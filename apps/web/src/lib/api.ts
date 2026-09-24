@@ -451,6 +451,9 @@ export interface Contact {
   timezone: string | null;
   /** Org-wide do-not-call flag (design §2) -- the one field every role, including agent, may set. */
   dnc: boolean;
+  /** LeadConnector contact id, set once a contact has been pulled from or linked to GHL
+   *  (TASK-P3-P2). Null for a CSV-imported or manually-added contact never synced with GHL. */
+  ghl_contact_id: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -1163,4 +1166,41 @@ export async function disconnectGhl(): Promise<void> {
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || 'Failed to disconnect GHL');
+}
+
+// --- GHL pull import (TASK-P3-P2) ---
+
+export interface ImportFromGhlInput {
+  /** "tag": pages every contact in the connected location and keeps only those whose GHL
+   *  tags include `value` (case-insensitive) -- GHL has no server-side tag filter. "search":
+   *  passes `value` straight through as GHL's own free-text `query` param. */
+  mode: 'tag' | 'search';
+  value: string;
+  /** When set, every created/updated contact is also queued onto this campaign. */
+  campaignId?: string;
+}
+
+export interface ImportFromGhlResult {
+  created: number;
+  updated: number;
+  skipped: number;
+  invalid: number;
+  /** true when the org has more matching GHL contacts than this run fetched (a 2,000-contact
+   *  per-run cap -- see ghl-import.ts) -- re-running the same import continues from where the
+   *  last one left off, since matched contacts are skipped as already up to date. */
+  truncated: boolean;
+}
+
+/** "Import from GHL" and "Re-sync" (design §7) are the same call -- re-running it with the
+ *  same { mode, value } is idempotent (dedupe on ghl_contact_id, then normalized phone), so
+ *  "Re-sync" just means the UI remembers and replays the last import's params. */
+export async function importFromGhl(input: ImportFromGhlInput): Promise<ImportFromGhlResult> {
+  const res = await fetch(`${getFunctionsUrl()}/ghl-import`, {
+    method: 'POST',
+    headers: await getEdgeFunctionHeaders(),
+    body: JSON.stringify({ mode: input.mode, value: input.value, campaignId: input.campaignId }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Failed to import from GHL');
+  return data as ImportFromGhlResult;
 }

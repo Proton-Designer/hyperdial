@@ -24,6 +24,19 @@
  * language maps onto most directly (`query` is a free-text search; a future pull-import
  * task filtering by tag can extend this with GHL's tag-list params without touching the
  * request shape here).
+ *
+ * UNVERIFIED (TASK-P3-P2, no live GHL location in this environment): GHL's own spec
+ * declares `GET /contacts/`'s response schema (`ContactsSearchSchema`) WITHOUT
+ * `firstName`/`lastName`/`phone`/`dnd` -- only `id`/`email`/`timezone`/`tags`/etc --
+ * even though `GET /contacts/{contactId}`'s schema (`GetContectByIdSchema`) has the
+ * full field set including all four. `GhlContact` and `_shared/ghl-import.ts` assume
+ * the list endpoint's *actual* runtime response includes them anyway (a pull-import
+ * feature is pointless without a phone number on the list response, and GHL's docs
+ * have already been shown twice in this codebase to under-document real behavior --
+ * see the `Version` header and `POST /contacts/search` notes above). If a live GHL
+ * verify pass finds the list response genuinely omits these fields, `ghl-import`'s
+ * per-contact loop needs a `getContact(id)` detail call added to `GhlClient` as a
+ * fallback -- not built here since there's no evidence yet that it's needed.
  */
 
 const GHL_BASE_URL = 'https://services.leadconnectorhq.com';
@@ -176,6 +189,9 @@ export interface GhlContact {
   lastName?: string;
   email?: string;
   phone?: string;
+  tags?: string[];
+  dnd?: boolean;
+  dateAdded?: string;
   [key: string]: unknown;
 }
 
