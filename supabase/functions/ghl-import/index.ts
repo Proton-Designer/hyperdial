@@ -77,7 +77,12 @@ Deno.serve(async (req: Request) => {
     return jsonResponse({ error: 'Failed to retrieve the GHL token' }, 502);
   }
 
-  const client = createGhlClient(token as string);
+  // GHL_API_BASE (TASK-P3-P2, same shape as TELNYX_API_BASE): server-side-only override so a
+  // local curl verification can redirect this org's client at a mock GHL HTTP server. Reading
+  // Deno.env here, not inside ghl-client.ts, keeps that file test-flag-free -- see its header.
+  const client = createGhlClient(token as string, {
+    apiBase: Deno.env.get('GHL_API_BASE') || undefined,
+  });
 
   let fetched;
   try {
@@ -144,13 +149,22 @@ Deno.serve(async (req: Request) => {
   }
 
   if (plan.toUpdate.length > 0) {
-    const { error: updateError } = await supabase.from('contacts').upsert(
-      plan.toUpdate.map((u) => ({ id: u.id, updated_at: now, ...u.patch })),
-      { onConflict: 'id' }
-    );
-    if (updateError) {
-      console.error('[ghl-import] update failed', updateError.message);
-      return jsonResponse({ error: updateError.message }, 500);
+    // Individual .update() calls, not .upsert(): PostgREST's upsert always builds a genuine
+    // INSERT ... ON CONFLICT DO UPDATE, so Postgres validates NOT NULL columns (user_id,
+    // org_id, ...) against the INSERT's proposed row even when a conflict -- and therefore an
+    // UPDATE, not a real insert -- is guaranteed. A patch that omits those columns (every
+    // patch here does; only the changed fields are included) fails outright. Found live via
+    // this task's own post-apply curl verification, not caught by the deno tests (which never
+    // touch the real DB) or the migration dry-run.
+    for (const u of plan.toUpdate) {
+      const { error: updateError } = await supabase
+        .from('contacts')
+        .update({ updated_at: now, ...u.patch })
+        .eq('id', u.id);
+      if (updateError) {
+        console.error('[ghl-import] update failed', updateError.message);
+        return jsonResponse({ error: updateError.message }, 500);
+      }
     }
     touchedContactIds.push(...plan.toUpdate.map((u) => u.id));
   }

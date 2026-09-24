@@ -37,9 +37,17 @@
  * verify pass finds the list response genuinely omits these fields, `ghl-import`'s
  * per-contact loop needs a `getContact(id)` detail call added to `GhlClient` as a
  * fallback -- not built here since there's no evidence yet that it's needed.
+ *
+ * apiBase override (TASK-P3-P2, same shape as telnyx-client.ts's TASK-P2-E2 addition):
+ * `createGhlClient(token, { apiBase })` -- an explicit constructor option, not a Deno.env
+ * read inside this file, so the bare `deno test supabase/functions/_shared` command never
+ * needs --allow-env to exercise it. A caller that wants an env-driven override (e.g.
+ * ghl-import/index.ts's GHL_API_BASE, for a local mock-GHL curl verification) reads it
+ * server-side and passes it through. Production never sets that env var, so every real
+ * caller gets the default.
  */
 
-const GHL_BASE_URL = 'https://services.leadconnectorhq.com';
+const DEFAULT_GHL_BASE_URL = 'https://services.leadconnectorhq.com';
 const GHL_API_VERSION = '2021-07-28';
 
 interface GhlEnvelope<T> {
@@ -48,11 +56,12 @@ interface GhlEnvelope<T> {
 
 async function ghlRequest<T = unknown>(
   token: string,
+  apiBase: string,
   path: string,
   init: RequestInit = {}
 ): Promise<T> {
   const method = init.method ?? 'GET';
-  const res = await fetch(`${GHL_BASE_URL}${path}`, {
+  const res = await fetch(`${apiBase}${path}`, {
     ...init,
     headers: {
       Authorization: `Bearer ${token}`,
@@ -212,11 +221,17 @@ export interface GhlClient {
   setDnd(contactId: string, dnd: boolean): Promise<void>;
 }
 
-export function createGhlClient(token: string): GhlClient {
+export interface CreateGhlClientOptions {
+  apiBase?: string;
+}
+
+export function createGhlClient(token: string, options: CreateGhlClientOptions = {}): GhlClient {
+  const apiBase = options.apiBase || DEFAULT_GHL_BASE_URL;
   return {
     async getLocation(locationId) {
       const res = await ghlRequest<{ location?: { id?: string; name?: string } }>(
         token,
+        apiBase,
         `/locations/${locationId}`
       );
       if (!res.location?.id) {
@@ -229,6 +244,7 @@ export function createGhlClient(token: string): GhlClient {
       const payload = buildUpsertContactPayload(args);
       const res = await ghlRequest<{ new?: boolean; contact?: { id?: string } }>(
         token,
+        apiBase,
         '/contacts/upsert',
         { method: 'POST', body: JSON.stringify(payload) }
       );
@@ -242,6 +258,7 @@ export function createGhlClient(token: string): GhlClient {
       const qs = buildSearchContactsQuery(args);
       const res = await ghlRequest<{ contacts?: GhlContact[]; count?: number }>(
         token,
+        apiBase,
         `/contacts/?${qs}`
       );
       return { contacts: res.contacts ?? [], count: res.count ?? 0 };
@@ -251,6 +268,7 @@ export function createGhlClient(token: string): GhlClient {
       const payload = buildAddNotePayload(args);
       const res = await ghlRequest<{ id?: string; note?: { id?: string } }>(
         token,
+        apiBase,
         `/contacts/${contactId}/notes`,
         { method: 'POST', body: JSON.stringify(payload) }
       );
@@ -262,7 +280,7 @@ export function createGhlClient(token: string): GhlClient {
     },
 
     async addTags(contactId, tags) {
-      await ghlRequest(token, `/contacts/${contactId}/tags`, {
+      await ghlRequest(token, apiBase, `/contacts/${contactId}/tags`, {
         method: 'POST',
         body: JSON.stringify({ tags }),
       });
@@ -270,10 +288,15 @@ export function createGhlClient(token: string): GhlClient {
 
     async createTask(contactId, args) {
       const payload = buildCreateTaskPayload(args);
-      const res = await ghlRequest<{ id?: string }>(token, `/contacts/${contactId}/tasks`, {
-        method: 'POST',
-        body: JSON.stringify(payload),
-      });
+      const res = await ghlRequest<{ id?: string }>(
+        token,
+        apiBase,
+        `/contacts/${contactId}/tasks`,
+        {
+          method: 'POST',
+          body: JSON.stringify(payload),
+        }
+      );
       if (!res.id) {
         throw new Error('GHL createTask: response had no task id');
       }
@@ -281,7 +304,7 @@ export function createGhlClient(token: string): GhlClient {
     },
 
     async setDnd(contactId, dnd) {
-      await ghlRequest(token, `/contacts/${contactId}`, {
+      await ghlRequest(token, apiBase, `/contacts/${contactId}`, {
         method: 'PUT',
         body: JSON.stringify({ dnd }),
       });
