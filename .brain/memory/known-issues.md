@@ -38,9 +38,12 @@ loads that org's `webhook_public_key` from `org_telephony`, and calls `_shared/w
 signature checking even starts, since there is no key to check it against. `client_state.org` is cross-checked against `?org=` as defense in depth, for the new
 `{org, session, leg}` client_state shape only — see the caveat below.
 
-**NEEDS-LIVE-VERIFY**: this has never been checked against a real Telnyx account signing a real webhook. It also has never run against a real database, because
-`org_telephony` (TASK-P1-05's own migration) is written but not yet applied — the lead applies it after TASK-P1-01. Until both are applied and exercised with
-`supabase functions serve`, treat "fixed" as "fixed pending the local-DB and live-Telnyx checks this task couldn't do tonight."
+**2026-09-24 update — local-stack proof done, real-Telnyx proof still open:** ran `supabase functions serve` against the local DB (`org_telephony` now applied)
+and posted real signed requests at `telnyx-webhook` with a generated ed25519 test keypair: correctly-signed request for the org holding that public key → `200
+{"received":true}`; no signature headers → `401`; correct signature but a different `?org=` (whose `org_telephony` row has no matching key) → `401`; signature
+over a timestamp 301s old → `401`. All four exactly as designed. Test org/keypair fixtures were inserted and deleted directly, not through a migration.
+**Still NEEDS-LIVE-VERIFY**: a real Telnyx account actually signing a webhook with its own portal-issued key — everything above used a locally generated
+keypair, not Telnyx's.
 
 **Caveat carried forward, not yet closed:** today's dial engine (`_shared/dialer-engine.ts`) still builds the legacy client_state shape
 (`userId/sessionId/contactId/campaignId/batchIndex`), which has no `org` field — TASK-P1-05 explicitly leaves that dispatch intact and defers the engine rewrite to
@@ -79,9 +82,14 @@ back to a Telnyx-side find-by-name lookup (`find*ByName` on `TelnyxClient`) befo
 prior (failed) attempt already created on Telnyx instead of creating a duplicate under the same deterministic name. This supersedes the "IDs only, no Telnyx-side
 search" decision in `.brain/memory/decisions.md` — see that entry for why the ID-only shortcut wasn't actually safe across a failed-persist retry.
 
-**2026-09-24 update:** the lead applied migration `20260924000500` and reviewed the wrapper ACLs and the find-by-name fix — both correct. Still owed before this
-closes: the `functions serve` + curl acceptance run (signed POST → 200, unsigned/wrong-org/stale-timestamp → 401, `telnyx-connect` run twice against a mock →
-second run reuses). Real Telnyx account check remains NEEDS-LIVE-VERIFY regardless.
+**2026-09-24 update:** the lead applied migration `20260924000500` and reviewed the wrapper ACLs and the find-by-name fix — both correct. Verified live against the
+applied migration: `has_function_privilege()` confirms `service_role` alone can execute both wrappers (not `authenticated`/`anon` — see the corrected `mem.lessons`
+entry on why this is checked, not called, as `authenticated`); a real `set_org_telnyx_key` → `org_telephony` row correct → `get_org_telnyx_key` round-trip, run
+through a temporary test org and cleaned up afterward. The webhook's signed/unsigned/wrong-org/stale-timestamp acceptance is verified live too — see item #0's
+2026-09-24 update. **Not verified live**: `telnyx-connect` run twice "against a mock" was proven at the `deno test` unit level only (`provisionTelnyxOrg`'s mock
+`TelnyxClient`, including the specific retry-with-no-stored-IDs scenario) — there is no seam to redirect `telnyx-client.ts`'s hardcoded `api.telnyx.com` base URL
+for a live HTTP mock without either a code change (out of scope tonight) or a real Telnyx sandbox key (not available). Real Telnyx account check remains
+NEEDS-LIVE-VERIFY regardless.
 
 Originally reported by eng1 (TASK-P1-05 review), fixed by eng2.
 
