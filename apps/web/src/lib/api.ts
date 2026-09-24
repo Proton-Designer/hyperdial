@@ -1204,3 +1204,33 @@ export async function importFromGhl(input: ImportFromGhlInput): Promise<ImportFr
   if (!res.ok) throw new Error(data.error || 'Failed to import from GHL');
   return data as ImportFromGhlResult;
 }
+
+// --- GHL push outbox worker (TASK-P3-P3) ---
+
+export interface CrmSyncJob {
+  id: string;
+  org_id: string;
+  provider: string;
+  kind: 'disposition' | 'contact_upsert';
+  contact_id: string | null;
+  status: 'queued' | 'running' | 'done' | 'failed' | 'dead';
+  attempts: number;
+  last_error: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Last 20 sync jobs for the active org, newest-updated first. Reads `crm_sync_jobs_recent`
+ *  (a security_invoker view over `crm_sync_jobs` -- RLS still applies per caller, owner/admin
+ *  only, same as the base table's own policy). */
+export async function listCrmSyncJobs(): Promise<CrmSyncJob[]> {
+  const orgId = await getActiveOrgId();
+  const { data, error } = await supabase
+    .from('crm_sync_jobs_recent')
+    .select('*')
+    .eq('org_id', orgId)
+    .order('updated_at', { ascending: false })
+    .limit(20);
+  if (error) throw new Error(error.message);
+  return (data ?? []) as CrmSyncJob[];
+}

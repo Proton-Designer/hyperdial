@@ -33,11 +33,13 @@ import {
   getGhlIntegrationStatus,
   connectGhl,
   disconnectGhl,
+  listCrmSyncJobs,
   getTelnyxConnectionStatus,
   connectTelnyx,
   disconnectTelnyx,
   type OrgMember,
   type GhlIntegrationStatus,
+  type CrmSyncJob,
   type TelnyxConnectionStatus,
 } from '@/lib/api';
 
@@ -579,7 +581,73 @@ function IntegrationsTab() {
           )}
         </div>
       )}
+
+      {isConnected && <SyncStatusList />}
     </motion.div>
+  );
+}
+
+const SYNC_STATUS_BADGE: Record<CrmSyncJob['status'], string> = {
+  queued: 'bg-white/5 text-[#B0BEC5] border-white/10',
+  running: 'bg-[#0066FF]/10 text-[#0066FF] border-[#0066FF]/20',
+  done: 'bg-[#00E676]/10 text-[#00E676] border-[#00E676]/20',
+  failed: 'bg-yellow-500/10 text-yellow-400 border-yellow-500/30',
+  dead: 'bg-red-500/10 text-red-400 border-red-500/30',
+};
+
+/** Last 20 crm_sync_jobs for this org (TASK-P3-P3) -- a read-only status list, no retry/cancel
+ *  action here (out of this task's scope; the worker's own backoff already retries queued
+ *  rows automatically). */
+function SyncStatusList() {
+  const [jobs, setJobs] = useState<CrmSyncJob[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    listCrmSyncJobs()
+      .then(setJobs)
+      .catch(() => setJobs([]))
+      .finally(() => setLoading(false));
+  }, []);
+
+  return (
+    <div className="mt-6 bg-[#1A2332]/60 backdrop-blur-xl rounded-2xl p-6 border border-white/5 max-w-xl">
+      <h3 className="text-white font-medium mb-4">Sync status</h3>
+      {loading ? (
+        <div className="flex items-center justify-center py-6">
+          <Loader2 className="w-6 h-6 text-[#00D9FF] animate-spin" />
+        </div>
+      ) : jobs.length === 0 ? (
+        <p className="text-sm text-[#B0BEC5]">No sync activity yet.</p>
+      ) : (
+        <div className="space-y-2">
+          {jobs.map((job) => (
+            <div
+              key={job.id}
+              className="flex items-center justify-between gap-3 py-2 border-b border-white/5 last:border-0"
+            >
+              <div className="min-w-0">
+                <div className="text-sm text-white capitalize">{job.kind.replace('_', ' ')}</div>
+                {job.status === 'dead' && job.last_error && (
+                  <div className="text-xs text-red-400 truncate" title={job.last_error}>
+                    {job.last_error}
+                  </div>
+                )}
+              </div>
+              <div className="flex items-center gap-2 flex-shrink-0">
+                {job.attempts > 0 && (
+                  <span className="text-xs text-[#B0BEC5]">{job.attempts} attempt(s)</span>
+                )}
+                <span
+                  className={`px-2.5 py-1 rounded-full text-xs border ${SYNC_STATUS_BADGE[job.status]}`}
+                >
+                  {job.status}
+                </span>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
