@@ -39,3 +39,7 @@ supabase/.branches/
 
 # overnight-session run folders
 .claude/overnight/
+
+# Vercel CLI link
+.vercel
+.env*.local
