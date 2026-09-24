@@ -310,6 +310,16 @@ If this ever needs closing, it needs a real signal a lost webhook can't fake —
 Telnyx call-status poll (`GET /calls/{id}`) — not a longer staleness window on the same webhook-
 silence heuristic, which would just make real long calls false-positive instead.
 
+**Downstream consequence, flagged by the lead in review:** since `handleWin`'s winning leg is
+the one that carries `dial_sessions.active_leg_id`, a WINNER whose own `call.hangup` webhook is
+lost leaves that leg stuck at `claimed` forever — and because the sweeper never reaps `claimed`,
+the SESSION also stays stuck in `on_call` forever (never reaches `wrap_up`, so no disposition is
+ever possible for it). **Follow-up, not yet built:** either (a) reap a `claimed` leg specifically
+once it's been silent for a much longer window than the pre-connect threshold (e.g. 2 hours —
+long enough that no real conversation is still running, short enough to actually recover), or
+(b) a periodic Telnyx call-status poll for any session parked in `on_call`/`connecting` past a
+similar threshold. Neither is implemented; this is the honest gap, not a silent assumption.
+
 ---
 
 ## Not issues — deliberate, documented elsewhere
