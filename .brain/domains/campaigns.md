@@ -5,7 +5,7 @@ layer: L2
 type: domain
 status: canonical
 owner: maintainer
-updated: 2026-09-21
+updated: 2026-09-24
 sources:
   - apps/web/src/components/Campaigns.tsx
   - apps/web/src/components/campaigns/**
@@ -25,7 +25,7 @@ answers:
   - "how are campaigns and campaign_leads scoped per user"
 covers: "The campaigns and campaign_leads tables, the campaigns_with_stats view, the campaign CRUD surface in the web client, and the handoff from a campaign to a parallel dial session."
 excludes: "Contact records and CSV import mechanics (.brain/domains/contacts.md) and everything after the session row is inserted — batching, AMD, call_logs (.brain/domains/dialer.md)."
-tokens_est: 2585
+tokens_est: 2910
 source_hash: 6b60bc657d3aec935eac9e4bb25818e47c437a57b9fe5388102d507f41ba04c8
 ---
 
@@ -117,9 +117,18 @@ product (the contact list, the dialer, the dashboard) is either feeding a campai
   Campaigns accumulate.
 - **`UNIQUE(campaign_id, contact_id)`** (migration `:42`) is what makes the add path idempotent; both FKs are `ON DELETE CASCADE`,
   so deleting a contact silently shrinks every campaign it was in.
-- **RLS:** `campaigns` is `auth.uid() = user_id` on all four verbs (migration `:19-33`); `campaign_leads` is an `IN (SELECT … FROM
-  campaigns …)` subquery (`:50-72`); the view is `security_invoker = on` (`:95`) so it inherits them. Service-role callers — the
-  Edge Functions — bypass all of it.
+- **RLS is org-scoped as of TASK-P1-01 (`20260924000300_rewrite_rls_org_scoped.sql`), not `auth.uid() = user_id` anymore.**
+  `campaigns` SELECT is any org member (`private.is_org_member`); INSERT/UPDATE/DELETE are owner/admin
+  (`private.has_org_role(org_id, ['owner','admin'])`). `campaign_leads` SELECT lets an agent see leads only on a campaign they're
+  assigned to via the new `campaign_agents` table; INSERT now also verifies `campaign_id` and `contact_id` both belong to the
+  claimed `org_id` — fixing the exact gap `domain.auth` used to flag ("INSERT only checked the caller owned the campaign, never
+  that the contact belonged to the same tenant"). The view is still `security_invoker = on`, now carrying `org_id` through, so it
+  inherits the org-scoped policy. Service-role callers — the Edge Functions — still bypass all of it; `dialer-session-start`'s
+  missing-ownership-check gotcha above is **not yet fixed** (that's the Edge Function layer, TASK-P1-02, still filtering by
+  `user_id`/trusting `campaignId` on input as of this writing). Full inventory: `.brain/domains/auth.md`.
+- **`campaign_agents` is new** (`campaign_id, user_id`, denormalized `org_id`): which agents may dial/see which campaign. A
+  validation trigger rejects an `org_id` that doesn't match the campaign's own org, even from a caller who legitimately owns the
+  claimed `org_id` (a *different* org) — RLS's INSERT check alone wouldn't catch that. See `.brain/domains/auth.md`.
 
 ## Not covered here
 

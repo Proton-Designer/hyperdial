@@ -5,7 +5,7 @@ layer: L2
 type: domain
 status: canonical
 owner: maintainer
-updated: 2026-09-21
+updated: 2026-09-24
 sources:
   - supabase/functions/_shared/auth.ts
   - supabase/functions/_shared/cors.ts
@@ -16,6 +16,7 @@ sources:
 related:
   - domain.dialer
   - domain.contacts
+  - domain.campaigns
   - arch.system-overview
 answers:
   - "how is a user authenticated when calling an Edge Function"
@@ -24,18 +25,27 @@ answers:
   - "which tables have RLS and what do the policies allow"
   - "where does SUPABASE_SERVICE_ROLE_KEY bypass RLS"
   - "what user metadata is collected at signup"
-covers: "Supabase auth, session handling, the two-layer Edge Function authorization model, service-role usage, and the per-table RLS inventory."
+  - "how does org/tenant scoping work now"
+  - "what are the RLS helper functions and why do they exist"
+covers: "Supabase auth, session handling, the two-layer Edge Function authorization model, service-role usage, org tenancy, and the per-table RLS inventory."
 excludes: "Telnyx webhook signature mechanics (domain.telephony); dial-loop ownership checks (domain.dialer)."
-tokens_est: 2458
-source_hash: 72ae36b48b1a82ec57268147c64b611d02180c60311c1a76ec376035c0c6554d
+tokens_est: 3594
+source_hash: 0388cf2fab8c2f4385c37c045bcd52d5f426fb8b71680110776816f0c605c799
 ---
 
 # Auth & Access Control
 
 ## Purpose
 
-Softdial is single-tenant-per-user: every contact, campaign, number, and call belongs to exactly one `auth.users` row. This domain establishes *who* is calling (Supabase email/password auth) and the
-two independent places deciding *what they may touch*: in-function token checks in Deno, and Postgres row-level security.
+**As of TASK-P1-01 (2026-09-24), Softdial is org-multi-tenant**, not single-user: every contact, campaign, number, and call belongs to one `orgs` row; a user reaches an org via `org_members` (role `owner|admin|agent`). The single-user model this doc used to describe (10 tables on `auth.uid() = user_id`) is now historical — see `mem.decisions`, `domain.campaigns`, `domain.contacts`. This domain still covers *who* is calling and the two layers deciding *what they may touch*: in-function checks in Deno, and Postgres RLS — now org-scoped.
+
+## Tenancy (new)
+
+`orgs` (team/tenant) · `org_members(org_id, user_id, role, status, telnyx_credential_id)` · `org_invites` (hashed single-use token, `role`, `expires_at`) · `profiles(user_id, first_name, last_name, active_org_id)` · `campaign_agents(campaign_id, user_id, org_id)` (which agents may dial/see which campaign).
+
+**RLS helpers**, schema `private` (not API-exposed — `authenticated` needs an explicit `GRANT USAGE ON SCHEMA private`; a non-`public` schema does not inherit `public`'s default grant, see `mem.lessons`): `private.is_org_member(org)`, `private.has_org_role(org, roles[])`, plus single-purpose cross-table lookups (`campaign_org_id`, `contact_org_id`, `agent_assigned_to_campaign`, `agent_has_contact_access`) used *inside other tables'* policies. All SECURITY DEFINER, STABLE, `search_path = ''`. **Every one exists to avoid RLS recursion**: an inline subquery on another RLS-protected table, used inside a policy, can cycle with that table's own policy (`infinite recursion detected in policy for relation ...`) — reproduced building the RLS test suite, see `mem.decisions`/`mem.lessons`. **Never write an inline cross-table `EXISTS` in a new policy** — add a `private.*` helper.
+
+**New-signup trigger** `public.handle_new_user()`: no `invite_token` in signup metadata → `private.ensure_org_for_user()` creates an org (named from `company_name`, else the email domain, else `'My Team'`), an owner membership, and the profile. `invite_token` present → only the profile is created; `accept-invite` (TASK-P1-02) is expected to add the `org_members` row.
 
 ## Key concepts
 
@@ -82,22 +92,32 @@ two independent places deciding *what they may touch*: in-function token checks 
 #0. **Treat it as fully unauthenticated**: it holds a service-role client and drives the
 dial loop.
 
+**Not yet done (TASK-P1-02):** the 13 service-role functions above still hand-filter by `user_id`, not `org_id` — `requireOrgRole(req, orgId, roles)` (design §2) does not exist yet in `supabase/functions/_shared/auth.ts`. Only the Postgres RLS layer below is org-scoped so far.
+
 ## Per-table RLS inventory
 
-**Every table has `ENABLE ROW LEVEL SECURITY`. None is unprotected.** All policies are `auth.uid()`-scoped or ownership-derived.
+**Every table has `ENABLE ROW LEVEL SECURITY`. None is unprotected.** As of TASK-P1-01
+(`20260924000100`–`300`), every business table's policies are org-scoped, written with the
+`private.*` helpers above — no more `auth.uid() = user_id`. `user_preferences` and `notifications`
+are the deliberate exceptions: personal, not org-shared (see `20260924000300`'s header comment).
 
-| Table | Policies (migration) |
+| Table | Policies (migration `20260924000300` unless noted) |
 |---|---|
-| `campaigns` | SELECT/INSERT/UPDATE/DELETE, all `auth.uid() = user_id` (`20250207100000:17-33`) |
-| `campaign_leads` | SELECT/INSERT/UPDATE/DELETE via `campaign_id IN (SELECT id FROM campaigns WHERE user_id = auth.uid())` (`:48-72`) |
-| `contacts` | SELECT/INSERT/UPDATE/DELETE, all `auth.uid() = user_id` (`20250214000001:24-40`) |
-| `user_phone_numbers` | SELECT/INSERT/UPDATE/DELETE, all `auth.uid() = user_id` (`20250208000001:15-36`) |
-| `call_events` | **SELECT only** (`20250213000001:22-27`); writes are service-role by design |
-| `notifications` | **SELECT + UPDATE only** (`20250213000001:51-59`); inserts are service-role |
-| `user_preferences` | SELECT/INSERT/UPDATE (`20250213000001:73-85`). No DELETE policy |
-| `dialer_sessions` | **SELECT only** (`20260207000100:28-33`); all writes via Edge Functions |
-| `call_logs` | **SELECT only** (`20260207000100:62-67`) |
-| `campaigns_with_stats` (view) | `security_invoker = on` (`20250207100000:95`) — caller's RLS applies. Correct. |
+| `orgs` | SELECT `is_org_member`; UPDATE/DELETE `has_org_role([owner])`. No client INSERT — orgs are created only by the signup trigger / backfill. |
+| `org_members` | SELECT `is_org_member`; INSERT/UPDATE/DELETE `has_org_role([owner,admin]) AND role <> 'owner'` — admins manage non-owner rows only; ownership transfer is not built. |
+| `org_invites` | SELECT/INSERT/UPDATE/DELETE, all `has_org_role([owner,admin])`. |
+| `profiles` | SELECT/INSERT/UPDATE, all `user_id = auth.uid()`. Personal; no cross-user policy — team-roster lookups go through an Edge Function (TASK-P1-02), not raw SELECT. |
+| `campaign_agents` | SELECT `is_org_member`; INSERT/DELETE `has_org_role([owner,admin])`. A `BEFORE INSERT/UPDATE` trigger (`private.check_campaign_agent_org`) rejects an `org_id` that doesn't match the campaign's own `org_id`, even when the caller legitimately owns the claimed `org_id` (a different org) — RLS alone would have let that through. |
+| `campaigns` | SELECT `is_org_member` (any role); INSERT/UPDATE/DELETE `has_org_role([owner,admin])`. |
+| `campaign_leads` | SELECT: owner/admin see all, agent sees only leads on a campaign they're assigned to (`campaign_agents`). INSERT `has_org_role([owner,admin])` **and** both `campaign_id` and `contact_id` verified to belong to the same `org_id` — fixes the auth.md finding that the old policy only checked campaign ownership, never the contact's. UPDATE/DELETE `has_org_role([owner,admin])`. |
+| `contacts` | SELECT/UPDATE: owner/admin see and edit all; agent sees/edits only contacts reachable through an assigned campaign (`campaign_agents` → `campaign_leads`). **The agent UPDATE is full-row, not DNC-scoped — there is no `dnc` column yet.** See known-issues #7. INSERT/DELETE `has_org_role([owner,admin])`. |
+| `user_phone_numbers` | SELECT `is_org_member` (any role, to pick a caller ID); INSERT/UPDATE/DELETE `has_org_role([owner,admin])`. |
+| `call_events` | SELECT: owner/admin see all; agent sees only their own (`user_id = auth.uid()`). **`org_id` is nullable** (mirrors `user_id`, see `mem.decisions`). Writes stay service-role only. |
+| `notifications` | Unchanged: SELECT/UPDATE `user_id = auth.uid()`. Personal, not org-scoped even though `org_id` was added to the table (FK/cascade hygiene only). |
+| `user_preferences` | Unchanged: SELECT/INSERT/UPDATE `auth.uid() = user_id`. No `org_id` column — stays per-user. |
+| `dialer_sessions` | SELECT: owner/admin see all; agent sees only their own. All writes via Edge Functions. |
+| `call_logs` | Same shape as `dialer_sessions`. |
+| `campaigns_with_stats` (view) | `security_invoker = on`, recreated to carry `org_id` through — caller's (now org-scoped) RLS on `campaigns` applies. |
 
 ## Constraints & gotchas
 
@@ -107,9 +127,8 @@ dial loop.
   path.
 - **Service-role clients bypass RLS entirely** — 13 functions plus `supabase/functions/_shared/dialer-events.ts:22`. The only guard there is a hand-written `.eq('user_id', user.id)`; every current
   call site scopes correctly, and omitting one is a silent cross-tenant read.
-- **`campaign_leads` policies check the campaign, never the contact.** INSERT only requires owning the `campaign_id` (`20250207100000:56-60`); `contact_id` ownership is unvalidated, so a crafted
-  insert can link another user's contact into your campaign. Mitigated on the dial path (`supabase/functions/_shared/dialer-engine.ts:98-105`) and RLS still blocks reading the row, but **a stricter
-  policy belongs here.**
+- **Fixed as of TASK-P1-01:** `campaign_leads` INSERT used to check only that the caller owned the campaign, never that the contact did — a crafted insert could link another org's contact in. The
+  rewritten policy (`20260924000300`) verifies `campaign_id` and `contact_id` both belong to the claimed `org_id`; see the per-table inventory above.
 - **`notifications` UPDATE has `USING` but no `WITH CHECK` — checked, and it is fine.** Postgres falls back to the `USING` expression for the check when `WITH CHECK` is omitted, so a user still cannot
   update a row into someone else's `user_id`. Recorded here so it is not re-raised as a finding. `notifications` also has no INSERT policy by design — inserts come from `ensure-week-summary` on the
   service-role client.

@@ -5,7 +5,7 @@ layer: L2
 type: domain
 status: canonical
 owner: maintainer
-updated: 2026-09-21
+updated: 2026-09-24
 sources:
   - supabase/functions/contacts-parse-csv/index.ts
   - supabase/functions/contacts-import/index.ts
@@ -26,8 +26,8 @@ answers:
   - "what happens when part of an import fails"
 covers: "The contacts table, two-step CSV import, phone normalisation and de-duplication, the category/contact_status labels, and single-contact create/delete."
 excludes: "Per-call state (call_status, call_count, last_called_at) written by the dial loop — see domain.dialer. Campaign membership — see domain.campaigns."
-tokens_est: 2237
-source_hash: 2a02f613ff8c396def494d99b79a2080ede709ae1f6bc30266d1ea0dcd5b861f
+tokens_est: 2385
+source_hash: bbd146f8e7a885098a76beadd12fa95824ca7af18974848ad194b2e0afacb26a
 ---
 
 # Contacts
@@ -97,8 +97,13 @@ enforced: [`docs/guides/csv-import.md`](/docs/guides/csv-import.md).
 ## Integration points & RLS
 
 Depends on `domain.auth`; depended on by `domain.campaigns` (via the `campaign_leads.contact_id` FK) and `domain.dialer` (which writes `call_status`, `last_called_at`,
-`call_count`). The table has SELECT/INSERT/UPDATE/DELETE policies, each `auth.uid() = user_id`. **The two Edge Functions use the service-role key and bypass RLS
-entirely** (`contacts-import/index.ts:72-74`) — their only tenancy guarantee is setting and filtering `user_id` from the verified JWT by hand.
+`call_count`). **As of TASK-P1-01, `contacts` is org-scoped, not `auth.uid() = user_id`**: owner/admin see and edit every contact
+in the org; an agent sees and edits only contacts reachable through a campaign they're assigned to (`campaign_agents` →
+`campaign_leads`). Import (INSERT) and delete stay owner/admin only. **The agent UPDATE is currently full-row, not limited to a
+DNC toggle** — there is no `dnc` column yet for the policy to scope to; see `.brain/memory/known-issues.md` #7. Full policy
+inventory: `.brain/domains/auth.md`. **The two Edge Functions still use the service-role key and bypass RLS
+entirely** (`contacts-import/index.ts:72-74`) — their only tenancy guarantee is setting and filtering `user_id` from the verified
+JWT by hand; they do not yet filter or set `org_id` (TASK-P1-02, not built as of this writing).
 
 ## Constraints & gotchas
 

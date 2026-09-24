@@ -16,7 +16,7 @@ answers:
   - "what did previous work get wrong"
 covers: "Non-obvious things learned from working in this repository"
 excludes: "Current defects (see mem.known-issues), the reasoning behind choices (see mem.decisions)"
-tokens_est: 1164
+tokens_est: 1909
 ---
 
 # Lessons
@@ -24,6 +24,29 @@ tokens_est: 1164
 Things that cost someone time, written down so they cost the next person none.
 
 ---
+
+## A denial-testing helper can swallow its own failure signal
+
+Writing `supabase/tests/rls_org_matrix.sql` (TASK-P1-01), the first draft of `_test_expect_insert_denied()` did `EXECUTE p_query; RAISE EXCEPTION 'FAIL ...'; EXCEPTION WHEN insufficient_privilege
+THEN RAISE NOTICE 'PASS ...'`. The bug: `RAISE EXCEPTION` is itself `raise_exception` (SQLSTATE P0001) — the very condition being widened for the campaign_agents trigger case — so an insert that
+*unexpectedly succeeded* would raise its own FAIL, get caught by the handler meant to detect denial, and print a false PASS. Fixed by scoping the exception handler to a nested block around only
+the `EXECUTE`, with the FAIL raise outside it. **Apply it:** in any "assert this raises" test helper, never let the helper's own "it didn't raise" failure signal share an exception class with what
+it's trying to detect — check it against a boolean flag set inside a narrowly-scoped sub-block instead.
+
+## RLS recursion is not limited to the table whose policy you're writing
+
+The tenancy migration's task explicitly warned against an inline subquery on `org_members` inside a policy (self-recursion). Real recursion showed up a hop further out and was not self-referential
+at all: `campaign_leads`' INSERT policy queried `contacts`, and `contacts`' SELECT policy queried `campaign_leads` back — two different tables, each fine in isolation, cyclic together. Postgres
+caught it at runtime (`infinite recursion detected in policy for relation "campaign_leads"`), while running the RLS test suite, not while reading the SQL. **Apply it:** any inline `EXISTS (SELECT
+... FROM <other RLS-protected table> ...)` inside a policy is a latent cycle waiting for the other table's policy to reference back — route it through a `SECURITY DEFINER` helper instead (see
+`mem.decisions`), and don't trust a multi-table RLS design as correct until it's been exercised as a different role, not just read.
+
+## A newly created Postgres schema is not `public`
+
+`create schema private;` does **not** grant `USAGE` to `PUBLIC`/`authenticated` the way `public` does by default — that default is specific to the `public` schema. `GRANT EXECUTE ON FUNCTION` in
+the new schema is not enough on its own; without `GRANT USAGE ON SCHEMA private TO authenticated` the role cannot even resolve `private.is_org_member(...)`, and every policy calling it fails
+closed with "permission denied for schema private." Caught by the RLS test suite before any commit — would otherwise have surfaced as every single RLS policy silently rejecting real traffic.
+**Apply it:** after `create schema <non-public>`, explicitly grant `USAGE` to whichever role needs to call into it.
 
 ## A UI can look finished and be a mock
 
