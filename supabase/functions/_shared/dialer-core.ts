@@ -163,14 +163,27 @@ export function legTransition(
       return current === 'initiated' ? { next: 'ringing' } : null;
 
     case 'call.answered': {
-      if (current !== 'ringing') return null;
+      // Accepts 'initiated' as well as 'ringing': webhook delivery order isn't
+      // guaranteed, so call.answered can arrive before call.initiated's own
+      // ringing transition has been applied (TASK-P2-E2, E0's 04 verify). Without
+      // this, an out-of-order call.answered was silently dropped (returned null)
+      // and a live human was never claimed until the sweeper timed the leg out.
+      if (current !== 'ringing' && current !== 'initiated') return null;
       const decision = amdDecision(ctx.amdMode, undefined);
       return resolveClaimDecision(decision, ctx, 'amd_pending');
     }
 
     case 'call.machine.detection.ended':
     case 'call.machine.premium.detection.ended': {
-      if (current !== 'amd_pending' || ctx.amdMode !== 'on') return null;
+      // Same out-of-order allowance as call.answered above: AMD only ever fires
+      // after a real answer, so a detection-ended event arriving before this
+      // leg's own call.answered was processed still means the call was in fact
+      // answered -- accept it from 'ringing'/'initiated' too, not just the normal
+      // 'amd_pending' (reached after call.answered already ran).
+      if (ctx.amdMode !== 'on') return null;
+      if (current !== 'amd_pending' && current !== 'ringing' && current !== 'initiated') {
+        return null;
+      }
       const decision = amdDecision(ctx.amdMode, event.result);
       return resolveClaimDecision(decision, ctx, 'amd_pending');
     }

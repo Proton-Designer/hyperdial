@@ -165,16 +165,31 @@ Deno.test('legTransition: call.answered, amd on -> amd_pending, no outcome yet',
   });
 });
 
-Deno.test('legTransition: call.answered out of order (not currently ringing) -> null', () => {
-  assertEquals(
-    legTransition('initiated', { eventType: 'call.answered' }, { amdMode: 'off', claim: 'won' }),
-    null
-  );
-  assertEquals(
-    legTransition('claimed', { eventType: 'call.answered' }, { amdMode: 'off', claim: 'won' }),
-    null
-  );
-});
+Deno.test(
+  'legTransition: call.answered arriving before call.initiated (still "initiated") is accepted, not dropped',
+  () => {
+    // Regression test for the out-of-order bug flagged in E0's 04 verify (TASK-P2-E2 log,
+    // 22:35): webhook delivery order isn't guaranteed, so call.answered can race ahead of
+    // call.initiated's own ringing transition. Before the fix this returned null (a live
+    // human never claimed, leg hangs until the sweeper). Confirmed by temporarily reverting
+    // the `current !== 'initiated'` allowance in dialer-core.ts and re-running this suite:
+    // this exact case failed (got null, expected the claimed transition below) before the fix.
+    assertEquals(
+      legTransition('initiated', { eventType: 'call.answered' }, { amdMode: 'off', claim: 'won' }),
+      { next: 'claimed', outcome: 'connected' }
+    );
+  }
+);
+
+Deno.test(
+  'legTransition: call.answered once a decision is already reached (claimed) is still a no-op -> null',
+  () => {
+    assertEquals(
+      legTransition('claimed', { eventType: 'call.answered' }, { amdMode: 'off', claim: 'won' }),
+      null
+    );
+  }
+);
 
 Deno.test(
   'legTransition: standard detection-ended, human, amd on, this leg wins -> claimed',
@@ -267,6 +282,38 @@ Deno.test(
         { amdMode: 'on', claim: 'won' }
       ),
       null
+    );
+  }
+);
+
+Deno.test(
+  'legTransition: detection-ended arriving before call.answered was processed (still "ringing") is accepted',
+  () => {
+    // Same out-of-order allowance as call.answered's own reordering test above: AMD only
+    // ever fires after a real answer, so a human detection-ended result arriving while this
+    // leg still reads "ringing" (call.answered's own transition hasn't landed yet) must still
+    // be claimable, not silently dropped.
+    assertEquals(
+      legTransition(
+        'ringing',
+        { eventType: 'call.machine.detection.ended', result: 'human' },
+        { amdMode: 'on', claim: 'won' }
+      ),
+      { next: 'claimed', outcome: 'connected' }
+    );
+  }
+);
+
+Deno.test(
+  'legTransition: detection-ended arriving before call.initiated was processed (still "initiated") is accepted',
+  () => {
+    assertEquals(
+      legTransition(
+        'initiated',
+        { eventType: 'call.machine.premium.detection.ended', result: 'human_residence' },
+        { amdMode: 'on', claim: 'won' }
+      ),
+      { next: 'claimed', outcome: 'connected' }
     );
   }
 );
