@@ -1,91 +1,88 @@
-import Telnyx from 'npm:telnyx@4';
-import { createClient } from 'npm:@supabase/supabase-js@2';
+/**
+ * Purchase a Telnyx number on the org's own BYO Telnyx account (design §3, TASK-P1-06).
+ * Owner/admin only (buying a real number costs real money -- design's "buy or release
+ * numbers" row). The number is attached to the org's Call Control Application
+ * (`org_telephony.call_control_app_id`), the same connection the webhook/engine already
+ * routes through, not the WebRTC credential connection. Stored with `org_id` (NOT NULL
+ * since TASK-P1-01) and `user_id` (the purchasing member, for attribution only -- any
+ * org member can dial out with the number once purchased, per `user_phone_numbers`'
+ * org-scoped RLS).
+ */
 import { corsHeaders, corsPreflightResponse } from '../_shared/cors.ts';
-import { getUserFromRequest } from '../_shared/auth.ts';
+import {
+  requireTelnyxOrgRole,
+  getSupabaseAdmin,
+  getConnectedOrgTelnyxContext,
+} from '../_shared/telnyx-org-context.ts';
 
-Deno.serve(async (req) => {
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+  });
+}
+
+Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return corsPreflightResponse();
+  if (req.method !== 'POST') return jsonResponse({ error: 'Method not allowed' }, 405);
 
-  const { user, error: authError } = await getUserFromRequest(req);
-  if (authError) return authError;
+  const { user, orgId, error: roleError } = await requireTelnyxOrgRole(req, ['owner', 'admin']);
+  if (roleError) return roleError;
 
+  let body: { phone_number?: string };
   try {
-    const body = await req.json().catch(() => ({}));
-    const { phone_number } = body as { phone_number?: string };
+    body = await req.json();
+  } catch {
+    return jsonResponse({ error: 'Invalid JSON body' }, 400);
+  }
+  const { phone_number: phoneNumber } = body;
+  if (!phoneNumber) return jsonResponse({ error: 'phone_number is required' }, 400);
 
-    if (!phone_number) {
-      return new Response(JSON.stringify({ error: 'phone_number is required' }), {
-        status: 400,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
+  const supabase = getSupabaseAdmin();
+  const {
+    client,
+    callControlAppId,
+    error: telnyxError,
+  } = await getConnectedOrgTelnyxContext(supabase, orgId);
+  if (telnyxError) return telnyxError;
 
-    const apiKey = Deno.env.get('TELNYX_API_KEY');
-    const connectionId = Deno.env.get('TELNYX_CREDENTIAL_CONNECTION_ID');
-    if (!apiKey) {
-      return new Response(JSON.stringify({ error: 'TELNYX_API_KEY not configured' }), {
-        status: 500,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
-    if (!connectionId) {
-      return new Response(
-        JSON.stringify({ error: 'TELNYX_CREDENTIAL_CONNECTION_ID not configured' }),
-        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
-
-    const client = new Telnyx({ apiKey });
-
-    const numberOrder = await client.numberOrders.create({
-      phone_numbers: [{ phone_number }],
-      connection_id: connectionId,
-    });
-
-    const orderId = numberOrder.data?.id;
-    const orderPhoneNumbers = numberOrder.data?.phone_numbers;
-    if (!orderId || !orderPhoneNumbers?.length) {
-      return new Response(JSON.stringify({ error: 'Failed to create number order' }), {
-        status: 500,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
-
-    const orderedNumber = orderPhoneNumbers[0];
-    const telnyxId =
-      typeof orderedNumber === 'object' && orderedNumber !== null && 'id' in orderedNumber
-        ? (orderedNumber as { id: string }).id
-        : null;
-    const num =
-      typeof orderedNumber === 'object' && orderedNumber !== null && 'phone_number' in orderedNumber
-        ? (orderedNumber as { phone_number: string }).phone_number
-        : phone_number;
-
-    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
-
-    const { error: insertError } = await supabase.from('user_phone_numbers').insert({
-      user_id: user.id,
-      telnyx_phone_number_id: telnyxId || orderId,
-      phone_number: num,
-    });
-
-    if (insertError) {
-      return new Response(JSON.stringify({ error: insertError.message }), {
-        status: 500,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
-
-    return new Response(JSON.stringify({ success: true, phone_number: num }), {
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+  let order;
+  try {
+    order = await client.orderNumber({
+      phoneNumbers: [phoneNumber],
+      connectionId: callControlAppId ?? undefined,
     });
   } catch (err) {
-    console.error('telnyx-purchase-number error:', err);
-    return new Response(JSON.stringify({ error: String(err) }), {
-      status: 500,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    });
+    console.error('[telnyx-purchase-number] order failed', err);
+    const message = err instanceof Error ? err.message : String(err);
+    return jsonResponse({ error: `Telnyx order failed: ${message}` }, 502);
   }
+
+  const orderedNumbers = order.phone_numbers as unknown[] | undefined;
+  const orderedNumber = orderedNumbers?.[0];
+  const telnyxId =
+    typeof orderedNumber === 'object' && orderedNumber !== null && 'id' in orderedNumber
+      ? (orderedNumber as { id: string }).id
+      : null;
+  const num =
+    typeof orderedNumber === 'object' && orderedNumber !== null && 'phone_number' in orderedNumber
+      ? (orderedNumber as { phone_number: string }).phone_number
+      : phoneNumber;
+
+  if (!order.id && !telnyxId) {
+    return jsonResponse({ error: 'Failed to create number order' }, 500);
+  }
+
+  const { error: insertError } = await supabase.from('user_phone_numbers').insert({
+    user_id: user.id,
+    org_id: orgId,
+    telnyx_phone_number_id: telnyxId || (order.id as string),
+    phone_number: num,
+  });
+  if (insertError) {
+    console.error('[telnyx-purchase-number] insert failed', insertError.message);
+    return jsonResponse({ error: insertError.message }, 500);
+  }
+
+  return jsonResponse({ success: true, phone_number: num });
 });

@@ -28,6 +28,17 @@
  * `filter[connection_name]` (no `[contains]`). All three are substring-or-exact
  * server-side filters, so callers still compare the returned name field for an exact
  * match before treating a result as "found" -- see the implementations below.
+ *
+ * findTelephonyCredentialByName (TASK-P1-06): telephony_credentials' list endpoint takes
+ * a consolidated `filter[name]` (deepObject style, no documented `[contains]` suffix --
+ * verified against spec3.json's `telephony-credentials_FilterConsolidated` parameter).
+ * Same "compare the returned name for an exact match" discipline as the other three.
+ *
+ * mintCredentialToken's real response (verified against spec3.json's
+ * `/telephony_credentials/{id}/token` POST, 201): `text/plain`, body is the raw JWT
+ * string -- not JSON. `telnyxRequest` below JSON.parses every response and falls back to
+ * `{ raw: text }` only when that throws, so callers of `mintCredentialToken` read the
+ * token from `.raw`, not `.data`/`.token`.
  */
 
 export type AmdMode = 'off' | 'premium';
@@ -210,7 +221,8 @@ export interface TelnyxClient {
   createTelephonyCredential(args: { connectionId: string; name?: string }): Promise<TelnyxIdData>;
   getTelephonyCredential(id: string): Promise<TelnyxIdData>;
   listTelephonyCredentials(): Promise<TelnyxIdData[]>;
-  mintCredentialToken(credentialId: string): Promise<unknown>;
+  findTelephonyCredentialByName(name: string): Promise<TelnyxIdData | null>;
+  mintCredentialToken(credentialId: string): Promise<{ token: string | null }>;
 }
 
 export function createTelnyxClient(apiKey: string): TelnyxClient {
@@ -404,10 +416,20 @@ export function createTelnyxClient(apiKey: string): TelnyxClient {
       return response.data ?? [];
     },
 
+    async findTelephonyCredentialByName(name) {
+      const qs = `filter[name]=${encodeURIComponent(name)}`;
+      const response = await req<TelnyxEnvelope<TelnyxIdData[]>>(`/telephony_credentials?${qs}`);
+      return (response.data ?? []).find((r) => r.name === name) ?? null;
+    },
+
     async mintCredentialToken(credentialId) {
-      return req(`/telephony_credentials/${encodeURIComponent(credentialId)}/token`, {
-        method: 'POST',
-      });
+      // 201 response is `text/plain` (a raw JWT), not JSON -- telnyxRequest's JSON.parse
+      // throws on it and falls back to `{ raw: text }`. See this file's header.
+      const response = await req<{ raw?: string }>(
+        `/telephony_credentials/${encodeURIComponent(credentialId)}/token`,
+        { method: 'POST' }
+      );
+      return { token: typeof response.raw === 'string' ? response.raw.trim() : null };
     },
   };
 }

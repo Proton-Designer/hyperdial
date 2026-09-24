@@ -8,8 +8,12 @@ owner: maintainer
 updated: 2026-09-21
 sources:
   - supabase/functions/_shared/telnyx.ts
+  - supabase/functions/_shared/telnyx-client.ts
+  - supabase/functions/_shared/telnyx-org-context.ts
+  - supabase/functions/_shared/telnyx-provision.ts
   - supabase/functions/telnyx-*/index.ts
   - supabase/migrations/20250208000001_create_user_phone_numbers.sql
+  - supabase/migrations/20260924000400_create_org_telephony.sql
   - apps/web/src/lib/useTelnyxCall.ts
   - apps/web/src/contexts/PhoneNumbersContext.tsx
 related:
@@ -42,8 +46,9 @@ Softdial places and receives real phone calls through Telnyx. This domain covers
 
 | Term | Means |
 |---|---|
-| Call Control Application | Telnyx "Voice API Application". Has a webhook URL; its **Application ID** is what `POST /calls` and `POST /conferences` want as `connection_id`. Stored as `TELNYX_CONNECTION_ID`. |
-| Credential connection | A Telnyx **SIP credential connection**. Used only to mint WebRTC telephony credentials and to attach purchased numbers. Stored as `TELNYX_CREDENTIAL_CONNECTION_ID`. |
+| Call Control Application | Telnyx "Voice API Application". Has a webhook URL; its **Application ID** is what `POST /calls` and `POST /conferences` want as `connection_id`. The **old** dial engine (`_shared/telnyx.ts`, still what actually runs calls today) reads it from `TELNYX_CONNECTION_ID`. The **new**, org-scoped functions (TASK-P1-06, see below) read the org's own `org_telephony.call_control_app_id` instead -- no env var. |
+| Credential connection | A Telnyx **SIP credential connection**. Used only to mint WebRTC telephony credentials and to attach purchased numbers. Old engine: `TELNYX_CREDENTIAL_CONNECTION_ID` env var. New, org-scoped: `org_telephony.credential_connection_id`. |
+| BYO Telnyx key (design §3) | Each org supplies its own Telnyx API key, provisioned once via `telnyx-connect` (`_shared/telnyx-provision.ts`) and stored in Vault (`org_telephony`, `private.set_org_telnyx_key`/`get_org_telnyx_key`). The four number/WebRTC functions below build a fresh `TelnyxClient` (`_shared/telnyx-client.ts`) per request from the org's own key -- never a global env var. |
 | `call_control_id` | Telnyx's per-leg handle. Every action (`join_conference`, `hangup`) is `POST /calls/{call_control_id}/actions/...`. |
 | Agent leg | The agent's audio. Two independent mechanisms: a **WebRTC** browser leg (click-to-dial) or a **PSTN callback leg** dialled to `agentCallbackNumber` and joined to the conference. |
 
@@ -51,11 +56,14 @@ Softdial places and receives real phone calls through Telnyx. This domain covers
 
 | What | Path | Notes |
 |---|---|---|
-| Telnyx REST client | `supabase/functions/_shared/telnyx.ts` | API key + connection-ID resolution, `POST /calls`, conferences, hangup |
-| Number search | `supabase/functions/telnyx-search-numbers/index.ts` | `npm:telnyx@4` SDK, `availablePhoneNumbers.list` |
-| Number purchase | `supabase/functions/telnyx-purchase-number/index.ts` | `numberOrders.create`, then DB insert |
-| Number listing | `supabase/functions/telnyx-list-numbers/index.ts` | Reads Postgres only — never Telnyx |
-| WebRTC token mint | `supabase/functions/telnyx-webrtc-credentials/index.ts` | Credential + token, per request |
+| Telnyx REST client (old engine) | `supabase/functions/_shared/telnyx.ts` | env-var API key + connection-ID resolution, `POST /calls`, conferences, hangup -- still what the running dial loop uses |
+| Telnyx REST client (BYO key) | `supabase/functions/_shared/telnyx-client.ts` | Per-org client (TASK-P1-04/06); no env var, takes the key as an argument |
+| Org context + connected-client helper | `supabase/functions/_shared/telnyx-org-context.ts` | `requireTelnyxOrgRole` (org+role resolution, telnyx-*/dialer-* don't use `_shared/auth.ts`'s `requireOrgRole`, TASK-P1-02's own scope note) + `getConnectedOrgTelnyxContext` (builds a `TelnyxClient` from `org_telephony`) |
+| Org Telnyx connect/disconnect | `supabase/functions/telnyx-connect/`, `telnyx-disconnect/` | Owner-only; provisions/stores the org's key + resource ids (TASK-P1-05) |
+| Number search | `supabase/functions/telnyx-search-numbers/index.ts` | Org-scoped (TASK-P1-06); any active org member; `_shared/telnyx-client.ts`'s `searchNumbers` |
+| Number purchase | `supabase/functions/telnyx-purchase-number/index.ts` | Org-scoped, owner/admin only; orders against the org's `call_control_app_id`, inserts with `org_id` |
+| Number listing | `supabase/functions/telnyx-list-numbers/index.ts` | Reads Postgres only — never Telnyx; filters by `org_id` |
+| WebRTC token mint | `supabase/functions/telnyx-webrtc-credentials/index.ts` | Get-or-create per (org, member) via `org_members.telnyx_credential_id`; no more per-call credential leak |
 | Webhook ingress | `supabase/functions/telnyx-webhook/index.ts` | Signature check `:32-73`; agent-leg join `:142-186` |
 | Browser WebRTC leg | `apps/web/src/lib/useTelnyxCall.ts` | `@telnyx/webrtc` `TelnyxRTC`; consumed by `apps/web/src/components/Dialer.tsx` |
 | Number cache (client) | `apps/web/src/contexts/PhoneNumbersContext.tsx` | Preloads once per sign-in; `usePhoneNumbers()` |
@@ -64,21 +72,27 @@ Softdial places and receives real phone calls through Telnyx. This domain covers
 
 ## How it works
 
-1. **Buy a number** — `telnyx-search-numbers` lists availability, `telnyx-purchase-number` orders it *against the credential connection*
-   (`supabase/functions/telnyx-purchase-number/index.ts:24,40-43`) and inserts a `user_phone_numbers` row with the service-role client (`:66-72`).
-2. **Cache it** — `PhoneNumbersContext` calls `listPhoneNumbers()` (`apps/web/src/lib/api.ts:32`) once per sign-in; the dialer and campaign UIs pick a caller ID from it.
-3. **Mint a WebRTC token** — `telnyx-webrtc-credentials` creates a telephony credential on the credential connection (`:25`), then `POST /v2/telephony_credentials/{id}/token` (`:36-45`).
-4. **Connect the browser** — `connect()` fetches that token and builds `new TelnyxRTC({ login_token })` (`apps/web/src/lib/useTelnyxCall.ts:46-49`); `dial()` calls `client.newCall()`.
-5. **Server-side dialing** — `dialOutboundCall()` posts to `/calls` with `connection_id` from `getTelnyxConnectionId()` and `webhook_url` = `<SUPABASE_URL>/functions/v1/telnyx-webhook`
-   (`supabase/functions/_shared/telnyx.ts:115-148`, `supabase/functions/dialer-session-start/index.ts:252`).
-6. **Webhook returns** — `telnyx-webhook` verifies the signature, ACKs `200` immediately and processes in a `queueMicrotask` (`:376-384`). An answered agent-callback leg is joined to the
+1. **Connect the org's Telnyx account** — owner pastes an API key + webhook public key into Settings → Telephony; `telnyx-connect` validates the key, provisions (or reuses) the
+   outbound voice profile / Call Control Application / credential connection (`_shared/telnyx-provision.ts`), and stores everything in `org_telephony` (key in Vault).
+2. **Buy a number** — `telnyx-search-numbers` lists availability against the org's own key; `telnyx-purchase-number` (owner/admin only) orders it *against the org's Call Control
+   Application* (`org_telephony.call_control_app_id` -- the same connection the webhook already routes through, not the WebRTC credential connection) and inserts a
+   `user_phone_numbers` row with `org_id` + the purchasing member's `user_id` for attribution.
+3. **Cache it** — `PhoneNumbersContext` calls `listPhoneNumbers()` (`apps/web/src/lib/api.ts`) once per sign-in; the dialer and campaign UIs pick a caller ID from it. This is a pure
+   DB read, org-scoped, and works even if the org's Telnyx connection is later disconnected.
+4. **Mint a WebRTC token** — `telnyx-webrtc-credentials` get-or-creates one telephony credential per (org, member), persisted in `org_members.telnyx_credential_id`, then
+   `client.mintCredentialToken()` (`POST /telephony_credentials/{id}/token`, a raw JWT `text/plain` response). No credential is ever created twice for the same member.
+5. **Connect the browser** — `connect()` fetches that token and builds `new TelnyxRTC({ login_token })` (`apps/web/src/lib/useTelnyxCall.ts:46-49`); `dial()` calls `client.newCall()`.
+6. **Server-side dialing (old engine, still what actually runs calls)** — `dialOutboundCall()` posts to `/calls` with `connection_id` from `getTelnyxConnectionId()`
+   (`TELNYX_CONNECTION_ID` env var, unrelated to the org-scoped `org_telephony.call_control_app_id` above) and `webhook_url` = `<SUPABASE_URL>/functions/v1/telnyx-webhook`
+   (`supabase/functions/_shared/telnyx.ts:115-148`, `supabase/functions/dialer-session-start/index.ts:252`). TASK-P2-E2 is expected to switch this to the org-scoped client too.
+7. **Webhook returns** — `telnyx-webhook` verifies the signature, ACKs `200` immediately and processes in a `queueMicrotask` (`:376-384`). An answered agent-callback leg is joined to the
    session's `conference_name` (`:142-186`), or hung up if the conference is unknown.
 
 ## Integration points
 
 | Direction | With | Via |
 |---|---|---|
-| Depends on | `domain.auth` | `getUserFromRequest()` in `supabase/functions/_shared/auth.ts` guards all four client-facing `telnyx-*` functions |
+| Depends on | `domain.auth` | `getUserFromRequest()` (`_shared/auth.ts`) guards every `telnyx-*` function, via `_shared/telnyx-org-context.ts`'s `requireTelnyxOrgRole` for the four number/WebRTC ones -- not `requireOrgRole` itself, which TASK-P1-02 excludes `telnyx-*`/`dialer-*` from |
 | Depends on | Supabase Postgres | `user_phone_numbers`, `dialer_sessions.conference_name` |
 | Depended on by | `domain.dialer` | `dialOutboundCall`, `createConference`, `joinCallToConference`, `hangupCall` |
 | External | Telnyx | REST `https://api.telnyx.com/v2`, `npm:telnyx@4` SDK, `@telnyx/webrtc`, inbound webhooks |
@@ -120,14 +134,23 @@ Softdial places and receives real phone calls through Telnyx. This domain covers
   bare `eyJ…` JWT. Do not collapse it to one shape.
 - **`toE164()` strips the `+`** (`apps/web/src/lib/useTelnyxCall.ts:13-18`) — it yields `15551234567`, not `+15551234567`. Server-side dialing does not use this helper; don't assume one
   format.
-- **`telnyx-list-numbers` never asks Telnyx** (`supabase/functions/telnyx-list-numbers/index.ts:17-21`) — it reads `user_phone_numbers`, so a number released in the portal still shows in the
+- **`telnyx-list-numbers` never asks Telnyx** (`supabase/functions/telnyx-list-numbers/index.ts`) — it reads `user_phone_numbers`, so a number released in the portal still shows in the
   app until the row is deleted.
-- **`telnyx_phone_number_id` is globally `UNIQUE`** (migration `:8`): the same Telnyx number cannot attach to two users; a second purchase fails with a constraint error, not a 4xx.
-- **Purchase writes with the service-role key**, bypassing the migration's RLS policies. `user_id` comes from the verified token (`supabase/functions/telnyx-purchase-number/index.ts:69`) —
-  the only guard against cross-user assignment.
-- **Number search quirks** (`supabase/functions/telnyx-search-numbers/index.ts:28-34`): `best_effort: true` is always set; the area code is sent as `national_destination_code` only when
-  `country_code === 'US'`. A Telnyx `10031` / "No numbers found" error becomes `200` with an empty list (`:54-66`).
+- **`telnyx_phone_number_id` is globally `UNIQUE`** (migration `:8`): the same Telnyx number cannot attach to two orgs; a second purchase fails with a constraint error, not a 4xx.
+- **Purchase writes with the service-role key**, bypassing `user_phone_numbers`' own RLS policies -- `org_id` (from `requireTelnyxOrgRole`'s verified membership lookup, not client input)
+  and the owner/admin role gate are the real guards against cross-org assignment; `user_id` is attribution only (any org member can dial with a number once purchased).
+- **Number search quirks** (`supabase/functions/telnyx-search-numbers/index.ts`): `best_effort: true` is always set; the area code is sent as `national_destination_code` only when
+  `country_code === 'US'`. A Telnyx `10031` / "No numbers found" error becomes `200` with an empty list.
 - **Four code strings point at a docs path that no longer exists.** The real file is `docs/guides/telnyx-call-control-setup.md`. Users following the error message hit a dead path.
+- **Fixed (TASK-P1-06, 2026-09-24): WebRTC credentials no longer leak.** `telnyx-webrtc-credentials` used to call `telephonyCredentials.create` on *every* invocation with nothing ever
+  deleting the credential -- every page load or reconnect added one to the account, forever. It now get-or-creates exactly one credential per (org, member), persisted in
+  `org_members.telnyx_credential_id`; a stale/deleted id falls back to a Telnyx-side find-by-name lookup (`softdial-member-<org>-<user>`) before creating a new one, mirroring
+  `_shared/telnyx-provision.ts`'s org-level idempotent-provisioning pattern. `apps/web/src/lib/useTelnyxCall.ts`'s own token-lifetime behavior (a long-lived tab keeps one token
+  forever; `disconnect()` then `connect()` to re-mint on expiry) is unchanged by this fix -- only the server-side credential churn is fixed.
+- **Token parsing is now a straight text/plain read, not tolerant multi-shape parsing.** Telnyx's `/telephony_credentials/{id}/token` response is verified (spec3.json) to be a raw
+  JWT `text/plain` body, not JSON. `_shared/telnyx-client.ts`'s `mintCredentialToken` returns `{ token: string | null }` from that text directly. The old
+  `telnyx-webrtc-credentials/index.ts`'s defensive multi-shape parsing (string / `.token` / bare `eyJ…`) only existed because it hand-rolled the request instead of trusting the spec;
+  it is gone from the new code, but `useTelnyxCall.ts`'s consumption of `{ token }` is unchanged.
 
 ## Not covered here
 

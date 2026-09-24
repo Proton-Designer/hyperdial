@@ -266,6 +266,47 @@ Deno.test(
   }
 );
 
+Deno.test(
+  'createTelnyxClient.findTelephonyCredentialByName: filters by the consolidated filter[name]',
+  async () => {
+    let seenUrl = '';
+    const restore = stubFetch((url) => {
+      seenUrl = url;
+      return new Response(
+        JSON.stringify({ data: [{ id: 'tc-1', name: 'softdial-member-org-1-user-1' }] }),
+        { status: 200 }
+      );
+    });
+    try {
+      const client = createTelnyxClient('test-api-key');
+      const found = await client.findTelephonyCredentialByName('softdial-member-org-1-user-1');
+      assertEquals(
+        seenUrl,
+        'https://api.telnyx.com/v2/telephony_credentials?filter[name]=softdial-member-org-1-user-1'
+      );
+      assertEquals(found, { id: 'tc-1', name: 'softdial-member-org-1-user-1' });
+    } finally {
+      restore();
+    }
+  }
+);
+
+Deno.test(
+  'createTelnyxClient.mintCredentialToken: parses a raw JWT text/plain response, not JSON',
+  async () => {
+    const restore = stubFetch(
+      () => new Response('eyJhbGciOiJIUzUxMiJ9.fake.signature', { status: 201 })
+    );
+    try {
+      const client = createTelnyxClient('test-api-key');
+      const result = await client.mintCredentialToken('tc-1');
+      assertEquals(result, { token: 'eyJhbGciOiJIUzUxMiJ9.fake.signature' });
+    } finally {
+      restore();
+    }
+  }
+);
+
 Deno.test('createTelnyxClient: a non-2xx response throws with the status and body', async () => {
   const restore = stubFetch(
     () => new Response(JSON.stringify({ errors: [{ detail: 'bad request' }] }), { status: 400 })
