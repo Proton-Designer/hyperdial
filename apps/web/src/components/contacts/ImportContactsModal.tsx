@@ -48,6 +48,7 @@ export function ImportContactsModal({
   const [importResult, setImportResult] = useState<{
     imported: number;
     skipped: number;
+    invalid: number;
     duplicates: number;
   } | null>(null);
   const [importCategory, setImportCategory] = useState<string>('Cold');
@@ -289,6 +290,13 @@ export function ImportContactsModal({
                 <p className="text-sm text-[#B0BEC5]">
                   {assignedCount + skippedCount} of {columns.length} columns assigned
                 </p>
+                {parseResult.invalid_phone_count > 0 && (
+                  <div className="rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-400 text-sm p-3">
+                    {parseResult.invalid_phone_count} row
+                    {parseResult.invalid_phone_count === 1 ? '' : 's'} have a phone number that
+                    isn't valid and will be skipped on import.
+                  </div>
+                )}
                 <div className="flex items-center gap-3">
                   <span className="text-sm text-[#B0BEC5]">Category for this import:</span>
                   <Select value={importCategory} onValueChange={setImportCategory}>
@@ -431,7 +439,8 @@ export function ImportContactsModal({
                   {importResult.imported} contacts imported successfully
                 </h3>
                 <p className="text-[#B0BEC5] mb-6">
-                  {importResult.skipped > 0 && `${importResult.skipped} rows skipped (no phone). `}
+                  {importResult.skipped > 0 &&
+                    `${importResult.skipped} row${importResult.skipped === 1 ? '' : 's'} skipped (missing or invalid phone number${importResult.invalid > 0 ? `, ${importResult.invalid} invalid` : ''}). `}
                   {importResult.duplicates > 0 && `${importResult.duplicates} duplicates skipped.`}
                 </p>
                 <button

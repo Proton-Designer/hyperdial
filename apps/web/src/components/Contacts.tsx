@@ -282,6 +282,7 @@ export function Contacts() {
             const phone = contact.phone_number ?? '—';
             const category = contact.category ?? 'Cold';
             const contactStatus = contact.contact_status ?? 'No Contact';
+            const isDnc = contact.dnc;
             const isSelected = selectedIds.has(contact.id);
             return (
               <motion.div
@@ -328,6 +329,11 @@ export function Contacts() {
                         <span className="px-2 py-0.5 rounded-full text-xs bg-white/10 truncate max-w-full">
                           {contactStatus}
                         </span>
+                        {isDnc && (
+                          <span className="px-2 py-0.5 rounded-full text-xs bg-red-500/20 text-red-400 truncate max-w-full">
+                            Do not call
+                          </span>
+                        )}
                       </div>
                     </div>
 
@@ -474,6 +480,10 @@ export function Contacts() {
         contact={detailContact}
         open={detailContact != null}
         onClose={() => setDetailContact(null)}
+        onUpdated={(updated) => {
+          setDetailContact(updated);
+          setContacts((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
+        }}
       />
     </div>
   );

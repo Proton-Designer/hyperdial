@@ -1,4 +1,6 @@
 import { supabase } from './supabase';
+import { normalizePhoneStrict } from './phone-normalize';
+import { timezoneForAreaCode } from './area-code-tz';
 
 const getFunctionsUrl = () => {
   const url = import.meta.env.VITE_SUPABASE_URL;
@@ -435,6 +437,8 @@ export interface Contact {
   review_count: number | null;
   open_hours: string | null;
   phone_number: string | null;
+  /** The phone number as originally typed/imported, before E.164 normalization (TASK-P2-P1). */
+  phone_raw: string | null;
   website: string | null;
   notes: string | null;
   first_name: string | null;
@@ -443,6 +447,10 @@ export interface Contact {
   address: string | null;
   category: string | null;
   contact_status: string | null;
+  /** IANA zone, e.g. "America/Chicago". Derived from the area code at import time, editable. */
+  timezone: string | null;
+  /** Org-wide do-not-call flag (design §2) -- the one field every role, including agent, may set. */
+  dnc: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -458,6 +466,8 @@ export interface ParseCsvResponse {
   columns: ParseCsvColumn[];
   total_rows: number;
   preview_rows: Record<string, string>[];
+  /** Rows whose mapped "Phone Number" column value fails strict E.164 validation (design §7). */
+  invalid_phone_count: number;
 }
 
 export async function parseContactsCsv(csvText: string): Promise<ParseCsvResponse> {
@@ -476,7 +486,7 @@ export async function importContacts(
   columnMappings: { original_header: string; mapped_field: string | null }[],
   category: string = 'Cold',
   campaignId?: string
-): Promise<{ imported: number; skipped: number; duplicates: number }> {
+): Promise<{ imported: number; skipped: number; invalid: number; duplicates: number }> {
   const body: Record<string, unknown> = {
     csv_text: csvText,
     column_mappings: columnMappings,
@@ -490,7 +500,7 @@ export async function importContacts(
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || 'Failed to import contacts');
-  return data as { imported: number; skipped: number; duplicates: number };
+  return data as { imported: number; skipped: number; invalid: number; duplicates: number };
 }
 
 export async function listContacts(): Promise<Contact[]> {
@@ -518,6 +528,31 @@ export interface CreateContactInput {
   address?: string;
   category?: string;
   contact_status?: string;
+  timezone?: string;
+}
+
+/**
+ * A phone_number present but not a valid E.164 number throws, same rejection contacts-import
+ * applies to a CSV row (design §7). phone_raw preserves what was typed; timezone is derived
+ * from the phone's NANP area code unless the caller already supplied one.
+ */
+function normalizeContactPhoneFields(
+  phoneNumber: string | undefined,
+  explicitTimezone: string | undefined
+): { phone_number: string | null; phone_raw: string | null; timezone?: string } {
+  const raw = (phoneNumber ?? '').trim();
+  if (!raw) return { phone_number: null, phone_raw: null };
+  const normalized = normalizePhoneStrict(raw);
+  if (!normalized) throw new Error(`"${raw}" is not a valid phone number`);
+  const result: { phone_number: string | null; phone_raw: string | null; timezone?: string } = {
+    phone_number: normalized.e164,
+    phone_raw: raw,
+  };
+  if (!explicitTimezone) {
+    const tz = timezoneForAreaCode(normalized.areaCode);
+    if (tz) result.timezone = tz;
+  }
+  return result;
 }
 
 export async function createContact(input: CreateContactInput): Promise<Contact> {
@@ -526,6 +561,7 @@ export async function createContact(input: CreateContactInput): Promise<Contact>
   } = await supabase.auth.getUser();
   if (!user) throw new Error('Not signed in');
   const orgId = await getActiveOrgId();
+  const phoneFields = normalizeContactPhoneFields(input.phone_number, input.timezone);
   const { data, error } = await supabase
     .from('contacts')
     .insert({
@@ -537,7 +573,7 @@ export async function createContact(input: CreateContactInput): Promise<Contact>
       rating: input.rating ?? null,
       review_count: input.review_count ?? null,
       open_hours: input.open_hours ?? null,
-      phone_number: input.phone_number ?? null,
+      ...phoneFields,
       website: input.website ?? null,
       notes: input.notes ?? null,
       first_name: input.first_name ?? null,
@@ -546,8 +582,56 @@ export async function createContact(input: CreateContactInput): Promise<Contact>
       address: input.address ?? null,
       category: input.category ?? 'Cold',
       contact_status: input.contact_status ?? 'No Contact',
+      timezone: input.timezone ?? phoneFields.timezone ?? null,
       updated_at: new Date().toISOString(),
     })
+    .select()
+    .single();
+  if (error) throw new Error(error.message);
+  return data as Contact;
+}
+
+/**
+ * Real contact editing (design §7). A direct client `.update()`, same pattern as
+ * createContact/deleteContact -- RLS plus the contacts_agent_update_scope trigger
+ * (20260924001300) are the actual authority: an owner/admin may change any field here, an
+ * assigned agent's request is rejected unless it touches only `dnc`. Passing `phone_number`
+ * re-normalizes it exactly like createContact; pass `timezone` explicitly to override the
+ * area-code-derived value instead of re-deriving it.
+ */
+export type UpdateContactInput = Partial<CreateContactInput> & { dnc?: boolean };
+
+export async function updateContact(id: string, input: UpdateContactInput): Promise<Contact> {
+  const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
+  for (const key of [
+    'business_name',
+    'business_link',
+    'business_type',
+    'rating',
+    'review_count',
+    'open_hours',
+    'website',
+    'notes',
+    'first_name',
+    'last_name',
+    'owner_contact',
+    'address',
+    'category',
+    'contact_status',
+    'timezone',
+  ] as const) {
+    if (key in input) patch[key] = input[key] ?? null;
+  }
+  if (typeof input.dnc === 'boolean') patch.dnc = input.dnc;
+  if ('phone_number' in input) {
+    const phoneFields = normalizeContactPhoneFields(input.phone_number, input.timezone);
+    Object.assign(patch, phoneFields);
+    if (phoneFields.timezone) patch.timezone = phoneFields.timezone;
+  }
+  const { data, error } = await supabase
+    .from('contacts')
+    .update(patch)
+    .eq('id', id)
     .select()
     .single();
   if (error) throw new Error(error.message);

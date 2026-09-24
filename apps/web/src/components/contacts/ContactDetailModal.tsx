@@ -1,7 +1,44 @@
+import { useState } from 'react';
 import { createPortal } from 'react-dom';
-import { X, Phone, Mail, Building2, MapPin, Globe, FileText, User } from 'lucide-react';
+import {
+  X,
+  Phone,
+  Mail,
+  Building2,
+  MapPin,
+  Globe,
+  FileText,
+  User,
+  Pencil,
+  ShieldOff,
+} from 'lucide-react';
 import { motion } from 'motion/react';
-import type { Contact } from '@/lib/api';
+import { updateContact, type Contact } from '@/lib/api';
+import { useOrg } from '@/contexts/OrgContext';
+
+const TIMEZONE_OPTIONS: { value: string; label: string }[] = [
+  { value: 'America/New_York', label: 'Eastern (New York)' },
+  { value: 'America/Chicago', label: 'Central (Chicago)' },
+  { value: 'America/Denver', label: 'Mountain (Denver)' },
+  { value: 'America/Phoenix', label: 'Arizona (no DST)' },
+  { value: 'America/Los_Angeles', label: 'Pacific (Los Angeles)' },
+  { value: 'America/Anchorage', label: 'Alaska' },
+  { value: 'Pacific/Honolulu', label: 'Hawaii' },
+  { value: 'America/Indiana/Indianapolis', label: 'Eastern (Indiana)' },
+  { value: 'America/Detroit', label: 'Eastern (Michigan)' },
+  { value: 'America/Puerto_Rico', label: 'Atlantic (Puerto Rico)' },
+  { value: 'America/Toronto', label: 'Eastern (Canada)' },
+  { value: 'America/Winnipeg', label: 'Central (Canada)' },
+  { value: 'America/Regina', label: 'Central, no DST (Saskatchewan)' },
+  { value: 'America/Edmonton', label: 'Mountain (Canada)' },
+  { value: 'America/Vancouver', label: 'Pacific (Canada)' },
+  { value: 'America/Halifax', label: 'Atlantic (Canada)' },
+  { value: 'America/Moncton', label: 'Atlantic (Canada)' },
+  { value: 'America/St_Johns', label: 'Newfoundland' },
+  { value: 'America/Whitehorse', label: 'Yukon' },
+  { value: 'Pacific/Guam', label: 'Chamorro (Guam)' },
+  { value: 'Pacific/Pago_Pago', label: 'Samoa' },
+];
 
 function contactDisplayName(c: Contact): string {
   const name = [c.first_name, c.last_name].filter(Boolean).join(' ').trim();
@@ -13,21 +50,130 @@ function truncateUrl(url: string, maxLen: number): string {
   return url.slice(0, maxLen) + '...';
 }
 
+interface EditFormState {
+  business_name: string;
+  business_type: string;
+  phone_number: string;
+  website: string;
+  notes: string;
+  first_name: string;
+  last_name: string;
+  owner_contact: string;
+  address: string;
+  timezone: string;
+}
+
+function toFormState(c: Contact): EditFormState {
+  return {
+    business_name: c.business_name ?? '',
+    business_type: c.business_type ?? '',
+    phone_number: c.phone_number ?? '',
+    website: c.website ?? '',
+    notes: c.notes ?? '',
+    first_name: c.first_name ?? '',
+    last_name: c.last_name ?? '',
+    owner_contact: c.owner_contact ?? '',
+    address: c.address ?? '',
+    timezone: c.timezone ?? '',
+  };
+}
+
+const inputClass =
+  'w-full bg-[#1E2A3A] border border-white/10 rounded-xl px-4 py-3 text-white placeholder-[#B0BEC5]/50 focus:outline-none focus:border-[#00D9FF]';
+
 interface ContactDetailModalProps {
   contact: Contact | null;
   open: boolean;
   onClose: () => void;
+  /** Called after a save succeeds, with the fresh row, so the caller can refresh its list. */
+  onUpdated?: (contact: Contact) => void;
 }
 
-export function ContactDetailModal({ contact, open, onClose }: ContactDetailModalProps) {
-  if (!open) return null;
+export function ContactDetailModal({ contact, open, onClose, onUpdated }: ContactDetailModalProps) {
+  const { role } = useOrg();
+  const [editing, setEditing] = useState(false);
+  const [form, setForm] = useState<EditFormState | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [dncSaving, setDncSaving] = useState(false);
 
+  if (!open) return null;
   const c = contact;
   if (!c) return null;
+
+  // Design §2's permission matrix: only owner/admin edit general contact fields. An
+  // assigned agent may still toggle DNC (below) -- contacts_agent_update_scope
+  // (20260924001300) enforces that boundary server-side regardless of what this UI shows.
+  const canEditFields = role === 'owner' || role === 'admin';
 
   const name = contactDisplayName(c);
   const category = c.category ?? 'Cold';
   const contactStatus = c.contact_status ?? 'No Contact';
+
+  const handleClose = () => {
+    if (saving || dncSaving) return;
+    setEditing(false);
+    setForm(null);
+    setError(null);
+    onClose();
+  };
+
+  const startEdit = () => {
+    setForm(toFormState(c));
+    setError(null);
+    setEditing(true);
+  };
+
+  const cancelEdit = () => {
+    setEditing(false);
+    setForm(null);
+    setError(null);
+  };
+
+  const setField = (key: keyof EditFormState, value: string) => {
+    setForm((prev) => (prev ? { ...prev, [key]: value } : prev));
+  };
+
+  const handleSave = async () => {
+    if (!form || saving) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const updated = await updateContact(c.id, {
+        business_name: form.business_name.trim() || undefined,
+        business_type: form.business_type.trim() || undefined,
+        phone_number: form.phone_number.trim() || undefined,
+        website: form.website.trim() || undefined,
+        notes: form.notes.trim() || undefined,
+        first_name: form.first_name.trim() || undefined,
+        last_name: form.last_name.trim() || undefined,
+        owner_contact: form.owner_contact.trim() || undefined,
+        address: form.address.trim() || undefined,
+        timezone: form.timezone || undefined,
+      });
+      onUpdated?.(updated);
+      setEditing(false);
+      setForm(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to save contact');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const toggleDnc = async () => {
+    if (dncSaving) return;
+    setDncSaving(true);
+    setError(null);
+    try {
+      const updated = await updateContact(c.id, { dnc: !c.dnc });
+      onUpdated?.(updated);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to update do-not-call');
+    } finally {
+      setDncSaving(false);
+    }
+  };
 
   return createPortal(
     <div
@@ -36,7 +182,7 @@ export function ContactDetailModal({ contact, open, onClose }: ContactDetailModa
       role="dialog"
       aria-modal="true"
     >
-      <div className="absolute inset-0 bg-black/60" onClick={onClose} aria-hidden="true" />
+      <div className="absolute inset-0 bg-black/60" onClick={handleClose} aria-hidden="true" />
       <motion.div
         initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
@@ -44,163 +190,335 @@ export function ContactDetailModal({ contact, open, onClose }: ContactDetailModa
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between border-b border-white/10 p-4">
-          <h2 className="text-xl font-bold text-white">Contact details</h2>
+          <h2 className="text-xl font-bold text-white">
+            {editing ? 'Edit contact' : 'Contact details'}
+          </h2>
+          <div className="flex items-center gap-2">
+            {!editing && canEditFields && (
+              <button
+                type="button"
+                onClick={startEdit}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm text-[#00D9FF] hover:bg-[#00D9FF]/10"
+              >
+                <Pencil className="w-4 h-4" />
+                Edit
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={handleClose}
+              className="rounded-lg p-2 text-[#B0BEC5] hover:bg-white/10 hover:text-white"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+        </div>
+
+        <div className="p-6 space-y-4 max-h-[70vh] overflow-y-auto">
+          {error && (
+            <div className="rounded-lg bg-red-500/10 border border-red-500/30 text-red-400 text-sm p-3">
+              {error}
+            </div>
+          )}
+
+          {/* Do-not-call: every role that can see this contact may toggle it (design §2). */}
           <button
             type="button"
-            onClick={onClose}
-            className="rounded-lg p-2 text-[#B0BEC5] hover:bg-white/10 hover:text-white"
+            onClick={toggleDnc}
+            disabled={dncSaving}
+            className={`w-full flex items-center justify-between gap-2 rounded-xl border p-3 text-sm font-medium transition-colors disabled:opacity-50 ${
+              c.dnc
+                ? 'bg-red-500/10 border-red-500/30 text-red-400'
+                : 'bg-white/5 border-white/10 text-[#B0BEC5] hover:bg-white/10'
+            }`}
           >
-            <X className="w-5 h-5" />
+            <span className="flex items-center gap-2">
+              <ShieldOff className="w-4 h-4" />
+              Do not call
+            </span>
+            <span>{c.dnc ? 'On — click to clear' : 'Off — click to mark'}</span>
           </button>
-        </div>
-        <div className="p-6 space-y-4 max-h-[70vh] overflow-y-auto">
-          <div className="flex items-center gap-4">
-            <div className="w-14 h-14 rounded-full bg-gradient-to-br from-[#00D9FF] to-[#0066FF] flex items-center justify-center text-white text-lg font-bold flex-shrink-0">
-              {name
-                .replace('—', '')
-                .split(' ')
-                .map((n) => n[0])
-                .filter(Boolean)
-                .join('')
-                .slice(0, 2) || '?'}
-            </div>
-            <div className="min-w-0 flex-1">
-              <div className="font-bold text-white text-lg line-clamp-2">{name}</div>
-              <div className="flex gap-2 mt-1 flex-wrap">
-                <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-white/10 text-[#B0BEC5]">
-                  {category}
-                </span>
-                <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-white/10 text-[#B0BEC5]">
-                  {contactStatus}
-                </span>
-              </div>
-            </div>
-          </div>
 
-          <div className="grid gap-3 text-sm">
-            {c.business_type && (
-              <div className="flex gap-2">
-                <Building2 className="w-4 h-4 text-[#00D9FF] flex-shrink-0 mt-0.5" />
-                <div className="min-w-0 text-[#B0BEC5]">{c.business_type}</div>
-              </div>
-            )}
-            {c.phone_number && (
-              <div className="flex gap-2 items-center">
-                <Phone className="w-4 h-4 text-[#00D9FF] flex-shrink-0" />
-                <a
-                  href={`tel:${c.phone_number}`}
-                  className="text-[#00D9FF] hover:underline truncate block"
-                >
-                  {c.phone_number}
-                </a>
-              </div>
-            )}
-            {c.owner_contact?.includes('@') && (
-              <div className="flex gap-2 items-center">
-                <Mail className="w-4 h-4 text-[#00D9FF] flex-shrink-0 mt-0.5" />
-                <a
-                  href={`mailto:${c.owner_contact}`}
-                  className="text-[#00D9FF] hover:underline truncate block"
-                  title={c.owner_contact}
-                >
-                  {truncateUrl(c.owner_contact, 50)}
-                </a>
-              </div>
-            )}
-            {c.website && (
-              <div className="flex gap-2 items-center">
-                <Globe className="w-4 h-4 text-[#00D9FF] flex-shrink-0 mt-0.5" />
-                <a
-                  href={c.website.startsWith('http') ? c.website : `https://${c.website}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-[#00D9FF] hover:underline truncate block"
-                  title={c.website}
-                >
-                  {truncateUrl(c.website, 50)}
-                </a>
-              </div>
-            )}
-            {c.address && (
-              <div className="flex gap-2">
-                <MapPin className="w-4 h-4 text-[#00D9FF] flex-shrink-0 mt-0.5" />
-                <div className="text-[#B0BEC5] line-clamp-2">{c.address}</div>
-              </div>
-            )}
-            {c.business_link && (
-              <div className="flex gap-2">
-                <Globe className="w-4 h-4 text-[#00D9FF] flex-shrink-0 mt-0.5" />
-                <a
-                  href={
-                    c.business_link.startsWith('http')
-                      ? c.business_link
-                      : `https://${c.business_link}`
-                  }
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-[#00D9FF] hover:underline truncate block"
-                  title={c.business_link}
-                >
-                  {truncateUrl(c.business_link, 50)}
-                </a>
-              </div>
-            )}
-            {(c.first_name || c.last_name) &&
-              (c.first_name || c.last_name) !== (c.business_name ?? '') && (
-                <div className="flex gap-2">
-                  <User className="w-4 h-4 text-[#00D9FF] flex-shrink-0 mt-0.5" />
-                  <div className="text-[#B0BEC5]">
-                    {[c.first_name, c.last_name].filter(Boolean).join(' ')}
+          {!editing ? (
+            <>
+              <div className="flex items-center gap-4">
+                <div className="w-14 h-14 rounded-full bg-gradient-to-br from-[#00D9FF] to-[#0066FF] flex items-center justify-center text-white text-lg font-bold flex-shrink-0">
+                  {name
+                    .replace('—', '')
+                    .split(' ')
+                    .map((n) => n[0])
+                    .filter(Boolean)
+                    .join('')
+                    .slice(0, 2) || '?'}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="font-bold text-white text-lg line-clamp-2">{name}</div>
+                  <div className="flex gap-2 mt-1 flex-wrap">
+                    <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-white/10 text-[#B0BEC5]">
+                      {category}
+                    </span>
+                    <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-white/10 text-[#B0BEC5]">
+                      {contactStatus}
+                    </span>
                   </div>
                 </div>
-              )}
-            {(c.rating != null || c.review_count != null) && (
-              <div className="flex gap-2 text-[#B0BEC5]">
-                <FileText className="w-4 h-4 text-[#00D9FF] flex-shrink-0 mt-0.5" />
-                <span>
-                  {c.rating != null && `Rating: ${c.rating}`}
-                  {c.rating != null && c.review_count != null && ' · '}
-                  {c.review_count != null && `Reviews: ${c.review_count}`}
-                </span>
               </div>
-            )}
-            {c.open_hours && (
-              <div className="flex gap-2">
-                <FileText className="w-4 h-4 text-[#00D9FF] flex-shrink-0 mt-0.5" />
-                <div className="text-[#B0BEC5] line-clamp-2">{c.open_hours}</div>
-              </div>
-            )}
-            {c.notes && (
-              <div className="flex gap-2">
-                <FileText className="w-4 h-4 text-[#00D9FF] flex-shrink-0 mt-0.5" />
-                <div className="text-[#B0BEC5] line-clamp-3">{c.notes}</div>
-              </div>
-            )}
-          </div>
 
-          <div className="text-xs text-[#B0BEC5] pt-2 border-t border-white/5">
-            Added {new Date(c.created_at).toLocaleDateString()}
-            {c.updated_at !== c.created_at &&
-              ` · Updated ${new Date(c.updated_at).toLocaleDateString()}`}
-          </div>
+              <div className="grid gap-3 text-sm">
+                {c.business_type && (
+                  <div className="flex gap-2">
+                    <Building2 className="w-4 h-4 text-[#00D9FF] flex-shrink-0 mt-0.5" />
+                    <div className="min-w-0 text-[#B0BEC5]">{c.business_type}</div>
+                  </div>
+                )}
+                {c.phone_number && (
+                  <div className="flex gap-2 items-center">
+                    <Phone className="w-4 h-4 text-[#00D9FF] flex-shrink-0" />
+                    <a
+                      href={`tel:${c.phone_number}`}
+                      className="text-[#00D9FF] hover:underline truncate block"
+                    >
+                      {c.phone_number}
+                    </a>
+                  </div>
+                )}
+                {c.timezone && (
+                  <div className="flex gap-2 items-center">
+                    <FileText className="w-4 h-4 text-[#00D9FF] flex-shrink-0" />
+                    <div className="text-[#B0BEC5]">
+                      {TIMEZONE_OPTIONS.find((t) => t.value === c.timezone)?.label ?? c.timezone}
+                    </div>
+                  </div>
+                )}
+                {c.owner_contact?.includes('@') && (
+                  <div className="flex gap-2 items-center">
+                    <Mail className="w-4 h-4 text-[#00D9FF] flex-shrink-0 mt-0.5" />
+                    <a
+                      href={`mailto:${c.owner_contact}`}
+                      className="text-[#00D9FF] hover:underline truncate block"
+                      title={c.owner_contact}
+                    >
+                      {truncateUrl(c.owner_contact, 50)}
+                    </a>
+                  </div>
+                )}
+                {c.website && (
+                  <div className="flex gap-2 items-center">
+                    <Globe className="w-4 h-4 text-[#00D9FF] flex-shrink-0 mt-0.5" />
+                    <a
+                      href={c.website.startsWith('http') ? c.website : `https://${c.website}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-[#00D9FF] hover:underline truncate block"
+                      title={c.website}
+                    >
+                      {truncateUrl(c.website, 50)}
+                    </a>
+                  </div>
+                )}
+                {c.address && (
+                  <div className="flex gap-2">
+                    <MapPin className="w-4 h-4 text-[#00D9FF] flex-shrink-0 mt-0.5" />
+                    <div className="text-[#B0BEC5] line-clamp-2">{c.address}</div>
+                  </div>
+                )}
+                {c.business_link && (
+                  <div className="flex gap-2">
+                    <Globe className="w-4 h-4 text-[#00D9FF] flex-shrink-0 mt-0.5" />
+                    <a
+                      href={
+                        c.business_link.startsWith('http')
+                          ? c.business_link
+                          : `https://${c.business_link}`
+                      }
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-[#00D9FF] hover:underline truncate block"
+                      title={c.business_link}
+                    >
+                      {truncateUrl(c.business_link, 50)}
+                    </a>
+                  </div>
+                )}
+                {(c.first_name || c.last_name) &&
+                  (c.first_name || c.last_name) !== (c.business_name ?? '') && (
+                    <div className="flex gap-2">
+                      <User className="w-4 h-4 text-[#00D9FF] flex-shrink-0 mt-0.5" />
+                      <div className="text-[#B0BEC5]">
+                        {[c.first_name, c.last_name].filter(Boolean).join(' ')}
+                      </div>
+                    </div>
+                  )}
+                {(c.rating != null || c.review_count != null) && (
+                  <div className="flex gap-2 text-[#B0BEC5]">
+                    <FileText className="w-4 h-4 text-[#00D9FF] flex-shrink-0 mt-0.5" />
+                    <span>
+                      {c.rating != null && `Rating: ${c.rating}`}
+                      {c.rating != null && c.review_count != null && ' · '}
+                      {c.review_count != null && `Reviews: ${c.review_count}`}
+                    </span>
+                  </div>
+                )}
+                {c.open_hours && (
+                  <div className="flex gap-2">
+                    <FileText className="w-4 h-4 text-[#00D9FF] flex-shrink-0 mt-0.5" />
+                    <div className="text-[#B0BEC5] line-clamp-2">{c.open_hours}</div>
+                  </div>
+                )}
+                {c.notes && (
+                  <div className="flex gap-2">
+                    <FileText className="w-4 h-4 text-[#00D9FF] flex-shrink-0 mt-0.5" />
+                    <div className="text-[#B0BEC5] line-clamp-3">{c.notes}</div>
+                  </div>
+                )}
+              </div>
+
+              <div className="text-xs text-[#B0BEC5] pt-2 border-t border-white/5">
+                Added {new Date(c.created_at).toLocaleDateString()}
+                {c.updated_at !== c.created_at &&
+                  ` · Updated ${new Date(c.updated_at).toLocaleDateString()}`}
+              </div>
+            </>
+          ) : (
+            form && (
+              <div className="space-y-3">
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-sm text-[#B0BEC5] mb-1">First name</label>
+                    <input
+                      className={inputClass}
+                      value={form.first_name}
+                      onChange={(e) => setField('first_name', e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm text-[#B0BEC5] mb-1">Last name</label>
+                    <input
+                      className={inputClass}
+                      value={form.last_name}
+                      onChange={(e) => setField('last_name', e.target.value)}
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-sm text-[#B0BEC5] mb-1">Business name</label>
+                  <input
+                    className={inputClass}
+                    value={form.business_name}
+                    onChange={(e) => setField('business_name', e.target.value)}
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm text-[#B0BEC5] mb-1">Business type</label>
+                  <input
+                    className={inputClass}
+                    value={form.business_type}
+                    onChange={(e) => setField('business_type', e.target.value)}
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm text-[#B0BEC5] mb-1">Phone number</label>
+                  <input
+                    type="tel"
+                    className={inputClass}
+                    value={form.phone_number}
+                    onChange={(e) => setField('phone_number', e.target.value)}
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm text-[#B0BEC5] mb-1">Timezone</label>
+                  <select
+                    className={inputClass}
+                    value={form.timezone}
+                    onChange={(e) => setField('timezone', e.target.value)}
+                  >
+                    <option value="">Not set</option>
+                    {TIMEZONE_OPTIONS.map((t) => (
+                      <option key={t.value} value={t.value}>
+                        {t.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm text-[#B0BEC5] mb-1">Website</label>
+                  <input
+                    type="url"
+                    className={inputClass}
+                    value={form.website}
+                    onChange={(e) => setField('website', e.target.value)}
+                    placeholder="https://..."
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm text-[#B0BEC5] mb-1">Owner / email</label>
+                  <input
+                    className={inputClass}
+                    value={form.owner_contact}
+                    onChange={(e) => setField('owner_contact', e.target.value)}
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm text-[#B0BEC5] mb-1">Address</label>
+                  <input
+                    className={inputClass}
+                    value={form.address}
+                    onChange={(e) => setField('address', e.target.value)}
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm text-[#B0BEC5] mb-1">Notes</label>
+                  <textarea
+                    className={inputClass}
+                    rows={3}
+                    value={form.notes}
+                    onChange={(e) => setField('notes', e.target.value)}
+                  />
+                </div>
+              </div>
+            )
+          )}
         </div>
         <div className="p-4 border-t border-white/10 flex justify-end gap-2">
-          {c.phone_number && (
-            <a
-              href={`tel:${c.phone_number}`}
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-[#00D9FF] to-[#0066FF] text-white font-semibold text-sm"
-            >
-              <Phone className="w-4 h-4" />
-              Call
-            </a>
+          {editing ? (
+            <>
+              <button
+                type="button"
+                onClick={cancelEdit}
+                disabled={saving}
+                className="px-4 py-2 rounded-xl border border-white/10 text-[#B0BEC5] hover:bg-white/5 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleSave}
+                disabled={saving}
+                className="px-4 py-2 rounded-xl bg-gradient-to-r from-[#00D9FF] to-[#0066FF] text-white font-semibold text-sm disabled:opacity-50"
+              >
+                {saving ? 'Saving...' : 'Save'}
+              </button>
+            </>
+          ) : (
+            <>
+              {c.phone_number && (
+                <a
+                  href={`tel:${c.phone_number}`}
+                  className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-[#00D9FF] to-[#0066FF] text-white font-semibold text-sm"
+                >
+                  <Phone className="w-4 h-4" />
+                  Call
+                </a>
+              )}
+              <button
+                type="button"
+                onClick={handleClose}
+                className="px-4 py-2 rounded-xl border border-white/10 text-[#B0BEC5] hover:bg-white/5"
+              >
+                Close
+              </button>
+            </>
           )}
-          <button
-            type="button"
-            onClick={onClose}
-            className="px-4 py-2 rounded-xl border border-white/10 text-[#B0BEC5] hover:bg-white/5"
-          >
-            Close
-          </button>
         </div>
       </motion.div>
     </div>,

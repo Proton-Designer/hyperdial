@@ -8,15 +8,17 @@ import {
   type Contact,
   type CreateContactInput,
 } from '@/lib/api';
+import { normalizePhoneStrict } from '@/lib/phone-normalize';
 
 const DEFAULT_FIELDS = ['Business Name', 'Business Type', 'Phone Number', 'Website'] as const;
 const ADDITIONAL_OPTIONS = CONTACT_CANONICAL_FIELDS.filter(
   (f) => !(DEFAULT_FIELDS as readonly string[]).includes(f)
 );
 
+/** Same strict E.164 validation contacts-import applies to a CSV row (design §7) --
+ * createContact re-normalizes and throws on save regardless; this is just inline feedback. */
 function isValidPhone(v: string): boolean {
-  const digits = v.replace(/\D/g, '');
-  return digits.length >= 10;
+  return normalizePhoneStrict(v) !== null;
 }
 
 function isValidUrl(v: string): boolean {

@@ -71,6 +71,7 @@
             "npm:cmdk@^1.1.1",
             "npm:embla-carousel-react@^8.6.0",
             "npm:input-otp@^1.4.2",
+            "npm:libphonenumber-js@^1.13.13",
             "npm:lucide-react@0.487",
             "npm:motion@^12.33.0",
             "npm:next-themes@~0.4.6",
