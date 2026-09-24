@@ -4,8 +4,10 @@
  * Vite can't resolve the Deno `npm:` specifier), and `private.area_code_timezones`'s seed rows
  * in `20260924001300_contacts_e164_tz_dnc.sql` (SQL can't import either TS file). Nothing
  * enforces they stay identical -- this test does. Needs `--allow-read` (only to read the
- * migration file's text; both TS copies are plain module imports, which don't need it) --
- * `deno test --allow-read supabase/functions/_shared`, not the fully bare command.
+ * migration file's text; both TS copies are plain module imports, which don't need it) -- ONLY
+ * for the one test that reads it. That test is `ignore`d when `read` isn't granted, so the bare
+ * `deno test supabase/functions/_shared` command (the documented gate everywhere else) stays
+ * green with it skipped; run `deno test --allow-read supabase/functions/_shared` to include it.
  */
 import { AREA_CODE_TIMEZONES as SHARED } from './area-code-tz.ts';
 import { AREA_CODE_TIMEZONES as WEB } from '../../../apps/web/src/lib/area-code-tz.ts';
@@ -14,6 +16,9 @@ const MIGRATION_PATH = new URL(
   '../../migrations/20260924001300_contacts_e164_tz_dnc.sql',
   import.meta.url
 );
+
+const CAN_READ =
+  Deno.permissions.querySync({ name: 'read', path: MIGRATION_PATH }).state === 'granted';
 
 /** Parses `insert into private.area_code_timezones (area_code, timezone) values (...), (...);`
  *  out of the migration's raw text -- no DB, no SQL parser, just the one row shape this specific
@@ -71,32 +76,36 @@ Deno.test('area-code-tz: the Deno and browser copies are byte-for-byte identical
   }
 });
 
-Deno.test('area-code-tz: both TS copies match the SQL seed in 20260924001300 exactly', async () => {
-  const migrationText = await Deno.readTextFile(MIGRATION_PATH);
-  const sqlSeed = parseSqlSeed(migrationText);
+Deno.test({
+  name: 'area-code-tz: both TS copies match the SQL seed in 20260924001300 exactly',
+  ignore: !CAN_READ,
+  fn: async () => {
+    const migrationText = await Deno.readTextFile(MIGRATION_PATH);
+    const sqlSeed = parseSqlSeed(migrationText);
 
-  const sqlKeys = Object.keys(sqlSeed).sort();
-  const sharedKeys = Object.keys(SHARED).sort();
-  if (JSON.stringify(sqlKeys) !== JSON.stringify(sharedKeys)) {
-    const onlyInSql = sqlKeys.filter((k) => !sharedKeys.includes(k));
-    const onlyInTs = sharedKeys.filter((k) => !sqlKeys.includes(k));
-    throw new Error(
-      `SQL seed vs. _shared area code sets differ -- only in SQL: [${onlyInSql.join(', ')}], only in TS: [${onlyInTs.join(', ')}]`
-    );
-  }
+    const sqlKeys = Object.keys(sqlSeed).sort();
+    const sharedKeys = Object.keys(SHARED).sort();
+    if (JSON.stringify(sqlKeys) !== JSON.stringify(sharedKeys)) {
+      const onlyInSql = sqlKeys.filter((k) => !sharedKeys.includes(k));
+      const onlyInTs = sharedKeys.filter((k) => !sqlKeys.includes(k));
+      throw new Error(
+        `SQL seed vs. _shared area code sets differ -- only in SQL: [${onlyInSql.join(', ')}], only in TS: [${onlyInTs.join(', ')}]`
+      );
+    }
 
-  const mismatches: string[] = [];
-  for (const code of sqlKeys) {
-    if (sqlSeed[code] !== SHARED[code]) {
-      mismatches.push(`${code}: sql=${sqlSeed[code]} ts=${SHARED[code]}`);
+    const mismatches: string[] = [];
+    for (const code of sqlKeys) {
+      if (sqlSeed[code] !== SHARED[code]) {
+        mismatches.push(`${code}: sql=${sqlSeed[code]} ts=${SHARED[code]}`);
+      }
+      if (sqlSeed[code] !== WEB[code]) {
+        mismatches.push(`${code}: sql=${sqlSeed[code]} web=${WEB[code]}`);
+      }
     }
-    if (sqlSeed[code] !== WEB[code]) {
-      mismatches.push(`${code}: sql=${sqlSeed[code]} web=${WEB[code]}`);
+    if (mismatches.length > 0) {
+      throw new Error(`SQL/TS timezone mismatches: ${mismatches.join('; ')}`);
     }
-  }
-  if (mismatches.length > 0) {
-    throw new Error(`SQL/TS timezone mismatches: ${mismatches.join('; ')}`);
-  }
+  },
 });
 
 Deno.test(
