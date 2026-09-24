@@ -34,12 +34,21 @@
  *      there's no dedicated endpoint) flips the session back to 'dialing' and attempts a
  *      refill (0 dials is the correct outcome here: every remaining lead's retry delay hasn't
  *      elapsed yet, so nothing is due -- this still proves the mechanism works).
+ *   7. TASK-P2-E2 fix-forward item 2 (lead's diff-read, high): a fresh lead is dialed, then its
+ *      call.answered and call.hangup webhooks are fired as two GENUINELY concurrent HTTP
+ *      requests (Promise.all, never awaited in sequence) -- the only way a same-process script
+ *      can produce a real interleaving, not a simulated one (LANE-eng2.md's
+ *      NEEDS-CONCURRENCY-VERIFY lesson: a sequential script can only prove logic correct for
+ *      orderings it can actually produce). Whichever request's transition_leg call commits
+ *      first, the other used to be silently dropped by the expected-state check if it landed a
+ *      terminal event -- applyLegTransition's reload-and-retry means the leg still reaches
+ *      'ended' with a real outcome either way.
  *
  * All fixtures (org/users/campaign/contacts/org_telephony) are created fresh under a
  * disposable orgId and deleted at the end, success or failure -- this never touches real data.
  */
 
-import { resumeToDialing } from '../../supabase/functions/_shared/dialer-engine.ts';
+import { resumeToDialing, refillSession } from '../../supabase/functions/_shared/dialer-engine.ts';
 import { createClient } from 'npm:@supabase/supabase-js@2';
 
 const MOCK_PORT = 9911;
@@ -227,6 +236,19 @@ async function sendWebhook(
 // ---------------------------------------------------------------------------
 
 async function main(): Promise<void> {
+  // `resumeToDialing`/`refillSession` are also called DIRECTLY from this script's own process
+  // (step 6 and step 7 below), not only through `functions serve`'s container -- the env file
+  // written further down only reaches THAT container, not this process. Found live: step 7's
+  // fresh race-scenario lead is genuinely due (unlike the rest of the fixture at that point),
+  // so it's the first place in this script where a closed agent-leg gate in THIS process
+  // actually produces a visibly wrong "0 dials" instead of a coincidentally-correct one, and
+  // where the default TELNYX_API_BASE (the real Telnyx API, since this process never got the
+  // env file) sent a real outbound HTTP request with a fake key and got a real 401 back.
+  // MOCK_BASE (not MOCK_BASE_FOR_CONTAINER) is correct here -- this process runs on the host,
+  // not inside functions serve's container.
+  Deno.env.set('DIALER_DEV_SKIP_AGENT_GATE', 'true');
+  Deno.env.set('TELNYX_API_BASE', MOCK_BASE);
+
   const statusOut = await run(['supabase', 'status', '-o', 'env']);
   const env: Record<string, string> = {};
   for (const line of statusOut.split('\n')) {
@@ -542,6 +564,24 @@ async function main(): Promise<void> {
       clientStateFor(leg3)
     );
     if (!res.ok) fail(`call.speak.ended(leg3) rejected: ${res.status} ${await res.text()}`);
+    await new Promise((r) => setTimeout(r, 400));
+
+    // TASK-P2-E2 fix-forward item 6 (eng1's review): call.speak.ended's own no-op confirmation
+    // on an already-'abandoned' leg (current === 'abandoned', legTransition returns
+    // {next:'abandoned'} with no outcome -- "no state change, the engine issues the hangup
+    // next") used to re-trigger sendAbandonMessage a second time, because the old dispatch
+    // gated on `result.next === 'abandoned'` instead of `result.outcome === 'abandoned'`. Every
+    // abandoned leg got the "sorry we missed you" message spoken twice. Assert EXACTLY one
+    // speak command total for leg3, not "at least one".
+    const speakRequestsAfterConfirmation = mockRequestLog.filter((r) =>
+      r.path.endsWith('/actions/speak')
+    );
+    assertEqual(
+      'exactly one speak command total for the abandoned leg (no duplicate on the speak.ended confirmation)',
+      speakRequestsAfterConfirmation.length,
+      1
+    );
+
     res = await sendWebhook(
       functionsUrl,
       orgId,
@@ -617,14 +657,17 @@ async function main(): Promise<void> {
       ['queued', '0', 'dropped']
     );
 
-    const legOutcomes = (
-      await psql(
-        `select outcome from public.call_legs where session_id = '${sessionId}' order by created_at;`,
-        dbUrl
-      )
-    )
-      .trim()
-      .split('\n');
+    // By call_control_id, not `order by created_at` -- claim_next_leads (fix-forward item 1)
+    // now inserts every leg from one refill in a single statement, so several legs can share
+    // the exact same created_at (stable within one statement); relying on row order to infer
+    // which leg is which broke this exact assertion when re-verifying the fix-forward live.
+    const legOutcomes: string[] = [];
+    for (const cc of [leg1, leg2, leg3, leg4]) {
+      const outcome = (
+        await psql(`select outcome from public.call_legs where call_control_id = '${cc}';`, dbUrl)
+      ).trim();
+      legOutcomes.push(outcome);
+    }
     assertEqual('all 4 legs reached the expected outcome', legOutcomes, [
       'no_answer',
       'connected',
@@ -643,6 +686,85 @@ async function main(): Promise<void> {
       await psql(`select state from public.dial_sessions where id = '${sessionId}';`, dbUrl)
     ).trim();
     assertEqual('session back to dialing after resumeToDialing', stateAfterResume, 'dialing');
+
+    // --- 7. TASK-P2-E2 fix-forward item 2: answered/hangup interleaved via two genuinely
+    // concurrent requests -------------------------------------------------------------------
+    const raceContactId = crypto.randomUUID();
+    const raceLeadId = crypto.randomUUID();
+    const racePhone = '+15550009999';
+    await psql(
+      `insert into public.contacts (id, org_id, user_id, first_name, phone_number)
+       values ('${raceContactId}', '${orgId}', '${ownerId}', 'Race Contact', '${racePhone}');
+       insert into public.campaign_leads (id, campaign_id, contact_id, org_id, status)
+       values ('${raceLeadId}', '${campaignId}', '${raceContactId}', '${orgId}', 'queued');`,
+      dbUrl
+    );
+    await refillSession(supabase, orgId, sessionId);
+    await new Promise((r) => setTimeout(r, 500));
+    const raceLeg = mockCallControlIdForPhone(racePhone);
+    const raceClientState = clientStateFor(raceLeg);
+    log('race_leg_dialed', { raceLeg });
+
+    // Fired via Promise.all, NOT awaited in sequence -- two real overlapping HTTP requests is
+    // the only way this same-process script can produce a genuine interleaving (see this
+    // file's header, and LANE-eng2.md's NEEDS-CONCURRENCY-VERIFY lesson). Whichever of
+    // call.answered's amd_pending transition or call.hangup's ended transition commits first,
+    // the loser's own transition_leg call used to be silently dropped -- applyLegTransition's
+    // reload-and-retry means the leg still reaches a terminal state either way. This is a
+    // best-effort real-concurrency exercise (the exact interleaving isn't forced
+    // deterministically the way the SQL-level `for update` lock is in
+    // run-dialer-concurrency-test.sh's scenario 2) -- said plainly, not overclaimed.
+    const [raceAnsweredRes, raceHangupRes] = await Promise.all([
+      sendWebhook(
+        functionsUrl,
+        orgId,
+        keyPair,
+        crypto.randomUUID(),
+        'call.answered',
+        raceLeg,
+        raceClientState
+      ),
+      sendWebhook(
+        functionsUrl,
+        orgId,
+        keyPair,
+        crypto.randomUUID(),
+        'call.hangup',
+        raceLeg,
+        raceClientState,
+        { hangup_cause: 'normal_clearing' }
+      ),
+    ]);
+    if (!raceAnsweredRes.ok)
+      fail(
+        `race call.answered rejected: ${raceAnsweredRes.status} ${await raceAnsweredRes.text()}`
+      );
+    if (!raceHangupRes.ok)
+      fail(`race call.hangup rejected: ${raceHangupRes.status} ${await raceHangupRes.text()}`);
+    await new Promise((r) => setTimeout(r, 800)); // let both async paths, and any retry, settle
+
+    const raceLegRow = (
+      await psql(
+        `select state, outcome from public.call_legs where call_control_id = '${raceLeg}';`,
+        dbUrl
+      )
+    )
+      .trim()
+      .split('|');
+    log('race_scenario_result', { state: raceLegRow[0], outcome: raceLegRow[1] });
+    assertEqual(
+      'interleaved answered/hangup: the leg still reaches a terminal state, not stuck non-terminal',
+      raceLegRow[0],
+      'ended'
+    );
+    // 'normal_clearing' isn't one of hangupOutcome's explicit-mapped causes and this leg never
+    // reached a claim/reject decision either way (amd_pending at worst) -- 'no_answer' is the
+    // correct outcome regardless of which event's transition committed first.
+    assertEqual(
+      'interleaved answered/hangup: outcome is deterministic regardless of race ordering',
+      raceLegRow[1],
+      'no_answer'
+    );
 
     console.log('\n[dialer-sim] ALL ASSERTIONS PASSED\n');
   } finally {

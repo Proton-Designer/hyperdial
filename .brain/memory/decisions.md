@@ -31,6 +31,31 @@ Newest first. Each entry answers: what was decided, why, and what it rules out.
 
 ---
 
+## 2026-09-24 — Dial capacity (`lines`) is enforced inside `claim_next_leads`, under a row lock, not by the caller
+
+**Status:** Active · **Decided by:** eng2 (TASK-P2-E2 fix-forward, item 1; lead's diff-read of the first version of this engine)
+
+**Context:** The first version of `refillSession` computed `n = lines - activeLegs` in TS from its own read, then called `claim_next_leads(session, n)`. Two
+leg-end webhooks for the same session processed concurrently each read the same active-leg count before either had inserted anything, so each independently
+computed "room for N more" and together could dial past `lines` — the exact kind of race a same-process sequential acceptance script (`dialer-sim.ts`) cannot
+exercise by construction, only a genuinely concurrent test can (see `run-dialer-concurrency-test.sh`'s scenario 2, which does, with two real overlapping psql
+connections).
+
+**Decision:** `claim_next_leads(p_session)` (no more `p_n`) now does the capacity check AND inserts each claimed lead's placeholder `call_legs` row itself, in
+one statement, under a `select ... for update` lock on the `dial_sessions` row held for the whole call. A second concurrent call for the same session blocks on
+that lock until the first commits, then recomputes capacity against the fresh, post-insert count. The caller (`refillSession`) no longer decides "how many" —
+it only dials whatever the RPC handed back. The placeholder `call_control_id` is keyed on a fresh random uuid per attempt, not the lead id (a lead-id-keyed one
+collided with a prior failed attempt's still-there dead row on the very next retry, aborting the whole claim for the session — caught in review before this
+ever ran live).
+
+**Consequences:** `refillCount` (`dialer-core.ts`) is now only a fast-path hint in `refillSession` (skip the RPC call when obviously full), not the source of
+truth for capacity — its own deno tests still describe the right shape of "how many," just no longer the authoritative one. `dialer-session-get`'s leg list
+needed a tie-break (`order by created_at, id`) since several legs from one refill now share the exact same `created_at` (one INSERT, `now()` stable within a
+statement) — display-only, nothing reads `call_legs.created_at` for logic.
+
+**Do not undo without understanding:** moving the capacity check back into TS (or splitting it from the leg insert into two separate RPC calls) reopens the
+overdial race exactly as before, even if each individual call "looks" atomic — the lock has to span both the read and the write in one statement/transaction.
+
 ## 2026-09-24 — A conditional UPDATE in Postgres replaces Redis's SET NX for the single-winner claim
 
 **Status:** Active · **Decided by:** eng2 (TASK-P2-E2, supersedes the "Redis alongside Postgres,

@@ -91,15 +91,22 @@ insert into public.campaign_leads (id, campaign_id, contact_id, org_id, status, 
   ('7d1e5000-a030-4000-8000-00000000000d', '7d1e5000-a010-4000-8000-00000000000a', '7d1e5000-a020-4000-8000-00000000000d', :'org_a', 'queued', 0, now()),
   ('7d1e5000-a030-4000-8000-00000000000e', '7d1e5000-a010-4000-8000-00000000000a', '7d1e5000-a020-4000-8000-00000000000e', :'org_a', 'queued', 0, now());
 
-insert into public.dial_sessions (id, org_id, campaign_id, agent_id, state) values
-  ('7d1e5000-a040-4000-8000-00000000000a', :'org_a', '7d1e5000-a010-4000-8000-00000000000a', '7d1e5000-a000-4000-8000-00000000000b', 'dialing');
+-- lines=7 (the max) so this session's capacity is never the binding constraint anywhere in
+-- this file -- both claim_next_leads calls below, plus the call_legs the RPC itself now
+-- inserts for every claimed lead (TASK-P2-E2 fix-forward item 1), have ample room; only
+-- eligibility (due/DNC/callable/candidate-pool) is under test here, not capacity.
+insert into public.dial_sessions (id, org_id, campaign_id, agent_id, state, lines) values
+  ('7d1e5000-a040-4000-8000-00000000000a', :'org_a', '7d1e5000-a010-4000-8000-00000000000a', '7d1e5000-a000-4000-8000-00000000000b', 'dialing', 7);
 
 -- ===========================================================================================
 -- 1. Ordering + 2c. DNC/callable exclusion (acceptance #1, #3)
 -- ===========================================================================================
 
+-- claim_next_leads no longer takes a p_n -- it computes its own capacity from `lines` (fix-
+-- forward item 1) and now also inserts each claimed lead's call_legs row itself (contact_id
+-- comes back on the same row, so the ordering assertion below is unaffected).
 select array_agg(contact_id order by ord) as claimed_order
-from (select contact_id, row_number() over () as ord from public.claim_next_leads('7d1e5000-a040-4000-8000-00000000000a', 5)) t
+from (select contact_id, row_number() over () as ord from public.claim_next_leads('7d1e5000-a040-4000-8000-00000000000a')) t
 \gset
 
 select public._test_expect_eq('claim_next_leads: attempts-0-due-now (b) before attempts-0-null-tz-due-now (d) before attempts-1 (a); not-due (c) and dnc (e) excluded',
@@ -124,9 +131,53 @@ insert into public.campaign_leads (id, campaign_id, contact_id, org_id, status, 
   ('7d1e5000-a030-4000-8000-00000000000f', '7d1e5000-a010-4000-8000-00000000000a', '7d1e5000-a020-4000-8000-00000000000f', :'org_a', 'queued', 0, now());
 
 select public._test_expect_count('claim_next_leads: a lead with an unrecognized timezone is still claimed (both-coasts fallback), not an abort',
-  'select count(*) from public.claim_next_leads(''7d1e5000-a040-4000-8000-00000000000a'', 5) where contact_id = ''7d1e5000-a020-4000-8000-00000000000f''', 1);
+  'select count(*) from public.claim_next_leads(''7d1e5000-a040-4000-8000-00000000000a'') where contact_id = ''7d1e5000-a020-4000-8000-00000000000f''', 1);
 select public._test_expect_count('claim_next_leads: the bad-timezone lead is now in_flight too (proves the call didn''t just silently skip it)',
   'select count(*) from public.campaign_leads where id = ''7d1e5000-a030-4000-8000-00000000000f'' and status = ''in_flight''', 1);
+
+-- ===========================================================================================
+-- 2e. TASK-P2-E2 fix-forward: a failed dial's leftover placeholder call_control_id must not
+--     collide when the SAME lead is claimed again later. The lead caught this before this
+--     migration was ever applied: the placeholder was originally keyed on the LEAD id, which
+--     is reused every time that lead is claimed again -- dialLead's error path ends the leg
+--     but never changes its call_control_id away from the placeholder, so the second attempt's
+--     insert collided with the first attempt's still-there dead row and raised a unique
+--     violation, aborting claim_next_leads for the WHOLE SESSION, not just this one lead.
+-- ===========================================================================================
+
+insert into public.contacts (id, org_id, user_id, phone_number, timezone) values
+  ('7d1e5000-a020-4000-8000-000000000010', :'org_a', '7d1e5000-a000-4000-8000-00000000000a', '+15550000007', 'America/Chicago');
+insert into public.campaign_leads (id, campaign_id, contact_id, org_id, status, attempts, next_attempt_at) values
+  ('7d1e5000-a030-4000-8000-000000000010', '7d1e5000-a010-4000-8000-00000000000a', '7d1e5000-a020-4000-8000-000000000010', :'org_a', 'queued', 0, now());
+
+select leg_id as first_leg_id, call_control_id as first_placeholder
+from public.claim_next_leads('7d1e5000-a040-4000-8000-00000000000a')
+where lead_id = '7d1e5000-a030-4000-8000-000000000010'
+\gset
+
+select public._test_expect_count('fix-forward: the fresh lead was claimed and got a call_legs row',
+  'select count(*) from public.call_legs where id = ''' || :'first_leg_id' || '''', 1);
+
+-- Simulate dialLead's own error path exactly: the dial fails, the leg ends without ever
+-- overwriting the placeholder, and next_attempt_at is forced to now() (rather than waiting out
+-- the campaign's real retry_interval_minutes) so the same lead is immediately due again.
+select public.transition_leg(:'first_placeholder', array['initiated'], 'ended',
+  jsonb_build_object('outcome', 'no_answer', 'hangup_cause', 'unspecified'));
+select public.apply_leg_outcome(:'first_leg_id');
+update public.campaign_leads set next_attempt_at = now() where id = '7d1e5000-a030-4000-8000-000000000010';
+
+select public._test_expect_count('fix-forward: the failed lead is requeued and due again',
+  'select count(*) from public.campaign_leads where id = ''7d1e5000-a030-4000-8000-000000000010'' and status = ''queued''', 1);
+
+select leg_id as second_leg_id, call_control_id as second_placeholder
+from public.claim_next_leads('7d1e5000-a040-4000-8000-00000000000a')
+where lead_id = '7d1e5000-a030-4000-8000-000000000010'
+\gset
+
+select public._test_expect_count('fix-forward: reclaiming the same lead after a failed dial succeeds (no unique violation, no aborted claim)',
+  'select count(*) from public.call_legs where id = ''' || :'second_leg_id' || '''', 1);
+select public._test_expect_true('fix-forward: the retry gets its OWN placeholder, not a collision with the dead first attempt',
+  :'first_placeholder' is distinct from :'second_placeholder');
 
 -- ===========================================================================================
 -- 3. Calling window (§7): explicit boundary + null-timezone both-coasts rule
@@ -255,7 +306,7 @@ select public._test_expect_false('record_webhook_event: replay of the same event
 -- which is exactly the real-world case this fix guards -- a session mid-connect should never also
 -- be handed a fresh batch of leads to dial.
 select public._test_expect_count('claim_next_leads: a non-dialing session (connecting) gets zero leads',
-  'select count(*) from public.claim_next_leads(''7d1e5000-a040-4000-8000-00000000000a'', 5)', 0);
+  'select count(*) from public.claim_next_leads(''7d1e5000-a040-4000-8000-00000000000a'')', 0);
 
 -- ===========================================================================================
 -- 7. RLS: agent sees only their own session/legs; owner sees the whole org; org-B sees nothing
@@ -266,8 +317,12 @@ set local role authenticated;
 select set_config('request.jwt.claims', '{"sub":"7d1e5000-a000-4000-8000-00000000000b","role":"authenticated"}', true);
 select public._test_expect_count('dial_sessions/agent sees their own session',
   'select count(*) from public.dial_sessions where id = ''7d1e5000-a040-4000-8000-00000000000a''', 1);
+-- 10 = 6 from claim_next_leads itself (3 in section 1 + 1 in section 2d + 2 in section 2e's
+-- failed-dial-then-retry -- fix-forward items 1 and the placeholder-collision fix, now that it
+-- inserts a call_legs row per claimed lead) + 4 explicit fixture legs inserted below in
+-- sections 4 and 6 (leg-1..leg-4).
 select public._test_expect_count('call_legs/agent sees legs on their own session',
-  'select count(*) from public.call_legs where session_id = ''7d1e5000-a040-4000-8000-00000000000a''', 4);
+  'select count(*) from public.call_legs where session_id = ''7d1e5000-a040-4000-8000-00000000000a''', 10);
 select public._test_expect_count('webhook_events/agent has no client access at all',
   'select count(*) from public.webhook_events', 0);
 
@@ -309,22 +364,26 @@ begin
   insert into public.campaigns (id, user_id, org_id, name, calling_window_start, calling_window_end)
   values (gen_random_uuid(), '7d1e5000-a000-4000-8000-00000000000a', v_org, 'perf-test-campaign', '00:00', '23:59')
   returning id into v_campaign;
-  insert into public.dial_sessions (id, org_id, campaign_id, agent_id, state)
-  values (gen_random_uuid(), v_org, v_campaign, '7d1e5000-a000-4000-8000-00000000000a', 'dialing')
+  insert into public.dial_sessions (id, org_id, campaign_id, agent_id, state, lines)
+  values (gen_random_uuid(), v_org, v_campaign, '7d1e5000-a000-4000-8000-00000000000a', 'dialing', 5)
   returning id into v_session;
 
+  -- +1557 (not +1555): this file's own section-1 fixture already uses +1555000000{1..6} for
+  -- l1-f, and org_id/phone_number is now unique (TASK-P2-P1, added after this perf test was
+  -- first written) -- a collision here aborted the whole DO block with a unique-violation,
+  -- unrelated to anything this fix-forward changed. Found and fixed while verifying it.
   insert into public.contacts (id, user_id, org_id, phone_number, timezone)
-  select gen_random_uuid(), '7d1e5000-a000-4000-8000-00000000000a', v_org, '+1555' || lpad(i::text, 7, '0'),
+  select gen_random_uuid(), '7d1e5000-a000-4000-8000-00000000000a', v_org, '+1557' || lpad(i::text, 7, '0'),
          (array['America/Chicago', 'America/New_York', 'America/Los_Angeles', 'America/Denver'])[1 + (i % 4)]
   from generate_series(1, 5000) i;
 
   insert into public.campaign_leads (id, campaign_id, contact_id, org_id, status, attempts, next_attempt_at)
   select gen_random_uuid(), v_campaign, c.id, v_org, 'queued', 0, now()
   from public.contacts c
-  where c.org_id = v_org and c.phone_number like '+1555%' and length(c.phone_number) = 12;
+  where c.org_id = v_org and c.phone_number like '+1557%' and length(c.phone_number) = 12;
 
   v_start := clock_timestamp();
-  perform * from public.claim_next_leads(v_session, 5);
+  perform * from public.claim_next_leads(v_session);
   v_elapsed_ms := extract(epoch from (clock_timestamp() - v_start)) * 1000;
   raise notice 'perf: claim_next_leads over 5000 tz-having candidates took % ms', v_elapsed_ms;
   if v_elapsed_ms > 500 then

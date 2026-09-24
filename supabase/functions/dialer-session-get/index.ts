@@ -67,7 +67,13 @@ Deno.serve(async (req) => {
           'contact:contacts(business_name, first_name, last_name, phone_number)'
       )
       .eq('session_id', sessionId)
-      .order('created_at', { ascending: true });
+      // TASK-P2-E2 fix-forward: claim_next_leads (migration 20260924001900) now inserts every
+      // leg from one refill in a single statement, so several legs can share the exact same
+      // `created_at` (stable within one statement) -- `order('id')` as a tie-break keeps this
+      // list's order deterministic across repeated polls (display order only; nothing here
+      // needs it to match dial priority exactly).
+      .order('created_at', { ascending: true })
+      .order('id', { ascending: true });
     if (legsError) {
       return new Response(JSON.stringify({ error: legsError.message }), {
         status: 500,

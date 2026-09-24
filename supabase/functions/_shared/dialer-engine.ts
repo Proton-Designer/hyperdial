@@ -40,6 +40,31 @@
  *   `resumeToDialing` below calls `transition_session` directly; Phase 3's dispositions
  *   submission is the real caller once it exists, and this task's own functions-serve
  *   acceptance script calls it directly to prove the rolling loop across a wrap_up cycle.
+ *
+ * Fix-forward (lead's diff-read on the first version of this file, plus eng1's review of the
+ * fix -- both folded in here rather than kept as a separate pass):
+ * - The overdial race: `refillSession` used to compute "room for N more" in TS from its own
+ *   read of the active-leg count, then ask `claim_next_leads` for that many. Two concurrent
+ *   refills for the same session (two leg-end webhooks landing at once) could each compute
+ *   the same stale room and together dial past `lines`. `claim_next_leads` (see its
+ *   migration) now does the capacity check AND inserts each new leg's placeholder
+ *   `call_legs` row itself, under a `dial_sessions` row lock held for the whole call -- the
+ *   TS side no longer decides "how many", only "dial whatever came back". `refillCount`'s
+ *   local `activeLegs`-based count is now only a fast-path hint to skip the RPC call
+ *   entirely when there's obviously no room, never the source of truth for how many to dial.
+ * - Lost terminal events on a race loss: `applyLegTransition` below reloads the leg and
+ *   retries the decision (bounded, 3 attempts) instead of just dropping the event when
+ *   `transition_leg`'s expected-state check fails. A dropped event that would have been
+ *   THIS leg's own terminal transition (most notably its own `call.hangup` racing a
+ *   concurrent AMD/claim decision) used to leave the leg stuck non-terminal forever --
+ *   retrying against the leg's now-current state fixes that while staying a safe no-op for
+ *   every case where the race loss really was final (the reloaded state makes
+ *   `legTransition` return null).
+ * - Double abandon-message send: the loser dispatch below gates on `result.outcome ===
+ *   'abandoned'`, not `result.next === 'abandoned'`. `call.speak.ended`'s own no-op
+ *   confirmation (leg already 'abandoned', "no state change, the engine issues the hangup
+ *   next") also has `next: 'abandoned'` but no `outcome` -- gating on `next` fired
+ *   `sendAbandonMessage` a second time on that confirmation event.
  */
 import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2';
 import {
@@ -291,41 +316,60 @@ export async function refillSession(
     return { dialed: 0 };
   }
 
+  // claim_next_leads now does its own capacity check AND inserts each new leg's placeholder
+  // call_legs row atomically, under a dial_sessions row lock, in the same call (TASK-P2-E2
+  // fix-forward item 1: the overdial race). `n` above is only a fast-path hint to skip this
+  // RPC call entirely when we already know there's no room -- the RPC recomputes the real
+  // capacity itself from a fresh, locked read, so a stale `n` here can never cause an
+  // overdial even if this read raced with another refill.
   const { data: claimed, error: claimError } = await supabase.rpc('claim_next_leads', {
     p_session: sessionId,
-    p_n: n,
   });
   if (claimError) throw new Error(`claim_next_leads: ${claimError.message}`);
-  const leads = (claimed ?? []) as {
+  const legs = (claimed ?? []) as {
+    leg_id: string;
     lead_id: string;
     contact_id: string;
     phone_number: string | null;
-    attempts: number;
-    status: string;
+    call_control_id: string;
   }[];
 
   const webhookUrl = webhookUrlForOrg(webhookBaseUrl(), orgId);
   let dialed = 0;
-  for (const lead of leads) {
-    if (!lead.phone_number) {
-      dialerLog('refill_skip_lead_no_phone', { sessionId, leadId: lead.lead_id });
+  for (const leg of legs) {
+    if (!leg.phone_number) {
+      // The row already exists (claim_next_leads inserted it) -- terminate it now via the
+      // normal RPCs so it doesn't sit as a phantom 'initiated' leg forever. In practice
+      // contacts.phone_number is NOT NULL (TASK-P2-P1), so this is defensive, not expected.
+      dialerLog('refill_skip_lead_no_phone', { sessionId, legId: leg.leg_id, leadId: leg.lead_id });
+      await supabase.rpc('transition_leg', {
+        p_call_control_id: leg.call_control_id,
+        p_expected_states: ['initiated'],
+        p_new_state: 'ended',
+        p_fields: {
+          outcome: 'no_answer',
+          hangup_cause: 'unspecified',
+          ended_at: new Date().toISOString(),
+        },
+      });
+      await supabase.rpc('apply_leg_outcome', { p_leg: leg.leg_id });
       continue;
     }
     await dialLead(supabase, client, {
       orgId,
       sessionId,
-      campaignId: campaign.id,
+      legId: leg.leg_id,
+      placeholderCallControlId: leg.call_control_id,
       callControlAppId,
       fromNumber,
       webhookUrl,
       amdMode: session.amd_mode,
-      leadId: lead.lead_id,
-      contactId: lead.contact_id,
-      phoneNumber: lead.phone_number,
+      leadId: leg.lead_id,
+      phoneNumber: leg.phone_number,
     });
     dialed++;
   }
-  dialerLog('refill_done', { sessionId, requested: n, claimed: leads.length, dialed });
+  dialerLog('refill_done', { sessionId, claimed: legs.length, dialed });
   return { dialed };
 }
 
@@ -335,39 +379,23 @@ async function dialLead(
   args: {
     orgId: string;
     sessionId: string;
-    campaignId: string;
+    legId: string;
+    placeholderCallControlId: string;
     callControlAppId: string;
     fromNumber: string;
     webhookUrl: string;
     amdMode: CoreAmdMode;
     leadId: string;
-    contactId: string;
     phoneNumber: string;
   }
 ): Promise<void> {
-  const legId = crypto.randomUUID();
-  // call_control_id is NOT NULL UNIQUE and we don't have Telnyx's real one until dial()
-  // returns -- a deterministic placeholder reserves the row so the leg is trackable from
-  // the instant claim_next_leads commits, then gets overwritten below.
-  const placeholderCallControlId = `pending-${legId}`;
-
-  const { error: insertError } = await supabase.from('call_legs').insert({
-    id: legId,
-    org_id: args.orgId,
-    session_id: args.sessionId,
-    campaign_id: args.campaignId,
-    contact_id: args.contactId,
-    lead_id: args.leadId,
-    kind: 'contact',
-    call_control_id: placeholderCallControlId,
-    state: 'initiated',
-  });
-  if (insertError) throw new Error(`dialLead insert: ${insertError.message}`);
-
+  // The call_legs row already exists (claim_next_leads inserted it, placeholder
+  // call_control_id and all, under the session lock that closes the overdial race) -- this
+  // function only ever dials and overwrites the placeholder, it never inserts.
   const clientState = encodeDialClientState({
     org: args.orgId,
     session: args.sessionId,
-    leg: legId,
+    leg: args.legId,
   });
 
   try {
@@ -383,11 +411,11 @@ async function dialLead(
     const { error: updateError } = await supabase
       .from('call_legs')
       .update({ call_control_id: callControlId })
-      .eq('id', legId);
+      .eq('id', args.legId);
     if (updateError) throw new Error(`dialLead update: ${updateError.message}`);
     dialerLog('dial_lead_success', {
       sessionId: args.sessionId,
-      legId,
+      legId: args.legId,
       callControlId,
       leadId: args.leadId,
     });
@@ -401,12 +429,12 @@ async function dialLead(
     // just as easily be a transient config/API problem as a genuinely bad number.
     dialerLog('dial_lead_failed', {
       sessionId: args.sessionId,
-      legId,
+      legId: args.legId,
       leadId: args.leadId,
       error: String(err),
     });
     await supabase.rpc('transition_leg', {
-      p_call_control_id: placeholderCallControlId,
+      p_call_control_id: args.placeholderCallControlId,
       p_expected_states: ['initiated'],
       p_new_state: 'ended',
       p_fields: {
@@ -415,7 +443,7 @@ async function dialLead(
         ended_at: new Date().toISOString(),
       },
     });
-    await supabase.rpc('apply_leg_outcome', { p_leg: legId });
+    await supabase.rpc('apply_leg_outcome', { p_leg: args.legId });
   }
 }
 
@@ -560,6 +588,95 @@ export async function processTelnyxDialerEvent(
   await processContactLegEvent(supabase, session, leg, dialerEvent);
 }
 
+/** Bounded retry count for `applyLegTransition`'s reload-and-retry on a race loss (TASK-P2-E2
+ *  fix-forward item 2). 3 is generous for a single leg's event stream -- a leg only ever
+ *  changes state a handful of times total, so a third consecutive race loss almost certainly
+ *  means something is genuinely wrong, not just unlucky timing. */
+const MAX_LEG_TRANSITION_RACE_RETRIES = 3;
+
+/** Runs `legTransition` against `leg`'s CURRENT state and applies it via `transition_leg`. If
+ *  another concurrent resolution of this same leg (webhook redelivery, or `handleWin`
+ *  resolving it from the other direction -- see this file's header) wins the race first,
+ *  this reloads the leg's now-current row and retries the decision against it, instead of
+ *  just dropping the event. Silently dropping used to be safe for a NON-terminal race loss
+ *  (the other resolution already covers it) but broke the "every leg reaches a terminal
+ *  state" invariant when the dropped event was itself terminal (e.g. this leg's own
+ *  call.hangup racing a concurrent AMD/claim decision) -- the leg would stay non-terminal
+ *  forever. Returns null for a genuine no-op (the reloaded state means this event no longer
+ *  applies at all) or after exhausting the retry budget. */
+async function applyLegTransition(
+  supabase: SupabaseClient,
+  session: DialSessionRow,
+  leg: CallLegRow,
+  event: TelnyxDialerEvent,
+  claim: 'won' | 'lost' | undefined
+): Promise<{ leg: CallLegRow; result: { next: LegState; outcome?: string } } | null> {
+  let currentLeg = leg;
+  for (let attempt = 1; attempt <= MAX_LEG_TRANSITION_RACE_RETRIES; attempt++) {
+    const hungUpByEngine =
+      event.eventType === 'call.hangup' ? hungUpByEngineFor(session, currentLeg) : false;
+    const result = legTransition(currentLeg.state, event, {
+      amdMode: session.amd_mode,
+      claim,
+      hungUpByEngine,
+    });
+    if (!result) {
+      dialerLog('leg_transition_noop', {
+        legId: currentLeg.id,
+        current: currentLeg.state,
+        eventType: event.eventType,
+      });
+      return null;
+    }
+
+    const fields: Record<string, unknown> = {};
+    if (result.outcome) fields.outcome = result.outcome;
+    if (event.eventType === 'call.answered') fields.answered_at = new Date().toISOString();
+    if (result.next === 'claimed') fields.claimed_at = new Date().toISOString();
+    if (event.eventType === 'call.hangup') {
+      fields.hangup_cause = event.hangupCause;
+      fields.ended_at = new Date().toISOString();
+    }
+
+    const { data: applied, error: transitionError } = await supabase.rpc('transition_leg', {
+      p_call_control_id: currentLeg.call_control_id,
+      p_expected_states: [currentLeg.state],
+      p_new_state: result.next,
+      p_fields: fields,
+    });
+    if (transitionError) throw new Error(`transition_leg: ${transitionError.message}`);
+    if (applied) {
+      dialerLog('leg_transition_applied', {
+        legId: currentLeg.id,
+        from: currentLeg.state,
+        to: result.next,
+        outcome: result.outcome,
+      });
+      return { leg: currentLeg, result };
+    }
+
+    dialerLog('leg_transition_race_lost', {
+      legId: currentLeg.id,
+      current: currentLeg.state,
+      next: result.next,
+      attempt,
+    });
+    if (attempt === MAX_LEG_TRANSITION_RACE_RETRIES) break;
+    const reloaded = await loadLegByCallControlIdOrClientLeg(
+      supabase,
+      currentLeg.call_control_id,
+      currentLeg.id
+    );
+    if (!reloaded) {
+      dialerLog('leg_transition_race_leg_gone', { legId: currentLeg.id });
+      return null;
+    }
+    currentLeg = reloaded;
+  }
+  dialerLog('leg_transition_race_exhausted', { legId: currentLeg.id, eventType: event.eventType });
+  return null;
+}
+
 async function processContactLegEvent(
   supabase: SupabaseClient,
   session: DialSessionRow,
@@ -607,64 +724,38 @@ async function processContactLegEvent(
     return;
   }
 
-  const hungUpByEngine =
-    event.eventType === 'call.hangup' ? hungUpByEngineFor(session, leg) : false;
+  const applied = await applyLegTransition(supabase, session, leg, event, claim);
+  if (!applied) return;
+  const currentLeg = applied.leg;
+  const result = applied.result;
 
-  const result = legTransition(leg.state, event, {
-    amdMode: session.amd_mode,
-    claim,
-    hungUpByEngine,
-  });
-  if (!result) {
-    dialerLog('leg_transition_noop', {
-      legId: leg.id,
-      current: leg.state,
-      eventType: event.eventType,
-    });
-    return;
-  }
-
-  const fields: Record<string, unknown> = {};
-  if (result.outcome) fields.outcome = result.outcome;
-  if (event.eventType === 'call.answered') fields.answered_at = new Date().toISOString();
-  if (result.next === 'claimed') fields.claimed_at = new Date().toISOString();
-  if (event.eventType === 'call.hangup') {
-    fields.hangup_cause = event.hangupCause;
-    fields.ended_at = new Date().toISOString();
-  }
-
-  const { data: applied, error: transitionError } = await supabase.rpc('transition_leg', {
-    p_call_control_id: leg.call_control_id,
-    p_expected_states: [leg.state],
-    p_new_state: result.next,
-    p_fields: fields,
-  });
-  if (transitionError) throw new Error(`transition_leg: ${transitionError.message}`);
-  if (!applied) {
-    // Lost a race with another concurrent resolution of this same leg (redelivery, or
-    // handleWin resolving it from the other direction -- see this file's header). Whichever
-    // one applied first is authoritative; re-deriving side effects here would double them.
-    dialerLog('leg_transition_race_lost', { legId: leg.id, current: leg.state, next: result.next });
-    return;
-  }
-  dialerLog('leg_transition_applied', {
-    legId: leg.id,
-    from: leg.state,
-    to: result.next,
-    outcome: result.outcome,
-  });
-
-  if (result.next === 'abandoned') {
+  // Gate on `result.outcome`, not `result.next` -- both the REAL transition into 'abandoned'
+  // (the claim/reject decision, which always carries outcome:'abandoned') and the harmless
+  // call.speak.ended CONFIRMATION no-op (current already 'abandoned', legTransition returns
+  // {next:'abandoned'} with no outcome, "no state change, the engine issues the hangup next")
+  // share `next === 'abandoned'`. Checking `next` alone fired sendAbandonMessage a second time
+  // on the confirmation event too -- TASK-P2-E2 fix-forward item 6 (eng1's review): every
+  // abandoned leg got the "sorry we missed you" message spoken twice.
+  //
+  // `outcome === 'abandoned'` alone is NOT enough either (caught live re-verifying this fix):
+  // hangupOutcome PRESERVES a leg's prior decision through to call.hangup, so the abandoned
+  // leg's own eventual call.hangup also carries outcome:'abandoned', but with next:'ended' --
+  // checking outcome alone stole that case into this branch instead of the `next === 'ended'`
+  // one below, so apply_leg_outcome never ran and the lead's status/attempts never updated.
+  // Both conditions together isolate exactly the one moment that should speak: next is still
+  // 'abandoned' (leg is live, not yet hung up) AND outcome is freshly set (a real transition,
+  // not the speak.ended echo).
+  if (result.next === 'abandoned' && result.outcome === 'abandoned') {
     // This leg lost the claim on its OWN call.answered/detection-ended event racing in
     // independently of handleWin (see header). handleWin's own loser resolution already
     // skipped this leg (transition_leg would have returned applied=false there) if it got
     // here first -- so this is the other half of that race, issuing the abandon message.
-    await sendAbandonMessage(supabase, session, leg);
+    await sendAbandonMessage(supabase, session, currentLeg);
   } else if (result.next === 'machine') {
-    await hangupLeg(supabase, session.org_id, leg.call_control_id, 'machine_hangup_failed');
+    await hangupLeg(supabase, session.org_id, currentLeg.call_control_id, 'machine_hangup_failed');
   } else if (result.next === 'ended') {
-    await supabase.rpc('apply_leg_outcome', { p_leg: leg.id });
-    if (leg.id === session.active_leg_id) {
+    await supabase.rpc('apply_leg_outcome', { p_leg: currentLeg.id });
+    if (currentLeg.id === session.active_leg_id) {
       // The winner just ended -- wrap_up, no more refill until a disposition (or
       // resumeToDialing, for testing) returns the session to dialing.
       await supabase.rpc('transition_session', {
@@ -682,7 +773,12 @@ async function processContactLegEvent(
   if (event.eventType === 'call.speak.ended' && result.next === 'abandoned') {
     // The abandon message finished playing -- now issue the actual hangup (dialer-core.ts's
     // own header comment: "the engine issues the actual hangup command next").
-    await hangupLeg(supabase, session.org_id, leg.call_control_id, 'speak_ended_hangup_failed');
+    await hangupLeg(
+      supabase,
+      session.org_id,
+      currentLeg.call_control_id,
+      'speak_ended_hangup_failed'
+    );
   }
 }
 

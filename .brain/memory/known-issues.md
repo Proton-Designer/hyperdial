@@ -46,9 +46,14 @@ over a timestamp 301s old → `401`. All four exactly as designed. Test org/keyp
 keypair, not Telnyx's.
 
 **Caveat closed 2026-09-24 (TASK-P2-E2):** the engine rewrite landed. `_shared/dialer-engine.ts` is a full rewrite that only ever builds `{org, session, leg}`
-client_state (`_shared/client-state.ts`); the legacy org-less shape is no longer produced anywhere. `telnyx-webhook`'s outer handler now hard-rejects any `call.*`
-event whose client_state doesn't decode and name the request's own org, instead of skipping the check on a null decode. The cross-check now actually protects
-every call the engine places.
+client_state (`_shared/client-state.ts`); the legacy org-less shape is no longer produced anywhere. The cross-check now actually protects every call the engine
+places.
+
+**Updated 2026-09-24 (TASK-P2-E2 fix-forward item 4):** a `call.*` event with no decodable or org-matching client_state is no longer a 401 — the signature already
+authenticates the request as belonging to `orgId` (checked first, unchanged), so a mismatch here just means this specific event isn't one the engine tracks (an
+inbound call to one of the org's numbers, or — once E3 lands — the agent's own WebRTC leg, which never carries this shape). It's accepted with 200 and ignored
+(logged), so Telnyx doesn't retry into an endpoint that will never process it. A missing/invalid SIGNATURE is unaffected and still 401 — this only changed the
+already-authenticated client_state check.
 
 Originally reported during the Agent-Brain install 2026-09-21.
 

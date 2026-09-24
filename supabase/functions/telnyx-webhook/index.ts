@@ -20,6 +20,22 @@ function webhookLog(step: string, meta: Record<string, unknown> = {}): void {
   console.log('[telnyx-webhook]', step, meta);
 }
 
+// Supabase's Edge Runtime, not stock Deno -- undeclared in Deno's own lib types, hence the
+// ambient ad-hoc declaration. `typeof EdgeRuntime` is a safe existence check even when the
+// binding doesn't exist in the global scope at all (e.g. under `deno test`, or a `functions
+// serve` build that predates it).
+declare const EdgeRuntime: { waitUntil(promise: Promise<unknown>): void } | undefined;
+
+/** TASK-P2-E2 fix-forward item 3 (lead's diff-read, high): `queueMicrotask` alone does not
+ *  guarantee the webhook's async processing survives past the response. Supabase's Edge
+ *  Runtime can freeze/recycle the isolate immediately after a response ships, killing an
+ *  in-flight microtask -- silently dropping the event in production. `EdgeRuntime.waitUntil`
+ *  is the runtime's own supported way to keep a promise alive past the response (see
+ *  https://supabase.com/docs/guides/functions/background-tasks). Outside that runtime (unit
+ *  tests, or a `functions serve` build without it) there is nothing left to keep the process
+ *  alive after the response ships, so the caller must await the promise itself before
+ *  responding instead -- see the two branches at the bottom of the request handler below. */
+
 function getSupabaseAdmin() {
   return createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
 }
@@ -80,9 +96,9 @@ async function processWebhook(
     return;
   }
   if (!callControlId || !eventId || !dialClientState) {
-    // The outer handler already rejected a missing/mismatched client_state for call.*
-    // events with a 401 before this ever runs -- these are defensive, should-never-happen
-    // guards, not the primary enforcement point.
+    // The outer handler already accepted-and-ignored (200) a missing/mismatched client_state
+    // for call.* events before this ever runs (fix-forward item 4) -- these are defensive,
+    // should-never-happen guards, not the primary enforcement point.
     webhookLog('event_ignored_missing_required_field', {
       eventType,
       hasCallControlId: Boolean(callControlId),
@@ -146,15 +162,19 @@ Deno.serve(async (req: Request) => {
     const body = JSON.parse(rawBody) as WebhookBody;
 
     // Cross-tenant defense in depth (design §3 step 5): every call.* event's client_state
-    // must decode to this task's {org, session, leg} shape and name this same org. TASK-P2-E2
-    // removes the legacy engine entirely, so there is no longer an org-less client_state
-    // shape to tolerate on a call.* event -- a missing/undecodable one is now a hard reject,
-    // not a skipped check (that leniency was only ever correct while the legacy engine's
-    // org-less client_state was still in play, per TASK-P1-05's original comment here).
-    // Scoped to call.* specifically: Telnyx also sends conference.* events to this same
-    // webhook URL (created via the org's own Call Control App), and those never carry this
-    // client_state shape at all -- rejecting them outright would just make Telnyx retry (or
-    // eventually disable) the endpoint for events this function never acts on anyway.
+    // must decode to this task's {org, session, leg} shape and name this same org. Scoped to
+    // call.* specifically: Telnyx also sends conference.* events to this same webhook URL
+    // (created via the org's own Call Control App), and those never carry this client_state
+    // shape at all.
+    //
+    // TASK-P2-E2 fix-forward item 4 (lead's diff-read, medium): a missing/undecodable or
+    // org-mismatched client_state on a call.* event used to be a 401 -- but the signature
+    // ALREADY authenticates this request as belonging to `orgId` (checked above), so a
+    // mismatch here just means this specific event isn't one our engine tracks (an inbound
+    // call to one of the org's numbers, or -- once E3 lands -- the agent's own WebRTC leg,
+    // which never carries this {org,session,leg} shape at all). Telnyx retries a non-2xx
+    // response repeatedly and eventually disables the endpoint; there is nothing to retry
+    // into, so accept with 200 and just ignore it (logged).
     const eventType = body?.data?.event_type ?? '';
     const rawClientState = asString(
       (body?.data?.payload as Record<string, unknown> | undefined)?.client_state ??
@@ -162,13 +182,12 @@ Deno.serve(async (req: Request) => {
     );
     const dialClientState = decodeDialClientState(rawClientState);
     if (eventType.startsWith('call.') && (!dialClientState || dialClientState.org !== orgId)) {
-      webhookLog('rejected_client_state_missing_or_org_mismatch', {
+      webhookLog('ignored_client_state_missing_or_org_mismatch', {
         orgId,
         eventType,
         clientStateOrg: dialClientState?.org ?? null,
       });
-      return new Response(JSON.stringify({ error: 'missing or mismatched client_state' }), {
-        status: 401,
+      return new Response(JSON.stringify({ received: true, ignored: true }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
@@ -180,11 +199,18 @@ Deno.serve(async (req: Request) => {
         (body?.data?.payload as Record<string, unknown> | undefined)?.call_control_id
       ),
     });
-    queueMicrotask(() => {
-      processWebhook(body, orgId, dialClientState).catch((err) =>
-        console.error('telnyx-webhook async processing error:', err)
-      );
-    });
+    const processingPromise = processWebhook(body, orgId, dialClientState).catch((err) =>
+      console.error('telnyx-webhook async processing error:', err)
+    );
+    if (typeof EdgeRuntime !== 'undefined') {
+      // Ack 200 immediately; EdgeRuntime keeps processingPromise alive past the response.
+      EdgeRuntime.waitUntil(processingPromise);
+    } else {
+      // No EdgeRuntime outside the real Supabase runtime -- nothing would keep the process
+      // alive after the response ships, so finish processing before responding instead of
+      // risking it getting killed mid-flight.
+      await processingPromise;
+    }
 
     return new Response(JSON.stringify({ received: true }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },

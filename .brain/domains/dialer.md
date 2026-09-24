@@ -18,7 +18,9 @@ sources:
   - supabase/migrations/20260924000700_dialer_schema.sql
   - supabase/migrations/20260924000800_dialer_rpcs.sql
   - supabase/migrations/20260924001000_dialer_rpc_fixes.sql
+  - supabase/migrations/20260924001900_dialer_engine_fix_forward.sql
   - scripts/dev/dialer-sim.ts
+  - supabase/tests/run-dialer-concurrency-test.sh
 related:
   - domain.telephony
   - domain.campaigns
@@ -68,7 +70,7 @@ them anymore — see "Not covered here" for what's actually dead versus still re
 | Engine (orchestration) | `supabase/functions/_shared/dialer-engine.ts` | Calls the RPCs below + the org's own `TelnyxClient`. Read its header comment first — it documents every non-obvious design decision. |
 | `client_state` codec | `supabase/functions/_shared/client-state.ts` | `encodeDialClientState`/`decodeDialClientState`. |
 | Telnyx REST (BYO key) | `supabase/functions/_shared/telnyx-client.ts`, `_shared/telnyx-org-context.ts` | `createTelnyxClient(apiKey, {apiBase?})`; `getConnectedOrgTelnyxContext` builds one from the org's own stored key. `apiBase` exists only for `scripts/dev/dialer-sim.ts`'s mock server. |
-| Schema + RPCs | `supabase/migrations/20260924000700/000800/001000` | `dial_sessions`, `call_legs`, `webhook_events`; `claim_next_leads`/`claim_leg`/`transition_leg`/`transition_session`/`apply_leg_outcome`/`record_webhook_event`. |
+| Schema + RPCs | `supabase/migrations/20260924000700/000800/001000/001900` | `dial_sessions`, `call_legs`, `webhook_events`; `claim_next_leads`/`claim_leg`/`transition_leg`/`transition_session`/`apply_leg_outcome`/`record_webhook_event`. |
 | Session control | `supabase/functions/dialer-session-{start,stop,pause,get,active,hangup-live}/index.ts` | Org-scoped auth via `requireTelnyxOrgRole`; owner/admin can act on any session in the org, an agent only their own. |
 | Webhook ingress | `supabase/functions/telnyx-webhook/index.ts` | Signature-verifies, requires `client_state` on `call.*` events, acks 200, processes async via `processTelnyxDialerEvent`. |
 | Client | `apps/web/src/hooks/useDialerSession.ts`, `apps/web/src/lib/api.ts` | Polls `dialer-session-get` (no realtime push — see gotchas). |
@@ -81,18 +83,28 @@ them anymore — see "Not covered here" for what's actually dead versus still re
    (`active`, not `deleted_at`, has a `caller_id_number_id`), checks no active session already
    exists for this agent+campaign, inserts a `dial_sessions` row (`state='dialing'`), then calls
    `refillSession`.
-2. `refillSession`: computes how many legs to dial (`refillCount` — zero unless `state='dialing'`
-   AND the agent leg reads `answered`, or the dev flag is set), calls `claim_next_leads(session,
-   n)` (E1's RPC — priority order: due callback for this agent, then `attempts asc, next_attempt_at
-   asc, position asc`, skipping DNC and out-of-calling-window contacts), then dials each claimed
-   lead: inserts a `call_legs` row with a placeholder `call_control_id` (`pending-<legId>`,
-   satisfying the NOT NULL UNIQUE constraint before Telnyx returns a real one), calls
-   `client.dial(...)` with `client_state={org,session,leg}`, then overwrites the placeholder with
-   the real id.
+2. `refillSession`: `refillCount` is a fast-path hint only (zero unless `state='dialing'` AND the
+   agent leg reads `answered`, or the dev flag is set) — the real capacity decision now lives
+   entirely inside `claim_next_leads(session)` (fix-forward, migration `20260924001900`): under
+   a `dial_sessions` row lock held for the whole call, it computes `lines - active contact legs`
+   itself and, in the SAME statement, inserts each claimed lead's `call_legs` row with a
+   placeholder `call_control_id` (`pending-<random uuid>` — NOT the lead id, see gotchas) before
+   returning. Two concurrent refills for the same session now serialize on that lock instead of
+   each reading a stale count and together dialing past `lines` (verified live with two real
+   overlapping psql connections, `supabase/tests/run-dialer-concurrency-test.sh` scenario 2).
+   `refillSession` then only dials each returned leg (`client.dial(...)` with
+   `client_state={org,session,leg}`) and overwrites the placeholder with the real id — it no
+   longer inserts into `call_legs` itself.
 3. Telnyx posts to `telnyx-webhook`. The outer handler verifies the signature, resolves `orgId`
-   from `?org=`, hard-rejects a `call.*` event with no valid `client_state`, acks 200, then
-   dispatches asynchronously into `processTelnyxDialerEvent` → `record_webhook_event` dedupe →
-   maps the raw event to `dialer-core.ts`'s typed union → looks up the leg → `processContactLegEvent`.
+   from `?org=`, accepts-and-ignores (200, logged) a `call.*` event with no decodable or
+   org-matching `client_state` (fix-forward item 4 — the signature already authenticates the
+   org; a mismatch just means the event isn't one this engine tracks, e.g. an inbound call or
+   the agent's own future WebRTC leg — a 401 there only makes Telnyx retry into nothing), acks
+   200, then dispatches into `processTelnyxDialerEvent` via `EdgeRuntime.waitUntil` (fix-forward
+   item 3 — the Edge Runtime can recycle the isolate right after the response ships, killing a
+   bare `queueMicrotask`; falls back to awaiting before responding when `EdgeRuntime` is
+   undefined, e.g. under a test harness) → `record_webhook_event` dedupe → maps the raw event to
+   `dialer-core.ts`'s typed union → looks up the leg → `processContactLegEvent`.
 4. **Claim resolution**, when the event could resolve one (`call.answered` in AMD-off mode, or a
    detection-ended event in AMD-on mode): `claim_leg` runs first. **`claim_leg`'s own SQL already
    sets the winning leg's `call_legs.state='claimed'`** as part of the atomic win — the engine only
@@ -102,7 +114,12 @@ them anymore — see "Not covered here" for what's actually dead versus still re
 5. **`handleWin`** (right after a win): creates the conference (first winner ever) or joins it
    (later winners), then resolves every *other* active leg in the session from a snapshot — still-
    ringing legs go straight to `dropped` (silent hangup); already-answered/amd_pending legs go to
-   `abandoned` (speak the abandon message, then hang up once `call.speak.ended` confirms it played).
+   `abandoned` (speak the abandon message, then hang up once `call.speak.ended` confirms it played
+   — sending the message a SECOND time on that confirmation event was a real bug, fix-forward
+   item 6: the dispatch gates on `result.next === 'abandoned' && result.outcome === 'abandoned'`
+   together, not `next` alone, since the confirmation no-op also has `next: 'abandoned'` but no
+   `outcome`, and a later `call.hangup` on an already-abandoned leg has `outcome: 'abandoned'`
+   too but `next: 'ended'` — either half of that pair alone reopens one of the two bugs).
    A losing leg's *own* `call.answered`/detection-ended event can independently reach the same
    `abandoned` conclusion if it arrives before `handleWin` gets to it — both paths guard their
    `transition_leg` call with the leg's expected pre-resolution state, so whichever gets there
@@ -113,7 +130,13 @@ them anymore — see "Not covered here" for what's actually dead versus still re
    `busy`/`no_answer`/`failed`), then `apply_leg_outcome` (E1's RPC — the single source of truth for
    the lead's `status`/`attempts`/`next_attempt_at`; never recomputed in TS for a live write). If
    the ended leg was the session's own winner, the session moves to `wrap_up` (no more refill);
-   otherwise, if still `dialing`, `refillSession` runs again.
+   otherwise, if still `dialing`, `refillSession` runs again. **If `transition_leg` loses a race**
+   (its expected-state check fails, e.g. a concurrent claim/AMD decision moved the leg first),
+   `applyLegTransition` reloads the leg's now-current row and retries the decision against it
+   (bounded, 3 attempts) instead of dropping the event — fix-forward item 2: dropping a race-lost
+   TERMINAL event (most notably the leg's own `call.hangup`) used to leave it stuck non-terminal
+   forever. Exercised live with two genuinely concurrent (not sequentially-awaited) HTTP requests
+   in `dialer-sim.ts`'s step 7.
 7. **`wrap_up` → `dialing`** has no dedicated HTTP endpoint on purpose — `resumeToDialing`
    (`_shared/dialer-engine.ts`) calls `transition_session` directly. Phase 3's dispositions
    submission is the intended real caller once it exists; until then, `scripts/dev/dialer-sim.ts`
@@ -130,6 +153,19 @@ them anymore — see "Not covered here" for what's actually dead versus still re
 
 ## Constraints & gotchas
 
+- **A placeholder `call_control_id` must be keyed on something unique per ATTEMPT, not per
+  lead.** `claim_next_leads` used to key it on the lead id — a lead id is reused every time that
+  same lead is claimed again after a failed dial (the error path ends the leg but never
+  overwrites its placeholder), so the second attempt's insert collided with the first attempt's
+  still-there dead row and raised a unique violation, aborting the WHOLE claim for the session,
+  not just that one lead. Caught in review before this ever ran live (fix-forward item 1); now
+  a fresh random uuid per attempt. Covered by a dedicated SQL test (failed dial → same lead
+  reclaimed → succeeds).
+- **Several legs from one `claim_next_leads` call can share the exact same `created_at`.** It's
+  one INSERT statement now (fix-forward item 1), and `now()` is stable within a statement.
+  `dialer-session-get`'s leg list orders by `created_at, id` for a deterministic (not
+  necessarily priority-matching) display order — this is display-only, nothing reads
+  `call_legs.created_at` for actual logic.
 - **No agent leg exists yet (E3).** `refillCount`'s "agent leg must be answered" gate is real
   code, not a stub — nothing dials at all unless `DIALER_DEV_SKIP_AGENT_GATE=true` is set
   server-side. Removing that flag before E3 lands a real WebRTC agent leg means the dial loop
