@@ -116,6 +116,16 @@ Superseded in design by `docs/design/stage-1-architecture.md`; recorded here unt
 
 ---
 
+## 1d. The migrations cannot replay from an empty database
+
+**Severity: high for local dev and any new environment.** Verified 2026-09-23 with `supabase start`, which fails. `20250207000001_add_contacts_category_status_address.sql` and `20250207100000_create_campaigns_and_leads.sql` reference `public.contacts`, which is only created by the later `20250214000001_create_contacts_table.sql` (a plain `CREATE TABLE`, not `IF NOT EXISTS`). The live project was evidently built out of order, and the files are append-only, so they are not edited.
+
+**Local workaround:** `npm run db:local:reset` (`scripts/db-local-reset.sh`). It starts the local stack from an empty copy of `supabase/`, replays the legacy migrations in a working order, records them in `supabase_migrations.schema_migrations`, then runs `supabase migration up --local` for everything newer. **Never run a bare `supabase db reset` in the repo.**
+
+**Long-term fix:** baseline the local and CI schema from the live project (`supabase db dump`, or a squashed baseline plus `migration repair`) once there is access to it. Until then, the live project's actual migration history is unverified.
+
+---
+
 ## 2. Client/server contract is unenforced
 
 **Severity: high — silent runtime failure.** `apps/web/src/lib/api.ts` hand-declares every Edge Function request and response type. There is no generated client and no shared types package, so
