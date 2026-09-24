@@ -36,7 +36,7 @@ export function ResetPassword() {
             <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-[#00D9FF] to-[#0066FF] flex items-center justify-center">
               <div className="w-6 h-6 border-2 border-white rounded-full" />
             </div>
-            <span className="text-2xl font-bold text-white">Softdial</span>
+            <span className="text-2xl font-bold text-white">HyperDial</span>
           </div>
         </div>
 
@@ -50,7 +50,7 @@ export function ResetPassword() {
               </div>
               <h2 className="text-2xl font-bold text-white mb-2 text-center">Password updated</h2>
               <p className="text-sm text-[#B0BEC5] mb-8 text-center">
-                Your password has been changed. Continue into Softdial.
+                Your password has been changed. Continue into HyperDial.
               </p>
               <button
                 type="button"

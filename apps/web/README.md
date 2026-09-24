@@ -1,6 +1,6 @@
-# @softdial/web
+# @hyperdial/web
 
-The Softdial Studio web client — React 18 + TypeScript + Vite 6, styled with
+The HyperDial web client — React 18 + TypeScript + Vite 6, styled with
 Tailwind CSS v4 and Radix-based shadcn/ui primitives.
 
 Run everything from the **repository root**; this is an npm workspace.

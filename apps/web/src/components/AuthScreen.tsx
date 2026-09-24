@@ -168,7 +168,7 @@ export function AuthScreen({ mode, onToggleMode }: AuthScreenProps) {
               <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-[#00D9FF] to-[#0066FF] flex items-center justify-center">
                 <div className="w-6 h-6 border-2 border-white rounded-full" />
               </div>
-              <span className="text-2xl font-bold text-white">Softdial</span>
+              <span className="text-2xl font-bold text-white">HyperDial</span>
             </div>
           </div>
 

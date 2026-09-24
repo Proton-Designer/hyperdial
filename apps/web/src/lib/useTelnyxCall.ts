@@ -8,7 +8,7 @@ interface UseTelnyxCallOptions {
   remoteElementId?: string;
 }
 
-const ACTIVE_AGENT_CALL_CONTROL_ID_KEY = 'softdial_active_agent_call_control_id';
+const ACTIVE_AGENT_CALL_CONTROL_ID_KEY = 'hyperdial_active_agent_call_control_id';
 
 function toE164(phone: string): string {
   const digits = phone.replace(/\D/g, '');
