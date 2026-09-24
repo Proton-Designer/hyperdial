@@ -1,72 +1,65 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { corsHeaders, corsPreflightResponse } from '../_shared/cors.ts';
-import { getUserFromRequest } from '../_shared/auth.ts';
-import { setAgentSessionState } from '../_shared/redis.ts';
+import { requireTelnyxOrgRole } from '../_shared/telnyx-org-context.ts';
+import { pauseSession } from '../_shared/dialer-engine.ts';
 
 interface PauseBody {
   sessionId?: string;
 }
 
+function jsonResponse(status: number, payload: Record<string, unknown>): Response {
+  return new Response(JSON.stringify(payload), {
+    status,
+    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+  });
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return corsPreflightResponse();
-  if (req.method !== 'POST') {
-    return new Response(JSON.stringify({ error: 'Method not allowed' }), {
-      status: 405,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    });
-  }
+  if (req.method !== 'POST') return jsonResponse(405, { error: 'Method not allowed' });
 
-  const { user, error: authError } = await getUserFromRequest(req);
+  const {
+    user,
+    orgId,
+    role,
+    error: authError,
+  } = await requireTelnyxOrgRole(req, ['owner', 'admin', 'agent']);
   if (authError) return authError;
 
   try {
     const body = (await req.json()) as PauseBody;
     const sessionId = body.sessionId?.trim();
-    if (!sessionId) {
-      return new Response(JSON.stringify({ error: 'sessionId is required' }), {
-        status: 400,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
+    if (!sessionId) return jsonResponse(400, { error: 'sessionId is required' });
 
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL')!,
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
     );
 
-    const { data: session } = await supabase
-      .from('dialer_sessions')
-      .select('*')
+    const { data: session, error: sessionError } = await supabase
+      .from('dial_sessions')
+      .select('id, org_id, agent_id')
       .eq('id', sessionId)
-      .eq('user_id', user.id)
       .maybeSingle();
-    if (!session) {
-      return new Response(JSON.stringify({ error: 'Session not found' }), {
-        status: 404,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    if (sessionError) return jsonResponse(500, { error: sessionError.message });
+    if (!session || session.org_id !== orgId)
+      return jsonResponse(404, { error: 'Session not found' });
+    if (role === 'agent' && session.agent_id !== user.id) {
+      return jsonResponse(403, { error: 'Not your session' });
+    }
+
+    // Only meaningful while actively refilling (`dialing`) -- pauseSession no-ops (returns
+    // false) from any other state, e.g. already `wrap_up`/`paused`/`stopped`.
+    const paused = await pauseSession(supabase, orgId, sessionId);
+    if (!paused) {
+      return jsonResponse(409, {
+        error: 'Session is not currently dialing, so it cannot be paused.',
       });
     }
 
-    await supabase.from('dialer_sessions').update({ status: 'paused' }).eq('id', sessionId);
-
-    await setAgentSessionState(user.id, {
-      sessionId,
-      campaignId: session.campaign_id,
-      conferenceId: session.conference_id,
-      conferenceName: session.conference_name,
-      linesCount: session.lines_count,
-      fromNumber: (session as { from_number?: string }).from_number ?? '',
-      status: 'paused',
-    });
-
-    return new Response(JSON.stringify({ status: 'paused' }), {
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    });
+    return jsonResponse(200, { status: 'paused' });
   } catch (err) {
     console.error('dialer-session-pause error:', err);
-    return new Response(JSON.stringify({ error: String(err) }), {
-      status: 500,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    });
+    return jsonResponse(500, { error: String(err) });
   }
 });

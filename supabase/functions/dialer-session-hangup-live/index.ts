@@ -1,98 +1,66 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { corsHeaders, corsPreflightResponse } from '../_shared/cors.ts';
-import { getUserFromRequest } from '../_shared/auth.ts';
-import { getSessionBatchState } from '../_shared/redis.ts';
-import { completeBatchAndAdvanceIfNeeded, handleCallHangup } from '../_shared/dialer-engine.ts';
-import { hangupCall } from '../_shared/telnyx.ts';
-import { getAgentSessionState } from '../_shared/redis.ts';
+import { requireTelnyxOrgRole } from '../_shared/telnyx-org-context.ts';
+import { endLiveCall } from '../_shared/dialer-engine.ts';
 
 interface HangupLiveBody {
   sessionId?: string;
 }
 
+function jsonResponse(status: number, payload: Record<string, unknown>): Response {
+  return new Response(JSON.stringify(payload), {
+    status,
+    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+  });
+}
+
+/** Ends the current live (claimed/on_call) contact leg for a session. The resulting
+ *  call.hangup webhook drives the normal ended -> apply_leg_outcome -> wrap_up flow --
+ *  this function only issues the Telnyx hangup command, same "commands only, state changes
+ *  through the webhook" discipline as everywhere else in this lane. */
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return corsPreflightResponse();
-  if (req.method !== 'POST') {
-    return new Response(JSON.stringify({ error: 'Method not allowed' }), {
-      status: 405,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    });
-  }
+  if (req.method !== 'POST') return jsonResponse(405, { error: 'Method not allowed' });
 
-  const { user, error: authError } = await getUserFromRequest(req);
+  const {
+    user,
+    orgId,
+    role,
+    error: authError,
+  } = await requireTelnyxOrgRole(req, ['owner', 'admin', 'agent']);
   if (authError) return authError;
 
   try {
     const body = (await req.json()) as HangupLiveBody;
     const sessionId = body.sessionId?.trim();
-    if (!sessionId) {
-      return new Response(JSON.stringify({ error: 'sessionId is required' }), {
-        status: 400,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
+    if (!sessionId) return jsonResponse(400, { error: 'sessionId is required' });
 
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL')!,
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
     );
 
-    const { data: session } = await supabase
-      .from('dialer_sessions')
-      .select('id, user_id, status')
+    const { data: session, error: sessionError } = await supabase
+      .from('dial_sessions')
+      .select('id, org_id, agent_id, active_leg_id')
       .eq('id', sessionId)
-      .eq('user_id', user.id)
       .maybeSingle();
-    if (!session || session.status !== 'active') {
-      console.warn('[hangup-live] session_not_found_or_inactive', { sessionId });
-      return new Response(JSON.stringify({ error: 'Session not found or not active' }), {
-        status: 404,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
+    if (sessionError) return jsonResponse(500, { error: sessionError.message });
+    if (!session || session.org_id !== orgId)
+      return jsonResponse(404, { error: 'Session not found' });
+    if (role === 'agent' && session.agent_id !== user.id) {
+      return jsonResponse(403, { error: 'Not your session' });
+    }
+    if (!session.active_leg_id) {
+      return jsonResponse(400, { error: 'No live call to end' });
     }
 
-    const batchState = await getSessionBatchState(sessionId);
-    const liveCallId = batchState?.humanAnsweredCallId ?? null;
-    if (!liveCallId) {
-      console.warn('[hangup-live] no_live_call_to_end', { sessionId });
-      // Identify if we have any active calls at all
-      const activeCallIds = batchState?.activeCallIds ?? [];
-      if (activeCallIds.length > 0) {
-        // Fallback: If no "Human" call is registered but there are active calls, maybe we should hang them all up?
-        // For now, let's just log this case.
-        console.warn('[hangup-live] has_active_calls_but_no_human_winner', {
-          count: activeCallIds.length,
-        });
-      }
-      return new Response(JSON.stringify({ error: 'No live call to end' }), {
-        status: 400,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
+    const ok = await endLiveCall(supabase, orgId, sessionId);
+    if (!ok) return jsonResponse(400, { error: 'No live call to end' });
 
-    console.log('[hangup-live] hanging_up_live_call', { sessionId, liveCallId });
-
-    await hangupCall(liveCallId);
-    const result = await handleCallHangup(supabase, liveCallId);
-
-    if (result.shouldAdvance && result.sessionId && result.userId) {
-      const agentState = await getAgentSessionState(result.userId);
-      await completeBatchAndAdvanceIfNeeded(supabase, {
-        sessionId: result.sessionId,
-        userId: result.userId,
-        webhookUrl: `${Deno.env.get('SUPABASE_URL')}/functions/v1/telnyx-webhook`,
-        fromNumber: agentState?.fromNumber ?? '',
-      });
-    }
-
-    return new Response(JSON.stringify({ ok: true }), {
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    });
+    return jsonResponse(200, { ok: true });
   } catch (err) {
     console.error('dialer-session-hangup-live error:', err);
-    return new Response(JSON.stringify({ error: String(err) }), {
-      status: 500,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    });
+    return jsonResponse(500, { error: String(err) });
   }
 });

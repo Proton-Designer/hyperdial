@@ -1,96 +1,62 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { corsHeaders, corsPreflightResponse } from '../_shared/cors.ts';
-import { getUserFromRequest } from '../_shared/auth.ts';
-import { clearSessionState, getAgentSessionState } from '../_shared/redis.ts';
-import { getActiveCallIdsForSession } from '../_shared/dialer-engine.ts';
-import { hangupCall } from '../_shared/telnyx.ts';
-import { publishDialerEvent } from '../_shared/dialer-events.ts';
+import { requireTelnyxOrgRole } from '../_shared/telnyx-org-context.ts';
+import { stopSession } from '../_shared/dialer-engine.ts';
 
 interface StopBody {
   sessionId?: string;
 }
 
+function jsonResponse(status: number, payload: Record<string, unknown>): Response {
+  return new Response(JSON.stringify(payload), {
+    status,
+    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+  });
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return corsPreflightResponse();
-  if (req.method !== 'POST') {
-    return new Response(JSON.stringify({ error: 'Method not allowed' }), {
-      status: 405,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    });
-  }
+  if (req.method !== 'POST') return jsonResponse(405, { error: 'Method not allowed' });
 
-  const { user, error: authError } = await getUserFromRequest(req);
+  const {
+    user,
+    orgId,
+    role,
+    error: authError,
+  } = await requireTelnyxOrgRole(req, ['owner', 'admin', 'agent']);
   if (authError) return authError;
 
   try {
     const body = (await req.json()) as StopBody;
     const sessionId = body.sessionId?.trim();
-    if (!sessionId) {
-      return new Response(JSON.stringify({ error: 'sessionId is required' }), {
-        status: 400,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
+    if (!sessionId) return jsonResponse(400, { error: 'sessionId is required' });
 
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL')!,
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
     );
 
-    const { data: session } = await supabase
-      .from('dialer_sessions')
-      .select('*')
-      .eq('id', sessionId)
-      .eq('user_id', user.id)
-      .maybeSingle();
-    if (!session) {
-      return new Response(JSON.stringify({ error: 'Session not found' }), {
-        status: 404,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
-
-    const activeCallIds = await getActiveCallIdsForSession(sessionId);
-    for (const callId of activeCallIds) {
-      await hangupCall(callId);
-    }
-
-    await supabase
-      .from('dialer_sessions')
-      .update({
-        status: 'stopped',
-        ended_at: new Date().toISOString(),
-      })
-      .eq('id', sessionId);
-
-    await clearSessionState(sessionId, user.id);
-
-    const { data: summary } = await supabase
-      .from('dialer_sessions')
-      .select('calls_made,calls_connected,calls_voicemail,calls_no_answer,total_contacts')
+    // dial_sessions' own RLS policies (20260924000700) draw this exact same boundary for a
+    // client-authenticated SELECT (owner/admin see the whole org, an agent only their own) --
+    // this replicates it by hand because this function uses the service-role client, which
+    // bypasses RLS entirely.
+    const { data: session, error: sessionError } = await supabase
+      .from('dial_sessions')
+      .select('id, org_id, agent_id')
       .eq('id', sessionId)
       .maybeSingle();
+    if (sessionError) return jsonResponse(500, { error: sessionError.message });
+    if (!session || session.org_id !== orgId)
+      return jsonResponse(404, { error: 'Session not found' });
+    if (role === 'agent' && session.agent_id !== user.id) {
+      return jsonResponse(403, { error: 'Not your session' });
+    }
 
-    await publishDialerEvent(user.id, 'CAMPAIGN_COMPLETE', {
-      sessionId,
-      summary: summary ?? {},
-      stopped: true,
-    });
+    await stopSession(supabase, orgId, sessionId);
 
-    const agentSession = await getAgentSessionState(user.id);
-
-    return new Response(
-      JSON.stringify({
-        summary: summary ?? {},
-        previousAgentSession: agentSession,
-      }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return jsonResponse(200, { status: 'stopped' });
   } catch (err) {
     console.error('dialer-session-stop error:', err);
-    return new Response(JSON.stringify({ error: String(err) }), {
-      status: 500,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    });
+    return jsonResponse(500, { error: String(err) });
   }
 });

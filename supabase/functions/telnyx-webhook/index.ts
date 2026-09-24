@@ -1,22 +1,15 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { corsHeaders, corsPreflightResponse } from '../_shared/cors.ts';
-import {
-  completeBatchAndAdvanceIfNeeded,
-  decodeAgentCallbackState,
-  decodeClientState,
-  handleAmdResult,
-  handleCallHangup,
-  markNoAnswerAndCleanup,
-  resolveStaleBatchIfTimedOut,
-} from '../_shared/dialer-engine.ts';
-import { getAgentSessionState, getCallState, setCallState } from '../_shared/redis.ts';
-import { hangupCall, joinCallToConference } from '../_shared/telnyx.ts';
-import { publishDialerEvent } from '../_shared/dialer-events.ts';
+import { processTelnyxDialerEvent } from '../_shared/dialer-engine.ts';
 import { verifyTelnyxSignature } from '../_shared/webhook-verify.ts';
-import { decodeDialClientState } from '../_shared/client-state.ts';
+import { decodeDialClientState, type DialClientState } from '../_shared/client-state.ts';
 
 type WebhookBody = {
   data?: {
+    /** The event's own UUID (verified against spec3.json -- every Call Control event schema
+     *  has this at data.id, a sibling of event_type/occurred_at/payload), used for
+     *  record_webhook_event's dedupe. */
+    id?: string;
     event_type?: string;
     occurred_at?: string;
     payload?: Record<string, unknown>;
@@ -55,274 +48,59 @@ function asString(value: unknown): string {
   return typeof value === 'string' ? value : '';
 }
 
-async function processWebhook(body: WebhookBody): Promise<void> {
+/**
+ * Dispatches a verified, accepted webhook body into the new org-scoped engine
+ * (_shared/dialer-engine.ts, TASK-P2-E2). The outer Deno.serve handler below has already:
+ * verified the ed25519 signature, resolved `orgId` from the `?org=` query param, and (for
+ * any call.* event) confirmed `dialClientState` decodes and names this same org -- so by
+ * the time this runs, a call.* event always has a valid `{org, session, leg}` client_state.
+ * Non-call.* events (e.g. conference.*) are filtered out before ever reaching the engine.
+ */
+async function processWebhook(
+  body: WebhookBody,
+  orgId: string,
+  dialClientState: DialClientState | null
+): Promise<void> {
   const eventType = body?.data?.event_type ?? '';
+  const eventId = body?.data?.id ?? '';
   const occurredAt = body?.data?.occurred_at ?? null;
   const payload = (body?.data?.payload ?? {}) as Record<string, unknown>;
   const callControlId = asString(payload.call_control_id || payload.call_session_id);
-  const clientStateRaw = asString(
-    payload.client_state ?? (body?.data as Record<string, unknown>)?.client_state
-  );
-  const clientState = decodeClientState(clientStateRaw);
-  const agentCallback = decodeAgentCallbackState(clientStateRaw);
-  const amdResult = asString(payload.result);
 
   webhookLog('event_received', {
     eventType,
+    eventId,
     occurredAt,
     callControlId,
-    hasClientStateRaw: Boolean(clientStateRaw),
-    decodedClientState: clientState
-      ? {
-          sessionId: clientState.sessionId,
-          contactId: clientState.contactId,
-          batchIndex: clientState.batchIndex,
-        }
-      : null,
-    decodedAgentCallback: agentCallback
-      ? {
-          sessionId: agentCallback.sessionId,
-          userId: agentCallback.userId,
-        }
-      : null,
-    amdResult: amdResult || null,
+    hasClientState: Boolean(dialClientState),
   });
 
-  if (!eventType || !callControlId) {
-    webhookLog('event_ignored_missing_event_or_call_id', { eventType, callControlId });
+  if (!eventType.startsWith('call.')) {
+    webhookLog('event_ignored_not_a_call_event', { eventType });
+    return;
+  }
+  if (!callControlId || !eventId || !dialClientState) {
+    // The outer handler already rejected a missing/mismatched client_state for call.*
+    // events with a 401 before this ever runs -- these are defensive, should-never-happen
+    // guards, not the primary enforcement point.
+    webhookLog('event_ignored_missing_required_field', {
+      eventType,
+      hasCallControlId: Boolean(callControlId),
+      hasEventId: Boolean(eventId),
+      hasClientState: Boolean(dialClientState),
+    });
     return;
   }
 
   const supabase = getSupabaseAdmin();
-  const cachedCall = await getCallState(callControlId);
-  const callContext =
-    cachedCall ??
-    (clientState
-      ? {
-          userId: clientState.userId,
-          sessionId: clientState.sessionId,
-          campaignId: clientState.campaignId,
-          contactId: clientState.contactId,
-          callControlId,
-          status: 'initiated' as const,
-          batchIndex: clientState.batchIndex,
-          startedAt: Date.now(),
-        }
-      : null);
-  webhookLog('call_context_resolved', {
+  await processTelnyxDialerEvent(supabase, {
+    orgId,
+    eventId,
     eventType,
     callControlId,
-    source: cachedCall ? 'redis' : clientState ? 'client_state' : 'none',
-    sessionId: callContext?.sessionId ?? null,
-    contactId: callContext?.contactId ?? null,
+    payload,
+    clientState: dialClientState,
   });
-
-  // Agent callback leg (we dialed the agent when contact answered); handle join to conference on answer.
-  if (agentCallback && eventType === 'call.answered') {
-    webhookLog('agent_callback_answered_start', {
-      callControlId,
-      sessionId: agentCallback.sessionId,
-    });
-    try {
-      const { data: session, error: sessionError } = await supabase
-        .from('dialer_sessions')
-        .select('conference_name')
-        .eq('id', agentCallback.sessionId)
-        .maybeSingle();
-      if (sessionError) {
-        webhookLog('agent_callback_session_fetch_failed', {
-          sessionId: agentCallback.sessionId,
-          callControlId,
-          error: sessionError.message,
-        });
-        await hangupCall(callControlId);
-        return;
-      }
-      if (!session?.conference_name) {
-        webhookLog('agent_callback_missing_conference_name', {
-          sessionId: agentCallback.sessionId,
-          callControlId,
-          hasSession: !!session,
-        });
-        await hangupCall(callControlId);
-        return;
-      }
-      await joinCallToConference(callControlId, session.conference_name);
-      webhookLog('agent_callback_joined_conference', {
-        sessionId: agentCallback.sessionId,
-        callControlId,
-        conferenceName: session.conference_name,
-      });
-    } catch (err) {
-      webhookLog('agent_callback_join_failed', {
-        sessionId: agentCallback.sessionId,
-        callControlId,
-        error: String(err),
-      });
-      await hangupCall(callControlId);
-    }
-    return;
-  }
-
-  if (!callContext) {
-    webhookLog('event_ignored_missing_call_context', {
-      eventType,
-      callControlId,
-      hasAgentCallback: Boolean(agentCallback),
-      hasClientStateRaw: Boolean(clientStateRaw),
-    });
-    return;
-  }
-
-  const agentState = await getAgentSessionState(callContext.userId);
-  if (
-    !agentState ||
-    agentState.sessionId !== callContext.sessionId ||
-    agentState.status !== 'active'
-  ) {
-    webhookLog('hanging_up_due_to_invalid_agent_state', {
-      eventType,
-      callControlId,
-      callSessionId: callContext.sessionId,
-      agentStateSessionId: agentState?.sessionId ?? null,
-      agentStateStatus: agentState?.status ?? null,
-    });
-    await hangupCall(callControlId);
-    return;
-  }
-
-  await resolveStaleBatchIfTimedOut(supabase, {
-    sessionId: callContext.sessionId,
-    userId: callContext.userId,
-    fromNumber: agentState.fromNumber ?? '',
-    webhookUrl: `${Deno.env.get('SUPABASE_URL')}/functions/v1/telnyx-webhook`,
-    triggerEventType: eventType,
-    triggerCallControlId: callControlId,
-  });
-
-  switch (eventType) {
-    case 'call.initiated': {
-      webhookLog('case_call_initiated', {
-        sessionId: callContext.sessionId,
-        callControlId,
-        contactId: callContext.contactId,
-      });
-      await setCallState({ ...callContext, status: 'initiated' });
-      await supabase.from('call_logs').upsert(
-        {
-          session_id: callContext.sessionId,
-          user_id: callContext.userId,
-          campaign_id: callContext.campaignId,
-          contact_id: callContext.contactId,
-          call_control_id: callControlId,
-          status: 'initiated',
-          direction: 'outbound',
-        },
-        { onConflict: 'call_control_id' }
-      );
-      await supabase
-        .from('contacts')
-        .update({
-          call_status: 'dialing',
-          last_called_at: new Date().toISOString(),
-        })
-        .eq('id', callContext.contactId);
-      break;
-    }
-    case 'call.answered': {
-      webhookLog('case_call_answered', {
-        sessionId: callContext.sessionId,
-        callControlId,
-        contactId: callContext.contactId,
-      });
-      await setCallState({
-        ...callContext,
-        status: 'answered_pending_amd',
-        answeredAt: Date.now(),
-      });
-      await supabase
-        .from('call_logs')
-        .update({
-          status: 'answered',
-          answered_at: new Date().toISOString(),
-        })
-        .eq('call_control_id', callControlId);
-      await publishDialerEvent(callContext.userId, 'CALL_ANSWERED', {
-        contactId: callContext.contactId,
-      });
-      break;
-    }
-    case 'call.machine.detection.ended':
-    case 'call.machine.premium.detection.ended': {
-      webhookLog('case_call_amd_ended', {
-        sessionId: callContext.sessionId,
-        callControlId,
-        contactId: callContext.contactId,
-        amdResult: amdResult || null,
-      });
-      await handleAmdResult(supabase, {
-        callControlId,
-        amdRawResult: amdResult,
-      });
-      break;
-    }
-    case 'call.machine.greeting.ended': {
-      webhookLog('case_call_machine_greeting_ended_hangup', {
-        sessionId: callContext.sessionId,
-        callControlId,
-        contactId: callContext.contactId,
-      });
-      // With standard AMD ('detect'), this event is not required for our flow and
-      // can cause false-positive disconnects if received unexpectedly.
-      // Keep it as an observability checkpoint only.
-      break;
-    }
-    case 'call.hangup': {
-      webhookLog('case_call_hangup', {
-        sessionId: callContext.sessionId,
-        callControlId,
-        contactId: callContext.contactId,
-      });
-      const result = await handleCallHangup(supabase, callControlId);
-      webhookLog('case_call_hangup_decision', {
-        callControlId,
-        shouldAdvance: result.shouldAdvance,
-        sessionId: result.sessionId,
-        userId: result.userId,
-      });
-      if (result.shouldAdvance && result.sessionId && result.userId) {
-        await completeBatchAndAdvanceIfNeeded(supabase, {
-          sessionId: result.sessionId,
-          userId: result.userId,
-          webhookUrl: `${Deno.env.get('SUPABASE_URL')}/functions/v1/telnyx-webhook`,
-          fromNumber: agentState.fromNumber ?? '',
-        });
-      } else {
-        await markNoAnswerAndCleanup(supabase, callControlId);
-      }
-      break;
-    }
-    case 'call.bridged': {
-      webhookLog('case_call_bridged', {
-        sessionId: callContext.sessionId,
-        callControlId,
-      });
-      await supabase
-        .from('call_logs')
-        .update({
-          status: 'connected',
-        })
-        .eq('call_control_id', callControlId);
-      break;
-    }
-    default:
-      webhookLog('case_unhandled_event', {
-        eventType,
-        callControlId,
-        sessionId: callContext.sessionId,
-      });
-      break;
-  }
 }
 
 Deno.serve(async (req: Request) => {
@@ -367,24 +145,29 @@ Deno.serve(async (req: Request) => {
 
     const body = JSON.parse(rawBody) as WebhookBody;
 
-    // Cross-tenant defense in depth (design §3 step 5): if client_state carries the
-    // new {org, session, leg} shape (TASK-P1-04/P2 dial engine), it must name this
-    // same org. The legacy dialer-engine client_state (userId/sessionId/contactId/
-    // campaignId/batchIndex, still dispatched below per this task's invariant) has no
-    // org field at all -- today's dial engine is pre-org-rewrite -- so there is
-    // nothing to check for it yet; that gap closes when Phase 2 rewrites the engine
-    // to carry {org, session, leg} on every leg.
+    // Cross-tenant defense in depth (design §3 step 5): every call.* event's client_state
+    // must decode to this task's {org, session, leg} shape and name this same org. TASK-P2-E2
+    // removes the legacy engine entirely, so there is no longer an org-less client_state
+    // shape to tolerate on a call.* event -- a missing/undecodable one is now a hard reject,
+    // not a skipped check (that leniency was only ever correct while the legacy engine's
+    // org-less client_state was still in play, per TASK-P1-05's original comment here).
+    // Scoped to call.* specifically: Telnyx also sends conference.* events to this same
+    // webhook URL (created via the org's own Call Control App), and those never carry this
+    // client_state shape at all -- rejecting them outright would just make Telnyx retry (or
+    // eventually disable) the endpoint for events this function never acts on anyway.
+    const eventType = body?.data?.event_type ?? '';
     const rawClientState = asString(
       (body?.data?.payload as Record<string, unknown> | undefined)?.client_state ??
         (body?.data as Record<string, unknown>)?.client_state
     );
     const dialClientState = decodeDialClientState(rawClientState);
-    if (dialClientState && dialClientState.org !== orgId) {
-      webhookLog('rejected_client_state_org_mismatch', {
+    if (eventType.startsWith('call.') && (!dialClientState || dialClientState.org !== orgId)) {
+      webhookLog('rejected_client_state_missing_or_org_mismatch', {
         orgId,
-        clientStateOrg: dialClientState.org,
+        eventType,
+        clientStateOrg: dialClientState?.org ?? null,
       });
-      return new Response(JSON.stringify({ error: 'client_state org mismatch' }), {
+      return new Response(JSON.stringify({ error: 'missing or mismatched client_state' }), {
         status: 401,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
@@ -398,7 +181,7 @@ Deno.serve(async (req: Request) => {
       ),
     });
     queueMicrotask(() => {
-      processWebhook(body).catch((err) =>
+      processWebhook(body, orgId, dialClientState).catch((err) =>
         console.error('telnyx-webhook async processing error:', err)
       );
     });
