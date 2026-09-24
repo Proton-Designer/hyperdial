@@ -11,6 +11,9 @@ sources:
   - supabase/functions/contacts-import/index.ts
   - supabase/functions/_shared/phone-normalize.ts
   - supabase/functions/_shared/area-code-tz.ts
+  - supabase/functions/_shared/ghl-import.ts
+  - supabase/functions/ghl-import/index.ts
+  - supabase/migrations/20260924001600_contacts_ghl_contact_id.sql
   - apps/web/src/components/Contacts.tsx
   - apps/web/src/components/contacts/*.tsx
   - apps/web/src/lib/api.ts
@@ -54,6 +57,7 @@ E.164 validation (TASK-P2-P1, design §7).
 | `phone_number` vs `phone_raw` | `phone_number` is always strict E.164 (or null) — the dial target `dialer-engine.ts` reads directly. `phone_raw` preserves what was actually typed/imported, never overwritten to a normalized form. |
 | `timezone` / `dnc` | IANA zone derived from the phone's NANP area code (overridable); an org-wide do-not-call flag any role, including agent, may set. `claim_next_leads` skips `dnc` rows. |
 | Duplicate | A row whose digits-only phone already exists for this **org** — in the table, or earlier in the same CSV. A DB-level unique index backs this up when the org's existing data has no conflicting duplicates already (see Dedupe below). |
+| `ghl_contact_id` | LeadConnector contact id (TASK-P3-P2), null unless the row was pulled from or linked to GHL. Unique per org, nullable. |
 
 ## Where the code lives
 
@@ -70,6 +74,7 @@ E.164 validation (TASK-P2-P1, design §7).
 | List / filter UI | `apps/web/src/components/Contacts.tsx` | `CATEGORIES`, 50/page, DNC badge |
 | Import wizard | `apps/web/src/components/contacts/ImportContactsModal.tsx` | `FIELD_OPTIONS`, invalid-phone warning |
 | Add / edit / detail modal | `apps/web/src/components/contacts/` | `AddContactModal.tsx`; `ContactDetailModal.tsx` now has a real edit mode + DNC toggle |
+| GHL pull import | `supabase/functions/_shared/ghl-import.ts` (pure paging/dedupe plan, deno-tested), `ghl-import/index.ts` (thin wrapper) | `ImportFromGhlModal.tsx`; GHL-API side → `.brain/domains/crm.md` |
 
 ## The canonical field set
 
@@ -99,7 +104,8 @@ E.164 validation (TASK-P2-P1, design §7).
 The key is **digits-only phone, scoped to the org** (TASK-P1-02). `contacts-import` still catches this at request time (including duplicates *within* the same CSV).
 A DB-level `unique index on contacts(org_id, phone_number) where phone_number is not null` backs this up **only when the org's existing data has no conflicting
 duplicates already** — `20260924001300` checks first and falls back to a plain (non-unique) index if it finds any, logging the count via `RAISE NOTICE` rather than
-failing the migration or deleting data. Not yet keyed on `ghl_contact_id` — deferred to Phase 3 per this task's own spec.
+failing the migration or deleting data. **GHL pull import** (TASK-P3-P2) dedupes on `ghl_contact_id` first, then normalized phone — a `unique index on
+contacts(org_id, ghl_contact_id) where ghl_contact_id is not null` (`20260924001600`) backs the id half; see `.brain/domains/crm.md` for the pull mechanics.
 
 ## Enums
 
@@ -129,8 +135,10 @@ owner/admin only.
   it first would make the migration reject its own backfill (caught by dry-running with the order deliberately swapped before shipping).
 - **`Business Link` is special-cased** — matches only the exact headers `business link` or `link`, never a substring of `Business`.
 - **Contacts paginate client-side**, 50/page, after `select('*')` of the whole table — large lists load entirely into the browser.
+- **GHL pull import's "skipped" reuses CSV import's exact semantics**: always incremented when a GHL contact has no usable phone; `invalid` is the subset where a
+  value was present but failed E.164 validation. "By tag" filters client-side (GHL's `GET /contacts/` has no server-side tag param) — see `.brain/domains/crm.md`.
 
 ## Not covered here
 
 `call_status` / `call_count` / `last_called_at` and the dial loop → `.brain/domains/dialer.md`; `campaign_leads` and lead status → `.brain/domains/campaigns.md`; JWT
-and service-role patterns → `.brain/domains/auth.md`; GHL sync (a future `ghl_contact_id` dedupe key, and pushing `dnc`/notes to GHL) → `.brain/domains/crm.md`.
+and service-role patterns → `.brain/domains/auth.md`; the GHL connection itself and pushing `dnc`/notes back to GHL (not yet built) → `.brain/domains/crm.md`.

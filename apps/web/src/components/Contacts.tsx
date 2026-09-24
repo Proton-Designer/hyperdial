@@ -14,10 +14,19 @@ import {
   ChevronLeft,
   ChevronRight,
   Globe,
+  Download,
+  RefreshCw,
 } from 'lucide-react';
-import { listContacts, deleteContact, deleteContacts, type Contact } from '@/lib/api';
+import {
+  listContacts,
+  deleteContact,
+  deleteContacts,
+  type Contact,
+  type ImportFromGhlInput,
+} from '@/lib/api';
 import { AddContactModal } from '@/components/contacts/AddContactModal';
 import { ImportContactsModal } from '@/components/contacts/ImportContactsModal';
+import { ImportFromGhlModal } from '@/components/contacts/ImportFromGhlModal';
 import { ContactDetailModal } from '@/components/contacts/ContactDetailModal';
 import {
   DropdownMenu,
@@ -44,6 +53,9 @@ export function Contacts() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [importModalOpen, setImportModalOpen] = useState(false);
   const [addModalOpen, setAddModalOpen] = useState(false);
+  const [ghlModalOpen, setGhlModalOpen] = useState(false);
+  const [ghlModalAutoSubmit, setGhlModalAutoSubmit] = useState(false);
+  const [lastGhlImport, setLastGhlImport] = useState<ImportFromGhlInput | null>(null);
   const [detailContact, setDetailContact] = useState<Contact | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [currentPage, setCurrentPage] = useState(0);
@@ -150,6 +162,35 @@ export function Contacts() {
         </div>
 
         <div className="flex gap-3">
+          {lastGhlImport && (
+            <motion.button
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+              onClick={() => {
+                setGhlModalAutoSubmit(true);
+                setGhlModalOpen(true);
+              }}
+              title={`Re-sync "${lastGhlImport.value}" (${lastGhlImport.mode === 'tag' ? 'by tag' : 'by search'})`}
+              className="flex items-center gap-2 px-5 py-3 bg-transparent border-2 border-white/10 rounded-xl text-[#B0BEC5] font-semibold hover:bg-white/5 transition-all"
+            >
+              <RefreshCw className="w-5 h-5" />
+              Re-sync
+            </motion.button>
+          )}
+
+          <motion.button
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
+            onClick={() => {
+              setGhlModalAutoSubmit(false);
+              setGhlModalOpen(true);
+            }}
+            className="flex items-center gap-2 px-5 py-3 bg-transparent border-2 border-[#00D9FF] rounded-xl text-[#00D9FF] font-semibold hover:bg-[#00D9FF]/10 transition-all"
+          >
+            <Download className="w-5 h-5" />
+            Import from GHL
+          </motion.button>
+
           <motion.button
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.95 }}
@@ -470,6 +511,14 @@ export function Contacts() {
         open={importModalOpen}
         onClose={() => setImportModalOpen(false)}
         onSuccess={fetchContacts}
+      />
+      <ImportFromGhlModal
+        open={ghlModalOpen}
+        onClose={() => setGhlModalOpen(false)}
+        onSuccess={fetchContacts}
+        initialInput={ghlModalAutoSubmit ? (lastGhlImport ?? undefined) : undefined}
+        autoSubmit={ghlModalAutoSubmit}
+        onImported={setLastGhlImport}
       />
       <AddContactModal
         open={addModalOpen}

@@ -12,7 +12,11 @@ sources:
   - supabase/functions/ghl-connect/index.ts
   - supabase/functions/ghl-disconnect/index.ts
   - supabase/functions/_shared/ghl-client.ts
+  - supabase/functions/_shared/ghl-import.ts
+  - supabase/functions/ghl-import/index.ts
+  - supabase/migrations/20260924001600_contacts_ghl_contact_id.sql
   - apps/web/src/components/Settings.tsx
+  - apps/web/src/components/contacts/ImportFromGhlModal.tsx
   - apps/web/src/lib/api.ts
 related:
   - domain.auth
@@ -24,7 +28,9 @@ answers:
   - "how does a disposition reach GHL"
   - "what payload shape does enqueue_crm_job expect for a disposition job"
   - "why is there no pg_cron worker draining crm_sync_jobs yet"
-covers: "GHL (GoHighLevel) connect/disconnect, the org_integrations token store, and the crm_sync_jobs push outbox contract."
+  - "how does Import from GHL dedupe, and what happens if you run it twice"
+  - "why does tag-based import page every contact instead of filtering server-side"
+covers: "GHL (GoHighLevel) connect/disconnect, the org_integrations token store, the crm_sync_jobs push outbox contract, and the pull-import (contacts by tag/search) path."
 excludes: "The disposition/wrap-up UI that will call enqueue_crm_job, and the pg_cron worker that drains crm_sync_jobs into real GHL API calls -- both are separate, not-yet-built tasks (see Not covered here)."
 tokens_est: 2419
 source_hash: fba225d25be200d588e62cf158889e3d2bce0d110bd8763fceb94cc6c27e3766
@@ -59,7 +65,8 @@ lands in. Nothing drains that outbox into real GHL API calls yet.
 | Connect / disconnect functions | `supabase/functions/ghl-connect/`, `supabase/functions/ghl-disconnect/` | Owner-only, same shape as `telnyx-connect`/`telnyx-disconnect` |
 | Typed LeadConnector client | `supabase/functions/_shared/ghl-client.ts` | contacts upsert/search, notes, tags, tasks, DND. Deno-tested (`ghl-client.test.ts`) with a stubbed `fetch`, no live GHL calls |
 | Settings UI | `apps/web/src/components/Settings.tsx` (`IntegrationsTab`) | Connect form + status card, owner-only controls |
-| Client wrappers | `apps/web/src/lib/api.ts` | `getGhlIntegrationStatus`, `connectGhl`, `disconnectGhl` |
+| Client wrappers | `apps/web/src/lib/api.ts` | `getGhlIntegrationStatus`, `connectGhl`, `disconnectGhl`, `importFromGhl` |
+| Pull import (TASK-P3-P2) | `supabase/functions/_shared/ghl-import.ts` (pure paging/dedupe, deno-tested), `ghl-import/index.ts` (thin wrapper) | `Contacts.tsx`'s "Import from GHL"/"Re-sync"; contacts-side detail → `.brain/domains/contacts.md` |
 
 ## How it works
 
@@ -89,13 +96,24 @@ For `kind='disposition'`, `enqueue_crm_job`'s `payload` must be:
 
 This is the exact shape a future worker will map onto `ghl-client.ts`'s `addNote` (outcome, duration, agent, notes, recording link, transcript excerpt), `addTags` (the disposition as a tag), `createTask` (when `callback_at` is set) and `setDnd` (when the disposition is a DNC outcome). Written here per TASK-P3-P1's own requirement so the dispositions task (eng2, Phase 3) can call `enqueue_crm_job` without re-deriving this shape.
 
+### Pull import (TASK-P3-P2)
+
+Admin+ only, same as CSV import (`requireOrgRole(['owner','admin'])`). "By tag" and "by search" share one code path: `fetchAllGhlContacts` pages `GET /contacts/`
+(100/page, capped at 20 pages -- 2,000 contacts/run) using `query` for search mode, or no query at all for tag mode (GHL's list endpoint has no server-side tag
+filter -- confirmed against its own OpenAPI spec, only `add`/`remove`/`bulk-update` tag endpoints exist), then `planGhlImport` (pure, no I/O) filters by
+`GhlContact.tags` client-side for tag mode and dedupes every fetched contact on `ghl_contact_id` first, normalized phone second -- exactly `contacts.md`'s
+De-duplication section's stated order. A GHL `dnd:true` contact sets `dnc: true`; `dnd:false`/absent never forces an existing contact's `dnc` back to false.
+"Re-sync" is not a separate endpoint -- the UI just replays the last `{mode, value}` through the same call, and dedupe makes that idempotent (a rerun updates
+already-imported contacts instead of duplicating them). Returns `{ created, updated, skipped, invalid, truncated }`; `truncated: true` means the 2,000-contact
+cap was hit and a "Re-sync" will continue from there.
+
 ## Integration points
 
 | Direction | With | Via |
 |---|---|---|
 | Depends on | `domain.auth` | `private.is_org_member`, `has_org_role`, the org-owner check |
 | Depended on by | Dispositions (not yet built) | `enqueue_crm_job(org, 'disposition', ...)` |
-| Depended on by | Contact import/pull (not yet built) | `ghl-client.ts`'s `searchContacts`/`upsertContact` |
+| Depended on by | `domain.contacts` | Pull import writes `contacts.ghl_contact_id`/`dnc`/`timezone` via `ghl-import.ts` |
 | External | GHL LeadConnector API v2 | `https://services.leadconnectorhq.com`, bearer token, `Version: 2021-07-28` header |
 
 ## Constraints & gotchas
@@ -110,10 +128,11 @@ This is the exact shape a future worker will map onto `ghl-client.ts`'s `addNote
 
 - The dial engine, dispositions, and wrap-up UI that will actually call `enqueue_crm_job` → not yet built (Phase 3, eng2, per the design's build-plan table).
 - The pg_cron worker that drains `crm_sync_jobs` into real `ghl-client.ts` calls with retry/backoff → not yet built. `crm_sync_jobs.status`/`attempts`/`next_run_at`/`last_error` exist for it to use.
-- "Import from GHL" (pull by tag/search into `contacts`) → not yet built. `ghl-client.ts`'s `searchContacts`/`upsertContact` are ready for it.
+- Pushing `dnc`/notes/dispositions back to GHL → not yet built (that's `enqueue_crm_job`/the pg_cron worker above). Pull import is one-directional, GHL → `contacts`.
 - Telnyx account connection → `.brain/domains/telephony.md`.
 - Org/role/invite plumbing `ghl-connect` reuses → `.brain/domains/auth.md`.
 
 ## Unverified
 
 - GHL's exact `contacts.dnd` semantics when a location's DND settings distinguish channel-level DND (`dndSettings`) from the blanket `dnd` boolean this client sets — `setDnd` only ever writes the blanket flag, matching the design's "turns DND on for DNC" requirement; per-channel DND is unexercised.
+- **GHL's own spec declares `GET /contacts/`'s response schema without `firstName`/`lastName`/`phone`/`dnd`** (only `GET /contacts/{id}`'s schema has them) -- `ghl-import.ts` assumes the real runtime response includes them anyway (no live GHL location to check against here). Full reasoning and the fallback direction if this turns out wrong → `ghl-client.ts`'s header comment.
