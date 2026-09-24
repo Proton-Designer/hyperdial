@@ -936,46 +936,76 @@ export async function getWebrtcCredentials(): Promise<{ token: string }> {
   return { token };
 }
 
-// --- Parallel dialer session ---
-export interface DialerSessionSummary {
-  calls_made?: number;
-  calls_connected?: number;
-  calls_voicemail?: number;
-  calls_no_answer?: number;
-  total_contacts?: number;
-}
+// --- Parallel dialer session (TASK-P2-E2: org-scoped dial_sessions/call_legs engine) ---
+// Rewritten from the legacy Redis/dialer_sessions contract. Behavior changes: no more
+// fromNumber/agentCallControlId/agentCallbackNumber on start (the caller ID now comes from
+// the campaign's own caller_id_number_id, TASK-P2-P1) and no calls_made/calls_connected/
+// calls_voicemail/calls_no_answer summary counters (there is no equivalent rollup query yet
+// -- a future task can add one; for now the UI should derive progress from the `legs` array
+// getDialerSession returns, same as the realtime DIALER_* events it already listens to).
 
-export interface DialerSessionStartResponse {
-  sessionId: string;
-  conferenceDetails: {
-    conferenceId: string | null;
-    conferenceName: string;
-  };
-  totalContacts: number;
-}
+export type DialSessionState =
+  | 'ready_pending'
+  | 'ready'
+  | 'dialing'
+  | 'connecting'
+  | 'on_call'
+  | 'wrap_up'
+  | 'paused'
+  | 'paused_agent_lost'
+  | 'stopped'
+  | 'completed';
 
-export interface DialerSessionRecord {
+export type CallLegState =
+  | 'initiated'
+  | 'ringing'
+  | 'answered'
+  | 'amd_pending'
+  | 'claimed'
+  | 'dropped'
+  | 'abandoned'
+  | 'machine'
+  | 'ended';
+
+export type CallLegOutcome =
+  'no_answer' | 'busy' | 'machine' | 'dropped' | 'abandoned' | 'failed' | 'connected';
+
+export interface DialSessionRecord {
   id: string;
+  org_id: string;
   campaign_id: string;
-  status: 'active' | 'paused' | 'completed' | 'stopped';
-  lines_count: number;
-  current_index: number;
-  total_contacts: number;
+  agent_id: string;
+  state: DialSessionState;
+  lines: number;
+  amd_mode: 'off' | 'on';
+  agent_leg_id: string | null;
+  active_leg_id: string | null;
   conference_id: string | null;
-  conference_name: string;
-  calls_made: number;
-  calls_connected: number;
-  calls_voicemail: number;
-  calls_no_answer: number;
+  started_at: string;
+  ended_at: string | null;
+  updated_at: string;
 }
 
-export interface DialerBatchState {
-  activeCallIds: string[];
-  humanAnsweredCallId: string | null;
-  batchIndex: number;
-  firedAt: number;
-  /** Current batch contact previews; set when batch is fired so UI can show after load */
-  contacts?: { id: string; name: string; phone: string }[];
+export interface CallLegRecord {
+  id: string;
+  kind: 'contact' | 'agent';
+  state: CallLegState;
+  outcome: CallLegOutcome | null;
+  contact_id: string | null;
+  lead_id: string | null;
+  call_control_id: string;
+  amd_result: string | null;
+  hangup_cause: string | null;
+  answered_at: string | null;
+  claimed_at: string | null;
+  ended_at: string | null;
+  created_at: string;
+  contact: {
+    business_name: string | null;
+    first_name: string | null;
+    last_name: string | null;
+    phone_number: string | null;
+  } | null;
 }
 
 /** Thrown when startDialerSession returns 409 because an active session already exists for the campaign. */
@@ -991,111 +1021,35 @@ export class ActiveSessionExistsError extends Error {
 
 export async function startDialerSession(args: {
   campaignId: string;
-  linesCount: 1 | 2 | 3 | 4 | 5;
-  fromNumber: string;
-  agentCallControlId?: string;
-  /** When set, the backend will call this number when a contact answers so the agent can join the conference for two-way audio. */
-  agentCallbackNumber?: string;
-}): Promise<DialerSessionStartResponse> {
-  const requestId = crypto.randomUUID();
-  const startedAt = performance.now();
-  const url = `${getFunctionsUrl()}/dialer-session-start`;
-  console.info('[startDialerSession] checkpoint:request_prepared', {
-    requestId,
-    campaignId: args.campaignId,
-    linesCount: args.linesCount,
-    hasFromNumber: Boolean(args.fromNumber),
-    hasAgentCallControlId: Boolean(args.agentCallControlId),
-  });
-  const res = await fetch(url, {
+  /** Overrides the campaign's own default `lines` (1-7) for this session only. */
+  lines?: 1 | 2 | 3 | 4 | 5 | 6 | 7;
+  /** Overrides the campaign's own default `amd_mode` for this session only. */
+  amdMode?: 'off' | 'on';
+}): Promise<{ sessionId: string }> {
+  const res = await fetch(`${getFunctionsUrl()}/dialer-session-start`, {
     method: 'POST',
     headers: await getEdgeFunctionHeaders(),
-    body: JSON.stringify({ ...args, debugRequestId: requestId }),
+    body: JSON.stringify(args),
   });
-  let data: {
+  const data = (await res.json()) as {
     error?: string;
     code?: string;
     existingSessionId?: string;
-    requestId?: string;
-    checkpoint?: string;
     sessionId?: string;
   };
-  try {
-    data = (await res.json()) as {
-      error?: string;
-      code?: string;
-      existingSessionId?: string;
-      requestId?: string;
-      checkpoint?: string;
-      sessionId?: string;
-    };
-  } catch {
-    console.error('[startDialerSession] checkpoint:response_non_json', {
-      requestId,
-      status: res.status,
-      statusText: res.statusText,
-      elapsedMs: Math.round(performance.now() - startedAt),
-    });
-    throw new Error(`Failed to start dialer session (${res.status}) [requestId=${requestId}]`);
-  }
-  const serverRequestId = data.requestId ?? requestId;
-  console.info('[startDialerSession] checkpoint:response_received', {
-    requestId: serverRequestId,
-    status: res.status,
-    code: data.code,
-    checkpoint: data.checkpoint,
-    elapsedMs: Math.round(performance.now() - startedAt),
-  });
   if (!res.ok) {
-    console.warn('[startDialerSession] error response', {
-      status: res.status,
-      error: data.error,
-      code: data.code,
-      existingSessionId: data.existingSessionId,
-      requestId: serverRequestId,
-      checkpoint: data.checkpoint,
-    });
     if (res.status === 409 && data.code === 'ACTIVE_SESSION_EXISTS' && data.existingSessionId) {
       throw new ActiveSessionExistsError(
-        `An active dialer session already exists for this campaign. [requestId=${serverRequestId}]`,
+        data.error || 'An active dialer session already exists for this campaign.',
         data.existingSessionId
       );
     }
-    if (res.status === 503 && data.code === 'MISSING_TELNYX_CONNECTION_ID') {
-      throw new Error(
-        data.error ||
-          'Set TELNYX_CONNECTION_ID in Supabase secrets. See docs/guides/telnyx-call-control-setup.md.'
-      );
-    }
-    if (res.status === 503 && data.code === 'INVALID_TELNYX_CONNECTION') {
-      throw new Error(
-        data.error ||
-          'Use a Call Control Application connection in Telnyx, not the WebRTC credential connection. See docs/guides/telnyx-call-control-setup.md.'
-      );
-    }
-    if (res.status === 503 && data.code === 'MISSING_TELNYX_API_KEY') {
-      throw new Error(
-        (data.error ||
-          'Outbound dialing is not configured. Set TELNYX_API_KEY in Supabase Edge Function secrets.') +
-          ` [requestId=${serverRequestId}, checkpoint=${data.checkpoint ?? 'unknown'}]`
-      );
-    }
-    throw new Error(
-      (data.error || `Failed to start dialer session (${res.status})`) +
-        ` [requestId=${serverRequestId}, checkpoint=${data.checkpoint ?? 'unknown'}]`
-    );
+    throw new Error(data.error || `Failed to start dialer session (${res.status})`);
   }
-  console.info('[startDialerSession] checkpoint:success', {
-    requestId: serverRequestId,
-    sessionId: data.sessionId,
-    elapsedMs: Math.round(performance.now() - startedAt),
-  });
-  return data as DialerSessionStartResponse;
+  return data as { sessionId: string };
 }
 
-export async function stopDialerSession(
-  sessionId: string
-): Promise<{ summary: DialerSessionSummary }> {
+export async function stopDialerSession(sessionId: string): Promise<{ status: 'stopped' }> {
   const res = await fetch(`${getFunctionsUrl()}/dialer-session-stop`, {
     method: 'POST',
     headers: await getEdgeFunctionHeaders(),
@@ -1103,7 +1057,7 @@ export async function stopDialerSession(
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || 'Failed to stop dialer session');
-  return data as { summary: DialerSessionSummary };
+  return data as { status: 'stopped' };
 }
 
 export async function pauseDialerSession(sessionId: string): Promise<{ status: 'paused' }> {
@@ -1117,7 +1071,8 @@ export async function pauseDialerSession(sessionId: string): Promise<{ status: '
   return data as { status: 'paused' };
 }
 
-/** End the current live contact call in a parallel session and advance to the next batch. */
+/** End the current live (claimed/on_call) contact leg in a session; the resulting webhook
+ *  drives the normal ended -> wrap_up flow. */
 export async function hangupLiveCall(sessionId: string): Promise<void> {
   const res = await fetch(`${getFunctionsUrl()}/dialer-session-hangup-live`, {
     method: 'POST',
@@ -1129,8 +1084,8 @@ export async function hangupLiveCall(sessionId: string): Promise<void> {
 }
 
 export async function getDialerSession(sessionId: string): Promise<{
-  session: DialerSessionRecord;
-  batch: DialerBatchState | null;
+  session: DialSessionRecord;
+  legs: CallLegRecord[];
 }> {
   const res = await fetch(
     `${getFunctionsUrl()}/dialer-session-get?sessionId=${encodeURIComponent(sessionId)}`,
@@ -1141,20 +1096,22 @@ export async function getDialerSession(sessionId: string): Promise<{
   );
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || 'Failed to load dialer session');
-  return data as { session: DialerSessionRecord; batch: DialerBatchState | null };
+  return data as { session: DialSessionRecord; legs: CallLegRecord[] };
 }
 
-/** Returns the current user's active parallel dialer session (if any). Use this to restore the parallel dialer UI when opening the Dialer tab. */
+/** Returns the current user's active parallel dialer session (if any) in the active org. Use
+ *  this to restore the parallel dialer UI when opening the Dialer tab. */
 export async function getActiveDialerSession(): Promise<{
   sessionId: string;
   campaignId: string;
+  state: DialSessionState;
 } | null> {
   const res = await fetch(`${getFunctionsUrl()}/dialer-session-active`, {
     method: 'GET',
     headers: await getEdgeFunctionHeaders(),
   });
   const data = (await res.json()) as {
-    session?: { sessionId: string; campaignId: string } | null;
+    session?: { sessionId: string; campaignId: string; state: DialSessionState } | null;
     error?: string;
   };
   if (!res.ok) throw new Error(data.error || 'Failed to get active dialer session');

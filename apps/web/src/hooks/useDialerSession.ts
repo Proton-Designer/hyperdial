@@ -1,27 +1,25 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { supabase } from '@/lib/supabase';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   getDialerSession,
   hangupLiveCall,
   pauseDialerSession,
   startDialerSession,
   stopDialerSession,
-  type DialerSessionRecord,
-  type DialerSessionSummary,
+  type CallLegRecord,
+  type DialSessionRecord,
 } from '@/lib/api';
 
-export type DialerEventType =
-  | 'DIALER_SESSION_STARTED'
-  | 'BATCH_FIRING'
-  | 'CALL_INITIATED'
-  | 'CALL_ANSWERED'
-  | 'HUMAN_CONNECTED'
-  | 'CALL_ENDED'
-  | 'CONTACT_VOICEMAIL'
-  | 'CONTACT_NO_ANSWER'
-  | 'BATCH_COMPLETE'
-  | 'CAMPAIGN_COMPLETE'
-  | 'DIALER_ERROR';
+/**
+ * TASK-P2-E2: rewritten from the legacy Redis/BATCH_FIRING-realtime-event model to the
+ * org-scoped dial_sessions/call_legs schema. There is no realtime push anymore -- the new
+ * engine (_shared/dialer-engine.ts) never calls the legacy publishDialerEvent, so the old
+ * `supabase.channel('dialer:user:...')` subscription this hook used to hold would just sit
+ * silently dead. Replaced with a plain poll of dialer-session-get while the session is in an
+ * active state; a future task can add a real realtime channel if push updates matter enough
+ * to build (out of scope here -- see LANE-eng2.md). The public shape this hook returns is
+ * unchanged on purpose, so Dialer.tsx/ParallelDialerUI.tsx (E4's UI, not touched by this
+ * task) keep working without their own changes.
+ */
 
 export interface BatchContactPreview {
   id: string;
@@ -30,101 +28,64 @@ export interface BatchContactPreview {
 }
 
 interface DialerHookState {
-  session: DialerSessionRecord | null;
+  session: DialSessionRecord | null;
   sessionId: string | null;
-  totalContacts: number;
-  currentBatchContacts: BatchContactPreview[];
-  /** Contact that answered (ringing stopped); set on CALL_ANSWERED, cleared on HUMAN_CONNECTED or BATCH_FIRING */
-  answeredContactId: string | null;
-  connectedContactId: string | null;
-  callsMade: number;
-  connected: number;
-  voicemail: number;
-  noAnswer: number;
+  legs: CallLegRecord[];
   loading: boolean;
   error: string | null;
+}
+
+const POLL_INTERVAL_MS = 3000;
+const ACTIVE_SESSION_STATES = new Set(['dialing', 'connecting', 'on_call', 'wrap_up']);
+const TERMINAL_LEG_STATES = new Set(['ended', 'dropped', 'abandoned', 'machine']);
+
+function contactName(leg: CallLegRecord): string {
+  const c = leg.contact;
+  if (!c) return 'Unknown contact';
+  return (
+    c.business_name || `${c.first_name ?? ''} ${c.last_name ?? ''}`.trim() || 'Unknown contact'
+  );
 }
 
 export function useDialerSession(initialSessionId: string | null = null) {
   const [state, setState] = useState<DialerHookState>({
     session: null,
     sessionId: initialSessionId,
-    totalContacts: 0,
-    currentBatchContacts: [],
-    answeredContactId: null,
-    connectedContactId: null,
-    callsMade: 0,
-    connected: 0,
-    voicemail: 0,
-    noAnswer: 0,
+    legs: [],
     loading: false,
     error: null,
   });
-
-  const applySummary = useCallback((summary?: DialerSessionSummary) => {
-    setState((prev: DialerHookState) => ({
-      ...prev,
-      callsMade: summary?.calls_made ?? prev.callsMade,
-      connected: summary?.calls_connected ?? prev.connected,
-      voicemail: summary?.calls_voicemail ?? prev.voicemail,
-      noAnswer: summary?.calls_no_answer ?? prev.noAnswer,
-      totalContacts: summary?.total_contacts ?? prev.totalContacts,
-    }));
-  }, []);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const loadSession = useCallback(async (sessionId: string) => {
-    setState((prev: DialerHookState) => ({ ...prev, loading: true, error: null }));
+    setState((prev) => ({ ...prev, loading: true, error: null }));
     try {
-      const { session, batch } = await getDialerSession(sessionId);
-      const batchContacts: BatchContactPreview[] = (batch?.contacts ?? []).map(
-        (c: { id: string; name: string; phone: string }) => ({
-          id: c.id,
-          name: c.name,
-          phone: c.phone,
-        })
-      );
-      setState((prev: DialerHookState) => ({
-        ...prev,
-        session,
-        sessionId,
-        totalContacts: session.total_contacts,
-        callsMade: session.calls_made,
-        connected: session.calls_connected,
-        voicemail: session.calls_voicemail,
-        noAnswer: session.calls_no_answer,
-        currentBatchContacts: batchContacts,
-        answeredContactId: null,
-      }));
+      const { session, legs } = await getDialerSession(sessionId);
+      setState((prev) => ({ ...prev, session, sessionId, legs }));
     } catch (e) {
-      setState((prev: DialerHookState) => ({
+      setState((prev) => ({
         ...prev,
         error: e instanceof Error ? e.message : 'Failed to load dialer session',
       }));
     } finally {
-      setState((prev: DialerHookState) => ({ ...prev, loading: false }));
+      setState((prev) => ({ ...prev, loading: false }));
     }
   }, []);
 
   const start = useCallback(
     async (args: {
       campaignId: string;
-      linesCount: 1 | 2 | 3 | 4 | 5;
-      fromNumber: string;
-      agentCallControlId?: string;
-      agentCallbackNumber?: string;
+      lines?: 1 | 2 | 3 | 4 | 5 | 6 | 7;
+      amdMode?: 'off' | 'on';
     }) => {
-      setState((prev: DialerHookState) => ({ ...prev, loading: true, error: null }));
+      setState((prev) => ({ ...prev, loading: true, error: null }));
       try {
         const result = await startDialerSession(args);
-        setState((prev: DialerHookState) => ({
-          ...prev,
-          sessionId: result.sessionId,
-          totalContacts: result.totalContacts,
-        }));
+        setState((prev) => ({ ...prev, sessionId: result.sessionId }));
         await loadSession(result.sessionId);
         return result;
       } finally {
-        setState((prev: DialerHookState) => ({ ...prev, loading: false }));
+        setState((prev) => ({ ...prev, loading: false }));
       }
     },
     [loadSession]
@@ -133,181 +94,88 @@ export function useDialerSession(initialSessionId: string | null = null) {
   const stop = useCallback(async () => {
     if (!state.sessionId) return null;
     const res = await stopDialerSession(state.sessionId);
-    applySummary(res.summary);
-    setState((prev: DialerHookState) => ({
-      ...prev,
-      session: prev.session ? { ...prev.session, status: 'stopped' } : prev.session,
-    }));
+    await loadSession(state.sessionId);
     return res;
-  }, [applySummary, state.sessionId, state.session]);
+  }, [loadSession, state.sessionId]);
 
   const pause = useCallback(async () => {
     if (!state.sessionId) return null;
-    await pauseDialerSession(state.sessionId);
-    setState((prev: DialerHookState) => ({
-      ...prev,
-      session: prev.session ? { ...prev.session, status: 'paused' } : prev.session,
-    }));
-    return { status: 'paused' as const };
-  }, [state.sessionId, state.session]);
-
-  useEffect(() => {
-    if (initialSessionId) {
-      setState((prev: DialerHookState) => ({ ...prev, sessionId: initialSessionId }));
-      loadSession(initialSessionId);
-    }
-  }, [initialSessionId, loadSession]);
-
-  useEffect(() => {
-    let channel: ReturnType<typeof supabase.channel> | null = null;
-    let unsubscribed = false;
-
-    const setup = async () => {
-      const { data } = await supabase.auth.getUser();
-      const userId = data.user?.id;
-      if (!userId || unsubscribed) return;
-
-      channel = supabase.channel(`dialer:user:${userId}`);
-      channel.on(
-        'broadcast',
-        { event: '*' },
-        ({ event, payload }: { event: string; payload: Record<string, unknown> }) => {
-          const eventType = event as DialerEventType;
-          try {
-            console.log('[useDialerSession] checkpoint:broadcast_event_received', {
-              eventType,
-              payload,
-              receivedAt: new Date().toISOString(),
-            });
-          } catch {
-            // no-op
-          }
-          setState((prev: DialerHookState) => {
-            if (eventType === 'BATCH_FIRING') {
-              const contacts = (payload?.contacts as BatchContactPreview[] | undefined) ?? [];
-              console.log('[useDialerSession] checkpoint:state_transition_batch_firing', {
-                contactsCount: contacts.length,
-              });
-              return {
-                ...prev,
-                currentBatchContacts: contacts,
-                connectedContactId: null,
-                answeredContactId: null,
-              };
-            }
-            if (eventType === 'CALL_ANSWERED') {
-              console.log('[useDialerSession] checkpoint:state_transition_call_answered', {
-                contactId: (payload?.contactId as string) ?? null,
-              });
-              return {
-                ...prev,
-                answeredContactId: (payload?.contactId as string) ?? null,
-              };
-            }
-            if (eventType === 'HUMAN_CONNECTED') {
-              console.log('[useDialerSession] checkpoint:state_transition_human_connected', {
-                contactId: (payload?.contactId as string) ?? null,
-                callControlId: (payload?.callControlId as string) ?? null,
-              });
-              return {
-                ...prev,
-                connectedContactId: (payload?.contactId as string) ?? null,
-                answeredContactId: null,
-                connected: prev.connected + 1,
-              };
-            }
-            if (eventType === 'CONTACT_VOICEMAIL') {
-              console.log('[useDialerSession] checkpoint:state_transition_contact_voicemail', {
-                contactId: (payload?.contactId as string) ?? null,
-              });
-              return { ...prev, voicemail: prev.voicemail + 1 };
-            }
-            if (eventType === 'CONTACT_NO_ANSWER') {
-              console.log('[useDialerSession] checkpoint:state_transition_contact_no_answer', {
-                contactId: (payload?.contactId as string) ?? null,
-              });
-              return { ...prev, noAnswer: prev.noAnswer + 1 };
-            }
-            if (eventType === 'CALL_INITIATED') {
-              console.log('[useDialerSession] checkpoint:state_transition_call_initiated', {
-                contactId: (payload?.contactId as string) ?? null,
-                callControlId: (payload?.callControlId as string) ?? null,
-              });
-              return { ...prev, callsMade: prev.callsMade + 1 };
-            }
-            if (eventType === 'DIALER_SESSION_STARTED') {
-              console.log('[useDialerSession] checkpoint:state_transition_session_started', {
-                sessionId: (payload?.sessionId as string) ?? null,
-                totalContacts: (payload?.totalContacts as number) ?? null,
-              });
-              return {
-                ...prev,
-                sessionId: (payload?.sessionId as string) ?? prev.sessionId,
-                totalContacts: (payload?.totalContacts as number) ?? prev.totalContacts,
-              };
-            }
-            if (eventType === 'CAMPAIGN_COMPLETE') {
-              console.log('[useDialerSession] checkpoint:state_transition_campaign_complete', {
-                sessionId: (payload?.sessionId as string) ?? null,
-              });
-              return {
-                ...prev,
-                session: prev.session ? { ...prev.session, status: 'completed' } : prev.session,
-              };
-            }
-            if (eventType === 'DIALER_ERROR') {
-              console.error('[useDialerSession] checkpoint:state_transition_dialer_error', {
-                error: (payload?.error as string) ?? 'Dialer error',
-                payload,
-              });
-              return {
-                ...prev,
-                error: (payload?.error as string) ?? 'Dialer error',
-              };
-            }
-            return prev;
-          });
-        }
-      );
-      await channel.subscribe();
-    };
-
-    setup().catch((e) => {
-      setState((prev: DialerHookState) => ({
-        ...prev,
-        error: e instanceof Error ? e.message : 'Failed to subscribe to dialer events',
-      }));
-    });
-
-    return () => {
-      unsubscribed = true;
-      if (channel) {
-        supabase.removeChannel(channel);
-      }
-    };
-  }, []);
-
-  const progress = useMemo(() => {
-    if (!state.totalContacts) return 0;
-    return Math.min(
-      100,
-      Math.round(((state.connected + state.voicemail + state.noAnswer) / state.totalContacts) * 100)
-    );
-  }, [state.connected, state.noAnswer, state.totalContacts, state.voicemail]);
+    const res = await pauseDialerSession(state.sessionId);
+    await loadSession(state.sessionId);
+    return res;
+  }, [loadSession, state.sessionId]);
 
   const endLiveCall = useCallback(async () => {
     if (!state.sessionId) return;
     await hangupLiveCall(state.sessionId);
-    setState((prev) => ({
-      ...prev,
-      connectedContactId: null,
-      answeredContactId: null,
-    }));
-  }, [state.sessionId]);
+    await loadSession(state.sessionId);
+  }, [loadSession, state.sessionId]);
+
+  useEffect(() => {
+    if (initialSessionId) loadSession(initialSessionId);
+  }, [initialSessionId, loadSession]);
+
+  useEffect(() => {
+    if (pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+    const sessionId = state.sessionId;
+    if (!sessionId || !state.session || !ACTIVE_SESSION_STATES.has(state.session.state)) {
+      return;
+    }
+    pollRef.current = setInterval(() => {
+      loadSession(sessionId);
+    }, POLL_INTERVAL_MS);
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
+  }, [state.sessionId, state.session, loadSession]);
+
+  const derived = useMemo(() => {
+    const connected = state.legs.filter((l) => l.outcome === 'connected').length;
+    const voicemail = state.legs.filter((l) => l.outcome === 'machine').length;
+    const noAnswer = state.legs.filter((l) => l.outcome === 'no_answer').length;
+    const callsMade = state.legs.length;
+    // No campaign-total-contacts equivalent exists in the new schema (the legacy engine
+    // snapshotted it at session start into dialer_sessions.total_contacts; dial_sessions has
+    // no such column). Approximated as "every leg attempted so far" -- progress reads as "%
+    // of attempted calls resolved," not "% of the whole campaign," until a future task adds
+    // a real rollup query.
+    const totalContacts = Math.max(callsMade, 1);
+    const activeLeg = state.legs.find((l) => state.session && l.id === state.session.active_leg_id);
+    const connectedContactId = activeLeg?.contact_id ?? null;
+    const answeringLeg = state.legs.find(
+      (l) => l.state === 'answered' || l.state === 'amd_pending'
+    );
+    const answeredContactId = answeringLeg?.contact_id ?? null;
+    const currentBatchContacts: BatchContactPreview[] = state.legs
+      .filter((l) => !TERMINAL_LEG_STATES.has(l.state))
+      .map((l) => ({
+        id: l.contact_id ?? l.id,
+        name: contactName(l),
+        phone: l.contact?.phone_number ?? '',
+      }));
+    const progress =
+      callsMade === 0
+        ? 0
+        : Math.min(100, Math.round(((connected + voicemail + noAnswer) / totalContacts) * 100));
+    return {
+      connected,
+      voicemail,
+      noAnswer,
+      callsMade,
+      totalContacts,
+      connectedContactId,
+      answeredContactId,
+      currentBatchContacts,
+      progress,
+    };
+  }, [state.legs, state.session]);
 
   return {
     ...state,
-    progress,
+    ...derived,
     start,
     stop,
     pause,
