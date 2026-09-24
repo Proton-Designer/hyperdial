@@ -207,6 +207,151 @@ export async function markAllNotificationsRead(): Promise<void> {
   if (error) throw new Error(error.message);
 }
 
+// --- Org / team / invites (TASK-P1-03) ---
+
+export interface OrgMember {
+  user_id: string;
+  role: 'owner' | 'admin' | 'agent';
+  status: 'active' | 'disabled';
+  created_at: string;
+  first_name: string | null;
+  last_name: string | null;
+  email: string | null;
+}
+
+export async function listOrgMembers(): Promise<OrgMember[]> {
+  const res = await fetch(`${getFunctionsUrl()}/org-members`, {
+    method: 'GET',
+    headers: await getEdgeFunctionHeaders(),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Failed to list team members');
+  return (data.members ?? []) as OrgMember[];
+}
+
+async function orgMembersAction(body: Record<string, unknown>): Promise<void> {
+  const res = await fetch(`${getFunctionsUrl()}/org-members`, {
+    method: 'POST',
+    headers: await getEdgeFunctionHeaders(),
+    body: JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || 'Failed to update member');
+}
+
+export const changeMemberRole = (userId: string, role: 'admin' | 'agent') =>
+  orgMembersAction({ action: 'change_role', user_id: userId, role });
+export const disableMember = (userId: string) =>
+  orgMembersAction({ action: 'disable', user_id: userId });
+export const enableMember = (userId: string) =>
+  orgMembersAction({ action: 'enable', user_id: userId });
+export const removeMember = (userId: string) =>
+  orgMembersAction({ action: 'remove', user_id: userId });
+
+export interface CreatedInvite {
+  inviteId: string;
+  token: string;
+  expiresAt: string;
+}
+
+export async function createOrgInvite(
+  email: string,
+  role: 'admin' | 'agent'
+): Promise<CreatedInvite> {
+  const res = await fetch(`${getFunctionsUrl()}/org-invite-create`, {
+    method: 'POST',
+    headers: await getEdgeFunctionHeaders(),
+    body: JSON.stringify({ email, role }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Failed to create invite');
+  return data as CreatedInvite;
+}
+
+export interface InvitePreview {
+  valid: boolean;
+  email: string | null;
+  role: 'owner' | 'admin' | 'agent' | null;
+  orgName: string | null;
+  reason: 'expired' | 'accepted' | null;
+}
+
+export async function previewOrgInvite(token: string): Promise<InvitePreview> {
+  const res = await fetch(
+    `${getFunctionsUrl()}/org-invite-accept?token=${encodeURIComponent(token)}`,
+    { method: 'GET', headers: await getEdgeFunctionHeaders() }
+  );
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Failed to look up invite');
+  return data as InvitePreview;
+}
+
+export async function acceptOrgInvite(token: string): Promise<{ orgId: string; role: string }> {
+  const res = await fetch(`${getFunctionsUrl()}/org-invite-accept`, {
+    method: 'POST',
+    headers: await getEdgeFunctionHeaders(),
+    body: JSON.stringify({ token }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Failed to accept invite');
+  return data as { orgId: string; role: string };
+}
+
+export interface Profile {
+  user_id: string;
+  first_name: string | null;
+  last_name: string | null;
+  active_org_id: string | null;
+}
+
+export async function getMyProfile(): Promise<Profile | null> {
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) throw new Error('Not signed in');
+  const { data, error } = await supabase
+    .from('profiles')
+    .select('user_id, first_name, last_name, active_org_id')
+    .eq('user_id', user.id)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return data as Profile | null;
+}
+
+export async function updateMyProfile(input: {
+  first_name: string;
+  last_name: string;
+}): Promise<void> {
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) throw new Error('Not signed in');
+  const { error } = await supabase
+    .from('profiles')
+    .update({
+      first_name: input.first_name.trim() || null,
+      last_name: input.last_name.trim() || null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('user_id', user.id);
+  if (error) throw new Error(error.message);
+}
+
+/** Campaign ids the signed-in agent is assigned to. Owner/admin have no assignment concept --
+ * they see every org campaign, so this is only meaningful for role === 'agent'. */
+export async function listMyCampaignAssignments(): Promise<string[]> {
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return [];
+  const { data, error } = await supabase
+    .from('campaign_agents')
+    .select('campaign_id')
+    .eq('user_id', user.id);
+  if (error) throw new Error(error.message);
+  return ((data ?? []) as { campaign_id: string }[]).map((r) => r.campaign_id);
+}
+
 export async function ensureWeekSummary(): Promise<void> {
   const url = `${getFunctionsUrl()}/ensure-week-summary`;
   const res = await fetch(url, { method: 'POST', headers: await getEdgeFunctionHeaders() });
@@ -413,7 +558,34 @@ export async function listCampaigns(): Promise<CampaignWithStats[]> {
     .select('*')
     .order('created_at', { ascending: false });
   if (error) throw new Error(error.message);
-  return (data ?? []) as CampaignWithStats[];
+  const campaigns = (data ?? []) as CampaignWithStats[];
+
+  // Design §2: an agent only works assigned campaigns. campaigns' own RLS is org-wide (not
+  // assignment-scoped -- every member can see every org campaign row, see TASK-P1-01's RLS
+  // rewrite), so this is cosmetic UI narrowing, not the real access boundary: the leads/contacts
+  // *inside* an unassigned campaign are already properly denied by contacts/campaign_leads RLS
+  // regardless of what this function returns. See this task's log and mem.known-issues.
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return campaigns;
+  let orgId: string;
+  try {
+    orgId = await getActiveOrgId();
+  } catch {
+    return campaigns;
+  }
+  const { data: membership } = await supabase
+    .from('org_members')
+    .select('role')
+    .eq('org_id', orgId)
+    .eq('user_id', user.id)
+    .eq('status', 'active')
+    .maybeSingle();
+  if ((membership?.role as string | undefined) !== 'agent') return campaigns;
+
+  const assignedIds = new Set(await listMyCampaignAssignments());
+  return campaigns.filter((c) => assignedIds.has(c.id));
 }
 
 export async function createCampaign(name: string): Promise<Campaign> {

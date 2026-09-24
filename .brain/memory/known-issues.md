@@ -150,7 +150,7 @@ Superseded in design by `docs/design/stage-1-architecture.md`; recorded here unt
 - **Pause is a one-way dead end.** No resume endpoint; late webhooks for a paused session hang up legs without advancing the batch.
 - **WebRTC credential leak.** `telnyx-webrtc-credentials` creates a new Telnyx credential per call and never deletes old ones.
 - **Lines cap is 5, not 10** (`dialer-session-start/index.ts:63`, DB `CHECK BETWEEN 1 AND 5`).
-- **`Settings.tsx` Profile / Billing / Team / Integrations tabs are mock** ("John Doe", fake $149 plan, "Coming Soon"). Same class as #1.
+- ~~`Settings.tsx` Profile / Billing / Team / Integrations tabs are mock~~ — Profile and Team are real as of TASK-P1-03; Billing is deleted (never a Stage 1 feature); Integrations stays a labeled "Phase 3" placeholder for GHL.
 - **`dialer-session-start` never checks campaign ownership** or campaign status; `campaign_leads` INSERT RLS does not check contact ownership.
 
 ---
@@ -246,6 +246,35 @@ together from these; `telnyx-purchase-number` also has no owner/admin role check
 
 **Fix:** apply `requireOrgRole` the same way when these are next touched (Phase 2 for `dialer-*`;
 alongside `telnyx-connect` for `telnyx-*`).
+
+---
+
+## 9. A disabled org member can't edit even unrelated profile fields until reactivated
+
+**Severity: low — surprising, not a leak.** `20260924000600` (TASK-P1-03) added `active_org_id is
+null or private.is_org_member(active_org_id)` to `profiles`' UPDATE `WITH CHECK`, exactly as
+specified. `WITH CHECK` re-evaluates the *whole new row* on every update, not just the changed
+columns, so once a member's `org_members.status` flips to `disabled`, `is_org_member` goes false
+for their still-set `active_org_id` and **every** self-update (even just editing `first_name`)
+is rejected until an owner/admin re-enables them or `active_org_id` is nulled/repointed. Caught by
+the pre-existing RLS matrix test ("agent can update own profile"), which started failing purely
+because an earlier test in the same run had just disabled that fixture user.
+
+**Fix if it becomes a real complaint:** a `BEFORE UPDATE` trigger comparing `OLD.active_org_id` to
+`NEW.active_org_id` instead of a blanket `WITH CHECK`, so unrelated fields aren't gated on org
+membership at all.
+
+## 10. `listCampaigns()`'s agent filtering is UI-only, not enforced by `campaigns` RLS
+
+**Severity: low.** Design §2 says an agent works only assigned campaigns, but `campaigns`' own
+SELECT policy (`20260924000300`) is `is_org_member(org_id)` — every role sees every org campaign
+row. TASK-P1-03 narrows this client-side in `api.ts`'s `listCampaigns()` (filters to
+`campaign_agents` rows for the caller when `role === 'agent'`), which is fine per this task's own
+invariant ("UI gating is cosmetic") since the sensitive content — `contacts`/`campaign_leads`
+*inside* an unassigned campaign — is already properly denied by their own RLS regardless. An
+agent calling `campaigns_with_stats` directly still gets every org campaign row (id/name/status,
+no leads). Not fixed here: narrowing `campaigns` SELECT itself is a real RLS change, out of this
+task's scope.
 
 ---
 

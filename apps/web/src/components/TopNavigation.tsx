@@ -1,8 +1,9 @@
 import { useState, useEffect, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { Search, Bell, ChevronDown, Settings, LogOut, User, CreditCard } from 'lucide-react';
+import { Search, Bell, ChevronDown, Settings, LogOut, User, Building2, Check } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useAuth } from '@/contexts/AuthContext';
+import { useOrg } from '@/contexts/OrgContext';
 import {
   listNotifications,
   getUnreadNotificationCount,
@@ -59,10 +60,13 @@ function formatNotificationDate(created_at: string): string {
 
 export function TopNavigation({ activeTab = 'dashboard', onTabChange }: TopNavigationProps) {
   const { user, signOut } = useAuth();
+  const { orgId, orgs, switchOrg } = useOrg();
   const [searchFocused, setSearchFocused] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
   const [showSignOutConfirm, setShowSignOutConfirm] = useState(false);
+  const [showOrgSwitcher, setShowOrgSwitcher] = useState(false);
+  const [switchingOrgId, setSwitchingOrgId] = useState<string | null>(null);
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
 
@@ -108,6 +112,21 @@ export function TopNavigation({ activeTab = 'dashboard', onTabChange }: TopNavig
     );
   };
 
+  const currentOrgName = orgs.find((o) => o.orgId === orgId)?.orgName ?? '';
+
+  const handleSwitchOrg = async (newOrgId: string) => {
+    if (newOrgId === orgId) {
+      setShowOrgSwitcher(false);
+      return;
+    }
+    setSwitchingOrgId(newOrgId);
+    try {
+      await switchOrg(newOrgId); // reloads the page on success
+    } catch {
+      setSwitchingOrgId(null);
+    }
+  };
+
   const handleSignOutConfirm = () => {
     setShowUserMenu(false);
     setShowSignOutConfirm(false);
@@ -132,6 +151,56 @@ export function TopNavigation({ activeTab = 'dashboard', onTabChange }: TopNavig
           <span>/</span>
           <span className="text-white">{TAB_LABELS[activeTab]}</span>
         </div>
+
+        {/* Org switcher: only shown when the user actually belongs to more than one org. */}
+        {orgs.length > 1 && (
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setShowOrgSwitcher((v) => !v)}
+              className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-sm text-white transition-colors"
+            >
+              <Building2 className="w-4 h-4 text-[#B0BEC5]" />
+              <span className="max-w-[140px] truncate">{currentOrgName}</span>
+              <ChevronDown className="w-3.5 h-3.5 text-[#B0BEC5]" />
+            </button>
+            <AnimatePresence>
+              {showOrgSwitcher && (
+                <>
+                  <div
+                    className="fixed inset-0 z-40"
+                    onClick={() => setShowOrgSwitcher(false)}
+                    aria-hidden="true"
+                  />
+                  <motion.div
+                    initial={{ opacity: 0, y: -10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -10 }}
+                    transition={{ duration: 0.2 }}
+                    className="absolute left-0 top-full mt-2 w-64 bg-[#1A2332]/95 backdrop-blur-xl border border-white/10 rounded-xl shadow-xl z-50 overflow-hidden p-2"
+                  >
+                    {orgs.map((o) => (
+                      <button
+                        key={o.orgId}
+                        type="button"
+                        onClick={() => handleSwitchOrg(o.orgId)}
+                        disabled={switchingOrgId !== null}
+                        className="w-full flex items-center justify-between gap-2 px-3 py-2.5 rounded-lg hover:bg-white/5 text-left text-white text-sm disabled:opacity-60"
+                      >
+                        <span className="truncate">{o.orgName}</span>
+                        {switchingOrgId === o.orgId ? (
+                          <span className="text-xs text-[#B0BEC5]">Switching…</span>
+                        ) : o.orgId === orgId ? (
+                          <Check className="w-4 h-4 text-[#00D9FF] flex-shrink-0" />
+                        ) : null}
+                      </button>
+                    ))}
+                  </motion.div>
+                </>
+              )}
+            </AnimatePresence>
+          </div>
+        )}
       </div>
 
       {/* Center Section - Search */}
@@ -309,17 +378,6 @@ export function TopNavigation({ activeTab = 'dashboard', onTabChange }: TopNavig
                     >
                       <Settings className="w-4 h-4 text-[#B0BEC5]" />
                       Settings
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setShowUserMenu(false);
-                        onTabChange?.('settings');
-                      }}
-                      className="w-full flex items-center gap-3 px-3 py-2.5 hover:bg-white/5 rounded-lg transition-colors text-white"
-                    >
-                      <CreditCard className="w-4 h-4 text-[#B0BEC5]" />
-                      Billing
                     </button>
                   </div>
 

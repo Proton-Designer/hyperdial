@@ -45,7 +45,7 @@ source_hash: 0388cf2fab8c2f4385c37c045bcd52d5f426fb8b71680110776816f0c605c799
 
 **RLS helpers**, schema `private` (not API-exposed — `authenticated` needs an explicit `GRANT USAGE ON SCHEMA private`; a non-`public` schema does not inherit `public`'s default grant, see `mem.lessons`): `private.is_org_member(org)`, `private.has_org_role(org, roles[])`, plus single-purpose cross-table lookups (`campaign_org_id`, `contact_org_id`, `agent_assigned_to_campaign`, `agent_has_contact_access`) used *inside other tables'* policies. All SECURITY DEFINER, STABLE, `search_path = ''`. **Every one exists to avoid RLS recursion**: an inline subquery on another RLS-protected table, used inside a policy, can cycle with that table's own policy (`infinite recursion detected in policy for relation ...`) — reproduced building the RLS test suite, see `mem.decisions`/`mem.lessons`. **Never write an inline cross-table `EXISTS` in a new policy** — add a `private.*` helper.
 
-**New-signup trigger** `public.handle_new_user()`: no `invite_token` in signup metadata → `private.ensure_org_for_user()` creates an org (named from `company_name`, else the email domain, else `'My Team'`), an owner membership, and the profile. `invite_token` present → only the profile is created; `accept-invite` (TASK-P1-02) is expected to add the `org_members` row.
+**New-signup trigger** `public.handle_new_user()`: no `invite_token` in signup metadata → `private.ensure_org_for_user()` creates an org (named from `company_name`, else the email domain, else `'My Team'`), an owner membership, and the profile. `invite_token` present → only the profile is created; `org-invite-accept` (TASK-P1-03) adds the `org_members` row and sets `active_org_id`. As of TASK-P1-03, `private.ensure_org_for_user`'s `EXECUTE` is revoked from `public`/`authenticated` (`20260924000600`) — it only ever runs from inside the SECURITY DEFINER trigger, which calls it as the owning role regardless of the grant; leaving it open let any signed-in user invoke it directly via `.rpc()`.
 
 ## Key concepts
 
@@ -66,6 +66,7 @@ source_hash: 0388cf2fab8c2f4385c37c045bcd52d5f426fb8b71680110776816f0c605c799
 | Browser session | `apps/web/src/contexts/AuthContext.tsx` — `getSession` + `onAuthStateChange` (`:34-50`) |
 | Sign-up UI | `apps/web/src/components/AuthScreen.tsx` — collects `first_name`, `last_name`, `company_name` into `auth.users.raw_user_meta_data` (no profiles table) (`:45-58`) |
 | Header attachment | `apps/web/src/lib/api.ts:36-49` — `getEdgeFunctionHeaders()`, also sets `X-Org-Id` via `getActiveOrgId()` (`:20-30`) · org+role check: `_shared/auth.ts:71` `requireOrgRole` |
+| Invite/team functions | `supabase/functions/org-invite-create`, `org-invite-accept`, `org-members` (TASK-P1-03) |
 
 ## How it works
 
@@ -78,8 +79,11 @@ source_hash: 0388cf2fab8c2f4385c37c045bcd52d5f426fb8b71680110776816f0c605c799
    `contacts-import`/`-parse-csv`, `dashboard-stats`, `team-performance` and `ensure-week-summary` call `requireOrgRole(req, roles)` instead (wraps `getUserFromRequest`, resolves `orgId`/`role`
    from `org_members` via header `X-Org-Id` or `profiles.active_org_id`, 403s outside `roles`) and filter every query by `org_id`. `telnyx-*`/`dialer-*` (10 functions) still hand-filter by `user_id`
    only — eng2/Phase 2. Client writes (`api.ts`: `createContact`, `createCampaign`, `addLeadsToCampaign`) now set `org_id` too — it has no DB default and is `NOT NULL` as of TASK-P1-01.
+5. **Invite / team management (TASK-P1-03)** — `org-invite-create` (`requireOrgRole(['owner','admin'])`) stores only a SHA-256 hash of a random token, returning the raw token once. `org-invite-accept`
+   GETs an unauthenticated preview (re-hashes the caller's token, never trusts a client-supplied hash) and POSTs the accept behind `getUserFromRequest` (no org yet, so not `requireOrgRole`), rejecting
+   an accepting email that doesn't case-insensitively match the invite. `org-members` re-implements owner-immutability in app code since its service-role client bypasses the RLS that enforces it.
 
-## Authorization matrix (all 16 functions)
+## Authorization matrix (all 19 functions)
 
 | Function | Gateway | In-function | Net |
 |---|---|---|---|
@@ -89,16 +93,14 @@ source_hash: 0388cf2fab8c2f4385c37c045bcd52d5f426fb8b71680110776816f0c605c799
 | `dashboard-stats`, `ensure-week-summary` | false | `requireOrgRole(['owner','admin','agent'])`, own-`user_id` only | guarded |
 | `team-performance` | false | `requireOrgRole(['owner','admin','agent'])`; owner/admin org-wide, agent own-`user_id` only | guarded |
 | `telnyx-list-numbers`/`-search-numbers`/`-purchase-number`/`-webrtc-credentials` | false | `:9`/`:8`/`:9`/`:8` | guarded |
+| `org-invite-create`, `org-members` (POST) | false | `requireOrgRole(['owner','admin'])` | guarded + role-gated |
+| `org-members` (GET) | false | `requireOrgRole(['owner','admin','agent'])` | guarded |
+| `org-invite-accept` | false | GET: none (token-hash lookup only); POST: `getUserFromRequest` + email match | guarded (POST) / intentionally open (GET preview) |
 | **`telnyx-webhook`** | false | **none** | **unauthenticated** |
 
 `telnyx-webhook` has neither layer, and its `verifySignature()` **fails open on two paths** (`supabase/functions/telnyx-webhook/index.ts:33-46`) — see `.brain/memory/known-issues.md`
 #0. **Treat it as fully unauthenticated**: it holds a service-role client and drives the
 dial loop.
-
-**Done as of TASK-P1-02:** `requireOrgRole(req, roles)` exists (`_shared/auth.ts:71`), scoping the five functions above. Signature takes only `roles` (org resolves internally, then returns) — the
-design doc's `requireOrgRole(req, orgId, roles)` was corrected to match, see `mem.decisions`. Queries `org_members` directly, not `private.is_org_member`/`has_org_role`: those are unreachable from
-a service-role function (`private` isn't PostgREST-exposed, `service_role` lacks schema `USAGE` — found reviewing TASK-P1-05, `mem.known-issues` #0c) and unneeded anyway, since a service-role
-client already bypasses `org_members`' RLS. `telnyx-*`/`dialer-*` stay `user_id`-only — eng2's lane, Phase 2.
 
 ## Per-table RLS inventory
 
@@ -111,8 +113,8 @@ are the deliberate exceptions: personal, not org-shared (see `20260924000300`'s 
 |---|---|
 | `orgs` | SELECT `is_org_member`; UPDATE/DELETE `has_org_role([owner])`. No client INSERT — orgs are created only by the signup trigger / backfill. |
 | `org_members` | SELECT `is_org_member`; INSERT/UPDATE/DELETE `has_org_role([owner,admin]) AND role <> 'owner'` — admins manage non-owner rows only; ownership transfer is not built. |
-| `org_invites` | SELECT/INSERT/UPDATE/DELETE, all `has_org_role([owner,admin])`. |
-| `profiles` | SELECT/INSERT/UPDATE, all `user_id = auth.uid()`. Personal; no cross-user policy — team-roster lookups go through an Edge Function (TASK-P1-02), not raw SELECT. |
+| `org_invites` | SELECT/INSERT/UPDATE/DELETE `has_org_role([owner,admin])`; INSERT/UPDATE additionally `role <> 'owner'` (`20260924000600`, TASK-P1-03) — an invite can never grant ownership. |
+| `profiles` | SELECT: own row, **or** (TASK-P1-03) any org co-member's, via `private.shares_org_with` — team-roster name lookups now go through RLS directly, not just an Edge Function. INSERT `user_id = auth.uid()`. UPDATE `user_id = auth.uid()` **and** (TASK-P1-03) `active_org_id is null or private.is_org_member(active_org_id)` — re-checked on *every* self-update, so a disabled member can't edit even unrelated fields until `active_org_id` is cleared or they're re-enabled; see `mem.known-issues`. |
 | `campaign_agents` | SELECT `is_org_member`; INSERT/DELETE `has_org_role([owner,admin])`. A `BEFORE INSERT/UPDATE` trigger (`private.check_campaign_agent_org`) rejects an `org_id` that doesn't match the campaign's own `org_id`, even when the caller legitimately owns the claimed `org_id` (a different org) — RLS alone would have let that through. |
 | `campaigns` | SELECT `is_org_member` (any role); INSERT/UPDATE/DELETE `has_org_role([owner,admin])`. |
 | `campaign_leads` | SELECT: owner/admin see all, agent sees only leads on a campaign they're assigned to (`campaign_agents`). INSERT `has_org_role([owner,admin])` **and** both `campaign_id` and `contact_id` verified to belong to the same `org_id` — fixes the auth.md finding that the old policy only checked campaign ownership, never the contact's. UPDATE/DELETE `has_org_role([owner,admin])`. |
@@ -131,7 +133,6 @@ are the deliberate exceptions: personal, not org-shared (see `20260924000300`'s 
 - **A new function needs BOTH.** No `[functions.<name>]` block → silently inherits `verify_jwt = true`; a `false` block with no `getUserFromRequest` call → wide open.
 - **`getUserFromRequest` round-trips to GoTrue every request** (`:20-27`), adding auth latency on the dial loop's critical path.
 - **Service-role clients bypass RLS entirely** — the guard is hand-written scoping, and omitting it is a silent cross-tenant read with no second layer to catch it.
-- **Fixed as of TASK-P1-01:** `campaign_leads` INSERT used to check only campaign ownership, never the contact's; the rewritten policy (`20260924000300`) verifies both belong to the claimed `org_id`.
 - **`notifications` UPDATE has `USING` but no `WITH CHECK`; verified fine** (Postgres falls back to `USING`). No INSERT policy by design — writes come only from `ensure-week-summary`'s service-role client.
 - **`call_events.user_id` is nullable** (`20250213000001:4`); a null-`user_id` row is invisible to everyone, not a leak, but orphaned and unreachable.
 - **`Access-Control-Allow-Origin: '*'`** (`supabase/functions/_shared/cors.ts:2`) — safe only because identity is a bearer token, not a cookie.
@@ -145,4 +146,3 @@ Webhook signature mechanics → `.brain/domains/telephony.md`; dial-loop ownersh
 ## Unverified
 
 - **Whether production matches `supabase/config.toml`** — `verify_jwt`/`[auth]` are also settable in the hosted dashboard and can diverge; local migrations may lag the deployed schema.
-- No password-reset flow was found; "Forgot password?" (`AuthScreen.tsx:333`) appears non-functional, inferred from the absence of a handler.

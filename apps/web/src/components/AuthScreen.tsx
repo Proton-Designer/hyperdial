@@ -10,7 +10,11 @@ interface AuthScreenProps {
 }
 
 export function AuthScreen({ mode, onToggleMode }: AuthScreenProps) {
-  const { signUp, signIn, error, clearError, loading } = useAuth();
+  const { signUp, signIn, requestPasswordReset, error, clearError, loading } = useAuth();
+  const [showForgotPassword, setShowForgotPassword] = useState(false);
+  const [forgotEmail, setForgotEmail] = useState('');
+  const [forgotSent, setForgotSent] = useState(false);
+  const [forgotSubmitting, setForgotSubmitting] = useState(false);
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [email, setEmail] = useState('');
@@ -61,6 +65,20 @@ export function AuthScreen({ mode, onToggleMode }: AuthScreenProps) {
       // Error is set in AuthContext
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const handleForgotPasswordSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    clearError();
+    setForgotSubmitting(true);
+    try {
+      await requestPasswordReset(forgotEmail);
+      setForgotSent(true);
+    } catch {
+      // Error is set in AuthContext
+    } finally {
+      setForgotSubmitting(false);
     }
   };
 
@@ -156,7 +174,83 @@ export function AuthScreen({ mode, onToggleMode }: AuthScreenProps) {
 
           {/* Card */}
           <div className="bg-[#1A2332]/60 backdrop-blur-xl rounded-2xl p-8 shadow-[0_4px_24px_rgba(0,102,255,0.15)] border border-white/5">
-            {showConfirmationMessage ? (
+            {showForgotPassword ? (
+              forgotSent ? (
+                <>
+                  <div className="flex justify-center mb-6">
+                    <div className="w-14 h-14 rounded-full bg-[#00E676]/20 flex items-center justify-center">
+                      <CheckCircle className="w-8 h-8 text-[#00E676]" />
+                    </div>
+                  </div>
+                  <h2 className="text-2xl font-bold text-white mb-2 text-center">
+                    Check your email
+                  </h2>
+                  <p className="text-sm text-[#B0BEC5] mb-8 text-center">
+                    If an account exists for{' '}
+                    <span className="text-white font-medium">{forgotEmail}</span>, a password reset
+                    link has been sent.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowForgotPassword(false);
+                      setForgotSent(false);
+                    }}
+                    className="w-full h-12 bg-gradient-to-r from-[#00D9FF] to-[#0066FF] rounded-xl text-white font-semibold flex items-center justify-center gap-2"
+                  >
+                    <span>Back to sign in</span>
+                    <ArrowRight className="w-5 h-5" />
+                  </button>
+                </>
+              ) : (
+                <>
+                  <h2 className="text-3xl font-bold text-white mb-2">Reset your password</h2>
+                  <p className="text-sm text-[#B0BEC5] mb-8">
+                    Enter your email and we'll send you a reset link.
+                  </p>
+                  {error && (
+                    <div className="mb-5 p-3 rounded-xl bg-red-500/10 border border-red-500/30 text-red-400 text-sm">
+                      {error}
+                    </div>
+                  )}
+                  <form onSubmit={handleForgotPasswordSubmit} className="space-y-5">
+                    <div>
+                      <label className="block text-xs text-[#B0BEC5] mb-2 ml-1">Email</label>
+                      <div className="relative">
+                        <Mail className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-[#B0BEC5]" />
+                        <input
+                          type="email"
+                          value={forgotEmail}
+                          onChange={(e) => setForgotEmail(e.target.value)}
+                          className="w-full bg-[#1E2A3A] border border-white/10 rounded-xl pl-12 pr-4 py-3.5 text-white placeholder-[#B0BEC5]/50 focus:outline-none focus:border-[#00D9FF] transition-colors"
+                          placeholder="you@company.com"
+                          required
+                        />
+                      </div>
+                    </div>
+                    <button
+                      type="submit"
+                      disabled={forgotSubmitting}
+                      className="w-full h-12 bg-gradient-to-r from-[#00D9FF] to-[#0066FF] rounded-xl text-white font-semibold flex items-center justify-center gap-2 disabled:opacity-60"
+                    >
+                      <span>{forgotSubmitting ? 'Sending…' : 'Send reset link'}</span>
+                    </button>
+                  </form>
+                  <div className="mt-6 text-center">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        clearError();
+                        setShowForgotPassword(false);
+                      }}
+                      className="text-sm text-[#00D9FF] hover:underline font-semibold"
+                    >
+                      Back to sign in
+                    </button>
+                  </div>
+                </>
+              )
+            ) : showConfirmationMessage ? (
               <>
                 <div className="flex justify-center mb-6">
                   <div className="w-14 h-14 rounded-full bg-[#00E676]/20 flex items-center justify-center">
@@ -329,9 +423,17 @@ export function AuthScreen({ mode, onToggleMode }: AuthScreenProps) {
                           Remember me
                         </span>
                       </label>
-                      <a href="#" className="text-sm text-[#00D9FF] hover:underline">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          clearError();
+                          setForgotEmail(email);
+                          setShowForgotPassword(true);
+                        }}
+                        className="text-sm text-[#00D9FF] hover:underline"
+                      >
                         Forgot password?
-                      </a>
+                      </button>
                     </div>
                   )}
 

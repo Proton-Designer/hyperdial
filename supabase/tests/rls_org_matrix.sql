@@ -251,6 +251,17 @@ select public._test_expect_affected('org_members/admin-a cannot demote the owner
 select public._test_expect_affected('org_members/admin-a can disable the agent',
   format('update public.org_members set status = %L where org_id = %L and user_id = %L', 'disabled', :'org_a', '9c1f7a11-a000-4000-8000-00000000000c'), 1);
 
+-- Restore agent-a to active (TASK-P1-03): the profiles.active_org_id WITH CHECK added below now
+-- re-validates active_org_id's membership via private.is_org_member on every UPDATE to a profile
+-- row, including ones that don't touch active_org_id -- so a disabled member fails WITH CHECK on
+-- any self-update while their org_members row stays disabled. That's real, intended behavior (see
+-- this task's log), but it would otherwise make the pre-existing "profiles/agent-a can update own
+-- profile" test below fail as a side effect of this test having just disabled them, not because
+-- of anything that test is actually checking.
+reset role;
+update public.org_members set status = 'active'
+  where org_id = :'org_a' and user_id = '9c1f7a11-a000-4000-8000-00000000000c';
+
 -- orgs: only the owner can rename the org.
 reset role;
 set local role authenticated;
@@ -272,6 +283,78 @@ select public._test_expect_affected('profiles/agent-a can update own profile',
   format('update public.profiles set first_name = %L where user_id = %L', 'Agent', '9c1f7a11-a000-4000-8000-00000000000c'), 1);
 select public._test_expect_affected('profiles/agent-a cannot update admin-a''s profile',
   format('update public.profiles set first_name = %L where user_id = %L', 'Hijacked', '9c1f7a11-a000-4000-8000-00000000000b'), 0);
+
+-- ===========================================================================================
+-- TASK-P1-03 RLS hardening: org_invites role<>'owner', profiles.active_org_id membership check,
+-- and co-member profile visibility (20260924000600).
+-- ===========================================================================================
+
+-- org_invites: neither admin nor owner can create/update an invite claiming role='owner' --
+-- ownership transfer is a separate, not-yet-built owner-only path, never an invite grant.
+reset role;
+set local role authenticated;
+select set_config('request.jwt.claims', '{"sub":"9c1f7a11-a000-4000-8000-00000000000b","role":"authenticated"}', true);
+select public._test_expect_insert_denied('org_invites/admin-a cannot create an owner-role invite',
+  format('insert into public.org_invites (org_id, email, role, token_hash, invited_by, expires_at) values (%L, %L, %L, %L, %L, now() + interval ''7 days'')',
+    :'org_a', 'hijack@example.com', 'owner', 'th-admin-owner-attempt', '9c1f7a11-a000-4000-8000-00000000000b'));
+
+reset role;
+set local role authenticated;
+select set_config('request.jwt.claims', '{"sub":"9c1f7a11-a000-4000-8000-00000000000a","role":"authenticated"}', true);
+select public._test_expect_insert_denied('org_invites/owner-a cannot create an owner-role invite either',
+  format('insert into public.org_invites (org_id, email, role, token_hash, invited_by, expires_at) values (%L, %L, %L, %L, %L, now() + interval ''7 days'')',
+    :'org_a', 'hijack2@example.com', 'owner', 'th-owner-owner-attempt', '9c1f7a11-a000-4000-8000-00000000000a'));
+
+select public._test_expect_insert_ok('org_invites/owner-a can create an admin-role invite',
+  format('insert into public.org_invites (org_id, email, role, token_hash, invited_by, expires_at) values (%L, %L, %L, %L, %L, now() + interval ''7 days'')',
+    :'org_a', 'new-admin@example.com', 'admin', 'th-owner-admin-ok', '9c1f7a11-a000-4000-8000-00000000000a'));
+
+-- Existing invite row (org A, role admin) used below to prove UPDATE also rejects role='owner'.
+select id as invite_a from public.org_invites where token_hash = 'th-owner-admin-ok' \gset
+
+-- The existing row (role=admin) passes UPDATE's USING clause fine (owner-a is owner of org A),
+-- so this is WITH CHECK rejecting the *new* row's role='owner' -- Postgres raises
+-- insufficient_privilege here rather than silently affecting 0 rows (that silent-skip behavior
+-- only happens when USING itself already excludes the row -- see the org_members admin-a/owner
+-- case above, where the row's *current* role='owner' fails USING before WITH CHECK is even
+-- reached).
+select public._test_expect_insert_denied('org_invites/owner-a cannot escalate an existing invite to role=owner via UPDATE',
+  format('update public.org_invites set role = %L where id = %L', 'owner', :'invite_a'));
+
+-- profiles.active_org_id: can only be set to an org the caller actually belongs to. Same
+-- USING-passes-but-WITH-CHECK-fails shape as above: agent-a's own row always passes USING
+-- (user_id = auth.uid()), so an invalid active_org_id raises insufficient_privilege, not a
+-- silent 0-row update.
+reset role;
+set local role authenticated;
+select set_config('request.jwt.claims', '{"sub":"9c1f7a11-a000-4000-8000-00000000000c","role":"authenticated"}', true);
+select public._test_expect_insert_denied('profiles/agent-a cannot set active_org_id to org B (not a member)',
+  format('update public.profiles set active_org_id = %L where user_id = %L', :'org_b', '9c1f7a11-a000-4000-8000-00000000000c'));
+select public._test_expect_affected('profiles/agent-a can set active_org_id to org A (real membership)',
+  format('update public.profiles set active_org_id = %L where user_id = %L', :'org_a', '9c1f7a11-a000-4000-8000-00000000000c'), 1);
+
+-- Co-member profile visibility (team roster): admin-a can read agent-a's name; owner-b (no
+-- shared org) still cannot -- this repeats the existing owner-b/profiles negative check above,
+-- now proving the new policy didn't accidentally widen it.
+reset role;
+set local role authenticated;
+select set_config('request.jwt.claims', '{"sub":"9c1f7a11-a000-4000-8000-00000000000b","role":"authenticated"}', true);
+select public._test_expect_count('profiles/admin-a sees co-member agent-a''s profile (team roster)',
+  'select count(*) from public.profiles where user_id = ''9c1f7a11-a000-4000-8000-00000000000c''', 1);
+
+reset role;
+set local role authenticated;
+select set_config('request.jwt.claims', '{"sub":"9c1f7a11-b000-4000-8000-00000000000a","role":"authenticated"}', true);
+select public._test_expect_count('profiles/owner-b (no shared org) still does NOT see agent-a''s profile',
+  'select count(*) from public.profiles where user_id = ''9c1f7a11-a000-4000-8000-00000000000c''', 0);
+
+-- private.ensure_org_for_user: revoked from authenticated -- direct .rpc()-style call denied.
+-- NOTE: do not provoke this as an actual EXECUTE-permission error -- calling a function as a role
+-- with no EXECUTE grant segfaults this local Postgres image (mem.lessons). Assert the grant state
+-- instead of the call.
+reset role;
+select public._test_expect_count('private.ensure_org_for_user/authenticated has no EXECUTE (revoked, TASK-P1-03)',
+  $q$select count(*) from (select has_function_privilege('authenticated', 'private.ensure_org_for_user(uuid)', 'EXECUTE') as ok) s where ok = false$q$, 1);
 
 reset role;
 do $$ begin raise notice 'ALL RLS MATRIX ASSERTIONS PASSED'; end $$;

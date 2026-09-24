@@ -8,6 +8,11 @@ export interface SignUpInput {
   firstName: string;
   lastName: string;
   companyName: string;
+  /** Present only on the invite-accept signup path (TASK-P1-03). When set, the
+   * on_auth_user_created trigger creates just a profile -- no new org -- so the invite can be
+   * accepted into the inviting org instead. See supabase/migrations/20260924000100's trigger
+   * comment for the full contract. */
+  inviteToken?: string;
 }
 
 interface AuthContextValue {
@@ -19,6 +24,13 @@ interface AuthContextValue {
   signUp: (input: SignUpInput) => Promise<{ emailConfirmationSent: boolean }>;
   signIn: (email: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
+  requestPasswordReset: (email: string) => Promise<void>;
+  updatePassword: (newPassword: string) => Promise<void>;
+  /** True from the moment supabase-js detects a password-recovery link in the URL until the
+   * user either sets a new password or signs out. App.tsx uses this to show the reset screen
+   * instead of the normal signed-in app, even though a recovery link does carry a real session. */
+  passwordRecovery: boolean;
+  clearPasswordRecovery: () => void;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -28,8 +40,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [passwordRecovery, setPasswordRecovery] = useState(false);
 
   const clearError = useCallback(() => setError(null), []);
+  const clearPasswordRecovery = useCallback(() => setPasswordRecovery(false), []);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -40,10 +54,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
+    } = supabase.auth.onAuthStateChange((event, session) => {
       setSession(session);
       setUser(session?.user ?? null);
       setLoading(false);
+      // Supabase-js fires this when it parses a `type=recovery` link from the URL fragment on
+      // load -- the session it creates is real, but the user hasn't chosen a new password yet
+      // and shouldn't land in the normal app until they do.
+      if (event === 'PASSWORD_RECOVERY') setPasswordRecovery(true);
     });
 
     return () => subscription.unsubscribe();
@@ -59,6 +77,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           first_name: input.firstName,
           last_name: input.lastName,
           company_name: input.companyName,
+          ...(input.inviteToken ? { invite_token: input.inviteToken } : {}),
         },
       },
     });
@@ -95,6 +114,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await supabase.auth.signOut();
   }, []);
 
+  const requestPasswordReset = useCallback(async (email: string) => {
+    setError(null);
+    const { error: resetError } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: window.location.origin,
+    });
+    if (resetError) {
+      setError(resetError.message);
+      throw resetError;
+    }
+  }, []);
+
+  const updatePassword = useCallback(async (newPassword: string) => {
+    setError(null);
+    const { error: updateError } = await supabase.auth.updateUser({ password: newPassword });
+    if (updateError) {
+      setError(updateError.message);
+      throw updateError;
+    }
+  }, []);
+
   const value: AuthContextValue = {
     user,
     session,
@@ -104,6 +143,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     signUp,
     signIn,
     signOut,
+    requestPasswordReset,
+    updatePassword,
+    passwordRecovery,
+    clearPasswordRecovery,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

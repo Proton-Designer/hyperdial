@@ -387,6 +387,13 @@ verify_jwt = false
 [functions.contacts-import]
 verify_jwt = false
 
+[functions.org-invite-create]
+verify_jwt = false
+[functions.org-invite-accept]
+verify_jwt = false
+[functions.org-members]
+verify_jwt = false
+
 # Parallel dialer (auth required except webhook)
 [functions.dialer-session-start]
 verify_jwt = false
