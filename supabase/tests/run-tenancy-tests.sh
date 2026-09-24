@@ -13,7 +13,7 @@
 # on the shared local stack.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-EMPTY="${TMPDIR:-/tmp}/softdial-supabase-empty"
+EMPTY="${TMPDIR:-/tmp}/hyperdial-supabase-empty"
 DB="postgresql://postgres:postgres@127.0.0.1:54322/postgres"
 LEGACY_ORDER=(20250214000001 20250207000001 20250207100000 20250208000001 20250213000001 20260207000100 20260208000001)
 

@@ -842,7 +842,7 @@ async function handleWin(
   try {
     if (!conferenceId) {
       const conference = await client.createConference({
-        name: `softdial-session-${session.id}`,
+        name: `hyperdial-session-${session.id}`,
         connectionId: callControlAppId,
         agentCallControlId: winnerLeg.call_control_id,
       });

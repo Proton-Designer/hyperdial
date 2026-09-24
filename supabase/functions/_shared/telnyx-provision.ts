@@ -45,9 +45,9 @@ export function resourceNamesForOrg(orgId: string): {
   credentialConnection: string;
 } {
   return {
-    outboundVoiceProfile: `softdial-org-${orgId}`,
-    callControlApplication: `softdial-org-${orgId}`,
-    credentialConnection: `softdial-org-${orgId}-webrtc`,
+    outboundVoiceProfile: `hyperdial-org-${orgId}`,
+    callControlApplication: `hyperdial-org-${orgId}`,
+    credentialConnection: `hyperdial-org-${orgId}-webrtc`,
   };
 }
 
@@ -114,7 +114,7 @@ export async function provisionTelnyxOrg(
   }
   if (!credentialConnectionId) {
     const conn = await client.createCredentialConnection({
-      userName: `softdial_${args.orgId.replace(/-/g, '')}`,
+      userName: `hyperdial_${args.orgId.replace(/-/g, '')}`,
       password: crypto.randomUUID().replace(/-/g, ''),
       connectionName: names.credentialConnection,
     });

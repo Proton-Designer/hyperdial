@@ -206,8 +206,8 @@ Deno.test(
       return new Response(
         JSON.stringify({
           data: [
-            { id: 'ovp-other', name: 'softdial-org-abc-extra' },
-            { id: 'ovp-1', name: 'softdial-org-abc' },
+            { id: 'ovp-other', name: 'hyperdial-org-abc-extra' },
+            { id: 'ovp-1', name: 'hyperdial-org-abc' },
           ],
         }),
         { status: 200 }
@@ -215,12 +215,12 @@ Deno.test(
     });
     try {
       const client = createTelnyxClient('test-api-key');
-      const found = await client.findOutboundVoiceProfileByName('softdial-org-abc');
+      const found = await client.findOutboundVoiceProfileByName('hyperdial-org-abc');
       assertEquals(
         seenUrl,
-        'https://api.telnyx.com/v2/outbound_voice_profiles?filter[name][contains]=softdial-org-abc'
+        'https://api.telnyx.com/v2/outbound_voice_profiles?filter[name][contains]=hyperdial-org-abc'
       );
-      assertEquals(found, { id: 'ovp-1', name: 'softdial-org-abc' });
+      assertEquals(found, { id: 'ovp-1', name: 'hyperdial-org-abc' });
     } finally {
       restore();
     }
@@ -233,7 +233,7 @@ Deno.test(
     const restore = stubFetch(
       () =>
         new Response(
-          JSON.stringify({ data: [{ id: 'ovp-other', name: 'softdial-org-abc-extra' }] }),
+          JSON.stringify({ data: [{ id: 'ovp-other', name: 'hyperdial-org-abc-extra' }] }),
           {
             status: 200,
           }
@@ -241,7 +241,7 @@ Deno.test(
     );
     try {
       const client = createTelnyxClient('test-api-key');
-      const found = await client.findOutboundVoiceProfileByName('softdial-org-abc');
+      const found = await client.findOutboundVoiceProfileByName('hyperdial-org-abc');
       assertEquals(found, null);
     } finally {
       restore();
@@ -256,18 +256,18 @@ Deno.test(
     const restore = stubFetch((url) => {
       seenUrl = url;
       return new Response(
-        JSON.stringify({ data: [{ id: 'app-1', application_name: 'softdial-org-abc' }] }),
+        JSON.stringify({ data: [{ id: 'app-1', application_name: 'hyperdial-org-abc' }] }),
         { status: 200 }
       );
     });
     try {
       const client = createTelnyxClient('test-api-key');
-      const found = await client.findCallControlApplicationByName('softdial-org-abc');
+      const found = await client.findCallControlApplicationByName('hyperdial-org-abc');
       assertEquals(
         seenUrl,
-        'https://api.telnyx.com/v2/call_control_applications?filter[application_name][contains]=softdial-org-abc'
+        'https://api.telnyx.com/v2/call_control_applications?filter[application_name][contains]=hyperdial-org-abc'
       );
-      assertEquals(found, { id: 'app-1', application_name: 'softdial-org-abc' });
+      assertEquals(found, { id: 'app-1', application_name: 'hyperdial-org-abc' });
     } finally {
       restore();
     }
@@ -281,18 +281,18 @@ Deno.test(
     const restore = stubFetch((url) => {
       seenUrl = url;
       return new Response(
-        JSON.stringify({ data: [{ id: 'cred-1', connection_name: 'softdial-org-abc-webrtc' }] }),
+        JSON.stringify({ data: [{ id: 'cred-1', connection_name: 'hyperdial-org-abc-webrtc' }] }),
         { status: 200 }
       );
     });
     try {
       const client = createTelnyxClient('test-api-key');
-      const found = await client.findCredentialConnectionByName('softdial-org-abc-webrtc');
+      const found = await client.findCredentialConnectionByName('hyperdial-org-abc-webrtc');
       assertEquals(
         seenUrl,
-        'https://api.telnyx.com/v2/credential_connections?filter[connection_name]=softdial-org-abc-webrtc'
+        'https://api.telnyx.com/v2/credential_connections?filter[connection_name]=hyperdial-org-abc-webrtc'
       );
-      assertEquals(found, { id: 'cred-1', connection_name: 'softdial-org-abc-webrtc' });
+      assertEquals(found, { id: 'cred-1', connection_name: 'hyperdial-org-abc-webrtc' });
     } finally {
       restore();
     }
@@ -306,18 +306,18 @@ Deno.test(
     const restore = stubFetch((url) => {
       seenUrl = url;
       return new Response(
-        JSON.stringify({ data: [{ id: 'tc-1', name: 'softdial-member-org-1-user-1' }] }),
+        JSON.stringify({ data: [{ id: 'tc-1', name: 'hyperdial-member-org-1-user-1' }] }),
         { status: 200 }
       );
     });
     try {
       const client = createTelnyxClient('test-api-key');
-      const found = await client.findTelephonyCredentialByName('softdial-member-org-1-user-1');
+      const found = await client.findTelephonyCredentialByName('hyperdial-member-org-1-user-1');
       assertEquals(
         seenUrl,
-        'https://api.telnyx.com/v2/telephony_credentials?filter[name]=softdial-member-org-1-user-1'
+        'https://api.telnyx.com/v2/telephony_credentials?filter[name]=hyperdial-member-org-1-user-1'
       );
-      assertEquals(found, { id: 'tc-1', name: 'softdial-member-org-1-user-1' });
+      assertEquals(found, { id: 'tc-1', name: 'hyperdial-member-org-1-user-1' });
     } finally {
       restore();
     }

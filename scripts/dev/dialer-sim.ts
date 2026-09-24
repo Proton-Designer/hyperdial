@@ -54,7 +54,7 @@ import { createClient } from 'npm:@supabase/supabase-js@2';
 const MOCK_PORT = 9911;
 const MOCK_BASE = `http://127.0.0.1:${MOCK_PORT}`;
 // `supabase functions serve` runs the edge runtime inside its own Docker container (confirmed
-// live: `docker ps` shows supabase_edge_runtime_Softdial), so "127.0.0.1" from inside it means
+// live: `docker ps` shows supabase_edge_runtime_HyperDial), so "127.0.0.1" from inside it means
 // the CONTAINER's own loopback, not the host's -- found live as an immediate "Connection
 // refused" on every dial the moment refillSession actually tried to call the mock. Docker
 // Desktop's host.docker.internal resolves to the host machine from inside any container; the

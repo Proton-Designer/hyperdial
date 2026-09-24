@@ -28,9 +28,9 @@ Deno.test(
       email: 'jane@example.com',
       phone: '+15551234567',
       timezone: 'America/New_York',
-      tags: ['softdial-import'],
+      tags: ['hyperdial-import'],
       dnd: false,
-      source: 'softdial',
+      source: 'hyperdial',
     });
     assertEquals(payload, {
       locationId: 'loc-1',
@@ -39,9 +39,9 @@ Deno.test(
       email: 'jane@example.com',
       phone: '+15551234567',
       timezone: 'America/New_York',
-      tags: ['softdial-import'],
+      tags: ['hyperdial-import'],
       dnd: false,
-      source: 'softdial',
+      source: 'hyperdial',
     });
   }
 );

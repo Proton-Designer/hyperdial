@@ -71,9 +71,9 @@ function makeMockClient(overrides: Partial<TelnyxClient> = {}): {
 
 Deno.test('resourceNamesForOrg / webhookUrlForOrg: stable, org-scoped names and URL', () => {
   assertEquals(resourceNamesForOrg(ORG_ID), {
-    outboundVoiceProfile: 'softdial-org-org-123',
-    callControlApplication: 'softdial-org-org-123',
-    credentialConnection: 'softdial-org-org-123-webrtc',
+    outboundVoiceProfile: 'hyperdial-org-org-123',
+    callControlApplication: 'hyperdial-org-org-123',
+    credentialConnection: 'hyperdial-org-org-123-webrtc',
   });
   assertEquals(
     webhookUrlForOrg(WEBHOOK_BASE, ORG_ID),

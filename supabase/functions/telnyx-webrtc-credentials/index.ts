@@ -29,7 +29,7 @@ function jsonResponse(body: unknown, status = 200): Response {
 }
 
 function memberCredentialName(orgId: string, userId: string): string {
-  return `softdial-member-${orgId}-${userId}`;
+  return `hyperdial-member-${orgId}-${userId}`;
 }
 
 async function getOrCreateMemberCredentialId(
