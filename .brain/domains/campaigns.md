@@ -25,8 +25,8 @@ answers:
   - "how are campaigns and campaign_leads scoped per user"
 covers: "The campaigns and campaign_leads tables, the campaigns_with_stats view, the campaign CRUD surface in the web client, and the handoff from a campaign to a parallel dial session."
 excludes: "Contact records and CSV import mechanics (.brain/domains/contacts.md) and everything after the session row is inserted — batching, AMD, call_logs (.brain/domains/dialer.md)."
-tokens_est: 2910
-source_hash: 6b60bc657d3aec935eac9e4bb25818e47c437a57b9fe5388102d507f41ba04c8
+tokens_est: 3082
+source_hash: 2c57cd8c86631d8b6453ec0f53afce5491c96fe662b7b3105c01e61b2b3c8851
 ---
 
 # Campaigns

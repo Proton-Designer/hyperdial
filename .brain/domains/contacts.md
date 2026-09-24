@@ -26,8 +26,8 @@ answers:
   - "what happens when part of an import fails"
 covers: "The contacts table, two-step CSV import, phone normalisation and de-duplication, the category/contact_status labels, and single-contact create/delete."
 excludes: "Per-call state (call_status, call_count, last_called_at) written by the dial loop — see domain.dialer. Campaign membership — see domain.campaigns."
-tokens_est: 2385
-source_hash: bbd146f8e7a885098a76beadd12fa95824ca7af18974848ad194b2e0afacb26a
+tokens_est: 2404
+source_hash: f83bac5524f84c345a5145b899f113df07ccc8676fcb74b38fc615b77f2bd755
 ---
 
 # Contacts

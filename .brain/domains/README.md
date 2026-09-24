@@ -11,7 +11,7 @@ answers:
   - "which domain owns X"
 covers: "What qualifies as a domain, how to write one, shared vs. local domain content"
 excludes: "The domains themselves (see each domain's own .brain/domains/*.md)"
-tokens_est: 859
+tokens_est: 905
 ---
 
 # `.brain/domains/`
@@ -31,6 +31,7 @@ questions code was never the right source for.
 | [Campaigns](/.brain/domains/campaigns.md) | Campaigns, leads, and the handoff into a dial session | `apps/web/src/components/campaigns/` | maintainer |
 | [Auth & Access Control](/.brain/domains/auth.md) | Supabase auth, the two authorization layers, RLS policies | `supabase/functions/_shared/auth.ts` | maintainer |
 | [Analytics & Notifications](/.brain/domains/analytics.md) | Dashboard aggregates, call events, week summaries, notifications | `supabase/functions/dashboard-stats/` | maintainer |
+| [CRM Sync (GHL)](/.brain/domains/crm.md) | GHL connect/disconnect, token storage, the crm_sync_jobs push outbox contract | `supabase/functions/ghl-*` | maintainer |
 
 ---
 

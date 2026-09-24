@@ -11,7 +11,7 @@ answers:
   - "where does knowledge live"
 covers: "Index of the whole knowledge base, how to use it, rules for keeping it true"
 excludes: "The content of any single domain or architecture document (see that document itself)"
-tokens_est: 1962
+tokens_est: 1993
 ---
 
 # `.brain/`
@@ -45,6 +45,7 @@ routing table; everything here is one hop down from it.
   - [`domains/campaigns.md`](/.brain/domains/campaigns.md) — campaigns, leads, handoff into a dial session
   - [`domains/auth.md`](/.brain/domains/auth.md) — Supabase auth, the two authorization layers, RLS
   - [`domains/analytics.md`](/.brain/domains/analytics.md) — dashboard aggregates, call events, notifications
+  - [`domains/crm.md`](/.brain/domains/crm.md) — GHL connect/disconnect, token storage, the push outbox contract
 
 **Memory** — what we know that the code does not show
 - [`memory/decisions.md`](memory/decisions.md) — why things are the way they are

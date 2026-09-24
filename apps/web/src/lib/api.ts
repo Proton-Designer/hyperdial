@@ -938,3 +938,50 @@ export async function getActiveDialerSession(): Promise<{
   if (!res.ok) throw new Error(data.error || 'Failed to get active dialer session');
   return data.session ?? null;
 }
+
+// --- GHL integration (TASK-P3-P1) ---
+
+export interface GhlIntegrationStatus {
+  status: 'disconnected' | 'pending_verification' | 'connected' | 'error';
+  location_id: string | null;
+  connected_at: string | null;
+}
+
+/** Reads the safe `org_integrations_status` view -- never the base table, which has no client policies at all. */
+export async function getGhlIntegrationStatus(): Promise<GhlIntegrationStatus | null> {
+  const orgId = await getActiveOrgId();
+  const { data, error } = await supabase
+    .from('org_integrations_status')
+    .select('status, location_id, connected_at')
+    .eq('org_id', orgId)
+    .eq('provider', 'ghl')
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return data as GhlIntegrationStatus | null;
+}
+
+export async function connectGhl(
+  token: string,
+  locationId: string
+): Promise<{ locationId: string; locationName: string }> {
+  const orgId = await getActiveOrgId();
+  const res = await fetch(`${getFunctionsUrl()}/ghl-connect`, {
+    method: 'POST',
+    headers: await getEdgeFunctionHeaders(),
+    body: JSON.stringify({ orgId, token, locationId }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Failed to connect GHL');
+  return { locationId: data.locationId, locationName: data.locationName };
+}
+
+export async function disconnectGhl(): Promise<void> {
+  const orgId = await getActiveOrgId();
+  const res = await fetch(`${getFunctionsUrl()}/ghl-disconnect`, {
+    method: 'POST',
+    headers: await getEdgeFunctionHeaders(),
+    body: JSON.stringify({ orgId }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || 'Failed to disconnect GHL');
+}

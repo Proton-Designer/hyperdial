@@ -28,8 +28,8 @@ answers:
   - "what is the difference between call_logs and call_events"
 covers: "The Dashboard metrics and team-performance chart, the call_events aggregation functions behind them, the Analytics screen's status, the weekly-summary job, and the in-app notification bell."
 excludes: "The dial loop, AMD, and the call_logs state machine that actually records calls — see .brain/domains/dialer.md. Telnyx wiring — see .brain/domains/telephony.md."
-tokens_est: 2746
-source_hash: 35e4e91694a8ec04948d80af7c5c352af8ec5a3c0768a46f30e1ae653d4fd7ea
+tokens_est: 2790
+source_hash: fd602cfb15f0295f191388547ce3972e4e546133468962c5ae114fef967bb935
 ---
 
 # Analytics & Notifications

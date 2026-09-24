@@ -22,7 +22,7 @@ answers:
 covers: "Every command needed to develop, verify, and deploy this repository"
 excludes: "External service configuration (see tool.integrations), environment variables (see docs/reference/environment-variables.md)"
 tokens_est: 1064
-source_hash: 0651b7f319afc588197d0db27eb4513c0499f9f6f33120f3553f05c8f6e07487
+source_hash: 6ee8547a3f26c2ee1345662bc43440e098ee70469500c63d115a41e06dcbff8e
 ---
 
 # Command Registry

@@ -25,7 +25,7 @@ answers:
 covers: "Components, trust boundaries, the dial lifecycle end to end, external dependencies, and where new code belongs"
 excludes: "Per-function detail (see arch.service-map), import rules (see arch.dependency-graph), payload-level flows (see arch.data-flows), per-capability logic (see .brain/domains/)"
 tokens_est: 2080
-source_hash: 96056caa8c656e85e4e0c0c87feaf4c80faa4432241ccd348e515b256a3455e2
+source_hash: 6943b68d0ad78944f975a72e4871033eddd6e5f65b8cdd5b7872bae8b256da52
 ---
 
 # System Overview

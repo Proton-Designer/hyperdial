@@ -25,8 +25,8 @@ answers:
   - "what does PARALLEL_DIALER_ENABLED actually gate"
 covers: "The dial-session engine: batching contacts onto N parallel Telnyx lines, AMD triage, human-answer race resolution, conference bridging, batch advance, and the live UI that mirrors it."
 excludes: "Telnyx API wrappers, number purchase/search and WebRTC credentials (domain.telephony); campaign and lead list construction (domain.campaigns)."
-tokens_est: 2694
-source_hash: 0f098741f482d33c7071123f0390a634f4ac6869b252c9cc38ebae06b474d7e8
+tokens_est: 2898
+source_hash: cd58704ddeaa003cbfd6f4902b4a33795a7e1f60cc17c62194ff17c9350a304c
 ---
 
 # Parallel Dialer

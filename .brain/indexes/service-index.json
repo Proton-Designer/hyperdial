@@ -2,11 +2,11 @@
   "meta": {
     "artifact": "service-index",
     "version": "1.0",
-    "generated_at": "2026-09-21T22:12:07.001Z",
+    "generated_at": "2026-09-24T03:46:02.015Z",
     "target": "/Users/aymanmohammed/Desktop/Softdial",
     "git": {
-      "commit": "f433cc4",
-      "branch": "chore/repo-modernization",
+      "commit": "e954e5d",
+      "branch": "feat/stage-1",
       "dirty": true
     },
     "tool": {
@@ -35,6 +35,19 @@
         "kind": "app",
         "package": "@softdial/web",
         "language": "TypeScript",
+        "entrypoint": null,
+        "owner": null,
+        "doc": null,
+        "depends_on": [],
+        "depended_on_by": [],
+        "external": []
+      },
+      {
+        "name": "scripts",
+        "path": "scripts",
+        "kind": "service",
+        "package": null,
+        "language": "Shell",
         "entrypoint": null,
         "owner": null,
         "doc": null,

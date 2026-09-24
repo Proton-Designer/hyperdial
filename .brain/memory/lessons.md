@@ -16,7 +16,7 @@ answers:
   - "what did previous work get wrong"
 covers: "Non-obvious things learned from working in this repository"
 excludes: "Current defects (see mem.known-issues), the reasoning behind choices (see mem.decisions)"
-tokens_est: 1909
+tokens_est: 2719
 ---
 
 # Lessons

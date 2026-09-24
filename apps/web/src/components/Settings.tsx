@@ -30,7 +30,11 @@ import {
   disableMember,
   enableMember,
   removeMember,
+  getGhlIntegrationStatus,
+  connectGhl,
+  disconnectGhl,
   type OrgMember,
+  type GhlIntegrationStatus,
 } from '@/lib/api';
 
 type SettingsTab = 'profile' | 'phone' | 'team' | 'integrations' | 'security';
@@ -415,6 +419,166 @@ function TeamTab() {
   );
 }
 
+function IntegrationsTab() {
+  const { role } = useOrg();
+  const isOwner = role === 'owner';
+
+  const [status, setStatus] = useState<GhlIntegrationStatus | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const [token, setToken] = useState('');
+  const [locationId, setLocationId] = useState('');
+  const [connecting, setConnecting] = useState(false);
+  const [disconnecting, setDisconnecting] = useState(false);
+
+  const load = useCallback(() => {
+    setLoading(true);
+    getGhlIntegrationStatus()
+      .then(setStatus)
+      .catch((e) => setError(String(e)))
+      .finally(() => setLoading(false));
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const handleConnect = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setConnecting(true);
+    setError(null);
+    try {
+      await connectGhl(token.trim(), locationId.trim());
+      setToken('');
+      setLocationId('');
+      load();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setConnecting(false);
+    }
+  };
+
+  const handleDisconnect = async () => {
+    setDisconnecting(true);
+    setError(null);
+    try {
+      await disconnectGhl();
+      load();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setDisconnecting(false);
+    }
+  };
+
+  const isConnected = status?.status === 'connected';
+
+  return (
+    <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
+      <h1 className="text-3xl font-bold text-white mb-2">Integrations</h1>
+      <p className="text-[#B0BEC5] mb-8">
+        Connect a GHL (GoHighLevel) sub-account to sync dispositions, notes, tags and callback tasks
+        after every call.
+      </p>
+
+      {error && (
+        <div className="mb-6 p-4 rounded-xl bg-red-500/10 border border-red-500/30 text-red-400 text-sm">
+          {error}
+        </div>
+      )}
+
+      {loading ? (
+        <div className="flex items-center justify-center py-12">
+          <Loader2 className="w-8 h-8 text-[#00D9FF] animate-spin" />
+        </div>
+      ) : (
+        <div className="bg-[#1A2332]/60 backdrop-blur-xl rounded-2xl p-6 border border-white/5 max-w-xl">
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-[#00D9FF] to-[#0066FF] flex items-center justify-center">
+                <Zap className="w-5 h-5 text-white" />
+              </div>
+              <div>
+                <div className="text-white font-medium">GoHighLevel</div>
+                <div className="text-sm text-[#B0BEC5]">
+                  {isConnected && status?.location_id
+                    ? `Location ${status.location_id}`
+                    : 'Not connected'}
+                </div>
+              </div>
+            </div>
+            <span
+              className={`px-2.5 py-1 rounded-full text-xs border ${
+                isConnected
+                  ? 'bg-[#00E676]/10 text-[#00E676] border-[#00E676]/20'
+                  : 'bg-white/5 text-[#B0BEC5] border-white/10'
+              }`}
+            >
+              {isConnected
+                ? 'Connected'
+                : status?.status === 'pending_verification'
+                  ? 'Pending'
+                  : 'Disconnected'}
+            </span>
+          </div>
+
+          {!isOwner ? (
+            <p className="text-sm text-[#B0BEC5]">
+              Only the org owner can connect or disconnect GHL.
+            </p>
+          ) : isConnected ? (
+            <button
+              onClick={handleDisconnect}
+              disabled={disconnecting}
+              className="px-5 py-2.5 bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 rounded-xl text-red-400 text-sm font-medium disabled:opacity-50 flex items-center gap-2"
+            >
+              {disconnecting && <Loader2 className="w-4 h-4 animate-spin" />}
+              Disconnect
+            </button>
+          ) : (
+            <form onSubmit={handleConnect} className="space-y-4">
+              <div>
+                <label className="block text-sm text-[#B0BEC5] mb-2">
+                  Private Integration Token
+                </label>
+                <input
+                  type="password"
+                  value={token}
+                  onChange={(e) => setToken(e.target.value)}
+                  required
+                  className="w-full bg-[#1E2A3A] border border-white/10 rounded-xl px-4 py-3 text-white placeholder-[#B0BEC5]/50 focus:outline-none focus:border-[#00D9FF]"
+                  placeholder="pit-..."
+                />
+              </div>
+              <div>
+                <label className="block text-sm text-[#B0BEC5] mb-2">Location ID</label>
+                <input
+                  type="text"
+                  value={locationId}
+                  onChange={(e) => setLocationId(e.target.value)}
+                  required
+                  className="w-full bg-[#1E2A3A] border border-white/10 rounded-xl px-4 py-3 text-white placeholder-[#B0BEC5]/50 focus:outline-none focus:border-[#00D9FF]"
+                  placeholder="Sub-account location ID"
+                />
+              </div>
+              <button
+                type="submit"
+                disabled={connecting}
+                className="px-6 py-3 bg-gradient-to-r from-[#00D9FF] to-[#0066FF] rounded-xl text-white font-semibold disabled:opacity-50 flex items-center gap-2"
+              >
+                {connecting && <Loader2 className="w-4 h-4 animate-spin" />}
+                Connect GHL
+              </button>
+            </form>
+          )}
+        </div>
+      )}
+    </motion.div>
+  );
+}
+
 export function Settings() {
   const {
     numbers: phoneNumbers,
@@ -644,7 +808,9 @@ export function Settings() {
 
               {activeTab === 'team' && !isAgent && <TeamTab />}
 
-              {(activeTab === 'integrations' && !isAgent) || activeTab === 'security' ? (
+              {activeTab === 'integrations' && !isAgent && <IntegrationsTab />}
+
+              {activeTab === 'security' ? (
                 <motion.div
                   initial={{ opacity: 0, y: 20 }}
                   animate={{ opacity: 1, y: 0 }}
@@ -652,11 +818,7 @@ export function Settings() {
                 >
                   <div className="text-6xl mb-4">🚧</div>
                   <h3 className="text-2xl font-bold text-white mb-2">Coming Soon</h3>
-                  <p className="text-[#B0BEC5]">
-                    {activeTab === 'integrations'
-                      ? 'GHL integration is planned for Phase 3.'
-                      : 'This feature is under development'}
-                  </p>
+                  <p className="text-[#B0BEC5]">This feature is under development</p>
                 </motion.div>
               ) : null}
             </>

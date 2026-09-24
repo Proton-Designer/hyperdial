@@ -29,8 +29,8 @@ answers:
   - "what are the RLS helper functions and why do they exist"
 covers: "Supabase auth, session handling, the two-layer Edge Function authorization model, service-role usage, org tenancy, and the per-table RLS inventory."
 excludes: "Telnyx webhook signature mechanics (domain.telephony); dial-loop ownership checks (domain.dialer)."
-tokens_est: 3594
-source_hash: 0388cf2fab8c2f4385c37c045bcd52d5f426fb8b71680110776816f0c605c799
+tokens_est: 3977
+source_hash: fe3aed0077c0d05faa070b2ba741fedb3406ba8ed07311e18ff9feed6bfeaa8d
 ---
 
 # Auth & Access Control
