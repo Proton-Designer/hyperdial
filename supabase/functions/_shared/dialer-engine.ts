@@ -843,8 +843,7 @@ async function handleWin(
     if (!conferenceId) {
       const conference = await client.createConference({
         name: `hyperdial-session-${session.id}`,
-        connectionId: callControlAppId,
-        agentCallControlId: winnerLeg.call_control_id,
+        callControlId: winnerLeg.call_control_id,
       });
       conferenceId = conference.id;
       if (conferenceId) {

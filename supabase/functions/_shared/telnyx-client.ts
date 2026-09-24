@@ -196,8 +196,7 @@ export interface TelnyxClient {
 
   createConference(args: {
     name: string;
-    connectionId: string;
-    agentCallControlId?: string;
+    callControlId: string;
   }): Promise<{ id: string | null; name: string }>;
   joinConference(
     conferenceId: string,
@@ -281,11 +280,16 @@ export function createTelnyxClient(
     },
 
     async createConference(args) {
-      const payload: Record<string, string> = {
+      // CreateConferenceRequest (verified against developers.telnyx.com's own
+      // api-reference/conference-commands/create-conference.md and spec3.json, TASK-X2):
+      // only `call_control_id` + `name` exist -- there is no `connection_id` field on this
+      // request at all. Both are required; the docs' own words: "create a conference from
+      // an existing call leg using call_control_id... the call will be automatically
+      // bridged to the conference."
+      const payload = {
         name: args.name,
-        connection_id: args.connectionId,
+        call_control_id: args.callControlId,
       };
-      if (args.agentCallControlId) payload.call_control_id = args.agentCallControlId;
       const response = await req<TelnyxEnvelope<TelnyxConferenceData>>('/conferences', {
         method: 'POST',
         body: JSON.stringify(payload),
@@ -331,12 +335,25 @@ export function createTelnyxClient(
     },
 
     async searchNumbers(params) {
-      const qs = new URLSearchParams(params).toString();
-      return req(`/available_phone_numbers?${qs}`);
+      // /available_phone_numbers takes ONE deepObject `filter` query param (verified against
+      // developers.telnyx.com/api-reference/phone-number-search/list-available-phone-numbers.md
+      // and spec3.json, TASK-X2): filter[country_code]=US&filter[best_effort]=true, not flat
+      // country_code=US&best_effort=true -- Telnyx silently ignores unrecognized flat params,
+      // so the old shape searched unfiltered against the real API.
+      const filterParams = new URLSearchParams();
+      for (const [key, value] of Object.entries(params)) {
+        filterParams.set(`filter[${key}]`, value);
+      }
+      return req(`/available_phone_numbers?${filterParams.toString()}`);
     },
 
     async orderNumber(args) {
-      const payload: Record<string, unknown> = { phone_numbers: args.phoneNumbers };
+      // CreateNumberOrderRequest.phone_numbers is an array of {phone_number} OBJECTS, not
+      // bare strings (verified against spec3.json, TASK-X2) -- a plain string array is
+      // rejected by the real API.
+      const payload: Record<string, unknown> = {
+        phone_numbers: args.phoneNumbers.map((phoneNumber) => ({ phone_number: phoneNumber })),
+      };
       if (args.connectionId) payload.connection_id = args.connectionId;
       const response = await req<TelnyxEnvelope<TelnyxIdData>>('/number_orders', {
         method: 'POST',

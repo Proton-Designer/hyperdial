@@ -340,6 +340,82 @@ Deno.test(
   }
 );
 
+Deno.test(
+  'createTelnyxClient.createConference: posts call_control_id + name only (no connection_id, per CreateConferenceRequest)',
+  async () => {
+    let seenUrl = '';
+    let seenBody: Record<string, unknown> = {};
+    const restore = stubFetch((url, init) => {
+      seenUrl = url;
+      seenBody = JSON.parse(String(init?.body ?? '{}'));
+      return new Response(JSON.stringify({ data: { id: 'conf-1', name: 'hyperdial-session-1' } }), {
+        status: 200,
+      });
+    });
+    try {
+      const client = createTelnyxClient('test-api-key');
+      const result = await client.createConference({
+        name: 'hyperdial-session-1',
+        callControlId: 'call-1',
+      });
+      assertEquals(seenUrl, 'https://api.telnyx.com/v2/conferences');
+      assertEquals(seenBody, { name: 'hyperdial-session-1', call_control_id: 'call-1' });
+      assertEquals(result, { id: 'conf-1', name: 'hyperdial-session-1' });
+    } finally {
+      restore();
+    }
+  }
+);
+
+Deno.test(
+  'createTelnyxClient.orderNumber: phone_numbers is an array of {phone_number} objects, not bare strings',
+  async () => {
+    let seenBody: Record<string, unknown> = {};
+    const restore = stubFetch((_url, init) => {
+      seenBody = JSON.parse(String(init?.body ?? '{}'));
+      return new Response(JSON.stringify({ data: { id: 'order-1', phone_numbers: [] } }), {
+        status: 200,
+      });
+    });
+    try {
+      const client = createTelnyxClient('test-api-key');
+      await client.orderNumber({ phoneNumbers: ['+15551234567'], connectionId: 'conn-1' });
+      assertEquals(seenBody, {
+        phone_numbers: [{ phone_number: '+15551234567' }],
+        connection_id: 'conn-1',
+      });
+    } finally {
+      restore();
+    }
+  }
+);
+
+Deno.test(
+  'createTelnyxClient.searchNumbers: wraps every filter key in filter[key] (deepObject style)',
+  async () => {
+    let seenUrl = '';
+    const restore = stubFetch((url) => {
+      seenUrl = url;
+      return new Response(JSON.stringify({ data: [] }), { status: 200 });
+    });
+    try {
+      const client = createTelnyxClient('test-api-key');
+      await client.searchNumbers({
+        country_code: 'US',
+        national_destination_code: '212',
+        best_effort: 'true',
+      });
+      assertEquals(
+        seenUrl,
+        'https://api.telnyx.com/v2/available_phone_numbers?' +
+          'filter%5Bcountry_code%5D=US&filter%5Bnational_destination_code%5D=212&filter%5Bbest_effort%5D=true'
+      );
+    } finally {
+      restore();
+    }
+  }
+);
+
 Deno.test('createTelnyxClient: a non-2xx response throws with the status and body', async () => {
   const restore = stubFetch(
     () => new Response(JSON.stringify({ errors: [{ detail: 'bad request' }] }), { status: 400 })

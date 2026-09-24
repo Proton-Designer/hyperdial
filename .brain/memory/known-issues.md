@@ -320,6 +320,41 @@ long enough that no real conversation is still running, short enough to actually
 (b) a periodic Telnyx call-status poll for any session parked in `on_call`/`connecting` past a
 similar threshold. Neither is implemented; this is the honest gap, not a silent assumption.
 
+## 12. `_shared/telnyx-client.ts` had 3 real request-shape bugs vs. the current Telnyx API
+
+**Severity: high (would have failed against a live Telnyx account). Fixed in code 2026-09-24
+(TASK-X2, phase 2).** A conformance audit against `developers.telnyx.com`'s own machine-readable
+docs (`data/webhook-events.json`, `public/llms/calling.txt`, `api-reference/**/*.md` — the human
+`/docs/api/...` pages still 404 through automated fetch) plus a fresh `spec3.json` pull found
+three mismatches between this client's request shapes and what Telnyx's API actually accepts,
+all fixed in the same commit with unit tests (positive-controlled: written to fail against the
+pre-fix code first):
+1. **`createConference`** sent a `connection_id` field that does not exist on
+   `POST /conferences` (`CreateConferenceRequest`'s only fields are `call_control_id`+`name`,
+   both required) and treated the real required field (`call_control_id`) as optional. Harmless
+   in practice only because the one call site (`dialer-engine.ts`'s `handleWin`) always supplied
+   it — fixed by dropping `connection_id` and making `callControlId` required in the type.
+2. **`orderNumber`** sent `phone_numbers` as an array of plain strings; Telnyx's
+   `CreateNumberOrderRequest.phone_numbers` is an array of `{phone_number}` objects. The real API
+   would reject this — `telnyx-purchase-number` had never actually worked against a live Telnyx
+   account. Fixed: each number is now wrapped `{phone_number: "..."}`.
+3. **`searchNumbers`** built a flat querystring (`country_code=US&best_effort=true`);
+   `GET /available_phone_numbers` takes one deepObject `filter` param
+   (`filter[country_code]=US&filter[best_effort]=true`). Telnyx silently ignores unrecognized
+   flat params, so number search was effectively unfiltered against the real API, and
+   `telnyx-search-numbers`'s own "Telnyx error 10031, no results" handling could never trigger
+   (the filter that would produce that error never reached Telnyx). Fixed: every filter key is
+   now wrapped `filter[key]`.
+
+Everything else audited in that pass (dial/AMD enums, `hangup_cause`, `record_start`,
+`transcription_start`, `speak`, `hangup`, conference join/leave, all four provisioning
+create-request bodies, `/balance`, `number_orders`/`phone_numbers` paths, the ed25519 signature
+header names) matched the docs with no changes needed — see TASK-X2's board file for the full
+match/mismatch table. **Also found, not fixed (out of this task's scope):** `recordStart`/
+`transcriptionStart` are fully built and unit-tested but never called anywhere in
+`dialer-engine.ts`, and nothing consumes `call.recording.saved`/`call.transcription` webhooks —
+recording and transcription are not wired into the dial flow yet.
+
 ---
 
 ## Not issues — deliberate, documented elsewhere
