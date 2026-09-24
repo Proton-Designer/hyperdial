@@ -11,6 +11,8 @@ sources:
   - apps/web/src/components/campaigns/**
   - apps/web/src/lib/api.ts
   - supabase/migrations/20250207100000_create_campaigns_and_leads.sql
+  - supabase/migrations/20260924000700_dialer_schema.sql
+  - supabase/migrations/20260924001500_campaign_settings_agents_delete.sql
   - supabase/functions/dialer-session-start/index.ts
 related:
   - domain.contacts
@@ -25,8 +27,8 @@ answers:
   - "how are campaigns and campaign_leads scoped per user"
 covers: "The campaigns and campaign_leads tables, the campaigns_with_stats view, the campaign CRUD surface in the web client, and the handoff from a campaign to a parallel dial session."
 excludes: "Contact records and CSV import mechanics (.brain/domains/contacts.md) and everything after the session row is inserted — batching, AMD, call_logs (.brain/domains/dialer.md)."
-tokens_est: 3082
-source_hash: 860fd18525a303fda2d5bf83c7605cf1c58382a1812d69cd1efeb8dfc356382d
+tokens_est: 3424
+source_hash: 62f328be7990bc5c227abd340918f0b18f5759c906f01e7235b566564631acee
 ---
 
 # Campaigns
@@ -43,15 +45,20 @@ product (the contact list, the dialer, the dashboard) is either feeding a campai
 | Campaign | A row in `campaigns`. Owns a name, a status, and three display-only stat columns. |
 | Lead | A row in `campaign_leads` — the join between one campaign and one contact, with its own `status`. Not a separate entity; the person's data lives on `contacts`. |
 | Dialable | A lead whose contact's `call_status` is *not* `contacted` or `do_not_call`, and which has a phone number. This is a property of the **contact**, not of the lead. |
-| `campaigns_with_stats` | A Postgres view, not a table — lead counts are computed per read, never cached. |
+| `campaigns_with_stats` | A Postgres view, not a table — lead counts are computed per read, never cached. Also the only place the E1/P2-P2 dial-settings columns and the soft-delete filter are exposed to the client. |
 | Passthrough | A `campaign_leads.status` value present in the CHECK constraint and the UI, never written by any code. |
+| Dial settings | `lines`, `amd_mode`, `caller_id_number_id`, `max_attempts`, `retry_interval_minutes`, `calling_window_start`, `calling_window_end`, `abandon_message_enabled` — added by TASK-P2-E1 (`20260924000700`), editable via TASK-P2-P2's Settings section (admin+ only). |
+| Soft delete | `campaigns.deleted_at` (TASK-P2-P2). Hard DELETE is no longer offered — the RLS delete policy was removed — so a "deleted" campaign is really "hidden and inert," not gone. |
 
 ## Where the code lives
 
 | What | Path | Notes |
 |---|---|---|
 | Schema + view + RLS | `supabase/migrations/20250207100000_create_campaigns_and_leads.sql` | Both tables, all 8 policies, `campaigns_with_stats` |
-| Client data layer | `apps/web/src/lib/api.ts` | Campaigns section, `:354-496`; `startDialerSession` `:564-668` |
+| Dial settings columns | `supabase/migrations/20260924000700_dialer_schema.sql` | `lines`/`amd_mode`/`caller_id_number_id`/etc., plus `campaigns_check_caller_id_org` trigger |
+| Soft delete, settings in the view, session-active guard | `supabase/migrations/20260924001500_campaign_settings_agents_delete.sql` | `deleted_at`, rebuilt `campaigns_with_stats`, `dial_sessions_require_active_campaign` trigger (TASK-P2-P2) |
+| SQL acceptance tests | `supabase/tests/campaign_settings_agents.sql` | Settings RLS, agent assignment, soft-delete, session-guard — 16 assertions |
+| Client data layer | `apps/web/src/lib/api.ts` | Campaigns section, `:354-496`; `startDialerSession` `:564-668`; `updateCampaignSettings`/`deleteCampaign`/`setCampaignAgents` (TASK-P2-P2) |
 | Campaign list screen | `apps/web/src/components/Campaigns.tsx` | Grid, search, status filter, create-campaign dialog |
 | Campaign detail | `apps/web/src/components/campaigns/CampaignManageModal.tsx` | 1,049 lines — see gotchas |
 | Session handoff | `supabase/functions/dialer-session-start/index.ts` | Consumes `campaignId`; `:171-207` |
@@ -72,7 +79,10 @@ product (the contact list, the dialer, the dashboard) is either feeding a campai
    campaignId, linesCount, fromNumber, agentCallControlId?, agentCallbackNumber? }`. The campaign contributes **only its id**.
 6. **Session start** — `dialer-session-start` verifies the from-number is the user's, rejects a second `active` session for the same
    campaign with `409 ACTIVE_SESSION_EXISTS` (`:112-139`), resolves dialable contacts, inserts a `dialer_sessions` row carrying
-   `campaign_id`, and fires the first batch.
+   `campaign_id`, and fires the first batch. Legacy path — see the status gotcha below for the new `dial_sessions` table.
+7. **Edit settings / assign agents / delete** (TASK-P2-P2, admin+ only) — `CampaignManageModal.tsx`'s Settings and Assigned
+   Agents sections call `updateCampaignSettings()`/`setCampaignAgents()` directly; RLS is the actual authority, not the UI's
+   `canManage` check. `deleteCampaign()` sets `deleted_at`; there is no restore UI.
 
 ## Integration points
 
@@ -85,59 +95,53 @@ product (the contact list, the dialer, the dashboard) is either feeding a campai
 
 ## Constraints & gotchas
 
-- **`campaign_leads.status` is write-once dead weight.** Nothing in the repo ever updates it — the only writes are inserts
-  defaulting to `queued` (`apps/web/src/lib/api.ts:468`, `supabase/functions/contacts-import/index.ts:152-156`). So in
-  `campaigns_with_stats`, `queued` always equals `total_contacts` and `completed` / `passthrough` are always `0`, yet
-  `apps/web/src/components/Campaigns.tsx:174-188` renders all three as if they moved. Call progress lives on `contacts.call_status`
-  and `call_logs`, not here.
-- **`campaigns.total_calls_made`, `connect_rate` and `last_called_at` are never written either** — the dialer's `last_called_at`
-  updates target `contacts` (`supabase/functions/_shared/dialer-engine.ts:212,313,458,722`), so the card at
-  `apps/web/src/components/Campaigns.tsx:196-209` always shows `0.0%`, `0`, `—`.
-- **Status is cosmetic.** `active | paused | completed` (CHECK at migration `:6`), set only from the modal's Select
-  (`CampaignManageModal.tsx:434-466` → `updateCampaignStatus`, `apps/web/src/lib/api.ts:421-430`). **Any value may move to any
-  other** — no transition rules exist — and `dialer-session-start` never reads `campaigns` at all, so a `paused` campaign dials like
-  an active one.
-- **`dialer-session-start` never checks campaign ownership.** It takes `campaignId` on trust (`:62,74-77`) and uses the service-role
-  key (`:87-90`), bypassing RLS. The accidental guard is `fetchDialableContacts` filtering `contact.user_id`
-  (`supabase/functions/_shared/dialer-engine.ts:104`) — another user's campaign yields a `400`, not a `403`.
-- **`total_contacts > 0` does not mean dialable.** The view counts every lead (migration `:86`); `fetchDialableContacts` excludes
-  contacts already `contacted` or `do_not_call` (`supabase/functions/_shared/dialer-engine.ts:105`). A fully worked campaign still
-  shows the Start button (`apps/web/src/components/Campaigns.tsx:211`), then fails `400 "No dialable contacts in campaign."`
-- **`CampaignManageModal.tsx` is doing six jobs in one file** and is the first thing to split. The seams are already visible:
-  campaign header + status (`:401-476`), lead table with filter/paginate/multi-select (`:478-696`), import and add-contact wrappers
-  (`:698-724`), the start-dial configuration modal (`:725-845`), the active-session conflict resolver (`:846-894`), and two confirm
-  dialogs (`:895-967`) — plus `AddExistingContactsModal`, a whole second component already living in the same file at `:969`.
-- **Pagination and selection are not reset.** `leadsPage` is only changed by the prev/next buttons
-  (`CampaignManageModal.tsx:674,682`) — changing a filter (`:523,542`) or opening a different campaign leaves the index where it
-  was, so the table can render empty. `selectedLeadIds` survives `onClose` too, so a bulk remove can target ids picked in a
-  previously viewed campaign.
-- **Lead filters read contact fields, not lead fields**: `categoryFilter` and `contactStatusFilter` match `lead.contact.category` /
-  `contact_status` (`CampaignManageModal.tsx:124-130`) — CRM labels, unrelated to `campaign_leads.status`.
-- **There is no delete-campaign path.** The RLS DELETE policy exists (migration `:31-33`) but no API function and no UI call it.
-  Campaigns accumulate.
-- **`UNIQUE(campaign_id, contact_id)`** (migration `:42`) is what makes the add path idempotent; both FKs are `ON DELETE CASCADE`,
-  so deleting a contact silently shrinks every campaign it was in.
+- **`campaign_leads.status` is write-once dead weight** — writes only ever insert `queued`, so `queued` always equals
+  `total_contacts` and `completed`/`passthrough` are always `0`, yet the UI renders all three as if they moved. Call progress
+  lives on `contacts.call_status`/`call_logs`, not here. `campaigns.total_calls_made`/`connect_rate`/`last_called_at` are never
+  written either (the dialer's `last_called_at` updates `contacts`), so the campaign card always shows `0.0%`, `0`, `—`.
+- **Status is cosmetic for the legacy dial path, enforced for the new one.** `active | paused | completed` (CHECK at migration
+  `:6`); **any value may still move to any other**, no transition rules exist. Legacy `dialer-session-start` (writes
+  `dialer_sessions`) never reads `campaigns.status`, so a `paused` campaign dials like an active one through that path. As of
+  TASK-P2-P2, `public.dial_sessions` (TASK-P2-E1/E2's target table) has a BEFORE INSERT trigger
+  (`dial_sessions_require_active_campaign`, `20260924001500`) refusing paused/completed/soft-deleted campaigns — only takes
+  effect once E2's rewrite inserts into `dial_sessions` instead of the legacy table.
+- **`dialer-session-start` never checks campaign ownership.** It takes `campaignId` on trust and uses the service-role key,
+  bypassing RLS — the accidental guard is `fetchDialableContacts` filtering `contact.user_id` (`400`, not `403`).
+- **`total_contacts > 0` does not mean dialable** — the view counts every lead; `fetchDialableContacts` excludes contacts
+  already `contacted`/`do_not_call`, so a fully worked campaign still shows Start, then fails `400 "No dialable contacts..."`
+- **`CampaignManageModal.tsx` is doing eight jobs in one file** (~1,400 lines as of TASK-P2-P2) and is the first thing to split:
+  header + status, dial settings, agent assignment, lead table (filter/paginate/multi-select), import/add-contact wrappers, the
+  start-dial config modal, the active-session conflict resolver, and three confirm dialogs — plus `AddExistingContactsModal`, a
+  second component in the same file.
+- **Pagination and selection are not reset**, and lead filters read contact fields, not lead ones. `leadsPage` only changes via
+  prev/next — a filter change or a different campaign leaves the index where it was; `selectedLeadIds` survives `onClose` too.
+  `categoryFilter`/`contactStatusFilter` match `lead.contact.category`/`contact_status` (CRM labels), unrelated to
+  `campaign_leads.status`.
+- **Delete is soft, as of TASK-P2-P2.** `deleteCampaign()` sets `deleted_at` via UPDATE; the RLS DELETE policy was **dropped**
+  in `20260924001500` (a real `DELETE FROM campaigns` now matches zero rows under any role) because `dial_sessions`/`call_legs`
+  are `ON DELETE CASCADE` on `campaign_id` — a hard delete would destroy call history, not "orphan" it. `campaigns_with_stats`
+  filters `deleted_at is null` as a **plain view predicate, not RLS**: dry-run testing proved a SELECT-policy filter there
+  instead breaks the very UPDATE that sets `deleted_at`, because Postgres implicitly ANDs a table's SELECT USING clause into
+  an UPDATE's WITH CHECK. Relevant to any future "hide via a flag" column its own owner/admin must be able to set.
+- **`UNIQUE(campaign_id, contact_id)`** makes the add path idempotent; both FKs `ON DELETE CASCADE`, so deleting a contact
+  silently shrinks every campaign it was in.
+- **`createCampaign()`/`addLeadsToCampaign()` set `org_id` explicitly** via `getActiveOrgId()` — `NOT NULL`, no DB default. RLS
+  is the actual authorization boundary; the client value only needs to be *correct*, never *trusted* as the check.
 - **RLS is org-scoped as of TASK-P1-01 (`20260924000300_rewrite_rls_org_scoped.sql`), not `auth.uid() = user_id` anymore.**
-  `campaigns` SELECT is any org member (`private.is_org_member`); INSERT/UPDATE/DELETE are owner/admin
-  (`private.has_org_role(org_id, ['owner','admin'])`). `campaign_leads` SELECT lets an agent see leads only on a campaign they're
-  assigned to via the new `campaign_agents` table; INSERT now also verifies `campaign_id` and `contact_id` both belong to the
-  claimed `org_id` — fixing the exact gap `domain.auth` used to flag ("INSERT only checked the caller owned the campaign, never
-  that the contact belonged to the same tenant"). The view is still `security_invoker = on`, now carrying `org_id` through, so it
-  inherits the org-scoped policy. Service-role callers — the Edge Functions — still bypass all of it; `dialer-session-start`'s
-  missing-ownership-check gotcha above is **not yet fixed** (that's `dialer-*`, eng2's lane/Phase 2, not TASK-P1-02, which was
-  scoped to `contacts-*`/`dashboard-stats`/`team-performance`/`ensure-week-summary` only). Full inventory: `.brain/domains/auth.md`.
-- **As of TASK-P1-02, `createCampaign()` and `addLeadsToCampaign()` set `org_id` explicitly** (`apps/web/src/lib/api.ts:392-409`,
-  `:496-508`, via a new `getActiveOrgId()` that reads `profiles.active_org_id`) — `org_id` has no DB default and is `NOT NULL`,
-  so an insert that omitted it would fail outright, not silently default to anything. RLS is still the actual authorization
-  boundary (an agent's insert is rejected regardless of what `org_id` they claim); the client-side value only has to be *correct*
-  for a permitted write to succeed, not trusted as an authorization check.
-- **`campaign_agents` is new** (`campaign_id, user_id`, denormalized `org_id`): which agents may dial/see which campaign. A
-  validation trigger rejects an `org_id` that doesn't match the campaign's own org, even from a caller who legitimately owns the
-  claimed `org_id` (a *different* org) — RLS's INSERT check alone wouldn't catch that. See `.brain/domains/auth.md`.
+  `campaigns` SELECT is any org member (`private.is_org_member`); INSERT/UPDATE/DELETE-turned-soft-delete are owner/admin
+  (`private.has_org_role(org_id, ['owner','admin'])`). `campaign_leads` SELECT lets an agent see leads only on a campaign
+  they're assigned to via `campaign_agents`; INSERT also verifies `campaign_id`/`contact_id` both belong to the claimed
+  `org_id`. The view is still `security_invoker = on`. Service-role Edge Functions still bypass all of it; `dialer-session-start`'s
+  missing-ownership-check gotcha is **not yet fixed** (eng2's Phase 2 lane, not this doc's scope). Full inventory:
+  `.brain/domains/auth.md`.
+- **`campaign_agents`** (`campaign_id, user_id`, denormalized `org_id`): which agents may dial/see which campaign. A validation
+  trigger rejects an `org_id` not matching the campaign's own org, even from a caller who legitimately owns that *different*
+  org. As of TASK-P2-P2, `CampaignManageModal.tsx`'s Assigned Agents section is the first UI for it: `setCampaignAgents()`
+  diffs the desired set against `listCampaignAgentIds()`, issuing one insert + one delete, not delete-all-then-reinsert. Still
+  org-wide `campaigns` visibility underneath (known-issues #10) — this controls who's *assigned*, not row visibility.
 
 ## Not covered here
 
 - Contacts, CSV import, `call_status` semantics → `.brain/domains/contacts.md`
 - Batching, AMD, `call_logs`, session stop/advance → `.brain/domains/dialer.md`
-- Caller-ID numbers, the WebRTC agent leg → `.brain/domains/telephony.md`; auth and Edge Function token verification →
-  `.brain/domains/auth.md`
+- Caller-ID numbers, the WebRTC agent leg → `.brain/domains/telephony.md`; auth/Edge Function token verification → `.brain/domains/auth.md`

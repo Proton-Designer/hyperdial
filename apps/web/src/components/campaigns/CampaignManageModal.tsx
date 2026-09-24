@@ -1,11 +1,27 @@
 import { useState, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'motion/react';
-import { X, Phone, Trash2, Upload, UserPlus, Users, Play, Loader2 } from 'lucide-react';
+import {
+  X,
+  Phone,
+  Trash2,
+  Upload,
+  UserPlus,
+  Users,
+  Play,
+  Loader2,
+  Settings as SettingsIcon,
+  Save,
+} from 'lucide-react';
 import { toast } from 'sonner';
 import {
   getCampaign,
   updateCampaignStatus,
+  updateCampaignSettings,
+  deleteCampaign,
+  listCampaignAgentIds,
+  setCampaignAgents,
+  listOrgMembers,
   listCampaignLeads,
   addLeadsToCampaign,
   removeLeadFromCampaign,
@@ -15,12 +31,15 @@ import {
   stopDialerSession,
   ActiveSessionExistsError,
   type CampaignWithStats,
+  type CampaignSettingsInput,
   type CampaignLead,
   type Contact,
+  type OrgMember,
 } from '../../lib/api';
 import { ImportContactsModal } from '../contacts/ImportContactsModal';
 import { AddContactModal } from '../contacts/AddContactModal';
 import { usePhoneNumbers } from '../../contexts/PhoneNumbersContext';
+import { useOrg } from '../../contexts/OrgContext';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
 
 const CATEGORIES = ['All', 'Cold', 'Warm', 'Follow Up', 'Voicemail', 'Booked'] as const;
@@ -58,8 +77,17 @@ export function CampaignManageModal({
   onOpenDialerWithSession,
 }: CampaignManageModalProps) {
   const { numbers: userNumbers } = usePhoneNumbers();
+  const { role } = useOrg();
+  const canManage = role === 'owner' || role === 'admin';
   const [campaign, setCampaign] = useState<CampaignWithStats | null>(null);
   const [leads, setLeads] = useState<CampaignLead[]>([]);
+  const [settingsForm, setSettingsForm] = useState<CampaignSettingsInput | null>(null);
+  const [savingSettings, setSavingSettings] = useState(false);
+  const [orgMembers, setOrgMembers] = useState<OrgMember[]>([]);
+  const [assignedAgentIds, setAssignedAgentIds] = useState<Set<string>>(new Set());
+  const [savingAgents, setSavingAgents] = useState(false);
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [loading, setLoading] = useState(false);
   const [leadsLoading, setLeadsLoading] = useState(false);
   const [categoryFilter, setCategoryFilter] = useState<string>('All');
@@ -86,12 +114,38 @@ export function CampaignManageModal({
     try {
       const c = await getCampaign(campaignId);
       setCampaign(c);
+      if (c) {
+        setSettingsForm({
+          lines: c.lines,
+          amd_mode: c.amd_mode,
+          caller_id_number_id: c.caller_id_number_id,
+          max_attempts: c.max_attempts,
+          retry_interval_minutes: c.retry_interval_minutes,
+          calling_window_start: c.calling_window_start,
+          calling_window_end: c.calling_window_end,
+          abandon_message_enabled: c.abandon_message_enabled,
+        });
+      }
     } catch {
       setCampaign(null);
     } finally {
       setLoading(false);
     }
   }, [campaignId]);
+
+  const fetchAssignment = useCallback(async () => {
+    if (!campaignId || !canManage) return;
+    try {
+      const [members, assignedIds] = await Promise.all([
+        listOrgMembers(),
+        listCampaignAgentIds(campaignId),
+      ]);
+      setOrgMembers(members.filter((m) => m.status === 'active'));
+      setAssignedAgentIds(new Set(assignedIds));
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to load agent assignments');
+    }
+  }, [campaignId, canManage]);
 
   const fetchLeads = useCallback(async () => {
     if (!campaignId) return;
@@ -110,8 +164,9 @@ export function CampaignManageModal({
     if (open && campaignId) {
       fetchCampaign();
       fetchLeads();
+      fetchAssignment();
     }
-  }, [open, campaignId, fetchCampaign, fetchLeads]);
+  }, [open, campaignId, fetchCampaign, fetchLeads, fetchAssignment]);
 
   useEffect(() => {
     if (addExistingOpen) {
@@ -146,6 +201,59 @@ export function CampaignManageModal({
     }
   };
 
+  const handleSaveSettings = async () => {
+    if (!campaignId || !settingsForm) return;
+    setSavingSettings(true);
+    try {
+      await updateCampaignSettings(campaignId, settingsForm);
+      await fetchCampaign();
+      toast.success('Dialer settings saved');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to save settings');
+    } finally {
+      setSavingSettings(false);
+    }
+  };
+
+  const toggleAssignedAgent = (userId: string) => {
+    setAssignedAgentIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(userId)) next.delete(userId);
+      else next.add(userId);
+      return next;
+    });
+  };
+
+  const handleSaveAgents = async () => {
+    if (!campaignId) return;
+    setSavingAgents(true);
+    try {
+      await setCampaignAgents(campaignId, Array.from(assignedAgentIds));
+      toast.success('Agent assignments saved');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to save agent assignments');
+      await fetchAssignment();
+    } finally {
+      setSavingAgents(false);
+    }
+  };
+
+  const handleDeleteCampaign = async () => {
+    if (!campaignId) return;
+    setDeleting(true);
+    try {
+      await deleteCampaign(campaignId);
+      setConfirmDeleteOpen(false);
+      onClose();
+      onRefreshList();
+      toast.success('Campaign deleted');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to delete campaign');
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   const handleStartParallelDialing = () => {
     console.info('[CampaignManageModal] checkpoint:start_click', {
       campaignId,
@@ -176,22 +284,18 @@ export function CampaignManageModal({
 
     setStartingDial(true);
     try {
-      const agentCallControlId =
-        typeof window !== 'undefined'
-          ? (window.localStorage.getItem('softdial_active_agent_call_control_id') ?? '').trim() ||
-            undefined
-          : undefined;
       console.info('[CampaignManageModal] checkpoint:api_startDialerSession_call', {
         campaignId,
         linesCount,
-        hasAgentCallControlId: Boolean(agentCallControlId),
       });
+      // TASK-P2-E2: the engine now resolves the caller ID from the campaign's own
+      // caller_id_number_id (TASK-P2-P1) instead of a per-session choice, and there is no
+      // agent leg yet (E3). `fromNumber`/`agentCallControlId`/`agentCallbackNumber` are no
+      // longer sent -- the "choose a number" step above is currently a no-op pending E4's UI
+      // pass (it will become "set your campaign's caller ID" once that surface exists).
       const result = await startDialerSession({
         campaignId,
-        linesCount,
-        fromNumber,
-        agentCallControlId,
-        agentCallbackNumber: callbackNumber.trim() || undefined,
+        lines: linesCount,
       });
       console.info('[CampaignManageModal] checkpoint:api_startDialerSession_success', {
         campaignId,
@@ -266,17 +370,10 @@ export function CampaignManageModal({
         campaignId,
         linesCount,
       });
-      const agentCallControlId =
-        typeof window !== 'undefined'
-          ? (window.localStorage.getItem('softdial_active_agent_call_control_id') ?? '').trim() ||
-            undefined
-          : undefined;
+      // See the other startDialerSession call site's comment (TASK-P2-E2).
       const result = await startDialerSession({
         campaignId,
-        linesCount,
-        fromNumber,
-        agentCallControlId,
-        agentCallbackNumber: callbackNumber.trim() || undefined,
+        lines: linesCount,
       });
       console.info('[CampaignManageModal] checkpoint:start_new_session_success', {
         campaignId,
@@ -415,13 +512,25 @@ export function CampaignManageModal({
               </>
             )}
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="p-2 rounded-lg bg-[#1E2A3A] hover:bg-[#252F3E] text-white"
-          >
-            <X className="w-5 h-5" />
-          </button>
+          <div className="flex items-center gap-2">
+            {canManage && (
+              <button
+                type="button"
+                onClick={() => setConfirmDeleteOpen(true)}
+                className="p-2 rounded-lg bg-[#FF3D00]/10 hover:bg-[#FF3D00]/20 text-[#FF3D00]"
+                title="Delete campaign"
+              >
+                <Trash2 className="w-5 h-5" />
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={onClose}
+              className="p-2 rounded-lg bg-[#1E2A3A] hover:bg-[#252F3E] text-white"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
         </div>
 
         <div className="flex-1 overflow-y-auto p-6 custom-scrollbar min-h-0">
@@ -474,6 +583,266 @@ export function CampaignManageModal({
                   Start Parallel Dialing Session
                 </button>
               </div>
+
+              {/* Dialer settings (admin+ only -- RLS is the real authority, this just hides
+                  the UI for an agent) */}
+              {canManage && settingsForm && (
+                <div className="bg-[#1E2A3A]/60 rounded-2xl border border-white/5 p-6 mb-6">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                      <SettingsIcon className="w-5 h-5" />
+                      Dialer Settings
+                    </h3>
+                    <button
+                      type="button"
+                      onClick={handleSaveSettings}
+                      disabled={savingSettings}
+                      className="flex items-center gap-2 px-3 py-2 bg-gradient-to-r from-[#00D9FF] to-[#0066FF] rounded-lg text-white text-sm font-semibold disabled:opacity-60"
+                    >
+                      {savingSettings ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <Save className="w-4 h-4" />
+                      )}
+                      Save Settings
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                    <div>
+                      <label className="text-sm text-[#B0BEC5] block mb-1">Lines</label>
+                      <Select
+                        value={String(settingsForm.lines ?? 3)}
+                        onValueChange={(v) =>
+                          setSettingsForm((f) => (f ? { ...f, lines: Number(v) } : f))
+                        }
+                      >
+                        <SelectTrigger className="w-full bg-[#1A2332] border-white/10 text-white">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent
+                          className="bg-[#1E2A3A] border-white/10"
+                          style={{ zIndex: 10001 }}
+                        >
+                          {[1, 2, 3, 4, 5, 6, 7].map((n) => (
+                            <SelectItem
+                              key={n}
+                              value={String(n)}
+                              className="bg-[#1E2A3A] hover:bg-white/10 focus:bg-white/10 text-white focus:text-white"
+                            >
+                              {n}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div>
+                      <label className="text-sm text-[#B0BEC5] block mb-1">
+                        Answering Machine Detection
+                      </label>
+                      <Select
+                        value={settingsForm.amd_mode ?? 'off'}
+                        onValueChange={(v) =>
+                          setSettingsForm((f) => (f ? { ...f, amd_mode: v as 'off' | 'on' } : f))
+                        }
+                      >
+                        <SelectTrigger className="w-full bg-[#1A2332] border-white/10 text-white">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent
+                          className="bg-[#1E2A3A] border-white/10"
+                          style={{ zIndex: 10001 }}
+                        >
+                          <SelectItem
+                            value="off"
+                            className="bg-[#1E2A3A] hover:bg-white/10 focus:bg-white/10 text-white focus:text-white"
+                          >
+                            Off
+                          </SelectItem>
+                          <SelectItem
+                            value="on"
+                            className="bg-[#1E2A3A] hover:bg-white/10 focus:bg-white/10 text-white focus:text-white"
+                          >
+                            On
+                          </SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <p className="text-xs text-[#B0BEC5]/70 mt-1">
+                        AMD adds ~2–4s after answer; some humans hang up in that gap.
+                      </p>
+                    </div>
+                    <div>
+                      <label className="text-sm text-[#B0BEC5] block mb-1">Caller ID Number</label>
+                      <Select
+                        value={settingsForm.caller_id_number_id ?? '__none__'}
+                        onValueChange={(v) =>
+                          setSettingsForm((f) =>
+                            f ? { ...f, caller_id_number_id: v === '__none__' ? null : v } : f
+                          )
+                        }
+                      >
+                        <SelectTrigger className="w-full bg-[#1A2332] border-white/10 text-white">
+                          <SelectValue placeholder="None" />
+                        </SelectTrigger>
+                        <SelectContent
+                          className="bg-[#1E2A3A] border-white/10"
+                          style={{ zIndex: 10001 }}
+                        >
+                          <SelectItem
+                            value="__none__"
+                            className="bg-[#1E2A3A] hover:bg-white/10 focus:bg-white/10 text-white focus:text-white"
+                          >
+                            None
+                          </SelectItem>
+                          {userNumbers.map((num) => (
+                            <SelectItem
+                              key={num.id}
+                              value={num.id}
+                              className="bg-[#1E2A3A] hover:bg-white/10 focus:bg-white/10 text-white focus:text-white"
+                            >
+                              {num.phone_number}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div>
+                      <label className="text-sm text-[#B0BEC5] block mb-1">Max Attempts</label>
+                      <input
+                        type="number"
+                        min={1}
+                        value={settingsForm.max_attempts ?? 3}
+                        onChange={(e) =>
+                          setSettingsForm((f) =>
+                            f ? { ...f, max_attempts: Math.max(1, Number(e.target.value)) } : f
+                          )
+                        }
+                        className="w-full bg-[#1A2332] border border-white/10 rounded-lg px-3 py-2 text-white"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-sm text-[#B0BEC5] block mb-1">
+                        Retry Interval (minutes)
+                      </label>
+                      <input
+                        type="number"
+                        min={0}
+                        value={settingsForm.retry_interval_minutes ?? 120}
+                        onChange={(e) =>
+                          setSettingsForm((f) =>
+                            f
+                              ? {
+                                  ...f,
+                                  retry_interval_minutes: Math.max(0, Number(e.target.value)),
+                                }
+                              : f
+                          )
+                        }
+                        className="w-full bg-[#1A2332] border border-white/10 rounded-lg px-3 py-2 text-white"
+                      />
+                    </div>
+                    <div className="flex items-end gap-2">
+                      <label className="flex items-center gap-2 text-sm text-[#B0BEC5]">
+                        <input
+                          type="checkbox"
+                          checked={settingsForm.abandon_message_enabled ?? true}
+                          onChange={(e) =>
+                            setSettingsForm((f) =>
+                              f ? { ...f, abandon_message_enabled: e.target.checked } : f
+                            )
+                          }
+                        />
+                        Play abandon message
+                      </label>
+                    </div>
+                    <div>
+                      <label className="text-sm text-[#B0BEC5] block mb-1">
+                        Calling Window Start (contact-local)
+                      </label>
+                      <input
+                        type="time"
+                        value={(settingsForm.calling_window_start ?? '08:00').slice(0, 5)}
+                        onChange={(e) =>
+                          setSettingsForm((f) =>
+                            f ? { ...f, calling_window_start: e.target.value } : f
+                          )
+                        }
+                        className="w-full bg-[#1A2332] border border-white/10 rounded-lg px-3 py-2 text-white"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-sm text-[#B0BEC5] block mb-1">
+                        Calling Window End (contact-local)
+                      </label>
+                      <input
+                        type="time"
+                        value={(settingsForm.calling_window_end ?? '21:00').slice(0, 5)}
+                        onChange={(e) =>
+                          setSettingsForm((f) =>
+                            f ? { ...f, calling_window_end: e.target.value } : f
+                          )
+                        }
+                        className="w-full bg-[#1A2332] border border-white/10 rounded-lg px-3 py-2 text-white"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Agent assignment (admin+ only). RLS on campaign_agents already scopes agents
+                  to their assigned campaigns (TASK-P1-01); this is that assignment's UI. */}
+              {canManage && (
+                <div className="bg-[#1E2A3A]/60 rounded-2xl border border-white/5 p-6 mb-6">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                      <Users className="w-5 h-5" />
+                      Assigned Agents
+                    </h3>
+                    <button
+                      type="button"
+                      onClick={handleSaveAgents}
+                      disabled={savingAgents}
+                      className="flex items-center gap-2 px-3 py-2 bg-gradient-to-r from-[#00D9FF] to-[#0066FF] rounded-lg text-white text-sm font-semibold disabled:opacity-60"
+                    >
+                      {savingAgents ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <Save className="w-4 h-4" />
+                      )}
+                      Save Assignment
+                    </button>
+                  </div>
+                  {orgMembers.length === 0 ? (
+                    <p className="text-sm text-[#B0BEC5]">No org members to assign.</p>
+                  ) : (
+                    <div className="flex flex-wrap gap-2">
+                      {orgMembers.map((m) => {
+                        const label =
+                          [m.first_name, m.last_name].filter(Boolean).join(' ').trim() ||
+                          m.email ||
+                          m.user_id;
+                        const checked = assignedAgentIds.has(m.user_id);
+                        return (
+                          <label
+                            key={m.user_id}
+                            className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-sm cursor-pointer ${
+                              checked
+                                ? 'bg-[#00D9FF]/10 border-[#00D9FF]/30 text-[#00D9FF]'
+                                : 'bg-[#1A2332] border-white/10 text-[#B0BEC5]'
+                            }`}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={() => toggleAssignedAgent(m.user_id)}
+                            />
+                            {label} <span className="text-xs opacity-70">({m.role})</span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* Leads section */}
               <div className="bg-[#1E2A3A]/60 rounded-2xl border border-white/5 p-6">
@@ -942,6 +1311,59 @@ export function CampaignManageModal({
                   className="px-4 py-2 rounded-lg bg-[#FF3D00]/20 text-[#FF3D00] border border-[#FF3D00]/30 hover:bg-[#FF3D00]/30"
                 >
                   Remove
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Delete campaign confirmation -- not window.confirm (design §7) */}
+      <AnimatePresence>
+        {confirmDeleteOpen && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 flex items-center justify-center p-4"
+            style={{ zIndex: 10000 }}
+          >
+            <div
+              className="absolute inset-0 bg-black/60"
+              onClick={() => !deleting && setConfirmDeleteOpen(false)}
+              aria-hidden
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="relative z-[1] w-full max-w-sm rounded-2xl border border-white/10 bg-[#1A2332] shadow-xl p-6"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <p className="text-white mb-2 font-semibold">
+                Delete &ldquo;{campaign?.name ?? 'this campaign'}&rdquo;?
+              </p>
+              <p className="text-sm text-[#B0BEC5] mb-6">
+                Its leads and call history are kept, but the campaign will no longer be usable or
+                visible in your list. This cannot be undone from the UI.
+              </p>
+              <div className="flex justify-end gap-2">
+                <button
+                  type="button"
+                  disabled={deleting}
+                  onClick={() => setConfirmDeleteOpen(false)}
+                  className="px-4 py-2 rounded-lg bg-[#1E2A3A] text-white hover:bg-[#252F3E] disabled:opacity-60"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={deleting}
+                  onClick={handleDeleteCampaign}
+                  className="flex items-center gap-2 px-4 py-2 rounded-lg bg-[#FF3D00]/20 text-[#FF3D00] border border-[#FF3D00]/30 hover:bg-[#FF3D00]/30 disabled:opacity-60"
+                >
+                  {deleting && <Loader2 className="w-4 h-4 animate-spin" />}
+                  Delete
                 </button>
               </div>
             </motion.div>
