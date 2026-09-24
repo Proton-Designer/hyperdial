@@ -1,4 +1,4 @@
-# Agent Guide — Softdial Studio
+# Agent Guide — HyperDial
 
 A parallel dialing platform for outbound sales teams: many simultaneous call
 legs, answering-machine detection, first human answer bridged to the agent.

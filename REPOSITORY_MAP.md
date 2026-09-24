@@ -17,7 +17,7 @@ answers:
   - "where are the migrations"
 covers: "Directory-by-directory map of the repository and which L2 document covers each area"
 excludes: "How subsystems work (see .brain/domains/), architecture (see arch.system-overview)"
-tokens_est: 1489
+tokens_est: 1488
 ---
 
 # Repository Map
@@ -26,7 +26,7 @@ npm workspace. One package (`apps/web`), plus a Supabase project at the root and
 two git submodules under `vendor/`.
 
 ```
-softdial-studio/
+hyperdial/
 ├── apps/web/            Web client         →  domain.* (all UI)
 ├── supabase/            Backend + schema   →  arch.service-map
 ├── docs/                L3 documentation
@@ -37,7 +37,7 @@ softdial-studio/
 
 ## `apps/web/` — the client
 
-Package `@softdial/web`. React 18 · TypeScript · Vite 6 · Tailwind v4.
+Package `@hyperdial/web`. React 18 · TypeScript · Vite 6 · Tailwind v4.
 
 | Path | Contains | Covered by |
 |---|---|---|

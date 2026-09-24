@@ -1,6 +1,6 @@
 <div align="center">
 
-# Softdial Studio
+# HyperDial
 
 **Parallel dialing platform for high-velocity sales teams.**
 
@@ -16,7 +16,7 @@ machines, and bridging the first human that picks up.
 
 ## What it does
 
-Softdial Studio runs **parallel dial sessions**: for a given campaign it fires
+HyperDial runs **parallel dial sessions**: for a given campaign it fires
 _N_ simultaneous outbound legs, runs Telnyx AMD (answering-machine detection) on
 each, and the moment a human answers it bridges that leg to the agent's WebRTC
 session and hangs up the rest of the batch. Contacts are marked `voicemail`,
@@ -30,9 +30,9 @@ search and purchase.
 ## Repository layout
 
 ```
-softdial-studio/
+hyperdial/
 ├── apps/
-│   └── web/                 React + Vite client (@softdial/web)
+│   └── web/                 React + Vite client (@hyperdial/web)
 │       ├── src/
 │       │   ├── components/  Feature screens + shadcn/ui primitives
 │       │   ├── contexts/    Auth and phone-number providers
@@ -64,8 +64,8 @@ softdial-studio/
 ### 1. Clone with submodules
 
 ```bash
-git clone --recurse-submodules https://github.com/Proton-Designer/softdial-studio.git
-cd softdial-studio
+git clone --recurse-submodules https://github.com/Proton-Designer/hyperdial.git
+cd hyperdial
 ```
 
 Already cloned without them? `git submodule update --init --recursive`

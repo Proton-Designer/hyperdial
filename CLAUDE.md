@@ -1,4 +1,4 @@
-# Softdial Studio
+# HyperDial
 
 A **parallel dialing platform for outbound sales teams**. One agent dials many
 lines at once; answering-machine detection discards the dead ends; the first

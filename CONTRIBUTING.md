@@ -1,10 +1,10 @@
-# Contributing to Softdial Studio
+# Contributing to HyperDial
 
 ## Setup
 
 ```bash
-git clone --recurse-submodules https://github.com/Proton-Designer/softdial-studio.git
-cd softdial-studio
+git clone --recurse-submodules https://github.com/Proton-Designer/hyperdial.git
+cd hyperdial
 npm install
 cp apps/web/.env.example apps/web/.env
 cp supabase/.env.example supabase/.env

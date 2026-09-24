@@ -16,7 +16,7 @@ answers:
   - "what does success look like for a user"
 covers: "Product intent, the user, and the metric the system exists to move"
 excludes: "Implementation (see arch.system-overview), per-capability behaviour (see .brain/domains/)"
-tokens_est: 1203
+tokens_est: 1202
 ---
 
 # Product Context
@@ -28,7 +28,7 @@ tokens_est: 1203
 
 ## What it is
 
-Softdial Studio is a **parallel dialing platform for outbound sales teams**. An
+HyperDial is a **parallel dialing platform for outbound sales teams**. An
 agent dials many numbers simultaneously, answering-machine detection discards the
 ones a human never picks up, and the first real human answer is bridged to the
 agent's headset.

@@ -1,4 +1,4 @@
-# Softdial Studio documentation
+# HyperDial documentation
 
 Human-facing documentation. For AI-agent context, start at
 [`../CLAUDE.md`](../CLAUDE.md) and [`../.brain/`](../.brain/).

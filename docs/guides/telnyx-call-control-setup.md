@@ -48,7 +48,7 @@ If you create two things that look the same (e.g. two applications with the same
 - Go to **Call Control** → **Applications** (or **Voice** → **Applications**).
 - Click **Create** (or **Add Application**).
 - Set:
-  - **Name:** e.g. `Softdial Parallel Dialer`
+  - **Name:** e.g. `HyperDial Parallel Dialer`
   - **Webhook URL:**  
     `https://YOUR_PROJECT_REF.supabase.co/functions/v1/telnyx-webhook`  
     (e.g. `https://<your-project-ref>.supabase.co/functions/v1/telnyx-webhook`)

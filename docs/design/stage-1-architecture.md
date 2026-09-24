@@ -1,4 +1,4 @@
-# Stage 1 Architecture — Softdial Studio
+# Stage 1 Architecture — HyperDial
 
 **Status:** DRAFT, awaiting owner approval · **Author:** Opus Lead · **Date:** 2026-09-23
 **Inputs:** platform audit and dialer audit (2026-09-23), owner decisions (2026-09-23)
@@ -113,7 +113,7 @@ The HMAC path is deleted. This lands before any live traffic, and together with 
 
 ### 4.1 Topology: a persistent agent leg in a conference
 
-1. **Go Ready.** The browser registers the WebRTC client. The server creates a Telnyx **conference** for the session and **dials the agent's SIP URI** (`sip:<cred-user>@sip.telnyx.com`) from the org's Call Control app. The browser auto-answers calls that carry `X-Softdial-Session: <id>`. The agent is now sitting in the conference.
+1. **Go Ready.** The browser registers the WebRTC client. The server creates a Telnyx **conference** for the session and **dials the agent's SIP URI** (`sip:<cred-user>@sip.telnyx.com`) from the org's Call Control app. The browser auto-answers calls that carry `X-HyperDial-Session: <id>`. The agent is now sitting in the conference.
 2. **Dial.** Contact legs are originated with `client_state = {org, session, leg}`.
 3. **Win.** The winning leg is joined into the conference, so the agent hears the contact within about 100 ms of the join, with no ring-to-agent delay.
 4. **After the call** the contact leg hangs up, and the agent **stays in the conference** for the next contact.
@@ -254,7 +254,7 @@ Ringing, unanswered legs are hung up silently.
 
 `org_integrations(org_id, provider='ghl', token_secret_id (Vault), location_id, status)`. It uses the LeadConnector API v2 (`services.leadconnectorhq.com`, `Version: 2021-07-28`).
 
-- **Pull:** "Import from GHL" by tag or search into `contacts` with `ghl_contact_id`, deduplicated on phone or `ghl_contact_id`. There is a manual re-sync button. Real-time GHL→Softdial webhooks are Stage 2.
+- **Pull:** "Import from GHL" by tag or search into `contacts` with `ghl_contact_id`, deduplicated on phone or `ghl_contact_id`. There is a manual re-sync button. Real-time GHL→HyperDial webhooks are Stage 2.
 - **Push:** after each disposition, one outbox row is written to `crm_sync_jobs`. A pg_cron worker processes it with retry and backoff. The push:
   - adds a **note** (outcome, duration, agent, notes, recording link, first ~1,000 characters of the transcript)
   - adds a **disposition tag**
@@ -263,7 +263,7 @@ Ringing, unanswered legs are hung up silently.
 
   The outbox exists so that GHL outages never block the dialer.
 
-- Contacts created in Softdial that have no GHL id are upserted to GHL on their first disposition.
+- Contacts created in HyperDial that have no GHL id are upserted to GHL on their first disposition.
 
 ---
 
