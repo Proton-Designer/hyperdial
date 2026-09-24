@@ -1,8 +1,8 @@
 {
-  "name": "@softdial/web",
+  "name": "@hyperdial/web",
   "version": "0.1.0",
   "private": true,
-  "description": "Softdial Studio web client — React + Vite parallel dialer UI.",
+  "description": "HyperDial web client — React + Vite parallel dialer UI.",
   "type": "module",
   "scripts": {
     "dev": "vite",

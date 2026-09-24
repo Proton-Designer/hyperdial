@@ -1,5 +1,5 @@
 {
-  "name": "softdial-studio",
+  "name": "hyperdial",
   "version": "0.1.0",
   "private": true,
   "description": "Parallel dialing platform: React/Vite web app backed by Supabase Edge Functions and Telnyx Call Control.",
@@ -12,10 +12,10 @@
     "apps/*"
   ],
   "scripts": {
-    "dev": "npm run dev --workspace @softdial/web",
-    "build": "npm run build --workspace @softdial/web",
-    "preview": "npm run preview --workspace @softdial/web",
-    "typecheck": "npm run typecheck --workspace @softdial/web",
+    "dev": "npm run dev --workspace @hyperdial/web",
+    "build": "npm run build --workspace @hyperdial/web",
+    "preview": "npm run preview --workspace @hyperdial/web",
+    "typecheck": "npm run typecheck --workspace @hyperdial/web",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
