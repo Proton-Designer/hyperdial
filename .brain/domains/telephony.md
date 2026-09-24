@@ -96,10 +96,20 @@ Softdial places and receives real phone calls through Telnyx. This domain covers
 - **`telnyx-webhook` is genuinely unauthenticated at both layers.** Telnyx has no Supabase session, so the gateway check is off (`supabase/config.toml:368-369`) and the function never calls
   `getUserFromRequest`. It must be deployed with `--no-verify-jwt` (`package.json:26` → `npm run functions:deploy:webhook`); a plain `functions deploy` re-enables gateway JWT and every
   Telnyx event starts 401-ing. The signature check is the *only* thing guarding the dial loop.
-- **The signature check fails open twice.** `verifySignature` (`supabase/functions/telnyx-webhook/index.ts:32-73`) returns `true` when `TELNYX_WEBHOOK_SECRET` is unset (`:34`), and returns
-  `true` for ed25519-only requests after a `console.warn` (`:43-46`) — Telnyx Standard Webhooks sign with ed25519, not the shared-secret HMAC this code implements. The HMAC path is SHA-256
-  hex over `` `${timestamp}|${rawBody}` `` compared against `telnyx-signature` / `x-telnyx-signature`, with `v1=`-prefix support (`:57-71`). A missing `telnyx-timestamp` is the one hard
-  reject (`:38`). There is **no replay window** — an old signed body still validates.
+- **The signature check no longer fails open (TASK-P1-05, 2026-09-24, NEEDS-LIVE-VERIFY).** `telnyx-webhook/index.ts` reads `?org=` from the URL, loads that org's
+  `webhook_public_key` from `org_telephony`, and verifies with `_shared/webhook-verify.ts`'s `verifyTelnyxSignature()` — real Ed25519 over `` `${timestamp}|${rawBody}` ``,
+  a 300s replay window, and no fail-open branch (11 `deno test` cases in TASK-P1-04, including a positive control and a regression test that no such branch exists). A
+  missing `?org=` is now also a hard 401, since there's no key to check against. Never tested against a real Telnyx account or against a running local DB — the
+  `org_telephony` migration isn't applied yet. See known-issues #0. The legacy HMAC/shared-secret path described below no longer exists in the code.
+- **The org-in-client_state cross-check has nothing to check yet for the current dial engine.** `decodeDialClientState` (new `{org, session, leg}` shape) is checked
+  against `?org=` when it decodes, but today's engine (`_shared/dialer-engine.ts`) still builds the legacy `{userId, sessionId, contactId, campaignId, batchIndex}`
+  shape, which has no `org` field — that only closes once Phase 2 rewrites the engine.
+- **Historical, pre-fix behavior (context for the fix above):** the old `verifySignature` returned `true` when `TELNYX_WEBHOOK_SECRET` was unset, and returned `true`
+  for ed25519-only requests after a `console.warn` — Telnyx Standard Webhooks sign with ed25519, not the shared-secret HMAC that code implemented. There was no replay
+  window.
+- **`joinCallToConference` calls a dead endpoint.** `_shared/telnyx.ts`'s `POST /calls/{id}/actions/join_conference` has zero matches in Telnyx's current OpenAPI spec
+  (verified 2026-09-23). The correct call is `POST /conferences/{id}/actions/join` with `call_control_id` in the body — implemented correctly in the new
+  `_shared/telnyx-client.ts` (TASK-P1-04), which Phase 2's engine rewrite switches to. See known-issues #0b.
 - **The webhook ACKs before it works.** `200 {received:true}` is returned and processing happens in `queueMicrotask` (`:376-384`), so a handler throw is invisible to Telnyx and never
   retried. Conversely Telnyx retries are at-least-once — handlers must be idempotent.
 - **WebRTC credentials leak.** `telephonyCredentials.create` runs on *every* call to `telnyx-webrtc-credentials` (`:25`) and nothing ever deletes the credential; each page load that connects

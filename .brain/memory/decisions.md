@@ -31,6 +31,61 @@ Newest first. Each entry answers: what was decided, why, and what it rules out.
 
 ---
 
+## 2026-09-24 — Every cross-table check inside an RLS policy goes through a SECURITY DEFINER helper
+
+**Status:** Active · **Decided by:** eng1 (TASK-P1-01, overnight run 2026-09-23)
+
+**Context:** The tenancy migration's design task explicitly banned inline subqueries on
+`org_members` inside a policy, to avoid RLS recursion. While writing the RLS test matrix
+(`supabase/tests/rls_org_matrix.sql`), the same failure mode showed up one hop further out:
+`campaign_leads`' INSERT `WITH CHECK` queried `contacts` (plain subquery, invoker rights), and
+`contacts`' own SELECT policy queries `campaign_leads` back for the agent-visibility branch. That
+closed a cycle — Postgres detected it at runtime: `infinite recursion detected in policy for
+relation "campaign_leads"`.
+
+**Decision:** every policy that needs to read a *different* table now does it through a
+`private.*` `SECURITY DEFINER STABLE` function (`campaign_org_id`, `contact_org_id`,
+`agent_assigned_to_campaign`, `agent_has_contact_access` — alongside the original
+`is_org_member`/`has_org_role`), never an inline `EXISTS (SELECT ... FROM <other table> ...)`. The
+table owner (the migration role) bypasses RLS inside a SECURITY DEFINER function it owns, so the
+referenced table's own policies never re-enter.
+
+**Do not undo without understanding:** writing a new org-scoped policy that queries another
+RLS-protected table inline is the same class of bug, just waiting for the right two tables to
+reference each other. Add a `private.*` helper instead.
+
+## 2026-09-24 — `call_events.org_id` stays nullable
+
+**Status:** Active · **Decided by:** eng1 (TASK-P1-01), per `CLAUDE.md`'s "if the code proves a
+design point wrong, choose the most reasonable fix and correct the design doc" instruction.
+
+**Context:** `docs/design/stage-1-architecture.md` §2 calls for `org_id NOT NULL` on
+`call_events` along with every other business table. But `call_events.user_id` has always been
+nullable (`ON DELETE SET NULL`, `20250213000001`) and rows with a null `user_id` are already
+unreachable under RLS — there is no user to derive an org from during backfill, and the live
+project is real, recovered data of unknown shape.
+
+**Decision:** `call_events.org_id` is nullable (`ON DELETE SET NULL`, mirroring `user_id`); every
+other table in scope (`campaigns`, `campaign_leads`, `contacts`, `user_phone_numbers`,
+`notifications`, `dialer_sessions`, `call_logs`) is `NOT NULL` as designed. The design doc is
+corrected in the same commit as this migration.
+
+## 2026-09-24 — A freshly created schema does not inherit `public`'s default `USAGE` grant
+
+**Status:** Active · **Decided by:** eng1 (TASK-P1-01)
+
+**Context:** The tenancy migration puts the RLS helper functions (`is_org_member`,
+`has_org_role`, etc.) in a `private` schema so they are not API-exposed. Postgres grants `USAGE`
+and `CREATE` on the `public` schema to `PUBLIC` by default, but that default is specific to
+`public` — a newly created schema grants privileges to nobody but its owner. `authenticated`
+therefore needs an explicit `grant usage on schema private to authenticated;`, or every policy
+calling a `private.*` function fails with "permission denied for schema private" the moment a
+real request hits it (caught while writing `supabase/tests/rls_org_matrix.sql`, before any commit
+— see `mem.lessons`).
+
+**Do not undo without understanding:** removing that grant (e.g. while "cleaning up" the schema)
+silently breaks every RLS policy that calls a `private.*` helper.
+
 ## 2026-09-21 — Restore a real Tailwind build; delete the compiled CSS
 
 **Status:** Active · **Decided by:** maintainer (approved during modernization)
@@ -185,3 +240,18 @@ hand. No generated client, no shared types package.
 **Consequence:** changing an Edge Function's response shape produces **no
 TypeScript error** — only a runtime failure. Treat every function signature change
 as a two-sided change.
+
+### `telnyx-connect` idempotency is by our own stored IDs, not a Telnyx-side search
+
+Design §3 says re-running "Connect Telnyx" should reuse existing resources "found
+by tag or name." `_shared/telnyx-provision.ts` (TASK-P1-05) instead reuses whatever
+IDs are already in `org_telephony` and only creates what's missing — we're the only
+writer of that table, so our own stored state is a reliable idempotency key without
+querying Telnyx to search for a same-named resource.
+
+**Do not undo without understanding:** if `org_telephony`'s row for an org is ever
+deleted or its IDs cleared without also deleting the underlying Telnyx resources,
+reconnecting will create duplicate outbound voice profiles / Call Control
+Applications / credential connections rather than finding the orphaned ones. A
+future "resync" or "adopt existing resources" flow would need an actual Telnyx-side
+search by name; this decision trades that for simplicity tonight.

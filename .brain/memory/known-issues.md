@@ -29,30 +29,25 @@ Ordered by how likely each is to waste someone's time, except #0 — ordered by 
 
 ## 0. The Telnyx webhook signature check fails open — the dial loop is effectively unauthenticated
 
-**Severity: critical — security. Verified in code 2026-09-21.**
+**Severity: critical — security. Fixed in code 2026-09-24 (TASK-P1-05). NEEDS-LIVE-VERIFY.**
 
-`telnyx-webhook` is the only endpoint reachable without a Supabase session (deployed `--no-verify-jwt`, because Telnyx has none), so `verifySignature()` is the *only* thing protecting the dial engine
-from the open internet. It returns `true` without verifying anything on **two** paths (`supabase/functions/telnyx-webhook/index.ts:32-46`):
+Fixed: `telnyx-webhook/index.ts` no longer has a `verifySignature()` with a no-secret or unchecked-ed25519 fail-open branch. It now reads `?org=` from the request URL,
+loads that org's `webhook_public_key` from `org_telephony`, and calls `_shared/webhook-verify.ts`'s `verifyTelnyxSignature()` — which fails closed on every branch
+(missing header, missing key, bad encoding, stale timestamp, bad signature) and has no code path that returns `ok: true` without a real Ed25519 check (see its 11
+`deno test` cases, TASK-P1-04, including a positive control and an explicit regression test that no such path exists). A request with no `?org=` is rejected before
+signature checking even starts, since there is no key to check it against. `client_state.org` is cross-checked against `?org=` as defense in depth, for the new
+`{org, session, leg}` client_state shape only — see the caveat below.
 
-```ts
-const secret = Deno.env.get('TELNYX_WEBHOOK_SECRET');
-if (!secret) return true;                        // (1) no secret → accept everything
-...
-if (!signature && ed25519Signature) {
-  console.warn('[telnyx-webhook] ed25519 signature received; skipping HMAC validation');
-  return true;                                   // (2) accept ANY ed25519 header, unchecked
-}
-```
+**NEEDS-LIVE-VERIFY**: this has never been checked against a real Telnyx account signing a real webhook. It also has never run against a real database, because
+`org_telephony` (TASK-P1-05's own migration) is written but not yet applied — the lead applies it after TASK-P1-01. Until both are applied and exercised with
+`supabase functions serve`, treat "fixed" as "fixed pending the local-DB and live-Telnyx checks this task couldn't do tonight."
 
-**Path (2) is the dangerous one.** Telnyx Standard Webhooks sign with **ed25519**, not the shared-secret HMAC implemented here — so path (2) is plausibly the path production traffic takes. Any caller
-sending a `telnyx-timestamp` header and a `telnyx-signature-ed25519` header **of any value** is accepted; the value is never checked. A forged request can drive the dial engine directly: inject call
-events, disposition contacts, stall batches, hang up live calls. There is also **no replay window** — the timestamp must be present (`:38`) but is never compared to now.
+**Caveat carried forward, not yet closed:** today's dial engine (`_shared/dialer-engine.ts`) still builds the legacy client_state shape
+(`userId/sessionId/contactId/campaignId/batchIndex`), which has no `org` field — TASK-P1-05 explicitly leaves that dispatch intact and defers the engine rewrite to
+Phase 2. So the `client_state.org` cross-check has nothing to check yet for calls the current engine places; only the *signature* check protects those today. Closes
+when Phase 2 rewrites the engine to carry `{org, session, leg}` on every leg (`_shared/client-state.ts`, already built in TASK-P1-04).
 
-**The fix** is to verify the ed25519 signature against Telnyx's public key (in the portal) and reject rather than warn, making `TELNYX_WEBHOOK_SECRET` a hard requirement that fails closed.
-
-**Do not** just delete the fail-open branches — without ed25519 verification in place that rejects all real Telnyx traffic and takes the dialer down.
-
-Reported during the Agent-Brain install; **not fixed** — the fix needs the account's public key and live-traffic verification the install could not do.
+Originally reported during the Agent-Brain install 2026-09-21.
 
 ---
 
@@ -182,6 +177,24 @@ Related: webhooks are at-least-once. Every handler must tolerate the same event 
 - **Lint warnings are not errors.** `npm run lint` passes with 0 errors and 13 warnings: 11 react-refresh/only-export-components (mostly in the generated UI primitives) and 2
   react-hooks/exhaustive-deps in `useDialerSession.ts` flagging an unnecessary `state.session` dependency. The hooks ones are in the live dial-session state machine and are worth a look.
 - **`ContactQueue.tsx` appears dead** — nothing imports it. Not confirmed.
+
+---
+
+## 7. Agent `contacts` UPDATE is full-row, not DNC-scoped
+
+**Severity: low — narrower than ideal, not a cross-tenant leak.**
+
+`docs/design/stage-1-architecture.md` §2's permission matrix gives every role, including Agent,
+the ability to "mark a contact DNC" — but there is no `dnc` column yet (design §7, not built as of
+TASK-P1-01). The tenancy migration (`20260924000300_rewrite_rls_org_scoped.sql`) therefore scopes
+an agent's `contacts` UPDATE policy to *any* column on a contact reachable through a campaign they
+are assigned to (`campaign_agents`), not just a DNC toggle — RLS `USING`/`WITH CHECK` cannot
+restrict which columns a matching row may change without a trigger. An agent can currently edit
+`business_name`, `notes`, etc. on any contact in their assigned campaigns, not only flag DNC.
+
+**Fix when the `dnc` column lands** (design §7 / a future contacts task): either add a
+`BEFORE UPDATE` trigger that rejects a non-owner/admin change touching any column other than
+`dnc`, or split `dnc` into its own table with its own narrower policy.
 
 ---
 

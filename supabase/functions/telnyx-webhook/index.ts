@@ -12,6 +12,8 @@ import {
 import { getAgentSessionState, getCallState, setCallState } from '../_shared/redis.ts';
 import { hangupCall, joinCallToConference } from '../_shared/telnyx.ts';
 import { publishDialerEvent } from '../_shared/dialer-events.ts';
+import { verifyTelnyxSignature } from '../_shared/webhook-verify.ts';
+import { decodeDialClientState } from '../_shared/client-state.ts';
 
 type WebhookBody = {
   data?: {
@@ -29,47 +31,24 @@ function getSupabaseAdmin() {
   return createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
 }
 
-async function verifySignature(req: Request, rawBody: string): Promise<boolean> {
-  const secret = Deno.env.get('TELNYX_WEBHOOK_SECRET');
-  if (!secret) return true;
-  const signature = req.headers.get('telnyx-signature') ?? req.headers.get('x-telnyx-signature');
-  const ed25519Signature = req.headers.get('telnyx-signature-ed25519');
-  const timestamp = req.headers.get('telnyx-timestamp') ?? '';
-  if (!timestamp) return false;
-
-  // Telnyx Standard Webhooks use ed25519 signatures (not shared-secret HMAC).
-  // If only ed25519 headers are present, allow processing for now so call control
-  // flow continues; this avoids false 401s when TELNYX_WEBHOOK_SECRET is set.
-  if (!signature && ed25519Signature) {
-    console.warn('[telnyx-webhook] ed25519 signature received; skipping HMAC validation');
-    return true;
+// Known-issues #0 fix: this replaces both fail-open branches (no-secret-configured,
+// and unchecked-ed25519-header) with real ed25519 verification that fails closed on
+// every branch (see _shared/webhook-verify.ts). There is no code path here, or in
+// verifyTelnyxSignature, that accepts a request without checking its signature.
+async function loadOrgWebhookPublicKey(
+  supabase: ReturnType<typeof getSupabaseAdmin>,
+  orgId: string
+): Promise<string | null> {
+  const { data, error } = await supabase
+    .from('org_telephony')
+    .select('webhook_public_key')
+    .eq('org_id', orgId)
+    .maybeSingle();
+  if (error) {
+    console.error('[telnyx-webhook] org_telephony lookup failed', { orgId, error: error.message });
+    return null;
   }
-  if (!signature) return false;
-
-  const encoder = new TextEncoder();
-  const key = await crypto.subtle.importKey(
-    'raw',
-    encoder.encode(secret),
-    { name: 'HMAC', hash: 'SHA-256' },
-    false,
-    ['sign']
-  );
-  const payload = `${timestamp}|${rawBody}`;
-  const digest = await crypto.subtle.sign('HMAC', key, encoder.encode(payload));
-  const expected = Array.from(new Uint8Array(digest))
-    .map((b) => b.toString(16).padStart(2, '0'))
-    .join('');
-  // Some Telnyx payloads include signature prefixes like "t=...,v1=...".
-  if (expected === signature) return true;
-  if (signature.includes('v1=')) {
-    const maybeV1 = signature
-      .split(',')
-      .map((part) => part.trim())
-      .find((part) => part.startsWith('v1='))
-      ?.replace('v1=', '');
-    return maybeV1 === expected;
-  }
-  return false;
+  return data?.webhook_public_key ?? null;
 }
 
 function asString(value: unknown): string {
@@ -356,10 +335,30 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
+    const orgId = new URL(req.url).searchParams.get('org');
+    if (!orgId) {
+      // Fail closed: with no org, there is no public key to check the signature
+      // against. Every org's Call Control Application webhook URL is provisioned
+      // with ?org=<org_id> by telnyx-connect, so a legitimate Telnyx request always
+      // carries it.
+      webhookLog('rejected_missing_org_param');
+      return new Response(JSON.stringify({ error: 'Missing org' }), {
+        status: 401,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
     const rawBody = await req.text();
-    const verified = await verifySignature(req, rawBody);
-    if (!verified) {
-      webhookLog('signature_verification_failed');
+    const supabase = getSupabaseAdmin();
+    const publicKey = await loadOrgWebhookPublicKey(supabase, orgId);
+    const verified = await verifyTelnyxSignature({
+      rawBody,
+      signatureB64: req.headers.get('telnyx-signature-ed25519'),
+      timestamp: req.headers.get('telnyx-timestamp'),
+      publicKeyB64: publicKey,
+    });
+    if (!verified.ok) {
+      webhookLog('signature_verification_failed', { orgId, reason: verified.reason });
       return new Response(JSON.stringify({ error: 'Invalid webhook signature' }), {
         status: 401,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -367,7 +366,32 @@ Deno.serve(async (req: Request) => {
     }
 
     const body = JSON.parse(rawBody) as WebhookBody;
+
+    // Cross-tenant defense in depth (design §3 step 5): if client_state carries the
+    // new {org, session, leg} shape (TASK-P1-04/P2 dial engine), it must name this
+    // same org. The legacy dialer-engine client_state (userId/sessionId/contactId/
+    // campaignId/batchIndex, still dispatched below per this task's invariant) has no
+    // org field at all -- today's dial engine is pre-org-rewrite -- so there is
+    // nothing to check for it yet; that gap closes when Phase 2 rewrites the engine
+    // to carry {org, session, leg} on every leg.
+    const rawClientState = asString(
+      (body?.data?.payload as Record<string, unknown> | undefined)?.client_state ??
+        (body?.data as Record<string, unknown>)?.client_state
+    );
+    const dialClientState = decodeDialClientState(rawClientState);
+    if (dialClientState && dialClientState.org !== orgId) {
+      webhookLog('rejected_client_state_org_mismatch', {
+        orgId,
+        clientStateOrg: dialClientState.org,
+      });
+      return new Response(JSON.stringify({ error: 'client_state org mismatch' }), {
+        status: 401,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
     webhookLog('request_accepted_for_async_processing', {
+      orgId,
       eventType: body?.data?.event_type ?? null,
       callControlId: asString(
         (body?.data?.payload as Record<string, unknown> | undefined)?.call_control_id
