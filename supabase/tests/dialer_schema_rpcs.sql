@@ -114,6 +114,21 @@ select public._test_expect_count('claim_next_leads: dnc lead (e) is untouched (s
   'select count(*) from public.campaign_leads where id = ''7d1e5000-a030-4000-8000-00000000000e'' and status = ''queued''', 1);
 
 -- ===========================================================================================
+-- 2d. Fix D: an unrecognized contacts.timezone falls back to the both-coasts rule instead of
+--     aborting claim_next_leads for the whole campaign (one bad CSV row must not stop dialing).
+-- ===========================================================================================
+
+insert into public.contacts (id, org_id, user_id, phone_number, timezone) values
+  ('7d1e5000-a020-4000-8000-00000000000f', :'org_a', '7d1e5000-a000-4000-8000-00000000000a', '+15550000006', 'Not/AZone');
+insert into public.campaign_leads (id, campaign_id, contact_id, org_id, status, attempts, next_attempt_at) values
+  ('7d1e5000-a030-4000-8000-00000000000f', '7d1e5000-a010-4000-8000-00000000000a', '7d1e5000-a020-4000-8000-00000000000f', :'org_a', 'queued', 0, now());
+
+select public._test_expect_count('claim_next_leads: a lead with an unrecognized timezone is still claimed (both-coasts fallback), not an abort',
+  'select count(*) from public.claim_next_leads(''7d1e5000-a040-4000-8000-00000000000a'', 5) where contact_id = ''7d1e5000-a020-4000-8000-00000000000f''', 1);
+select public._test_expect_count('claim_next_leads: the bad-timezone lead is now in_flight too (proves the call didn''t just silently skip it)',
+  'select count(*) from public.campaign_leads where id = ''7d1e5000-a030-4000-8000-00000000000f'' and status = ''in_flight''', 1);
+
+-- ===========================================================================================
 -- 3. Calling window (§7): explicit boundary + null-timezone both-coasts rule
 -- ===========================================================================================
 
@@ -125,6 +140,30 @@ select public._test_expect_true('calling window: null-timezone contact IS callab
   private.is_lead_callable_now(null, '00:00', '23:59'));
 select public._test_expect_false('calling window: null-timezone contact is NOT callable in a window too narrow to hold on both coasts at once',
   private.is_lead_callable_now(null, '00:00', '00:01'));
+
+-- ===========================================================================================
+-- 3a. Fix C: claim_leg must validate the leg itself (belongs to this session, still live,
+--     kind='contact') before it can ever touch dial_sessions -- a leg that already ended in a
+--     race must not be able to win the session and leave it stuck pointing at a dead leg.
+-- ===========================================================================================
+
+insert into public.dial_sessions (id, org_id, campaign_id, agent_id, state) values
+  ('7d1e5000-a041-4000-8000-00000000000a', :'org_a', '7d1e5000-a010-4000-8000-00000000000a', '7d1e5000-a000-4000-8000-00000000000a', 'dialing');
+insert into public.call_legs (id, org_id, session_id, campaign_id, contact_id, kind, call_control_id, state) values
+  ('7d1e5000-a051-4000-8000-00000000000a', :'org_a', '7d1e5000-a041-4000-8000-00000000000a', '7d1e5000-a010-4000-8000-00000000000a', '7d1e5000-a020-4000-8000-00000000000a', 'contact', 'v3:p2e1-leg-c-live', 'ringing'),
+  ('7d1e5000-a051-4000-8000-00000000000b', :'org_a', '7d1e5000-a041-4000-8000-00000000000a', '7d1e5000-a010-4000-8000-00000000000a', '7d1e5000-a020-4000-8000-00000000000a', 'agent', 'v3:p2e1-leg-c-agent', 'answered'),
+  ('7d1e5000-a051-4000-8000-00000000000c', :'org_a', '7d1e5000-a041-4000-8000-00000000000a', '7d1e5000-a010-4000-8000-00000000000a', '7d1e5000-a020-4000-8000-00000000000a', 'contact', 'v3:p2e1-leg-c-dead', 'ended');
+
+select public._test_expect_false('claim_leg: a leg belonging to a DIFFERENT session cannot win',
+  public.claim_leg('7d1e5000-a040-4000-8000-00000000000a', '7d1e5000-a051-4000-8000-00000000000a'));
+select public._test_expect_false('claim_leg: an agent-kind leg cannot win a contact-leg claim',
+  public.claim_leg('7d1e5000-a041-4000-8000-00000000000a', '7d1e5000-a051-4000-8000-00000000000b'));
+select public._test_expect_false('claim_leg: a leg that already ended (dead, lost a race) cannot win',
+  public.claim_leg('7d1e5000-a041-4000-8000-00000000000a', '7d1e5000-a051-4000-8000-00000000000c'));
+select public._test_expect_eq('claim_leg: none of the above touched the session -- still dialing, no active_leg_id',
+  (select state from public.dial_sessions where id = '7d1e5000-a041-4000-8000-00000000000a'), 'dialing');
+select public._test_expect_true('claim_leg: a live contact leg that genuinely belongs to this session still wins',
+  public.claim_leg('7d1e5000-a041-4000-8000-00000000000a', '7d1e5000-a051-4000-8000-00000000000a'));
 
 -- ===========================================================================================
 -- 4. claim_leg: single-winner conditional UPDATE (acceptance #4)
@@ -158,6 +197,15 @@ select public._test_expect_false('transition_session: wrong expected prior state
 select public._test_expect_eq('transition_session: state is unchanged after the no-op',
   (select state from public.dial_sessions where id = '7d1e5000-a040-4000-8000-00000000000a'), 'connecting');
 
+-- Fix B: hangup_cause/amd_result are Telnyx's own vocabulary, not ours to gatekeep with a closed
+-- CHECK -- a real Telnyx value this task's original CHECK never listed must still be accepted.
+insert into public.call_legs (id, org_id, session_id, campaign_id, contact_id, kind, call_control_id, state) values
+  ('7d1e5000-a052-4000-8000-00000000000a', :'org_a', '7d1e5000-a041-4000-8000-00000000000a', '7d1e5000-a010-4000-8000-00000000000a', '7d1e5000-a020-4000-8000-00000000000a', 'contact', 'v3:p2e1-leg-b', 'answered');
+select public._test_expect_true('transition_leg: accepts an unlisted-but-real Telnyx hangup_cause (destination_out_of_order)',
+  public.transition_leg('v3:p2e1-leg-b', array['answered'], 'ended', jsonb_build_object('hangup_cause', 'destination_out_of_order', 'amd_result', 'some_future_telnyx_value')));
+select public._test_expect_eq('transition_leg: the unlisted hangup_cause is stored verbatim, not rejected',
+  (select hangup_cause from public.call_legs where id = '7d1e5000-a052-4000-8000-00000000000a'), 'destination_out_of_order');
+
 select public.apply_leg_outcome('7d1e5000-a050-4000-8000-00000000000a'); -- leg-1's outcome is 'connected' (left to disposition); this call's only job here is clearing active_leg_id below
 
 -- ===========================================================================================
@@ -179,6 +227,14 @@ select public.apply_leg_outcome('7d1e5000-a050-4000-8000-00000000000c');
 select public._test_expect_count('apply_leg_outcome/no_answer at attempts=max_attempts-1: increments to max_attempts and exhausts',
   'select count(*) from public.campaign_leads where id = ''7d1e5000-a030-4000-8000-00000000000a'' and attempts = 3 and status = ''exhausted''', 1);
 
+-- Fix A: apply_leg_outcome must be idempotent -- a webhook redelivery or the sweeper racing the
+-- webhook calling it again on the SAME leg must not double-apply (double-increment attempts).
+select public.apply_leg_outcome('7d1e5000-a050-4000-8000-00000000000c');
+select public._test_expect_count('apply_leg_outcome: calling it a SECOND time on the same leg does not increment attempts again',
+  'select count(*) from public.campaign_leads where id = ''7d1e5000-a030-4000-8000-00000000000a'' and attempts = 3', 1);
+select public._test_expect_count('apply_leg_outcome: outcome_applied_at is set exactly once, not re-touched',
+  'select count(*) from public.call_legs where id = ''7d1e5000-a050-4000-8000-00000000000c'' and outcome_applied_at is not null', 1);
+
 insert into public.call_legs (id, org_id, session_id, campaign_id, contact_id, lead_id, kind, call_control_id, state, outcome) values
   ('7d1e5000-a050-4000-8000-00000000000d', :'org_a', '7d1e5000-a040-4000-8000-00000000000a', '7d1e5000-a010-4000-8000-00000000000a', '7d1e5000-a020-4000-8000-00000000000c', '7d1e5000-a030-4000-8000-00000000000c', 'contact', 'v3:p2e1-leg-4', 'ended', 'failed');
 select public.apply_leg_outcome('7d1e5000-a050-4000-8000-00000000000d');
@@ -193,6 +249,13 @@ select public._test_expect_true('record_webhook_event: first sighting of an even
   public.record_webhook_event(:'org_a', '22222222-2222-2222-2222-222222222222', 'call.answered', 'v3:p2e1-leg-1'));
 select public._test_expect_false('record_webhook_event: replay of the same event_id is rejected (dedupe)',
   public.record_webhook_event(:'org_a', '22222222-2222-2222-2222-222222222222', 'call.answered', 'v3:p2e1-leg-1'));
+
+-- Fix E: claim_next_leads must return nothing for a session that isn't 'dialing' (defense in
+-- depth). Session a040 is already 'connecting' at this point (claim_leg's own test above won it),
+-- which is exactly the real-world case this fix guards -- a session mid-connect should never also
+-- be handed a fresh batch of leads to dial.
+select public._test_expect_count('claim_next_leads: a non-dialing session (connecting) gets zero leads',
+  'select count(*) from public.claim_next_leads(''7d1e5000-a040-4000-8000-00000000000a'', 5)', 0);
 
 -- ===========================================================================================
 -- 7. RLS: agent sees only their own session/legs; owner sees the whole org; org-B sees nothing
@@ -212,7 +275,7 @@ reset role;
 set local role authenticated;
 select set_config('request.jwt.claims', '{"sub":"7d1e5000-a000-4000-8000-00000000000a","role":"authenticated"}', true);
 select public._test_expect_count('dial_sessions/owner sees the whole org''s sessions, not just their own',
-  'select count(*) from public.dial_sessions where campaign_id = ''7d1e5000-a010-4000-8000-00000000000a''', 1);
+  'select count(*) from public.dial_sessions where campaign_id = ''7d1e5000-a010-4000-8000-00000000000a''', 2);
 
 reset role;
 set local role authenticated;
@@ -223,4 +286,52 @@ select public._test_expect_count('call_legs/org-B owner sees none of org A''s le
   'select count(*) from public.call_legs where session_id = ''7d1e5000-a040-4000-8000-00000000000a''', 0);
 
 reset role;
+
+-- ===========================================================================================
+-- 8. Perf: the fix for D (private.safe_timezone via a PK-lookup table, not a pg_timezone_names
+--    scan) must keep claim_next_leads fast even with a large candidate pool -- every candidate is
+--    filtered BEFORE the LIMIT, so this scales with queued leads, not with p_n. Own dedicated
+--    campaign/session/5,000 leads so it can't be skewed by anything else in this file.
+-- ===========================================================================================
+
+do $$
+-- psql's :'var' substitution does not reach inside a dollar-quoted body, so org_a is re-derived
+-- here (its owner's user_id is a fixed literal fixture id, same as everywhere else in this file).
+declare
+  v_org uuid;
+  v_campaign uuid;
+  v_session uuid;
+  v_start timestamptz;
+  v_elapsed_ms numeric;
+begin
+  select active_org_id into v_org from public.profiles where user_id = '7d1e5000-a000-4000-8000-00000000000a';
+
+  insert into public.campaigns (id, user_id, org_id, name, calling_window_start, calling_window_end)
+  values (gen_random_uuid(), '7d1e5000-a000-4000-8000-00000000000a', v_org, 'perf-test-campaign', '00:00', '23:59')
+  returning id into v_campaign;
+  insert into public.dial_sessions (id, org_id, campaign_id, agent_id, state)
+  values (gen_random_uuid(), v_org, v_campaign, '7d1e5000-a000-4000-8000-00000000000a', 'dialing')
+  returning id into v_session;
+
+  insert into public.contacts (id, user_id, org_id, phone_number, timezone)
+  select gen_random_uuid(), '7d1e5000-a000-4000-8000-00000000000a', v_org, '+1555' || lpad(i::text, 7, '0'),
+         (array['America/Chicago', 'America/New_York', 'America/Los_Angeles', 'America/Denver'])[1 + (i % 4)]
+  from generate_series(1, 5000) i;
+
+  insert into public.campaign_leads (id, campaign_id, contact_id, org_id, status, attempts, next_attempt_at)
+  select gen_random_uuid(), v_campaign, c.id, v_org, 'queued', 0, now()
+  from public.contacts c
+  where c.org_id = v_org and c.phone_number like '+1555%' and length(c.phone_number) = 12;
+
+  v_start := clock_timestamp();
+  perform * from public.claim_next_leads(v_session, 5);
+  v_elapsed_ms := extract(epoch from (clock_timestamp() - v_start)) * 1000;
+  raise notice 'perf: claim_next_leads over 5000 tz-having candidates took % ms', v_elapsed_ms;
+  if v_elapsed_ms > 500 then
+    raise exception 'FAIL [perf]: claim_next_leads took %ms over 5000 candidates, expected well under 500ms (fix D''s PK-lookup table)', v_elapsed_ms;
+  end if;
+  raise notice 'PASS [perf]: claim_next_leads over 5000 candidates in %ms', v_elapsed_ms;
+end;
+$$;
+
 rollback;
