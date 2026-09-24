@@ -45,10 +45,10 @@ over a timestamp 301s old → `401`. All four exactly as designed. Test org/keyp
 **Still NEEDS-LIVE-VERIFY**: a real Telnyx account actually signing a webhook with its own portal-issued key — everything above used a locally generated
 keypair, not Telnyx's.
 
-**Caveat carried forward, not yet closed:** today's dial engine (`_shared/dialer-engine.ts`) still builds the legacy client_state shape
-(`userId/sessionId/contactId/campaignId/batchIndex`), which has no `org` field — TASK-P1-05 explicitly leaves that dispatch intact and defers the engine rewrite to
-Phase 2. So the `client_state.org` cross-check has nothing to check yet for calls the current engine places; only the *signature* check protects those today. Closes
-when Phase 2 rewrites the engine to carry `{org, session, leg}` on every leg (`_shared/client-state.ts`, already built in TASK-P1-04).
+**Caveat closed 2026-09-24 (TASK-P2-E2):** the engine rewrite landed. `_shared/dialer-engine.ts` is a full rewrite that only ever builds `{org, session, leg}`
+client_state (`_shared/client-state.ts`); the legacy org-less shape is no longer produced anywhere. `telnyx-webhook`'s outer handler now hard-rejects any `call.*`
+event whose client_state doesn't decode and name the request's own org, instead of skipping the check on a null decode. The cross-check now actually protects
+every call the engine places.
 
 Originally reported during the Agent-Brain install 2026-09-21.
 
@@ -120,6 +120,13 @@ Net: **Analytics is fake data; Dashboard is real code over no data.** Neither sc
 
 ## 1b. Dial-session bookkeeping bugs (verified in code)
 
+**Status: describes the LEGACY engine only, superseded 2026-09-24 (TASK-P2-E2).** The
+Redis/`dialer_sessions`/`call_logs` engine this entire entry is about no longer runs any real
+call — `_shared/dialer-engine.ts` was fully rewritten onto the org-scoped `dial_sessions`/
+`call_legs` schema (`.brain/domains/dialer.md`), and the legacy tables/code are left in place,
+untouched, but dead for the dial path. Kept below for history; do not debug a live session
+against these notes.
+
 **Severity: high.** Found during domain extraction, confirmed against the schema and the functions. Not fixed.
 
 - **`dialer-session-active` can never find an active session.** `supabase/functions/dialer-session-active/index.ts:28` orders by `created_at`, but `dialer_sessions` has **no such column** — the schema
@@ -142,6 +149,10 @@ under *Constraints & gotchas*. **Specific and plausible, but not independently c
 ---
 
 ## 1c. Further findings from the 2026-09-23 audits (verified in source)
+
+**Status: describes the LEGACY engine only.** Same caveat as #1b above — superseded 2026-09-24
+by TASK-P2-E2's rewrite. The WebRTC-credential-leak line was independently fixed in TASK-P1-06
+(`.brain/domains/telephony.md`); the rest describe engine code that no longer runs.
 
 Superseded in design by `docs/design/stage-1-architecture.md`; recorded here until that lands.
 
@@ -181,24 +192,39 @@ needs live Telnyx credentials and a real phone call. Every dial-loop change is v
 
 ## 4. Two independent feature flags gate the dialer
 
-**Severity: medium — confusing to diagnose.**
+**Status: server-side flag dropped in the TASK-P2-E2 rewrite, not carried forward.** The
+rewritten `dialer-session-start` (`.brain/domains/dialer.md`) does not check
+`PARALLEL_DIALER_ENABLED` at all — it was never in this task's spec, and dropping it wasn't a
+deliberate decision so much as a gap. The client flag (`VITE_PARALLEL_DIALER_ENABLED`) still
+exists and still hides the UI (`apps/web/src/lib/api.ts`), so today there is effectively one
+active flag, not two. A future task that wants the server-side kill switch back needs to add it
+explicitly to the new function.
 
-`VITE_PARALLEL_DIALER_ENABLED` (client) hides the UI; `PARALLEL_DIALER_ENABLED` (server) makes `dialer-session-start` reject requests. Unrelated variables in different environments — **both must be
-on.** Setting only one gives a visible Start button that fails on click.
+**Severity: medium — confusing to diagnose.** (Describes the pre-rewrite behavior; kept for
+history.)
 
-Defaults are asymmetric: the client flag is opt-*out* (anything but the string `"false"` enables it, `api.ts:9-12`); the server flag must be explicitly `true`. The server flag also gates **only**
-`dialer-session-start` — webhook, pause, stop, and hangup stay live, so in-flight sessions keep running after it is turned off.
+`VITE_PARALLEL_DIALER_ENABLED` (client) hides the UI; `PARALLEL_DIALER_ENABLED` (server) made `dialer-session-start` reject requests. Unrelated variables in different environments — **both had to be
+on.** Setting only one gave a visible Start button that failed on click.
+
+Defaults were asymmetric: the client flag is opt-*out* (anything but the string `"false"` enables it, `api.ts:9-12`); the server flag had to be explicitly `true`. The server flag also gated **only**
+`dialer-session-start` — webhook, pause, stop, and hangup stayed live, so in-flight sessions kept running after it was turned off.
 
 ---
 
 ## 5. The dial loop only advances when a webhook arrives
 
+**Status: still true of the current (TASK-P2-E2) engine** — the sweeper that would fix this is
+E5, explicitly out of scope for E2, and not built yet. The specific mitigation named below
+(`resolveStaleBatchIfTimedOut`) is legacy-engine-only and no longer runs; there is currently NO
+mitigation at all for a leg Telnyx never sends a terminal event for. The at-least-once/dedupe
+point is current and verified: `record_webhook_event` (E1's RPC) is the dedupe now, exercised
+live by `scripts/dev/dialer-sim.ts`'s redelivered-event test.
+
 **Severity: medium — by design, but surprising.**
 
-No cron, no worker, no timer. If Telnyx never sends a terminal event for a leg, that batch does not advance. `resolveStaleBatchIfTimedOut()` (`_shared/dialer-engine.ts:744`) mitigates this but is
-swept on the **next inbound event**, not on a schedule. A session whose events stop entirely stays wedged.
+No cron, no worker, no timer. If Telnyx never sends a terminal event for a leg, the session does not advance and never refills past that stuck leg. Nothing sweeps it today (E5, not built).
 
-Related: webhooks are at-least-once. Every handler must tolerate the same event arriving twice, late, or out of order — and the only dedupe today is the `call_logs` upsert on `call_control_id`.
+Related: webhooks are at-least-once. Every handler must tolerate the same event arriving twice, late, or out of order — `record_webhook_event` is the dedupe gate.
 
 ---
 

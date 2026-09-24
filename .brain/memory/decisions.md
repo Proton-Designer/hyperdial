@@ -31,6 +31,38 @@ Newest first. Each entry answers: what was decided, why, and what it rules out.
 
 ---
 
+## 2026-09-24 — A conditional UPDATE in Postgres replaces Redis's SET NX for the single-winner claim
+
+**Status:** Active · **Decided by:** eng2 (TASK-P2-E2, supersedes the "Redis alongside Postgres,
+for live call state" entry below)
+
+**Context:** Design §4.3 and TASK-P2-E1 already built `claim_leg(session, leg)` — a single
+UPDATE (`set active_leg_id = p_leg ... where state = 'dialing' and active_leg_id is null`) that
+gives exactly one caller `found = true` no matter how many legs answer at once, the same
+single-winner guarantee `claimHumanAnswer()`'s Redis `SET NX` existed to provide. TASK-P2-E2's
+engine rewrite is the point where the dial path actually stops calling the Redis-based legacy
+engine at all — `_shared/dialer-engine.ts` is a full rewrite with zero Redis imports, and
+`telnyx-webhook`/all six `dialer-session-*` functions were rewritten alongside it to match.
+
+**Decision:** Redis leaves the dial path entirely. `_shared/redis.ts` itself is NOT deleted
+(other, non-dial code may still reference it; Phase 4 is the planned removal) and the legacy
+`dialer_sessions`/`call_logs` tables and their Redis-driven engine code path are left in place,
+unused, per the design's own "keep them, don't write to them from new code" instruction — this
+is an addition of a parallel org-scoped schema (`dial_sessions`/`call_legs`), not an in-place
+migration of the old one.
+
+**Consequences:** the single-winner claim is now a plain Postgres row lock + conditional UPDATE,
+verified live under `functions serve` (`scripts/dev/dialer-sim.ts`) to correctly resolve exactly
+one winner across concurrently-answered legs. No new latency concern versus Redis in practice —
+the UPDATE is a single indexed row write, same order of magnitude as a Redis round trip, and it's
+already in the same transaction as the rest of the leg's state change instead of a second
+datastore to keep consistent with Postgres.
+
+**Do not undo without understanding:** this only holds because `claim_leg`'s UPDATE is the *sole*
+writer of `dial_sessions.active_leg_id` for the win decision — any future code path that sets
+`active_leg_id` some other way (a raw UPDATE, a different RPC) reopens the exact race Redis's
+`SET NX` was there to prevent.
+
 ## 2026-09-24 — TASK-P1-02: `requireOrgRole` queries `org_members` directly; dedup is now org-wide
 
 **Status:** Active · **Decided by:** eng1
@@ -222,6 +254,13 @@ reconstructed.
 
 ### Redis alongside Postgres, for live call state
 
+**Status: SUPERSEDED 2026-09-24, see "A conditional UPDATE in Postgres replaces
+Redis's SET NX for the single-winner claim" below.** Kept for history: the
+concern this entry raised (Edge Functions are stateless/concurrent, so the
+webhook handler needs *some* atomic single-winner primitive) was correct — it's
+exactly why the replacement is also a single atomic conditional UPDATE, just in
+Postgres instead of Redis.
+
 `claimHumanAnswer()` (`_shared/redis.ts:110`) is a Redis `SET NX` with a 300s TTL.
 It is what guarantees that when several legs in a batch are answered by humans at
 once, **exactly one** is bridged. Supabase Edge Functions are stateless and
@@ -230,7 +269,8 @@ express this but not at the per-webhook latency the dial loop needs.
 
 **Do not undo without understanding:** removing Redis to "simplify to one
 datastore" reintroduces a race in which two contacts are bridged to one agent, or
-legs that should have been hung up keep ringing.
+legs that should have been hung up keep ringing -- unless the single-winner
+guarantee is coming from somewhere else (it now is, see the entry below).
 
 ### `telnyx-webhook` is deployed `--no-verify-jwt`
 

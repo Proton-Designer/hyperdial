@@ -5,126 +5,189 @@ layer: L2
 type: domain
 status: canonical
 owner: maintainer
-updated: 2026-09-21
+updated: 2026-09-24
 sources:
-  - supabase/functions/_shared/**
+  - supabase/functions/_shared/dialer-core.ts
+  - supabase/functions/_shared/dialer-engine.ts
+  - supabase/functions/_shared/client-state.ts
   - supabase/functions/dialer-session-*/**
   - supabase/functions/telnyx-webhook/**
   - apps/web/src/hooks/useDialerSession.ts
+  - apps/web/src/lib/api.ts
   - apps/web/src/components/dialer/**
-  - supabase/migrations/**
+  - supabase/migrations/20260924000700_dialer_schema.sql
+  - supabase/migrations/20260924000800_dialer_rpcs.sql
+  - supabase/migrations/20260924001000_dialer_rpc_fixes.sql
+  - scripts/dev/dialer-sim.ts
 related:
   - domain.telephony
   - domain.campaigns
   - arch.system-overview
 answers:
   - "how does the dialer pick which answered call the agent talks to, and what counts as human"
-  - "what Redis keys and TTLs does a dial session depend on"
-  - "how does the dialer advance from one batch of lines to the next"
-  - "why did a dial session stall, or calls_connected stay 0, or a webhook replay break it"
-  - "what does PARALLEL_DIALER_ENABLED actually gate"
-covers: "The dial-session engine: batching contacts onto N parallel Telnyx lines, AMD triage, human-answer race resolution, conference bridging, batch advance, and the live UI that mirrors it."
-excludes: "Telnyx API wrappers, number purchase/search and WebRTC credentials (domain.telephony); campaign and lead list construction (domain.campaigns)."
-tokens_est: 2898
-source_hash: a4c36731f2d332220e5cc4a3bfa9f781e24c0d3c3469d35274ff1dfcb2d4f99f
+  - "how does the rolling-refill dial loop work, and what keeps two legs from both winning"
+  - "what happened to the Redis-based engine / dialer_sessions / call_logs"
+  - "why did a dial session stall, or stay in wrap_up, or a webhook replay break it"
+  - "how do I test the dial engine without a real Telnyx account"
+covers: "The org-scoped dial engine (TASK-P2-E2): rolling-refill queueing over campaign_leads, single-winner claim resolution, AMD triage, conference bridging, wrap_up, and the webhook that drives it."
+excludes: "Telnyx API wrappers, number purchase/search and WebRTC credentials (domain.telephony); campaign and lead list construction (domain.campaigns); the agent's own WebRTC leg (E3, not built yet); dispositions (Phase 3, not built yet)."
+tokens_est: 3400
 ---
 
 # Parallel Dialer
 
 ## Purpose
 
-Lets one agent work a campaign list far faster by ringing several contacts at once and connecting the agent only to the first real human who picks up; voicemail,
-silence and no-answer are hung up and recorded silently. A "session" is one user × one campaign × one run.
+Lets one agent work a campaign list far faster by ringing several contacts at once and
+connecting the agent only to the first real human who picks up; voicemail, silence and
+no-answer are hung up and recorded silently. A "session" is one agent × one campaign × one run,
+scoped to an org.
+
+**This document describes the current, org-scoped engine (TASK-P2-E2), which replaced the
+legacy Redis-based engine for the dial path entirely.** The legacy `dialer_sessions`/`call_logs`
+tables and their engine code are still in the repo, untouched, but nothing in this lane writes to
+them anymore — see "Not covered here" for what's actually dead versus still real.
 
 ## Key concepts
 
 | Term | Means |
 |---|---|
-| Batch | The `lines_count` (1–5) contacts dialed at once, identified by `batchIndex`; a session is a row in `dialer_sessions`. |
-| Winner | The one leg in a batch that claimed the human lock; all others are hung up. AMD (answering-machine detection) decides, via Telnyx `answering_machine_detection: 'detect'`. |
-| Client state | Base64 JSON round-tripped through Telnyx so a webhook knows its session/contact. Two shapes: contact leg (`DecodedClientState`), agent callback leg (`{t:'agent'}`). |
-| Conference | Telnyx conference `agent_session_{userId}_{sessionId}` where agent + winner meet; the agent callback is an optional PSTN number dialed *after* a human answers to bridge the agent in. |
+| `dial_sessions` row | One session: `org_id`, `campaign_id`, `agent_id`, `state`, `lines`, `amd_mode`, `agent_leg_id`, `active_leg_id`, `conference_id`. States: `ready_pending → ready → dialing → connecting → on_call → wrap_up`, plus `paused`/`paused_agent_lost`/`stopped`/`completed`. |
+| `call_legs` row | One phone call (a "leg"): `kind` (`contact`/`agent`), `state` (`initiated → ringing → answered → amd_pending → claimed/dropped/abandoned/machine → ended`), `outcome` (`no_answer`/`busy`/`machine`/`dropped`/`abandoned`/`failed`/`connected`). |
+| Rolling refill | Not fixed "batches" like the legacy engine — the session keeps exactly `lines` active legs going at all times, refilling one at a time as legs end. Driven by `claim_next_leads` + `refillCount` (design §4.1's safety invariant: only refills while the session is `dialing` AND the agent leg reads `answered`). |
+| Single-winner claim | `claim_leg(session, leg)` — one atomic conditional UPDATE (`active_leg_id is null → set it`). Exactly one caller ever gets `true`, no matter how many legs answer at once. Replaces the legacy engine's Redis `SET NX` lock; see `mem.decisions`. |
+| `client_state` | Base64 `{org, session, leg}` (`_shared/client-state.ts`), round-tripped through every Telnyx call. `telnyx-webhook` hard-rejects any `call.*` event whose client_state doesn't decode and name the request's own `org`. |
+| AMD modes | `off` (every `call.answered` claims immediately) or `on` (holds at `amd_pending` until the leg's own `call.machine.(premium.)detection.ended` resolves it — claim on human, reject to `machine` otherwise). |
+| Dev flag | `DIALER_DEV_SKIP_AGENT_GATE=true` (server env) bypasses the "agent leg must be answered" refill gate. There is no real agent leg yet (E3 builds it) — every session today only dials at all because of this flag. |
 
 ## Where the code lives
 
 | What | Path | Notes |
 |---|---|---|
-| Core engine | `supabase/functions/_shared/dialer-engine.ts` | Every state transition |
-| AMD mapping | `supabase/functions/_shared/amd.ts` | 22 lines; read in full |
-| Redis state, locks, TTLs | `supabase/functions/_shared/redis.ts` | |
-| Realtime fan-out | `supabase/functions/_shared/dialer-events.ts` | Supabase broadcast, not Redis pub/sub |
-| Telnyx REST | `supabase/functions/_shared/telnyx.ts` | dial / conference / join / hangup |
-| Session start | `supabase/functions/dialer-session-start/index.ts` | Validation, conference, batch 0 |
-| Session control | `supabase/functions/dialer-session-{get,active,pause,stop,hangup-live}/index.ts` | |
-| Webhook ingress | `supabase/functions/telnyx-webhook/index.ts` | The only driver of batch progress |
-| Client | `apps/web/src/hooks/useDialerSession.ts`, `apps/web/src/lib/api.ts` | Hook subscribes to `dialer:user:{userId}` |
-| UI | `apps/web/src/components/Dialer.tsx`, `apps/web/src/components/dialer/*.tsx` | `ParallelDialerUI.tsx` is the parallel surface |
-| Schema | `supabase/migrations/20260207000100_create_dialer_sessions_and_call_logs.sql` | plus `…20260208000001_add_dialer_sessions_from_number.sql` |
+| Pure decision logic | `supabase/functions/_shared/dialer-core.ts` | No I/O. `legTransition`/`amdDecision`/`hangupOutcome`/`refillCount`/`loserActions`/`leadOutcomeUpdate`. Deno-tested. |
+| Engine (orchestration) | `supabase/functions/_shared/dialer-engine.ts` | Calls the RPCs below + the org's own `TelnyxClient`. Read its header comment first — it documents every non-obvious design decision. |
+| `client_state` codec | `supabase/functions/_shared/client-state.ts` | `encodeDialClientState`/`decodeDialClientState`. |
+| Telnyx REST (BYO key) | `supabase/functions/_shared/telnyx-client.ts`, `_shared/telnyx-org-context.ts` | `createTelnyxClient(apiKey, {apiBase?})`; `getConnectedOrgTelnyxContext` builds one from the org's own stored key. `apiBase` exists only for `scripts/dev/dialer-sim.ts`'s mock server. |
+| Schema + RPCs | `supabase/migrations/20260924000700/000800/001000` | `dial_sessions`, `call_legs`, `webhook_events`; `claim_next_leads`/`claim_leg`/`transition_leg`/`transition_session`/`apply_leg_outcome`/`record_webhook_event`. |
+| Session control | `supabase/functions/dialer-session-{start,stop,pause,get,active,hangup-live}/index.ts` | Org-scoped auth via `requireTelnyxOrgRole`; owner/admin can act on any session in the org, an agent only their own. |
+| Webhook ingress | `supabase/functions/telnyx-webhook/index.ts` | Signature-verifies, requires `client_state` on `call.*` events, acks 200, processes async via `processTelnyxDialerEvent`. |
+| Client | `apps/web/src/hooks/useDialerSession.ts`, `apps/web/src/lib/api.ts` | Polls `dialer-session-get` (no realtime push — see gotchas). |
+| UI | `apps/web/src/components/Dialer.tsx`, `apps/web/src/components/dialer/*.tsx`, `CampaignManageModal.tsx` | Not rewritten for this task (E4); only adapted enough to compile against the new contract. |
+| Acceptance script | `scripts/dev/dialer-sim.ts` | `functions serve` + a mock Telnyx HTTP server + signed fake webhooks against the real local DB. Read its header before running it. |
 
 ## How it works
 
-1. `dialer-session-start` checks the feature flag, `fromNumber` ownership against `user_phone_numbers`, that no `active` session exists, and Telnyx config; inserts the
-   session; creates the conference **only if** an `agentCallControlId` was passed (`index.ts:210`); writes `agent:{userId}:session` to Redis; fires batch 0.
-2. `fireBatch` (`dialer-engine.ts:120`) dials each contact **sequentially**, writes `call:{id}` state, upserts `call_logs`, marks the contact `dialing`, then writes
-   `session:{id}:batch` and broadcasts `BATCH_FIRING` / `CALL_INITIATED`.
-3. Telnyx posts to `telnyx-webhook`, which ACKs immediately and processes in a `queueMicrotask` (`index.ts:376`). Every event re-checks agent session state, runs
-   `resolveStaleBatchIfTimedOut`, then hits the per-event switch.
-4. On `call.machine.detection.ended`, `handleAmdResult` (`dialer-engine.ts:249`) normalizes the result, applies the 5s grace override, then takes the Redis NX lock via
-   `claimHumanAnswer`. Losers hang up; the winner joins (or creates) the conference, and the agent callback is dialed if no agent leg existed.
-5. On `call.hangup`, `handleCallHangup` (`:543`) drops the leg and returns `shouldAdvance` when the live human leg ended or the batch emptied;
-   `completeBatchAndAdvanceIfNeeded` (`:602`) then advances `current_index` by `lines_count` and fires the next batch, or marks the session `completed`.
+1. `dialer-session-start` resolves the org's connected `TelnyxClient`, validates the campaign
+   (`active`, not `deleted_at`, has a `caller_id_number_id`), checks no active session already
+   exists for this agent+campaign, inserts a `dial_sessions` row (`state='dialing'`), then calls
+   `refillSession`.
+2. `refillSession`: computes how many legs to dial (`refillCount` — zero unless `state='dialing'`
+   AND the agent leg reads `answered`, or the dev flag is set), calls `claim_next_leads(session,
+   n)` (E1's RPC — priority order: due callback for this agent, then `attempts asc, next_attempt_at
+   asc, position asc`, skipping DNC and out-of-calling-window contacts), then dials each claimed
+   lead: inserts a `call_legs` row with a placeholder `call_control_id` (`pending-<legId>`,
+   satisfying the NOT NULL UNIQUE constraint before Telnyx returns a real one), calls
+   `client.dial(...)` with `client_state={org,session,leg}`, then overwrites the placeholder with
+   the real id.
+3. Telnyx posts to `telnyx-webhook`. The outer handler verifies the signature, resolves `orgId`
+   from `?org=`, hard-rejects a `call.*` event with no valid `client_state`, acks 200, then
+   dispatches asynchronously into `processTelnyxDialerEvent` → `record_webhook_event` dedupe →
+   maps the raw event to `dialer-core.ts`'s typed union → looks up the leg → `processContactLegEvent`.
+4. **Claim resolution**, when the event could resolve one (`call.answered` in AMD-off mode, or a
+   detection-ended event in AMD-on mode): `claim_leg` runs first. **`claim_leg`'s own SQL already
+   sets the winning leg's `call_legs.state='claimed'`** as part of the atomic win — the engine only
+   patches in `outcome='connected'` afterward, it does not run the leg through the generic
+   `legTransition`+`transition_leg` path for the win (a real bug this session's own acceptance
+   script caught: that generic path always lost the race against `claim_leg`'s own write).
+5. **`handleWin`** (right after a win): creates the conference (first winner ever) or joins it
+   (later winners), then resolves every *other* active leg in the session from a snapshot — still-
+   ringing legs go straight to `dropped` (silent hangup); already-answered/amd_pending legs go to
+   `abandoned` (speak the abandon message, then hang up once `call.speak.ended` confirms it played).
+   A losing leg's *own* `call.answered`/detection-ended event can independently reach the same
+   `abandoned` conclusion if it arrives before `handleWin` gets to it — both paths guard their
+   `transition_leg` call with the leg's expected pre-resolution state, so whichever gets there
+   first wins and the other is a safe no-op.
+6. **On any leg reaching `ended`** (natural `call.hangup`, or one the engine commanded): `transition_leg`
+   persists the outcome (`hangupOutcome` — a `machine`/`dropped`/`abandoned`/`claimed` state short-
+   circuits to preserve that decision regardless of `hangup_cause`; otherwise the cause maps to
+   `busy`/`no_answer`/`failed`), then `apply_leg_outcome` (E1's RPC — the single source of truth for
+   the lead's `status`/`attempts`/`next_attempt_at`; never recomputed in TS for a live write). If
+   the ended leg was the session's own winner, the session moves to `wrap_up` (no more refill);
+   otherwise, if still `dialing`, `refillSession` runs again.
+7. **`wrap_up` → `dialing`** has no dedicated HTTP endpoint on purpose — `resumeToDialing`
+   (`_shared/dialer-engine.ts`) calls `transition_session` directly. Phase 3's dispositions
+   submission is the intended real caller once it exists; until then, `scripts/dev/dialer-sim.ts`
+   calls it directly to prove the rolling loop across a wrap_up cycle.
 
 ## Integration points
 
 | Direction | With | Via |
 |---|---|---|
-| Depends on | domain.telephony | `supabase/functions/_shared/telnyx.ts`; `TELNYX_CONNECTION_ID` must be a Call Control app (`docs/guides/telnyx-call-control-setup.md`) |
-| Depends on | domain.campaigns | `fetchDialableContacts` reads `campaign_leads` ⋈ `contacts` |
-| Depends on | Upstash Redis | all live call/batch/lock state (`supabase/functions/_shared/redis.ts`) |
-| Depended on by | Web UI | Supabase Realtime broadcast channel `dialer:user:{userId}` |
+| Depends on | domain.telephony | `_shared/telnyx-client.ts`/`telnyx-org-context.ts` — every Telnyx call uses the org's own BYO key, never an env var |
+| Depends on | domain.campaigns | `claim_next_leads` reads `campaign_leads` ⋈ `contacts`; `campaigns.lines`/`amd_mode`/`caller_id_number_id`/`abandon_message_enabled`/`calling_window_*` (TASK-P2-P1) |
+| Depended on by | Web UI | `dialer-session-get`, polled — see gotchas for why not realtime |
+| Supersedes | Upstash Redis (dial path only) | `mem.decisions`: the single-winner claim is now `claim_leg`'s conditional UPDATE, not `SET NX` |
 
 ## Constraints & gotchas
 
-- **The human-answer lock is per session, not per batch.** `claimHumanAnswer` (`redis.ts:110`) is `SET NX EX 300` on `session:{id}:humanClaimed`, deleted only by
-  `clearSessionState` on stop (`redis.ts:119`). After batch 0's winner, every later batch's human answer fails the claim and is **hung up** (`dialer-engine.ts:331-340`)
-  until the 300s TTL lapses. Start here for any "won't connect" bug.
-- **Redis TTLs are the real session limits:** call `300s`, batch `600s`, agent session `3600s`, human lock `300s`. On expiry handlers return silently
-  (`dialer-engine.ts:261`, `:267`); past ~1h the agent-state check in `telnyx-webhook/index.ts:199-213` hangs up *every* remaining call.
-- **Webhooks are at-least-once with no idempotency guard** — the only dedupe is the `call_logs` upsert on `call_control_id`. A replayed `call.machine.detection.ended`
-  re-enters `handleAmdResult`, fails the claim, and hangs up the live winner.
-- **Signature verification is effectively off:** `verifySignature` returns `true` when `TELNYX_WEBHOOK_SECRET` is unset *and* when only ed25519 headers are present
-  (`telnyx-webhook/index.ts:33-46`). Treat it as unauthenticated.
-- **AMD: `not_sure` counts as human** (`amd.ts:20`), `silence`/`fax_detected` as machine (`amd.ts:16`), and a `machine` verdict inside 5000 ms of answer is overridden
-  to human (`dialer-engine.ts:284-299`). `PREMIUM_AMD_CONFIG` is exported but unused — the dial sends plain `'detect'` (`telnyx.ts:133`).
-- **Nothing runs on a timer.** The 45s stale-batch sweep (`dialer-engine.ts:756`) fires only when another webhook for that session arrives — no cron. All legs quiet ⇒
-  wedged.
-- **Batch state is unguarded read-modify-write:** `handleCallHangup` reads then writes `session:{id}:batch` (`:554-575`), so concurrent hangups clobber `activeCallIds`.
-- **Losing legs never get `no_answer`.** On `call.hangup` with `shouldAdvance=false` the webhook calls `markNoAnswerAndCleanup` (`telnyx-webhook/index.ts:322`), but
-  `handleCallHangup` already ran `delCallState` (`dialer-engine.ts:555`) so it returns at `:709` — those contacts stay `call_status='dialing'` forever.
-- **Batch advance skips contacts:** `current_index` grows by `lines_count`, but `fetchDialableContacts` excludes `contacted`/`do_not_call` (`:105`), so the window
-  shrinks under a fixed offset — every connect silently skips a lead.
-- **`calls_connected`/`calls_voicemail`/`calls_no_answer` are never written** — only `calls_made` is (`dialer-engine.ts:234`). UI counters come purely from broadcasts
-  and reset to the DB's zeros on reload (`useDialerSession.ts:86`).
-- **`dialer-session-active` orders by `created_at`, which `dialer_sessions` lacks** (schema has `started_at`); the error is swallowed, so it always reports no active
-  session (`dialer-session-active/index.ts:23-36`).
-- **Pause is one-way** — no resume endpoint; `paused` fails the webhook guard and `completeBatchAndAdvanceIfNeeded`'s `status !== 'active'` check (`:617`).
-- **`PARALLEL_DIALER_ENABLED=false` only 403s `dialer-session-start`** (`index.ts:50-58`); webhook/pause/stop/hangup-live stay live, so in-flight sessions keep running.
-  The UI gate is the separate `VITE_PARALLEL_DIALER_ENABLED` (`apps/web/src/lib/api.ts:9`).
-- RLS on `dialer_sessions`/`call_logs` grants **SELECT only**; all writes go through edge functions with the service-role key. Events are Realtime broadcasts, not
-  persisted: a client not subscribed when one fires never sees it, and `dialer-session-get` is the only catch-up path.
+- **No agent leg exists yet (E3).** `refillCount`'s "agent leg must be answered" gate is real
+  code, not a stub — nothing dials at all unless `DIALER_DEV_SKIP_AGENT_GATE=true` is set
+  server-side. Removing that flag before E3 lands a real WebRTC agent leg means the dial loop
+  never starts.
+- **No realtime push.** The legacy engine's `_shared/dialer-events.ts`/`publishDialerEvent`
+  broadcast (`dialer:user:{userId}`) has nothing publishing to it anymore — the new engine never
+  calls it. `useDialerSession.ts` polls `dialer-session-get` every 3s instead while the session is
+  active. A future task can add a real realtime channel if push updates turn out to matter enough
+  to build.
+- **`hungUpByEngine` (needed by `hangupOutcome`) has no DB column.** Derived at hangup-processing
+  time instead: true iff the session's `active_leg_id` already names a *different* leg (someone
+  else already won, so this leg's hangup was necessarily commanded), or the session is already
+  past `dialing`/`connecting`. See `_shared/dialer-engine.ts`'s header for why this covers every
+  real case without needing to persist the flag.
+- **Judgment calls on the outcome table (design §4.2), logged so nobody re-derives them
+  differently:** `call_rejected` exhausts the lead permanently (a callee decline counts as a
+  real, final "no"). `dropped` never increments `attempts` (the lead was only rung because of our
+  own parallelism, not a real attempt reaching them) — it can requeue indefinitely, every 15
+  minutes, which is intentional.
+- **Testing against a mock Telnyx server needs `host.docker.internal`, not `127.0.0.1`.**
+  `supabase functions serve` runs the edge runtime inside its own Docker container — found live
+  while building `scripts/dev/dialer-sim.ts`: pointing `TELNYX_API_BASE` at `127.0.0.1` resolved
+  to the container's own loopback and every dial failed with a connection-refused error.
+- **The calling-window check can make a test's outcome depend on the real wall-clock hour.**
+  `private.is_lead_callable_now` falls back to requiring the window to hold in *both*
+  America/New_York and America/Los_Angeles for a contact with no `timezone` set — a fixture
+  seeded with a narrow default `calling_window_start`/`end` can silently claim zero leads
+  depending on what time it is when the test happens to run. `dialer-sim.ts` opens the window all
+  day in its fixture campaign for exactly this reason.
+- **Legacy `dialer_sessions`/`call_logs` and their Redis-driven engine still exist, untouched,
+  and are dead code for the dial path** — kept per the design's own "don't drop them, just stop
+  writing to them from new code" instruction. Every constraint the *previous* version of this
+  document described (the Redis TTL limits, the per-session human-lock bug, the missing
+  `no_answer` writes, etc.) applied to that engine, which no longer runs any real call. Don't debug
+  a live session against those old notes.
+- RLS on `dial_sessions`/`call_legs` grants **SELECT only** (owner/admin see the whole org, an
+  agent only their own session/legs); every write goes through the SECURITY DEFINER RPCs or the
+  service-role client, matching the migration's own "no client INSERT/UPDATE/DELETE policy
+  anywhere" design.
 
 ## Not covered here
 
-- Telnyx numbers, WebRTC credentials, raw API wrappers → `.brain/domains/telephony.md`; campaigns and lead lists → `.brain/domains/campaigns.md`; cross-service flow and
-  deployment → `.brain/architecture/system-overview.md`
-- **The rewrite in progress (TASK-P2-E1, design §4.2-4.4/§7):** a new, org-scoped `dial_sessions`/`call_legs`/`webhook_events` schema plus `claim_next_leads`/
-  `claim_leg`/`transition_leg`/`transition_session`/`apply_leg_outcome`/`record_webhook_event` RPCs (`supabase/migrations/20260924000700`/`000800`) now exist
-  alongside everything described above, replacing Redis-based state with a single Postgres source of truth and a rolling-refill queue on `campaign_leads`
-  (new `attempts`/`next_attempt_at`/`position`/`status` values). **Not wired to any engine or webhook yet** — every constraint/gotcha above still describes
-  the only engine that actually runs calls today. This whole document gets rewritten once TASK-P2-E2 lands.
+- Telnyx numbers, WebRTC credentials, raw API wrappers → `.brain/domains/telephony.md`; campaigns
+  and lead lists → `.brain/domains/campaigns.md`; cross-service flow and deployment →
+  `.brain/architecture/system-overview.md`.
+- The agent's own WebRTC leg and joining it to the conference (E3), the dialer UI's own redesign
+  around the new `legs`-array contract (E4), the sweeper for stuck/timed-out legs (E5), and
+  dispositions submitting a session out of `wrap_up` for real (Phase 3) are all explicitly out of
+  scope for the engine described here and not yet built.
 
 ## Unverified
 
-- `.brain/domains/telephony.md` and `.brain/domains/campaigns.md` did not exist when this was written; confirm their ids before relying on those links.
-- `apps/web/src/components/dialer/ContactQueue.tsx` exists but nothing under `apps/web/src` imports it — appears dead.
-- Telnyx's webhook retry policy is portal config, not in this repo; at-least-once above is a safe assumption, not a confirmed observation.
+- Telnyx's webhook retry policy is portal config, not in this repo; at-least-once delivery is a
+  safe assumption (and `record_webhook_event`'s dedupe assumes it), not a confirmed observation.
+- `apps/web/src/components/dialer/ContactQueue.tsx`'s status (dead code or not) was not
+  re-checked for this rewrite — see the previous version of this document's note; nothing new
+  contradicts it.
+- The three-way manual-sync duplication of any shared vocabulary between `dialer-core.ts`'s
+  TS unions and the `call_legs`/`dial_sessions` CHECK constraints (both hand-copied from the same
+  design table, not generated from one source) is a real, ongoing drift risk on any future
+  addition to either — not new information, just still true.
