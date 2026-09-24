@@ -30,7 +30,7 @@ answers:
 covers: "Supabase auth, session handling, the two-layer Edge Function authorization model, service-role usage, org tenancy, and the per-table RLS inventory."
 excludes: "Telnyx webhook signature mechanics (domain.telephony); dial-loop ownership checks (domain.dialer)."
 tokens_est: 3977
-source_hash: fe3aed0077c0d05faa070b2ba741fedb3406ba8ed07311e18ff9feed6bfeaa8d
+source_hash: 0e7e7b194f909ad7133670d6ddeff4a7fe5c43f083d6e0566f0ce525f162f56c
 ---
 
 # Auth & Access Control

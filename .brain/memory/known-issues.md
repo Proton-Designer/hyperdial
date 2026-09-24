@@ -18,7 +18,7 @@ answers:
   - "what should I not trust"
 covers: "Known defects, traps, and behaviour that looks intentional but is not"
 excludes: "Planned work (see mem.active-work), deliberate design choices (see mem.decisions)"
-tokens_est: 5898
+tokens_est: 5978
 ---
 
 # Known Issues
@@ -216,7 +216,10 @@ Related: webhooks are at-least-once. Every handler must tolerate the same event 
 
 ## 7. Agent `contacts` UPDATE is full-row, not DNC-scoped
 
-**Severity: low — narrower than ideal, not a cross-tenant leak.**
+**Severity: low. Fixed in code 2026-09-24 (TASK-P2-P1).** `contacts_agent_update_scope`
+(migration `20260924001300`) is the exact BEFORE UPDATE trigger fix this entry originally
+proposed: an agent's UPDATE now raises `42501` unless the only column that changed is
+`dnc`. Live-verified through a real PostgREST PATCH, not just SQL. Kept below for context.
 
 `docs/design/stage-1-architecture.md` §2's permission matrix gives every role, including Agent,
 the ability to "mark a contact DNC" — but there is no `dnc` column yet (design §7, not built as of

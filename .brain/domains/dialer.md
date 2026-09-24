@@ -26,7 +26,7 @@ answers:
 covers: "The dial-session engine: batching contacts onto N parallel Telnyx lines, AMD triage, human-answer race resolution, conference bridging, batch advance, and the live UI that mirrors it."
 excludes: "Telnyx API wrappers, number purchase/search and WebRTC credentials (domain.telephony); campaign and lead list construction (domain.campaigns)."
 tokens_est: 2898
-source_hash: cd58704ddeaa003cbfd6f4902b4a33795a7e1f60cc17c62194ff17c9350a304c
+source_hash: a4c36731f2d332220e5cc4a3bfa9f781e24c0d3c3469d35274ff1dfcb2d4f99f
 ---
 
 # Parallel Dialer

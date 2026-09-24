@@ -26,8 +26,8 @@ answers:
   - "why is there no pg_cron worker draining crm_sync_jobs yet"
 covers: "GHL (GoHighLevel) connect/disconnect, the org_integrations token store, and the crm_sync_jobs push outbox contract."
 excludes: "The disposition/wrap-up UI that will call enqueue_crm_job, and the pg_cron worker that drains crm_sync_jobs into real GHL API calls -- both are separate, not-yet-built tasks (see Not covered here)."
-tokens_est: 2393
-source_hash: 800decb8f9b721c2ef7f18af8a00eeb5e2488826d3ead2d6860c555e5431cc5d
+tokens_est: 2419
+source_hash: fba225d25be200d588e62cf158889e3d2bce0d110bd8763fceb94cc6c27e3766
 ---
 
 # CRM Sync (GHL)

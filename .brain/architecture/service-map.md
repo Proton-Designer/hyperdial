@@ -22,7 +22,7 @@ answers:
 covers: "Every Edge Function: purpose, auth posture, dependencies, and risk"
 excludes: "Public URLs and deploy commands (see docs/reference/edge-functions.md), dial-loop internals (see domain.dialer)"
 tokens_est: 1555
-source_hash: 00c0fe695c7d6c055f3619d99a3f1f7e932f9e66d2882c2a6647dc42892f9d75
+source_hash: 89fc812578aef2b7285f43afb7269bdf92347fd351f9bd106eaf359a69d3b42b
 ---
 
 # Service Map

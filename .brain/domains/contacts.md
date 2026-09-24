@@ -9,9 +9,13 @@ updated: 2026-09-24
 sources:
   - supabase/functions/contacts-parse-csv/index.ts
   - supabase/functions/contacts-import/index.ts
+  - supabase/functions/_shared/phone-normalize.ts
+  - supabase/functions/_shared/area-code-tz.ts
   - apps/web/src/components/Contacts.tsx
   - apps/web/src/components/contacts/*.tsx
   - apps/web/src/lib/api.ts
+  - apps/web/src/lib/phone-normalize.ts
+  - apps/web/src/lib/area-code-tz.ts
   - supabase/migrations/*.sql
 related:
   - domain.campaigns
@@ -24,10 +28,12 @@ answers:
   - "what are the allowed values of category and contact_status"
   - "why does the 'Contacted' filter never match anything"
   - "what happens when part of an import fails"
-covers: "The contacts table, two-step CSV import, phone normalisation and de-duplication, the category/contact_status labels, and single-contact create/delete."
+  - "how is a phone number validated and where does its timezone come from"
+  - "who can edit a contact, and who can only mark it DNC"
+covers: "The contacts table, two-step CSV import, strict E.164 phone normalisation, area-code timezone derivation, per-org de-duplication, real contact editing, org-wide DNC, and the category/contact_status labels."
 excludes: "Per-call state (call_status, call_count, last_called_at) written by the dial loop — see domain.dialer. Campaign membership — see domain.campaigns."
-tokens_est: 2404
-source_hash: f83bac5524f84c345a5145b899f113df07ccc8676fcb74b38fc615b77f2bd755
+tokens_est: 3008
+source_hash: a9122a7786e99e5b60680bd35be62dff74b7bb0c5304f5e971e7008d4f4acdb1
 ---
 
 # Contacts
@@ -35,7 +41,8 @@ source_hash: f83bac5524f84c345a5145b899f113df07ccc8676fcb74b38fc615b77f2bd755
 ## Purpose
 
 Contacts are the call list. Everything the dialer consumes starts as a row in `public.contacts`, arriving via a CSV upload with interactive column mapping or a single
-"Add contact" form. A contact without a usable phone number is worthless here, and the import path enforces that.
+"Add contact" form, and can be edited afterward. A contact without a usable phone number is worthless here, and both the import path and editing enforce that with strict
+E.164 validation (TASK-P2-P1, design §7).
 
 ## Key concepts
 
@@ -44,88 +51,86 @@ Contacts are the call list. Everything the dialer consumes starts as a row in `p
 | Canonical field | One of 13 human-readable labels. The CSV UI speaks labels, the DB speaks snake_case; **three separate maps** translate between them. |
 | Column mapping | `{ original_header, mapped_field, status }` per CSV column — a label, `'Skip this column'`, or `null`. |
 | `category` vs `contact_status` | Two **separate** labels: a pipeline bucket chosen per import, and a contacted flag. Neither is the dialer's `call_status`. |
-| Duplicate | A row whose digits-only phone already exists for this `user_id` — in the table, or earlier in the same CSV. |
+| `phone_number` vs `phone_raw` | `phone_number` is always strict E.164 (or null) — the dial target `dialer-engine.ts` reads directly. `phone_raw` preserves what was actually typed/imported, never overwritten to a normalized form. |
+| `timezone` / `dnc` | IANA zone derived from the phone's NANP area code (overridable); an org-wide do-not-call flag any role, including agent, may set. `claim_next_leads` skips `dnc` rows. |
+| Duplicate | A row whose digits-only phone already exists for this **org** — in the table, or earlier in the same CSV. A DB-level unique index backs this up when the org's existing data has no conflicting duplicates already (see Dedupe below). |
 
 ## Where the code lives
 
 | What | Path | Notes |
 |---|---|---|
-| Table + RLS | `supabase/migrations/20250214000001_create_contacts_table.sql` | 4 policies, all `auth.uid() = user_id` |
-| Added columns | `supabase/migrations/20250207000001_add_contacts_category_status_address.sql` | sorts **before** the CREATE — see gotchas |
-| CSV parse + auto-map | `supabase/functions/contacts-parse-csv/index.ts` | `CANONICAL_FIELDS :5`, `ALIASES :21`, scoring `:80-188` |
-| CSV import | `supabase/functions/contacts-import/index.ts` | `CANONICAL_TO_DB :6`, `normalizePhone :22`, dedupe `:76-125` |
-| Client contract | `apps/web/src/lib/api.ts` | `CONTACT_CANONICAL_FIELDS :192`, `Contact :208`, `createContact :303` |
-| List / filter UI | `apps/web/src/components/Contacts.tsx` | `CATEGORIES :29`, 50/page `:31` |
-| Import wizard | `apps/web/src/components/contacts/ImportContactsModal.tsx` | `FIELD_OPTIONS :22` |
-| Add / detail modals | `apps/web/src/components/contacts/` | `AddContactModal.tsx` `toDbKey :74`; `ContactDetailModal.tsx` read-only |
+| Table + RLS | `supabase/migrations/20250214000001_create_contacts_table.sql` | 4 policies, all `auth.uid() = user_id` (superseded by org-scoped policies, TASK-P1-01) |
+| `phone_raw`, area-code timezone table, dedupe index, DNC trigger | `supabase/migrations/20260924001300_contacts_e164_tz_dnc.sql` | See Constraints below |
+| Legacy phone renormalization | `supabase/migrations/20260924001400_contacts_phone_renormalize.sql` | One-time, best-effort; see Constraints |
+| CSV parse + auto-map | `supabase/functions/contacts-parse-csv/index.ts` | `CANONICAL_FIELDS`, `ALIASES`, scoring, plus `invalid_phone_count` |
+| CSV import | `supabase/functions/contacts-import/index.ts` | `CANONICAL_TO_DB`, phone normalize/dedupe/timezone, `phone_raw` |
+| Phone + timezone (Deno) | `supabase/functions/_shared/phone-normalize.ts`, `_shared/area-code-tz.ts` | libphonenumber-js wrapper; 422-entry NANP→IANA table |
+| Phone + timezone (browser) | `apps/web/src/lib/phone-normalize.ts`, `lib/area-code-tz.ts` | Duplicates of the above — Vite can't resolve the Deno copies' `npm:` specifier |
+| Client contract | `apps/web/src/lib/api.ts` | `Contact`, `createContact`, `updateContact`, `CONTACT_CANONICAL_FIELDS` |
+| List / filter UI | `apps/web/src/components/Contacts.tsx` | `CATEGORIES`, 50/page, DNC badge |
+| Import wizard | `apps/web/src/components/contacts/ImportContactsModal.tsx` | `FIELD_OPTIONS`, invalid-phone warning |
+| Add / edit / detail modal | `apps/web/src/components/contacts/` | `AddContactModal.tsx`; `ContactDetailModal.tsx` now has a real edit mode + DNC toggle |
 
 ## The canonical field set
 
 13 labels: `Business Name`, `Business Link`, `Business Type`, `Rating`, `Review Count`, `Open Hours`, `Phone Number`, `Website`, `Notes`, `First Name`, `Last Name`,
-`Owner Contact`, `Address` — declared identically in three places (`contacts-parse-csv/index.ts:5`, `contacts-import/index.ts:6`, `api.ts:192`), shared nowhere.
+`Owner Contact`, `Address` — declared identically in three places (`contacts-parse-csv/index.ts`, `contacts-import/index.ts`, `api.ts`), shared nowhere. `phone_raw`,
+`timezone`, and `dnc` are **not** importable/mappable fields — they're derived or set separately (see How it works).
 
-**Every column is nullable** — no DB-level required field. The *import* path makes `Phone Number` effectively required (a null normalised phone is `skipped`,
-`contacts-import/index.ts:114-117`); `createContact` does not, requiring only that *some* field is non-empty (`AddContactModal.tsx:55-58`).
+**Every column is nullable** — no DB-level required field. The *import* path makes `Phone Number` effectively required (a value that fails strict E.164 validation is
+`skipped`); `createContact` does not, requiring only that *some* field is non-empty.
 
 ## How it works
 
-1. **Parse** — the browser reads the file as text (`ImportContactsModal.tsx:85-99`) and POSTs `{ csv_text }` to `contacts-parse-csv`, which scores every (column, field)
-   pair and returns a *proposed* mapping (`index.ts:157-188`).
+1. **Parse** — the browser reads the file as text and POSTs `{ csv_text }` to `contacts-parse-csv`, which scores every (column, field) pair, returns a *proposed*
+   mapping, and reports `invalid_phone_count` against the whole file (not just the 3-row preview) using the same `normalizePhoneStrict` import will use.
 2. **Review** — the user corrects the mapping and picks one `category`. Import stays disabled until every column has a value ("Skip" counts).
-3. **Import** — the browser POSTs the **original `csv_text` again** with the final mappings to `contacts-import`, which re-parses, normalises phones, de-duplicates, and
-   does one bulk `insert().select('id')` (`index.ts:128-142`). If a `campaign_id` was given *and* the caller owns it, the new ids are upserted into `campaign_leads` as
-   `queued` (`:144-162`). Returns `{ imported, skipped, duplicates }`.
+3. **Import** — the browser POSTs the **original `csv_text` again** with the final mappings to `contacts-import`, which re-parses, normalizes each phone to strict
+   E.164 (rejecting invalid ones into `skipped`, with `invalid` broken out separately), preserves the original text in `phone_raw`, derives `timezone` from the area
+   code, de-duplicates, and does one bulk insert. Returns `{ imported, skipped, invalid, duplicates }`.
+4. **Edit** — `ContactDetailModal` now supports real editing via `updateContact` (a direct client `.update()`, not an Edge Function): owner/admin can change any field,
+   including a curated timezone dropdown that overrides the area-code guess; every role that can see the contact gets a DNC toggle. Both RLS and the
+   `contacts_agent_update_scope` trigger (not just this UI) enforce that an agent's request may only touch `dnc` — see Constraints.
 
-**Why two round-trips:** parse is a pure proposal the human then edits; the server keeps no state between calls, so the client re-sends the full CSV text. Nothing is
-written until step 3. Full detail: `docs/guides/csv-import.md`.
+**Why two round-trips for import:** parse is a pure proposal the human then edits; the server keeps no state between calls, so the client re-sends the full CSV text.
 
 ## De-duplication
 
-The key is **digits-only phone, scoped to the importing user**. Because the lookup Set
-grows as rows are processed, it also catches duplicates **within the same CSV**. Nothing
-else participates, and duplicates are silently dropped, never merged.
-
-Mechanics, `normalizePhone` rules, and line references:
-[`docs/guides/csv-import.md`](/docs/guides/csv-import.md).
+The key is **digits-only phone, scoped to the org** (TASK-P1-02). `contacts-import` still catches this at request time (including duplicates *within* the same CSV).
+A DB-level `unique index on contacts(org_id, phone_number) where phone_number is not null` backs this up **only when the org's existing data has no conflicting
+duplicates already** — `20260924001300` checks first and falls back to a plain (non-unique) index if it finds any, logging the count via `RAISE NOTICE` rather than
+failing the migration or deleting data. Not yet keyed on `ghl_contact_id` — deferred to Phase 3 per this task's own spec.
 
 ## Enums
 
-`category` has 5 allowed values and `contact_status` 2. **Neither has a DB CHECK**, and
-**nothing ever writes `'Contacted'`** — see gotchas. Full value lists and where each is
-enforced: [`docs/guides/csv-import.md`](/docs/guides/csv-import.md).
+`category` has 5 allowed values and `contact_status` 2. **Neither has a DB CHECK**, and **nothing ever writes `'Contacted'`**.
 
 ## Integration points & RLS
 
-Depends on `domain.auth`; depended on by `domain.campaigns` (via the `campaign_leads.contact_id` FK) and `domain.dialer` (which writes `call_status`, `last_called_at`,
-`call_count`). **As of TASK-P1-01, `contacts` is org-scoped, not `auth.uid() = user_id`**: owner/admin see and edit every contact
-in the org; an agent sees and edits only contacts reachable through a campaign they're assigned to (`campaign_agents` →
-`campaign_leads`). Import (INSERT) and delete stay owner/admin only. **The agent UPDATE is currently full-row, not limited to a
-DNC toggle** — there is no `dnc` column yet for the policy to scope to; see `.brain/memory/known-issues.md` #7. Full policy
-inventory: `.brain/domains/auth.md`. **As of TASK-P1-02**, both Edge Functions call `requireOrgRole(req, ['owner','admin'])`
-(agents get 403) and filter/set every service-role query by `org_id`, not just `user_id`: `contacts-import`'s phone-dedup check
-(`:76-125`) is now org-wide instead of per-importing-user, so two different org members importing the same lead now correctly
-collide as a duplicate.
+Depends on `domain.auth`; depended on by `domain.campaigns` (via `campaign_leads.contact_id`) and `domain.dialer` (which writes `call_status`, `last_called_at`,
+`call_count`, and reads `dnc`/`timezone` at claim time). Owner/admin see and edit every contact in the org; an agent sees and edits only contacts reachable through a
+campaign they're assigned to (`campaign_agents` → `campaign_leads`), and — as of TASK-P2-P1 — **an agent's UPDATE is now genuinely DNC-scoped**, not full-row: the
+`contacts_agent_update_scope` trigger rejects any other column change with a `42501`, closing `.brain/memory/known-issues.md` #7. Import (INSERT) and delete stay
+owner/admin only.
 
 ## Constraints & gotchas
 
-- **Migration filenames are out of order.** `20250207000001` (ALTER contacts) and `20250207100000` (FK to contacts) both sort *before* `20250214000001`, the `CREATE
-  TABLE`, which has no `IF NOT EXISTS`. **A fresh `npm run db:push` against an empty database fails.** Do not "fix" it by editing applied migrations.
-- **The `Contacted` filter is dead.** Nothing writes `contact_status = 'Contacted'`; the dialer writes `call_status`, a different column
-  (`supabase/functions/_shared/dialer-engine.ts:209`). It always yields zero rows.
-- **`Contact` in `api.ts:208-228` is missing `call_status`, `last_called_at`, and `call_count`** (added by the dialer). The type is hand-written; nothing catches it.
-- **Import is one bulk insert — all-or-nothing on DB error** (`contacts-import/index.ts:129-139`), but a *partial* success is possible in the campaign step: contacts
-  are committed before the `campaign_leads` upsert, and **that upsert's error is never checked** (`:157-160`).
-- **There is no update path.** `ContactDetailModal` is read-only and no `updateContact` exists, so `category` and `contact_status` cannot be changed.
-- **`Business Link` is special-cased** — it matches only the exact headers `business link` or `link`, never a substring of `Business`
-  (`contacts-parse-csv/index.ts:75-77`).
-- **Contacts paginate client-side**, 50/page, after `select('*')` of the whole table (`api.ts:276-283`) — large lists load entirely into the browser.
-
-## Adding a new importable field
-
-Thirteen places must change and most failures are silent — full checklist in [`docs/guides/csv-import.md`](/docs/guides/csv-import.md). The one that bites:
-`AddContactModal.tsx:90` ends `return map[label] ?? 'notes'`, so a label missing from that map writes its value into `notes` with no error.
+- **Migration filenames are out of order.** `20250207000001`/`20250207100000` both sort before `20250214000001`'s `CREATE TABLE`. Do not "fix" by editing applied migrations.
+- **The `Contacted` filter is dead** — nothing writes `contact_status = 'Contacted'`; the dialer writes the separate `call_status` column.
+- **`Contact` in `api.ts` is hand-written**; nothing catches a drift from the DB shape.
+- **Three copies of phone/timezone logic exist** (Deno `_shared/`, browser `apps/web/src/lib/`, plus a `private.area_code_timezones` SQL table for the one-time
+  migration backfill) because Vite can't resolve the Deno copies' `npm:libphonenumber-js` specifier and SQL can't import either. Keep all three in sync by hand.
+- **The area-code→timezone table is best-effort, not exhaustive** — most area codes map cleanly to one zone, but a handful of states split across zones by area code
+  (documented exceptions: TX 915, IN 219, KY 270/364, TN 423/838/865); everything else uses that state/province's single dominant zone. This is why the edit UI's
+  timezone field is an override, not a fixed value.
+- **`20260924001400`'s renormalization is silent** — its skip counts (implausible numbers, would-collide-with-another-contact) only reach a `RAISE NOTICE` the lead
+  sees when applying the migration, not anywhere in-app. No UI surfaces "N contacts still need a manual phone fix."
+- **Trigger/migration ordering matters**: `contacts_agent_update_scope` is created *after* `20260924001300`'s own timezone backfill UPDATE in the same file — creating
+  it first would make the migration reject its own backfill (caught by dry-running with the order deliberately swapped before shipping).
+- **`Business Link` is special-cased** — matches only the exact headers `business link` or `link`, never a substring of `Business`.
+- **Contacts paginate client-side**, 50/page, after `select('*')` of the whole table — large lists load entirely into the browser.
 
 ## Not covered here
 
 `call_status` / `call_count` / `last_called_at` and the dial loop → `.brain/domains/dialer.md`; `campaign_leads` and lead status → `.brain/domains/campaigns.md`; JWT
-and service-role patterns → `.brain/domains/auth.md`.
+and service-role patterns → `.brain/domains/auth.md`; GHL sync (a future `ghl_contact_id` dedupe key, and pushing `dnc`/notes to GHL) → `.brain/domains/crm.md`.
