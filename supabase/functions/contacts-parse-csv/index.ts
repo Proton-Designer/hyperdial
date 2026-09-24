@@ -1,6 +1,7 @@
 import { parse } from 'npm:csv-parse/sync';
 import { corsHeaders, corsPreflightResponse } from '../_shared/cors.ts';
 import { requireOrgRole } from '../_shared/auth.ts';
+import { normalizePhoneStrict } from '../_shared/phone-normalize.ts';
 
 const CANONICAL_FIELDS = [
   'Business Name',
@@ -153,6 +154,14 @@ function valueMatchScore(previewData: string[], field: string): number {
   return Math.round(Math.min(100, ratio * 100));
 }
 
+/** Column index mapped to a given canonical field, or -1 if none is. */
+function colIndexOf(assignment: Map<number, string>, field: string): number {
+  for (const [colIdx, mapped] of assignment) {
+    if (mapped === field) return colIdx;
+  }
+  return -1;
+}
+
 /** Best-fit: score each (column, field) by header + value fit, then assign so each column and each field is used at most once (highest scores first). */
 function assignBestFitColumns(
   headers: string[],
@@ -233,11 +242,25 @@ Deno.serve(async (req) => {
       };
     });
 
+    // Design §7: "invalid ones are rejected at import with a count" -- surface that count
+    // at preview time too, against the *whole* file, not just the 3-row preview, using the
+    // same normalizePhoneStrict the actual import will use. Only meaningful once a column
+    // is auto-mapped (or will be mapped) to "Phone Number"; 0 when none is.
+    const phoneColumnHeader = headers[colIndexOf(assignment, 'Phone Number')];
+    let invalidPhoneCount = 0;
+    if (phoneColumnHeader) {
+      for (const row of rows) {
+        const raw = row[phoneColumnHeader] != null ? String(row[phoneColumnHeader]).trim() : '';
+        if (raw && !normalizePhoneStrict(raw)) invalidPhoneCount++;
+      }
+    }
+
     return new Response(
       JSON.stringify({
         columns,
         total_rows: totalRows,
         preview_rows: previewRows,
+        invalid_phone_count: invalidPhoneCount,
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );

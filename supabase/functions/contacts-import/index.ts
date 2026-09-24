@@ -2,6 +2,8 @@ import { parse } from 'npm:csv-parse/sync';
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { corsHeaders, corsPreflightResponse } from '../_shared/cors.ts';
 import { requireOrgRole } from '../_shared/auth.ts';
+import { normalizePhoneStrict } from '../_shared/phone-normalize.ts';
+import { timezoneForAreaCode } from '../_shared/area-code-tz.ts';
 
 const CANONICAL_TO_DB: Record<string, string> = {
   'Business Name': 'business_name',
@@ -18,14 +20,6 @@ const CANONICAL_TO_DB: Record<string, string> = {
   'Owner Contact': 'owner_contact',
   Address: 'address',
 };
-
-function normalizePhone(value: string | null | undefined): string | null {
-  const digits = (value ?? '').replace(/\D/g, '');
-  if (digits.length === 0) return null;
-  if (digits.length === 10 && !digits.startsWith('1')) return `+1${digits}`;
-  if (digits.length === 11 && digits.startsWith('1')) return `+${digits}`;
-  return digits.length >= 10 ? `+${digits}` : null;
-}
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return corsPreflightResponse();
@@ -86,6 +80,7 @@ Deno.serve(async (req) => {
 
     let imported = 0;
     let skipped = 0;
+    let invalid = 0;
     let duplicates = 0;
     const toInsert: Record<string, unknown>[] = [];
 
@@ -98,10 +93,17 @@ Deno.serve(async (req) => {
         updated_at: new Date().toISOString(),
       };
       let phoneValue: string | null = null;
+      let phoneRaw: string | null = null;
+      let phoneWasProvided = false;
+      let areaCode: string | null = null;
       for (const [origHeader, dbCol] of headerToDb) {
         const val = row[origHeader] != null ? String(row[origHeader]).trim() : '';
         if (dbCol === 'phone_number') {
-          phoneValue = normalizePhone(val);
+          phoneWasProvided = val !== '';
+          phoneRaw = val || null;
+          const normalized = normalizePhoneStrict(val);
+          phoneValue = normalized?.e164 ?? null;
+          areaCode = normalized?.areaCode ?? null;
           contact[dbCol] = phoneValue;
         } else if (dbCol === 'rating') {
           const num = parseFloat(val);
@@ -113,7 +115,8 @@ Deno.serve(async (req) => {
           contact[dbCol] = val || null;
         }
       }
-      if (!contact.phone_number || contact.phone_number === null) {
+      if (!contact.phone_number) {
+        if (phoneWasProvided) invalid++;
         skipped++;
         continue;
       }
@@ -123,6 +126,9 @@ Deno.serve(async (req) => {
         continue;
       }
       existingSet.add(phoneDigits);
+      contact.phone_raw = phoneRaw;
+      const timezone = timezoneForAreaCode(areaCode);
+      if (timezone) contact.timezone = timezone;
       toInsert.push(contact);
     }
 
@@ -164,7 +170,10 @@ Deno.serve(async (req) => {
       }
     }
 
-    return new Response(JSON.stringify({ imported, skipped, duplicates }), {
+    // skipped counts every row with no usable phone_number (missing or invalid); invalid
+    // is the subset of those where a value was actually provided but libphonenumber-js
+    // rejected it -- design §7's "invalid ones are rejected... with a count".
+    return new Response(JSON.stringify({ imported, skipped, invalid, duplicates }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   } catch (err) {
