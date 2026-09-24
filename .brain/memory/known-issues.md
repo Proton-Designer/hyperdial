@@ -61,6 +61,33 @@ old `telnyx.ts` is untouched until then.
 
 ---
 
+## 0c. `telnyx-connect` couldn't actually store the Telnyx key — PostgREST and `service_role` both refused the private RPCs
+
+**Severity: high — found by eng1's review of TASK-P1-05, fixed in code 2026-09-24 (migration `20260924000500`). NEEDS-LIVE-VERIFY.**
+
+`telnyx-connect/index.ts` calls `supabase.rpc('set_org_telnyx_key', ...)`, which PostgREST resolves only against `config.toml`'s exposed schemas
+(`public`, `graphql_public` — `private` is deliberately not in that list, see TASK-P1-01). The RPC 404'd (`PGRST202`). Independently, even a direct SQL call as
+`service_role` failed with "permission denied for schema private" — migration `20260924000100` granted `usage on schema private` to `authenticated` only (for the RLS
+helpers), never to `service_role`. Net effect: every real "Connect Telnyx" attempt provisioned real Telnyx resources (voice profile, Call Control app, credential
+connection) and then unconditionally 500'd before persisting anything, so a retry started from an empty `org_telephony` row every time.
+
+**Fixed:** `public`-schema `SECURITY DEFINER` wrapper functions (`public.set_org_telnyx_key`, `public.get_org_telnyx_key`), owned by the migration role and therefore
+able to reach `private.*` regardless of the caller's own schema grants, `revoke`d from `public`/`anon`/`authenticated` and `grant`ed to `service_role` only.
+PostgREST resolves the public-schema wrapper by name; adding `private` itself to `config.toml`'s exposed schemas was rejected, since that would also turn
+`is_org_member`/`has_org_role`/etc. into public REST endpoints. **Also fixed the retry-duplication risk this bug exposed**: `_shared/telnyx-provision.ts` now falls
+back to a Telnyx-side find-by-name lookup (`find*ByName` on `TelnyxClient`) before creating any of the three resources, so a retry with no stored IDs reuses what a
+prior (failed) attempt already created on Telnyx instead of creating a duplicate under the same deterministic name. This supersedes the "IDs only, no Telnyx-side
+search" decision in `.brain/memory/decisions.md` — see that entry for why the ID-only shortcut wasn't actually safe across a failed-persist retry.
+
+**NEEDS-LIVE-VERIFY**: verified in a rolled-back local-DB transaction (service_role successfully calls both wrappers, key round-trips through Vault, rotation reuses
+the same secret) — but **not** yet proven via a real `supabase functions serve` + curl request against `telnyx-connect`, because that requires this migration to
+actually be applied first (the lead applies migrations, not the engineer who writes them) and the local Postgres container was crash-looping (see `mem.lessons`)
+during this task, independent of anything in this migration. Also not yet checked against a real Telnyx account.
+
+Originally reported by eng1 (TASK-P1-05 review), fixed by eng2.
+
+---
+
 ## 1. The Analytics screen is entirely fake data
 
 **Severity: high — actively misleading.**

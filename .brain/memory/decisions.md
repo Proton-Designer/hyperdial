@@ -243,6 +243,10 @@ as a two-sided change.
 
 ### `telnyx-connect` idempotency is by our own stored IDs, not a Telnyx-side search
 
+**Status: SUPERSEDED 2026-09-24, see the entry below.** Kept for history: the concern this entry raised (a retry with no stored IDs would duplicate Telnyx
+resources) turned out not to be hypothetical — it's exactly what TASK-P1-05's eng1 review found happening in practice (`mem.known-issues` #0c), because the
+key-storage step failed *before* IDs were ever persisted, on every attempt.
+
 Design §3 says re-running "Connect Telnyx" should reuse existing resources "found
 by tag or name." `_shared/telnyx-provision.ts` (TASK-P1-05) instead reuses whatever
 IDs are already in `org_telephony` and only creates what's missing — we're the only
@@ -255,3 +259,23 @@ reconnecting will create duplicate outbound voice profiles / Call Control
 Applications / credential connections rather than finding the orphaned ones. A
 future "resync" or "adopt existing resources" flow would need an actual Telnyx-side
 search by name; this decision trades that for simplicity tonight.
+
+### `telnyx-connect` provisioning does a real Telnyx-side find-by-name before creating (supersedes the entry above)
+
+**Status:** Active · **Decided by:** eng2 (TASK-P1-05 fix, 2026-09-24)
+
+**Context:** eng1's review of TASK-P1-05 found the key-storage RPC unreachable (`mem.known-issues` #0c), which meant every real connect attempt provisioned real
+Telnyx resources and then failed *before* persisting their IDs — so the "reuse by stored ID" idempotency above never had an ID to find on retry, and would have
+created duplicate resources on every single attempt, not just in the deleted-row edge case originally imagined.
+
+**Decision:** `_shared/telnyx-provision.ts` now calls a Telnyx-side `find*ByName` lookup (new `TelnyxClient` methods, using each resource's list-endpoint name
+filter — verified against `spec3.json`) for any resource with no ID in `existing`, before creating. This is the design's original "found by tag or name" (§3),
+reinstated once the ID-only shortcut proved unsafe. Deterministic per-org names (`resourceNamesForOrg`) make the lookup exact enough in practice; the client-side
+code still compares the returned name field for an exact match (the profile/app filters are substring `[contains]`, not exact).
+
+**Consequences:** one extra GET per missing resource on every provisioning call (negligible latency next to the Telnyx account-key round trip already happening).
+Reconnecting after a fully-deleted `org_telephony` row now correctly finds and reuses orphaned Telnyx resources instead of duplicating them, closing the gap the
+superseded decision above knowingly accepted.
+
+**Do not undo without understanding:** reverting to ID-only reuse silently reopens both the deleted-row case and — more importantly — the every-single-retry case a
+future persistence failure (of any kind, not just this specific RPC bug) would reintroduce.

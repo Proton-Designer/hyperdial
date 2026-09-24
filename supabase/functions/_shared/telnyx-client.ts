@@ -20,6 +20,14 @@
  * body, which is what `joinConference` below calls. Flagged in
  * `.brain/memory/known-issues.md` for TASK-P1-05, which switches the engine over to
  * this client.
+ *
+ * find*ByName (added for the TASK-P1-05 fix, 2026-09-24): list-endpoint filter params,
+ * also verified against spec3.json's `components.parameters`: outbound_voice_profiles
+ * takes only `filter[name][contains]`; call_control_applications takes
+ * `filter[application_name][contains]`; credential_connections takes the exact-match
+ * `filter[connection_name]` (no `[contains]`). All three are substring-or-exact
+ * server-side filters, so callers still compare the returned name field for an exact
+ * match before treating a result as "found" -- see the implementations below.
  */
 
 export type AmdMode = 'off' | 'premium';
@@ -187,14 +195,17 @@ export interface TelnyxClient {
   }): Promise<TelnyxIdData>;
   getCallControlApplication(id: string): Promise<TelnyxIdData>;
   listCallControlApplications(): Promise<TelnyxIdData[]>;
+  findCallControlApplicationByName(name: string): Promise<TelnyxIdData | null>;
 
   createOutboundVoiceProfile(args: { name: string }): Promise<TelnyxIdData>;
+  findOutboundVoiceProfileByName(name: string): Promise<TelnyxIdData | null>;
 
   createCredentialConnection(args: {
     userName: string;
     password: string;
     connectionName: string;
   }): Promise<TelnyxIdData>;
+  findCredentialConnectionByName(name: string): Promise<TelnyxIdData | null>;
 
   createTelephonyCredential(args: { connectionId: string; name?: string }): Promise<TelnyxIdData>;
   getTelephonyCredential(id: string): Promise<TelnyxIdData>;
@@ -331,12 +342,26 @@ export function createTelnyxClient(apiKey: string): TelnyxClient {
       return response.data ?? [];
     },
 
+    async findCallControlApplicationByName(name) {
+      const qs = `filter[application_name][contains]=${encodeURIComponent(name)}`;
+      const response = await req<TelnyxEnvelope<TelnyxIdData[]>>(
+        `/call_control_applications?${qs}`
+      );
+      return (response.data ?? []).find((r) => r.application_name === name) ?? null;
+    },
+
     async createOutboundVoiceProfile(args) {
       const response = await req<TelnyxEnvelope<TelnyxIdData>>('/outbound_voice_profiles', {
         method: 'POST',
         body: JSON.stringify({ name: args.name }),
       });
       return response.data ?? {};
+    },
+
+    async findOutboundVoiceProfileByName(name) {
+      const qs = `filter[name][contains]=${encodeURIComponent(name)}`;
+      const response = await req<TelnyxEnvelope<TelnyxIdData[]>>(`/outbound_voice_profiles?${qs}`);
+      return (response.data ?? []).find((r) => r.name === name) ?? null;
     },
 
     async createCredentialConnection(args) {
@@ -349,6 +374,12 @@ export function createTelnyxClient(apiKey: string): TelnyxClient {
         }),
       });
       return response.data ?? {};
+    },
+
+    async findCredentialConnectionByName(name) {
+      const qs = `filter[connection_name]=${encodeURIComponent(name)}`;
+      const response = await req<TelnyxEnvelope<TelnyxIdData[]>>(`/credential_connections?${qs}`);
+      return (response.data ?? []).find((r) => r.connection_name === name) ?? null;
     },
 
     async createTelephonyCredential(args) {

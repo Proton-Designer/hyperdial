@@ -1,12 +1,16 @@
 /**
  * Idempotent Telnyx resource provisioning for BYO-key orgs (design §3, "Connect
- * Telnyx"). Pure with respect to persistence: the caller (`telnyx-connect`) passes
- * in whatever resource IDs are already stored for the org, and this module only
- * creates what's missing — so a second run with the first run's output as `existing`
- * reuses everything and creates nothing. That's a deliberate simplification of the
- * design's "found by tag or name": we are the only writer of `org_telephony`, so our
- * own stored IDs are a reliable idempotency key without a Telnyx-side search. Logged
- * in `.brain/memory/decisions.md`.
+ * Telnyx"). The caller (`telnyx-connect`) passes in whatever resource IDs are already
+ * stored for the org; this module reuses any of those it has, and for everything else
+ * falls back to a Telnyx-side find-by-name lookup (`find*ByName` on `TelnyxClient`)
+ * before creating — so a retry with an empty `existing` (e.g. after a failed
+ * `org_telephony` write, TASK-P1-05's eng1 review finding) still finds and reuses the
+ * first run's real Telnyx resources instead of creating duplicates with the same
+ * deterministic name. This replaces the original "IDs only" simplification recorded in
+ * `.brain/memory/decisions.md` (2026-09-24) — that decision is superseded, not deleted,
+ * since the name-based lookup this now performs is exactly the design's original
+ * "found by tag or name" (§3), reinstated once the ID-only shortcut proved unsafe
+ * across a failed-persist retry.
  */
 
 import type { TelnyxClient } from './telnyx-client.ts';
@@ -54,8 +58,10 @@ export function webhookUrlForOrg(webhookBaseUrl: string, orgId: string): string 
 /**
  * Validates the key (`GET /v2/balance`) then finds-or-creates the outbound voice
  * profile, the Call Control Application (webhook URL tagged with `?org=<orgId>`)
- * and the credential connection, in that order — reusing any ID already present in
- * `args.existing`. Throws on the first missing id Telnyx doesn't return.
+ * and the credential connection, in that order. For each resource: reuse the ID in
+ * `args.existing` if present; otherwise look it up on Telnyx by its deterministic
+ * name (`resourceNamesForOrg`) and reuse that if found; otherwise create it. Throws
+ * on the first missing id Telnyx doesn't return.
  */
 export async function provisionTelnyxOrg(
   client: TelnyxClient,
@@ -72,6 +78,10 @@ export async function provisionTelnyxOrg(
 
   let outboundVoiceProfileId = args.existing?.outboundVoiceProfileId ?? null;
   if (!outboundVoiceProfileId) {
+    const found = await client.findOutboundVoiceProfileByName(names.outboundVoiceProfile);
+    outboundVoiceProfileId = typeof found?.id === 'string' ? found.id : null;
+  }
+  if (!outboundVoiceProfileId) {
     const ovp = await client.createOutboundVoiceProfile({ name: names.outboundVoiceProfile });
     outboundVoiceProfileId = typeof ovp.id === 'string' ? ovp.id : null;
     if (!outboundVoiceProfileId) {
@@ -81,6 +91,10 @@ export async function provisionTelnyxOrg(
   }
 
   let callControlApplicationId = args.existing?.callControlApplicationId ?? null;
+  if (!callControlApplicationId) {
+    const found = await client.findCallControlApplicationByName(names.callControlApplication);
+    callControlApplicationId = typeof found?.id === 'string' ? found.id : null;
+  }
   if (!callControlApplicationId) {
     const app = await client.createCallControlApplication({
       applicationName: names.callControlApplication,
@@ -94,6 +108,10 @@ export async function provisionTelnyxOrg(
   }
 
   let credentialConnectionId = args.existing?.credentialConnectionId ?? null;
+  if (!credentialConnectionId) {
+    const found = await client.findCredentialConnectionByName(names.credentialConnection);
+    credentialConnectionId = typeof found?.id === 'string' ? found.id : null;
+  }
   if (!credentialConnectionId) {
     const conn = await client.createCredentialConnection({
       userName: `softdial_${args.orgId.replace(/-/g, '')}`,

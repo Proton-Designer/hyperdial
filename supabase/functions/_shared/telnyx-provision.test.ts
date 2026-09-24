@@ -38,13 +38,25 @@ function makeMockClient(overrides: Partial<TelnyxClient> = {}): {
     },
     getCallControlApplication: async () => ({}),
     listCallControlApplications: async () => [],
+    findCallControlApplicationByName: async (name) => {
+      record('findCallControlApplicationByName', [name]);
+      return null;
+    },
     createOutboundVoiceProfile: async (args) => {
       record('createOutboundVoiceProfile', [args]);
       return { id: 'ovp-1' };
     },
+    findOutboundVoiceProfileByName: async (name) => {
+      record('findOutboundVoiceProfileByName', [name]);
+      return null;
+    },
     createCredentialConnection: async (args) => {
       record('createCredentialConnection', [args]);
       return { id: 'cred-1' };
+    },
+    findCredentialConnectionByName: async (name) => {
+      record('findCredentialConnectionByName', [name]);
+      return null;
     },
     createTelephonyCredential: async () => ({}),
     getTelephonyCredential: async () => ({}),
@@ -86,8 +98,11 @@ Deno.test('provisionTelnyxOrg: first run creates all three resources', async () 
   const methodsCalled = calls.map((c) => c.method);
   assertEquals(methodsCalled, [
     'getBalance',
+    'findOutboundVoiceProfileByName',
     'createOutboundVoiceProfile',
+    'findCallControlApplicationByName',
     'createCallControlApplication',
+    'findCredentialConnectionByName',
     'createCredentialConnection',
   ]);
 
@@ -141,7 +156,97 @@ Deno.test(
     assertEquals(result.credentialConnectionId, 'cred-1');
     assertEquals(
       calls.map((c) => c.method),
-      ['getBalance', 'createCallControlApplication', 'createCredentialConnection']
+      [
+        'getBalance',
+        'findCallControlApplicationByName',
+        'createCallControlApplication',
+        'findCredentialConnectionByName',
+        'createCredentialConnection',
+      ]
+    );
+  }
+);
+
+Deno.test(
+  'provisionTelnyxOrg: retry after a failed persist (no stored IDs) reuses resources Telnyx already has by name, creates nothing',
+  async () => {
+    // Reproduces the scenario TASK-P1-05's eng1 review flagged: provisioning succeeds and
+    // creates real Telnyx resources, but the write that would have persisted their IDs into
+    // org_telephony fails, so a retry starts with `existing` empty again. Before this fix,
+    // that retry could only create -- never find -- so it always duplicated. The mock here
+    // simulates Telnyx already holding all three resources under their deterministic names.
+    const names = resourceNamesForOrg(ORG_ID);
+    const { client, calls } = makeMockClient({
+      findOutboundVoiceProfileByName: async (name) => {
+        calls.push({ method: 'findOutboundVoiceProfileByName', args: [name] });
+        return name === names.outboundVoiceProfile ? { id: 'ovp-reused', name } : null;
+      },
+      findCallControlApplicationByName: async (name) => {
+        calls.push({ method: 'findCallControlApplicationByName', args: [name] });
+        return name === names.callControlApplication
+          ? { id: 'app-reused', application_name: name }
+          : null;
+      },
+      findCredentialConnectionByName: async (name) => {
+        calls.push({ method: 'findCredentialConnectionByName', args: [name] });
+        return name === names.credentialConnection
+          ? { id: 'cred-reused', connection_name: name }
+          : null;
+      },
+    });
+
+    const result = await provisionTelnyxOrg(client, {
+      orgId: ORG_ID,
+      webhookBaseUrl: WEBHOOK_BASE,
+      // Empty existing -- exactly what a fresh row (or one that never got its IDs written)
+      // looks like on retry.
+      existing: {},
+    });
+
+    assertEquals(result, {
+      outboundVoiceProfileId: 'ovp-reused',
+      callControlApplicationId: 'app-reused',
+      credentialConnectionId: 'cred-reused',
+      created: {
+        outboundVoiceProfile: false,
+        callControlApplication: false,
+        credentialConnection: false,
+      },
+    });
+    // No create* call anywhere in the trace -- everything was found, not duplicated.
+    const methodsCalled = calls.map((c) => c.method);
+    assertEquals(
+      methodsCalled.some((m) => m.startsWith('create')),
+      false
+    );
+  }
+);
+
+Deno.test(
+  'provisionTelnyxOrg: find-by-name miss (nothing on Telnyx under that name either) still creates, exactly like a brand-new org',
+  async () => {
+    const { client, calls } = makeMockClient();
+    const result = await provisionTelnyxOrg(client, {
+      orgId: ORG_ID,
+      webhookBaseUrl: WEBHOOK_BASE,
+      existing: {},
+    });
+    assertEquals(result.created, {
+      outboundVoiceProfile: true,
+      callControlApplication: true,
+      credentialConnection: true,
+    });
+    assertEquals(
+      calls.map((c) => c.method),
+      [
+        'getBalance',
+        'findOutboundVoiceProfileByName',
+        'createOutboundVoiceProfile',
+        'findCallControlApplicationByName',
+        'createCallControlApplication',
+        'findCredentialConnectionByName',
+        'createCredentialConnection',
+      ]
     );
   }
 );

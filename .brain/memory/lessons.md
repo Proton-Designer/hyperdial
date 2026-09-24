@@ -133,3 +133,16 @@ Telnyx webhook.
 **Apply it:** when reasoning about "what happens next" in a dial session, the
 answer is always "the next webhook arrives, or nothing happens". Timeout handling
 is swept on the next event, not on a schedule.
+
+---
+
+## The local Supabase Postgres container can crash-loop independently of whatever SQL you're running
+
+While verifying the TASK-P1-05 fix (2026-09-24, `mem.known-issues` #0c), `psql` connections repeatedly died mid-script with "server closed the connection
+unexpectedly." `docker logs supabase_db_Softdial` showed the container restarting every 15–30 seconds ("database system was not properly shut down; automatic
+recovery in progress") — confirmed independent of the query by reproducing the same drop with a trivial, unrelated one-line SQL statement, and by observing restarts
+recur on their own cadence with no client connected at all.
+
+**Apply it:** if a local-DB verification step dies with "connection to server was lost," check `docker ps`/`docker logs <db container>` for a restart loop before
+assuming the SQL (or the migration under test) is at fault. A rolled-back transaction that completes several assertions before dying is still real signal for the
+parts that ran — don't discard a partial-but-clean result just because the session was later cut off by the container bouncing.

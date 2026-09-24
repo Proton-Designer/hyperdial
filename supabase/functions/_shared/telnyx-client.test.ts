@@ -164,6 +164,108 @@ Deno.test(
   }
 );
 
+Deno.test(
+  'createTelnyxClient.findOutboundVoiceProfileByName: filters by name[contains], matches only an exact name',
+  async () => {
+    let seenUrl = '';
+    const restore = stubFetch((url) => {
+      seenUrl = url;
+      return new Response(
+        JSON.stringify({
+          data: [
+            { id: 'ovp-other', name: 'softdial-org-abc-extra' },
+            { id: 'ovp-1', name: 'softdial-org-abc' },
+          ],
+        }),
+        { status: 200 }
+      );
+    });
+    try {
+      const client = createTelnyxClient('test-api-key');
+      const found = await client.findOutboundVoiceProfileByName('softdial-org-abc');
+      assertEquals(
+        seenUrl,
+        'https://api.telnyx.com/v2/outbound_voice_profiles?filter[name][contains]=softdial-org-abc'
+      );
+      assertEquals(found, { id: 'ovp-1', name: 'softdial-org-abc' });
+    } finally {
+      restore();
+    }
+  }
+);
+
+Deno.test(
+  'createTelnyxClient.findOutboundVoiceProfileByName: no exact match among results returns null',
+  async () => {
+    const restore = stubFetch(
+      () =>
+        new Response(
+          JSON.stringify({ data: [{ id: 'ovp-other', name: 'softdial-org-abc-extra' }] }),
+          {
+            status: 200,
+          }
+        )
+    );
+    try {
+      const client = createTelnyxClient('test-api-key');
+      const found = await client.findOutboundVoiceProfileByName('softdial-org-abc');
+      assertEquals(found, null);
+    } finally {
+      restore();
+    }
+  }
+);
+
+Deno.test(
+  'createTelnyxClient.findCallControlApplicationByName: filters by application_name[contains]',
+  async () => {
+    let seenUrl = '';
+    const restore = stubFetch((url) => {
+      seenUrl = url;
+      return new Response(
+        JSON.stringify({ data: [{ id: 'app-1', application_name: 'softdial-org-abc' }] }),
+        { status: 200 }
+      );
+    });
+    try {
+      const client = createTelnyxClient('test-api-key');
+      const found = await client.findCallControlApplicationByName('softdial-org-abc');
+      assertEquals(
+        seenUrl,
+        'https://api.telnyx.com/v2/call_control_applications?filter[application_name][contains]=softdial-org-abc'
+      );
+      assertEquals(found, { id: 'app-1', application_name: 'softdial-org-abc' });
+    } finally {
+      restore();
+    }
+  }
+);
+
+Deno.test(
+  'createTelnyxClient.findCredentialConnectionByName: filters by the exact-match connection_name (no [contains])',
+  async () => {
+    let seenUrl = '';
+    const restore = stubFetch((url) => {
+      seenUrl = url;
+      return new Response(
+        JSON.stringify({ data: [{ id: 'cred-1', connection_name: 'softdial-org-abc-webrtc' }] }),
+        { status: 200 }
+      );
+    });
+    try {
+      const client = createTelnyxClient('test-api-key');
+      const found = await client.findCredentialConnectionByName('softdial-org-abc-webrtc');
+      assertEquals(
+        seenUrl,
+        'https://api.telnyx.com/v2/credential_connections?filter[connection_name]=softdial-org-abc-webrtc'
+      );
+      assertEquals(found, { id: 'cred-1', connection_name: 'softdial-org-abc-webrtc' });
+    } finally {
+      restore();
+    }
+  }
+);
+
 Deno.test('createTelnyxClient: a non-2xx response throws with the status and body', async () => {
   const restore = stubFetch(
     () => new Response(JSON.stringify({ errors: [{ detail: 'bad request' }] }), { status: 400 })
