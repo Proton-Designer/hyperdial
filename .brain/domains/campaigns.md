@@ -124,8 +124,13 @@ product (the contact list, the dialer, the dashboard) is either feeding a campai
   claimed `org_id` — fixing the exact gap `domain.auth` used to flag ("INSERT only checked the caller owned the campaign, never
   that the contact belonged to the same tenant"). The view is still `security_invoker = on`, now carrying `org_id` through, so it
   inherits the org-scoped policy. Service-role callers — the Edge Functions — still bypass all of it; `dialer-session-start`'s
-  missing-ownership-check gotcha above is **not yet fixed** (that's the Edge Function layer, TASK-P1-02, still filtering by
-  `user_id`/trusting `campaignId` on input as of this writing). Full inventory: `.brain/domains/auth.md`.
+  missing-ownership-check gotcha above is **not yet fixed** (that's `dialer-*`, eng2's lane/Phase 2, not TASK-P1-02, which was
+  scoped to `contacts-*`/`dashboard-stats`/`team-performance`/`ensure-week-summary` only). Full inventory: `.brain/domains/auth.md`.
+- **As of TASK-P1-02, `createCampaign()` and `addLeadsToCampaign()` set `org_id` explicitly** (`apps/web/src/lib/api.ts:392-409`,
+  `:496-508`, via a new `getActiveOrgId()` that reads `profiles.active_org_id`) — `org_id` has no DB default and is `NOT NULL`,
+  so an insert that omitted it would fail outright, not silently default to anything. RLS is still the actual authorization
+  boundary (an agent's insert is rejected regardless of what `org_id` they claim); the client-side value only has to be *correct*
+  for a permitted write to succeed, not trusted as an authorization check.
 - **`campaign_agents` is new** (`campaign_id, user_id`, denormalized `org_id`): which agents may dial/see which campaign. A
   validation trigger rejects an `org_id` that doesn't match the campaign's own org, even from a caller who legitimately owns the
   claimed `org_id` (a *different* org) — RLS's INSERT check alone wouldn't catch that. See `.brain/domains/auth.md`.

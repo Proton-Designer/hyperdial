@@ -1,6 +1,6 @@
 import { parse } from 'npm:csv-parse/sync';
 import { corsHeaders, corsPreflightResponse } from '../_shared/cors.ts';
-import { getUserFromRequest } from '../_shared/auth.ts';
+import { requireOrgRole } from '../_shared/auth.ts';
 
 const CANONICAL_FIELDS = [
   'Business Name',
@@ -190,7 +190,10 @@ function assignBestFitColumns(
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return corsPreflightResponse();
 
-  const { user, error: authError } = await getUserFromRequest(req);
+  // Part of the same owner/admin-only import flow as contacts-import (design §2);
+  // this step makes no DB queries but is gated the same way so an agent can't
+  // probe it even though it returns no org data.
+  const { error: authError } = await requireOrgRole(req, ['owner', 'admin']);
   if (authError) return authError;
 
   try {

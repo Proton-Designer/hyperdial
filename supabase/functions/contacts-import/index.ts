@@ -1,7 +1,7 @@
 import { parse } from 'npm:csv-parse/sync';
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { corsHeaders, corsPreflightResponse } from '../_shared/cors.ts';
-import { getUserFromRequest } from '../_shared/auth.ts';
+import { requireOrgRole } from '../_shared/auth.ts';
 
 const CANONICAL_TO_DB: Record<string, string> = {
   'Business Name': 'business_name',
@@ -30,7 +30,8 @@ function normalizePhone(value: string | null | undefined): string | null {
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return corsPreflightResponse();
 
-  const { user, error: authError } = await getUserFromRequest(req);
+  // Design §2 permission matrix: importing contacts is owner/admin only.
+  const { user, orgId, error: authError } = await requireOrgRole(req, ['owner', 'admin']);
   if (authError) return authError;
 
   try {
@@ -76,7 +77,7 @@ Deno.serve(async (req) => {
     const { data: existingPhones } = await supabase
       .from('contacts')
       .select('phone_number')
-      .eq('user_id', user.id);
+      .eq('org_id', orgId);
     const existingSet = new Set(
       (existingPhones ?? []).map((r: { phone_number: string | null }) =>
         (r.phone_number ?? '').replace(/\D/g, '')
@@ -91,6 +92,7 @@ Deno.serve(async (req) => {
     for (const row of rows) {
       const contact: Record<string, unknown> = {
         user_id: user.id,
+        org_id: orgId,
         category,
         contact_status: 'No Contact',
         updated_at: new Date().toISOString(),
@@ -146,12 +148,13 @@ Deno.serve(async (req) => {
         .from('campaigns')
         .select('id')
         .eq('id', campaignId)
-        .eq('user_id', user.id)
+        .eq('org_id', orgId)
         .maybeSingle();
       if (campaign) {
         const leadRows = insertedContactIds.map((contact_id: string) => ({
           campaign_id: campaignId,
           contact_id,
+          org_id: orgId,
           status: 'queued',
         }));
         await supabase.from('campaign_leads').upsert(leadRows, {

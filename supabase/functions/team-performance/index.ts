@@ -1,6 +1,6 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { corsHeaders, corsPreflightResponse } from '../_shared/cors.ts';
-import { getUserFromRequest } from '../_shared/auth.ts';
+import { requireOrgRole } from '../_shared/auth.ts';
 
 const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
@@ -33,7 +33,14 @@ function getDateRange(
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return corsPreflightResponse();
 
-  const { user, error: authError } = await getUserFromRequest(req);
+  // Design §2 permission matrix: "team stats" are org-wide for owner/admin,
+  // own-only for an agent.
+  const {
+    user,
+    orgId,
+    role,
+    error: authError,
+  } = await requireOrgRole(req, ['owner', 'admin', 'agent']);
   if (authError) return authError;
 
   try {
@@ -50,13 +57,17 @@ Deno.serve(async (req) => {
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    const { data: rows } = await supabase
+    let query = supabase
       .from('call_events')
       .select('started_at, outcome')
-      .eq('user_id', user.id)
+      .eq('org_id', orgId)
       .eq('direction', 'outbound')
       .gte('started_at', startStr)
       .lte('started_at', endStr);
+    if (role === 'agent') {
+      query = query.eq('user_id', user.id);
+    }
+    const { data: rows } = await query;
 
     const byDay: Record<string, { calls: number; connections: number }> = {};
     const cursor = new Date(start);

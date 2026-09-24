@@ -65,7 +65,7 @@ source_hash: 0388cf2fab8c2f4385c37c045bcd52d5f426fb8b71680110776816f0c605c799
 | Gateway config | `supabase/config.toml` — `verify_jwt` `:360-396`, `[auth]` from `:150` |
 | Browser session | `apps/web/src/contexts/AuthContext.tsx` — `getSession` + `onAuthStateChange` (`:34-50`) |
 | Sign-up UI | `apps/web/src/components/AuthScreen.tsx` — collects `first_name`, `last_name`, `company_name` into `auth.users.raw_user_meta_data` (no profiles table) (`:45-58`) |
-| Header attachment | `apps/web/src/lib/api.ts:14-28` — `getEdgeFunctionHeaders()` |
+| Header attachment | `apps/web/src/lib/api.ts:36-49` — `getEdgeFunctionHeaders()`, also sets `X-Org-Id` via `getActiveOrgId()` (`:20-30`) · org+role check: `_shared/auth.ts:71` `requireOrgRole` |
 
 ## How it works
 
@@ -74,8 +74,10 @@ source_hash: 0388cf2fab8c2f4385c37c045bcd52d5f426fb8b71680110776816f0c605c799
 2. **Calling a function** — `getEdgeFunctionHeaders()` sets `apikey` and `Authorization: Bearer <access_token>` **only if a session exists** (`apps/web/src/lib/api.ts:20-27`); no session → no header →
    401.
 3. **Layer 1 (gateway)** — `verify_jwt` is `false` for 15 of 16; only `dialer-session-hangup-live` keeps the `true` default.
-4. **Layer 2 (in-function)** — `getUserFromRequest` requires a `Bearer ` prefix (`supabase/functions/_shared/auth.ts:8`) then validates via `supabase.auth.getUser(token)` on a service-role client
-   (`:19-26`). Functions then scope every service-role query by hand; the browser's direct reads use the anon-key client, where RLS enforces.
+4. **Layer 2 (in-function)** — `getUserFromRequest` requires a `Bearer ` prefix (`:9`) then validates via `supabase.auth.getUser(token)` on a service-role client (`:20-27`). As of TASK-P1-02,
+   `contacts-import`/`-parse-csv`, `dashboard-stats`, `team-performance` and `ensure-week-summary` call `requireOrgRole(req, roles)` instead (wraps `getUserFromRequest`, resolves `orgId`/`role`
+   from `org_members` via header `X-Org-Id` or `profiles.active_org_id`, 403s outside `roles`) and filter every query by `org_id`. `telnyx-*`/`dialer-*` (10 functions) still hand-filter by `user_id`
+   only — eng2/Phase 2. Client writes (`api.ts`: `createContact`, `createCampaign`, `addLeadsToCampaign`) now set `org_id` too — it has no DB default and is `NOT NULL` as of TASK-P1-01.
 
 ## Authorization matrix (all 16 functions)
 
@@ -83,8 +85,9 @@ source_hash: 0388cf2fab8c2f4385c37c045bcd52d5f426fb8b71680110776816f0c605c799
 |---|---|---|---|
 | `dialer-session-hangup-live` | **true** (default) | `:22` | double-guarded |
 | `dialer-session-start`/`-stop`/`-pause`/`-get`/`-active` | false | `:42`/`:22`/`:19`/`:15`/`:14` | guarded |
-| `contacts-import`, `contacts-parse-csv` | false | `:33`, `:193` | guarded |
-| `dashboard-stats`, `team-performance`, `ensure-week-summary` | false | `:8`, `:36`, `:24` | guarded |
+| `contacts-import`, `contacts-parse-csv` | false | `requireOrgRole(['owner','admin'])` | guarded + role-gated |
+| `dashboard-stats`, `ensure-week-summary` | false | `requireOrgRole(['owner','admin','agent'])`, own-`user_id` only | guarded |
+| `team-performance` | false | `requireOrgRole(['owner','admin','agent'])`; owner/admin org-wide, agent own-`user_id` only | guarded |
 | `telnyx-list-numbers`/`-search-numbers`/`-purchase-number`/`-webrtc-credentials` | false | `:9`/`:8`/`:9`/`:8` | guarded |
 | **`telnyx-webhook`** | false | **none** | **unauthenticated** |
 
@@ -92,7 +95,10 @@ source_hash: 0388cf2fab8c2f4385c37c045bcd52d5f426fb8b71680110776816f0c605c799
 #0. **Treat it as fully unauthenticated**: it holds a service-role client and drives the
 dial loop.
 
-**Not yet done (TASK-P1-02):** the 13 service-role functions above still hand-filter by `user_id`, not `org_id` — `requireOrgRole(req, orgId, roles)` (design §2) does not exist yet in `supabase/functions/_shared/auth.ts`. Only the Postgres RLS layer below is org-scoped so far.
+**Done as of TASK-P1-02:** `requireOrgRole(req, roles)` exists (`_shared/auth.ts:71`), scoping the five functions above. Signature takes only `roles` (org resolves internally, then returns) — the
+design doc's `requireOrgRole(req, orgId, roles)` was corrected to match, see `mem.decisions`. Queries `org_members` directly, not `private.is_org_member`/`has_org_role`: those are unreachable from
+a service-role function (`private` isn't PostgREST-exposed, `service_role` lacks schema `USAGE` — found reviewing TASK-P1-05, `mem.known-issues` #0c) and unneeded anyway, since a service-role
+client already bypasses `org_members`' RLS. `telnyx-*`/`dialer-*` stay `user_id`-only — eng2's lane, Phase 2.
 
 ## Per-table RLS inventory
 
@@ -123,16 +129,11 @@ are the deliberate exceptions: personal, not org-shared (see `20260924000300`'s 
 
 - **`verify_jwt = false` is deliberate** (`supabase/config.toml:358-359`): the gateway's 401 carries no CORS headers, so the browser sees an opaque network error.
 - **A new function needs BOTH.** No `[functions.<name>]` block → silently inherits `verify_jwt = true`; a `false` block with no `getUserFromRequest` call → wide open.
-- **`getUserFromRequest` round-trips to GoTrue every request** (`supabase/functions/_shared/auth.ts:20-21`) rather than verifying the JWT locally, putting auth latency on the dial loop's critical
-  path.
-- **Service-role clients bypass RLS entirely** — 13 functions plus `supabase/functions/_shared/dialer-events.ts:22`. The only guard there is a hand-written `.eq('user_id', user.id)`; every current
-  call site scopes correctly, and omitting one is a silent cross-tenant read.
-- **Fixed as of TASK-P1-01:** `campaign_leads` INSERT used to check only that the caller owned the campaign, never that the contact did — a crafted insert could link another org's contact in. The
-  rewritten policy (`20260924000300`) verifies `campaign_id` and `contact_id` both belong to the claimed `org_id`; see the per-table inventory above.
-- **`notifications` UPDATE has `USING` but no `WITH CHECK` — checked, and it is fine.** Postgres falls back to the `USING` expression for the check when `WITH CHECK` is omitted, so a user still cannot
-  update a row into someone else's `user_id`. Recorded here so it is not re-raised as a finding. `notifications` also has no INSERT policy by design — inserts come from `ensure-week-summary` on the
-  service-role client.
-- **`call_events.user_id` is nullable** (`20250213000001:4`); once null the row is invisible to everyone — not a leak, but orphaned rows exist and are unreachable.
+- **`getUserFromRequest` round-trips to GoTrue every request** (`:20-27`), adding auth latency on the dial loop's critical path.
+- **Service-role clients bypass RLS entirely** — the guard is hand-written scoping, and omitting it is a silent cross-tenant read with no second layer to catch it.
+- **Fixed as of TASK-P1-01:** `campaign_leads` INSERT used to check only campaign ownership, never the contact's; the rewritten policy (`20260924000300`) verifies both belong to the claimed `org_id`.
+- **`notifications` UPDATE has `USING` but no `WITH CHECK`; verified fine** (Postgres falls back to `USING`). No INSERT policy by design — writes come only from `ensure-week-summary`'s service-role client.
+- **`call_events.user_id` is nullable** (`20250213000001:4`); a null-`user_id` row is invisible to everyone, not a leak, but orphaned and unreachable.
 - **`Access-Control-Allow-Origin: '*'`** (`supabase/functions/_shared/cors.ts:2`) — safe only because identity is a bearer token, not a cookie.
 - **Email confirmation is off; password floor is 6 characters** (`supabase/config.toml:210`, `:175`) and the strength meter never blocks a weak one — anyone can create an account and immediately dial.
 - **`raw_user_meta_data` is user-writable via the client SDK** — display-only, never an input to an authorization decision.
@@ -143,6 +144,5 @@ Webhook signature mechanics → `.brain/domains/telephony.md`; dial-loop ownersh
 
 ## Unverified
 
-- **Whether production matches `supabase/config.toml`** — `verify_jwt` and `[auth]` are also settable in the hosted dashboard and can diverge; and **whether every migration has been applied** — the
-  inventory is read from SQL, not a live database.
-- No password-reset flow was found; "Forgot password?" (`AuthScreen.tsx:333`) appears non-functional. Inferred from the absence of a handler.
+- **Whether production matches `supabase/config.toml`** — `verify_jwt`/`[auth]` are also settable in the hosted dashboard and can diverge; local migrations may lag the deployed schema.
+- No password-reset flow was found; "Forgot password?" (`AuthScreen.tsx:333`) appears non-functional, inferred from the absence of a handler.

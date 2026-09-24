@@ -1,11 +1,13 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { corsHeaders, corsPreflightResponse } from '../_shared/cors.ts';
-import { getUserFromRequest } from '../_shared/auth.ts';
+import { requireOrgRole } from '../_shared/auth.ts';
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return corsPreflightResponse();
 
-  const { user, error: authError } = await getUserFromRequest(req);
+  // This is the caller's own personal daily widget, not the org-wide "team stats"
+  // capability (that's team-performance) -- every role can see their own numbers.
+  const { user, orgId, error: authError } = await requireOrgRole(req, ['owner', 'admin', 'agent']);
   if (authError) return authError;
 
   try {
@@ -25,6 +27,7 @@ Deno.serve(async (req) => {
     const { data: outboundToday } = await supabase
       .from('call_events')
       .select('id, outcome, duration_seconds')
+      .eq('org_id', orgId)
       .eq('user_id', userId)
       .eq('direction', 'outbound')
       .gte('started_at', todayStartStr)

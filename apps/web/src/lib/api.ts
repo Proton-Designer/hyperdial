@@ -11,6 +11,27 @@ export function isParallelDialerEnabled(): boolean {
   return env?.VITE_PARALLEL_DIALER_ENABLED !== 'false';
 }
 
+/**
+ * The signed-in user's current org (TASK-P1-01/P1-02). There is no org-switcher UI
+ * yet (Stage 1 is one org per user in practice), so this always resolves to
+ * `profiles.active_org_id`. Not cached: org membership can change from another tab
+ * (an invite accepted, a role changed), and this is one cheap indexed read.
+ */
+async function getActiveOrgId(): Promise<string> {
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) throw new Error('Not signed in');
+  const { data, error } = await supabase
+    .from('profiles')
+    .select('active_org_id')
+    .eq('user_id', user.id)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!data?.active_org_id) throw new Error('No active org selected');
+  return data.active_org_id as string;
+}
+
 /** Headers for calling Supabase Edge Functions from the browser (includes apikey so gateway accepts the request). */
 async function getEdgeFunctionHeaders(): Promise<HeadersInit> {
   const anonKey = (import.meta as ImportMeta & { env?: Record<string, string> }).env
@@ -24,6 +45,13 @@ async function getEdgeFunctionHeaders(): Promise<HeadersInit> {
   } = await supabase.auth.getSession();
   if (session?.access_token) {
     headers['Authorization'] = `Bearer ${session.access_token}`;
+  }
+  try {
+    headers['X-Org-Id'] = await getActiveOrgId();
+  } catch {
+    // No org context yet (e.g. mid-signup, before the trigger/backfill has run for
+    // this session) -- let the function's own requireOrgRole fall back to
+    // profiles.active_org_id server-side, or reject with its own error.
   }
   return headers;
 }
@@ -208,6 +236,7 @@ export const CONTACT_CANONICAL_FIELDS = [
 export interface Contact {
   id: string;
   user_id: string;
+  org_id: string;
   business_name: string | null;
   business_link: string | null;
   business_type: string | null;
@@ -305,10 +334,12 @@ export async function createContact(input: CreateContactInput): Promise<Contact>
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) throw new Error('Not signed in');
+  const orgId = await getActiveOrgId();
   const { data, error } = await supabase
     .from('contacts')
     .insert({
       user_id: user.id,
+      org_id: orgId,
       business_name: input.business_name ?? null,
       business_link: input.business_link ?? null,
       business_type: input.business_type ?? null,
@@ -333,21 +364,16 @@ export async function createContact(input: CreateContactInput): Promise<Contact>
 }
 
 export async function deleteContact(id: string): Promise<void> {
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) throw new Error('Not signed in');
-  const { error } = await supabase.from('contacts').delete().eq('id', id).eq('user_id', user.id);
+  // Deletion is owner/admin-only org-wide (design §2), not limited to contacts the
+  // caller personally created -- RLS (`private.has_org_role`) is the actual
+  // authority here, not a client-side user_id filter.
+  const { error } = await supabase.from('contacts').delete().eq('id', id);
   if (error) throw new Error(error.message);
 }
 
 export async function deleteContacts(ids: string[]): Promise<void> {
   if (ids.length === 0) return;
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) throw new Error('Not signed in');
-  const { error } = await supabase.from('contacts').delete().eq('user_id', user.id).in('id', ids);
+  const { error } = await supabase.from('contacts').delete().in('id', ids);
   if (error) throw new Error(error.message);
 }
 
@@ -355,6 +381,7 @@ export async function deleteContacts(ids: string[]): Promise<void> {
 export interface Campaign {
   id: string;
   user_id: string;
+  org_id: string;
   name: string;
   status: 'active' | 'paused' | 'completed';
   total_calls_made: number;
@@ -394,10 +421,12 @@ export async function createCampaign(name: string): Promise<Campaign> {
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) throw new Error('Not signed in');
+  const orgId = await getActiveOrgId();
   const { data, error } = await supabase
     .from('campaigns')
     .insert({
       user_id: user.id,
+      org_id: orgId,
       name: name.trim(),
       status: 'active',
       updated_at: new Date().toISOString(),
@@ -465,7 +494,12 @@ export async function listCampaignLeads(campaignId: string): Promise<CampaignLea
 
 export async function addLeadsToCampaign(campaignId: string, contactIds: string[]): Promise<void> {
   if (contactIds.length === 0) return;
-  const rows = contactIds.map((contact_id) => ({ campaign_id: campaignId, contact_id }));
+  const orgId = await getActiveOrgId();
+  const rows = contactIds.map((contact_id) => ({
+    campaign_id: campaignId,
+    contact_id,
+    org_id: orgId,
+  }));
   const { error } = await supabase.from('campaign_leads').upsert(rows, {
     onConflict: 'campaign_id,contact_id',
     ignoreDuplicates: true,

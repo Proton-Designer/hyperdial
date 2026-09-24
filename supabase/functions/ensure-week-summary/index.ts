@@ -1,6 +1,6 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { corsHeaders, corsPreflightResponse } from '../_shared/cors.ts';
-import { getUserFromRequest } from '../_shared/auth.ts';
+import { requireOrgRole } from '../_shared/auth.ts';
 
 function getLastWeekBounds(): { start: string; end: string; label: string } {
   const now = new Date();
@@ -21,7 +21,10 @@ function getLastWeekBounds(): { start: string; end: string; label: string } {
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return corsPreflightResponse();
 
-  const { user, error: authError } = await getUserFromRequest(req);
+  // Personal notification for the caller's own week (notifications stays
+  // user_id-scoped per TASK-P1-01), any role. org_id is required on the row
+  // since notifications.org_id is NOT NULL as of TASK-P1-01.
+  const { user, orgId, error: authError } = await requireOrgRole(req, ['owner', 'admin', 'agent']);
   if (authError) return authError;
 
   try {
@@ -44,6 +47,7 @@ Deno.serve(async (req) => {
     const { data: existing } = await supabase
       .from('notifications')
       .select('id')
+      .eq('org_id', orgId)
       .eq('user_id', user.id)
       .eq('type', 'week_summary')
       .like('body', `%${startStr}%`)
@@ -60,6 +64,7 @@ Deno.serve(async (req) => {
     const { data: rows } = await supabase
       .from('call_events')
       .select('outcome, duration_seconds')
+      .eq('org_id', orgId)
       .eq('user_id', user.id)
       .eq('direction', 'outbound')
       .gte('started_at', start)
@@ -90,6 +95,7 @@ Deno.serve(async (req) => {
 
     await supabase.from('notifications').insert({
       user_id: user.id,
+      org_id: orgId,
       type: 'week_summary',
       title: `Week summary – ${label}`,
       body,

@@ -31,6 +31,23 @@ Newest first. Each entry answers: what was decided, why, and what it rules out.
 
 ---
 
+## 2026-09-24 — TASK-P1-02: `requireOrgRole` queries `org_members` directly; dedup is now org-wide
+
+**Status:** Active · **Decided by:** eng1
+
+Reviewing TASK-P1-05 found `private.set_org_telnyx_key`/`get_org_telnyx_key` unreachable from a
+service-role function (`private` not PostgREST-exposed; `service_role` lacks schema `USAGE`, only
+`authenticated` has it) — both reproduced live. `requireOrgRole` (`supabase/functions/_shared/auth.ts`)
+needs the same kind of check, so it queries `org_members` directly with a service-role client rather
+than calling `private.is_org_member`/`has_org_role`: sidesteps the reachability bug and loses nothing,
+since a service-role client already bypasses that table's RLS (the helpers stop recursion *inside
+policies*, irrelevant here). Implemented as `requireOrgRole(req, roles)` — org resolved internally,
+not passed in — correcting `docs/design/stage-1-architecture.md` §2's `requireOrgRole(req, orgId, roles)`.
+
+Also: `contacts-import`'s phone-dedup check moved from per-importing-user to `org_id`-scoped, since
+the shared pool under org tenancy is the org's contacts, not one member's. Verified live: a second
+member importing a number a first already imported now reports it as a duplicate.
+
 ## 2026-09-24 — Every cross-table check inside an RLS policy goes through a SECURITY DEFINER helper
 
 **Status:** Active · **Decided by:** eng1 (TASK-P1-01, overnight run 2026-09-23)

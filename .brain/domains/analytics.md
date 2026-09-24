@@ -96,8 +96,9 @@ the notification bell that delivers a weekly recap. Most of that surface is not 
 - **Nothing writes `call_events`.** It is referenced in exactly four places: the migration, and a `SELECT` in each of the three Edge Functions. The dial loop writes `call_logs` instead
   (`supabase/functions/_shared/dialer-engine.ts:195`, `supabase/functions/telnyx-webhook/index.ts:232`). So the Dashboard's real wiring aggregates an empty table — zero calls, 0%, "0m" is
   expected behaviour, not a bug.
-- **`team-performance` is real code over that same empty table** — genuine, correct aggregation that returns real data the moment `call_events` is populated. Despite the name it is **not**
-  team-wide: it filters `user_id = user.id` (`supabase/functions/team-performance/index.ts:56`). No multi-agent rollup exists.
+- **`team-performance` is real code over that same empty table** — genuine, correct aggregation that returns real data the moment `call_events` is populated. **As of TASK-P1-02 it is genuinely
+  team-wide** for an owner/admin (filters `org_id` only); an agent still gets their own rows only (`org_id` + `user_id`, `supabase/functions/team-performance/index.ts:56-64`, gated by
+  `requireOrgRole`, design §2's "team stats: owner/admin all, agent own only").
 - **"Revenue Pipeline" is a literal placeholder** — the fourth Dashboard tile is the string `'Coming soon'` (`apps/web/src/components/Dashboard.tsx:163`).
 - **`ensure-week-summary` only works on a Friday** (`:29`), and only if the user opens the app that day — it fires from a component mount (`apps/web/src/components/TopNavigation.tsx:70`),
   not cron. Miss that Friday and the summary is never written; nothing backfills.
@@ -105,8 +106,8 @@ the notification bell that delivers a weekly recap. Most of that surface is not 
   tab loads on a Friday can both miss and insert twice.
 - **A week-summary `body` is JSON, not display text** — `TopNavigation` parses it, falling back to raw text on a throw (`apps/web/src/components/TopNavigation.tsx:215-232`). Change the
   producer's shape and the bell silently renders a JSON blob.
-- **All three functions set `verify_jwt = false`** (`supabase/config.toml:371-378`), relying solely on their own `getUserFromRequest()` for identity, then use the service-role key, which
-  bypasses RLS — the token's `user_id` is the only tenant boundary.
+- **All three functions set `verify_jwt = false`** (`supabase/config.toml:371-378`). As of TASK-P1-02 they call `requireOrgRole()`, not raw `getUserFromRequest()`, then use the service-role key
+  (bypasses RLS) filtered by `org_id` + role — see `.brain/domains/auth.md`.
 - **`notifications` has no INSERT policy at all** (migration `:61-62`) — only SELECT and UPDATE. Clients cannot create notifications; only a service-role function can. The UPDATE policy also
   has no `WITH CHECK` (migration `:57-59`), and `markAllNotificationsRead()` issues an unfiltered `UPDATE ... IS NULL` (`apps/web/src/lib/api.ts:174-180`) — scoping rests entirely on the
   USING clause.

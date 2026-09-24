@@ -101,9 +101,10 @@ Depends on `domain.auth`; depended on by `domain.campaigns` (via the `campaign_l
 in the org; an agent sees and edits only contacts reachable through a campaign they're assigned to (`campaign_agents` →
 `campaign_leads`). Import (INSERT) and delete stay owner/admin only. **The agent UPDATE is currently full-row, not limited to a
 DNC toggle** — there is no `dnc` column yet for the policy to scope to; see `.brain/memory/known-issues.md` #7. Full policy
-inventory: `.brain/domains/auth.md`. **The two Edge Functions still use the service-role key and bypass RLS
-entirely** (`contacts-import/index.ts:72-74`) — their only tenancy guarantee is setting and filtering `user_id` from the verified
-JWT by hand; they do not yet filter or set `org_id` (TASK-P1-02, not built as of this writing).
+inventory: `.brain/domains/auth.md`. **As of TASK-P1-02**, both Edge Functions call `requireOrgRole(req, ['owner','admin'])`
+(agents get 403) and filter/set every service-role query by `org_id`, not just `user_id`: `contacts-import`'s phone-dedup check
+(`:76-125`) is now org-wide instead of per-importing-user, so two different org members importing the same lead now correctly
+collide as a duplicate.
 
 ## Constraints & gotchas
 
