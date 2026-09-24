@@ -662,6 +662,17 @@ export interface Campaign {
   total_calls_made: number;
   connect_rate: number;
   last_called_at: string | null;
+  /** Simultaneous outbound lines (design §7, TASK-P2-E1/P2-P2). */
+  lines: number;
+  amd_mode: 'off' | 'on';
+  /** Must belong to this campaign's own org -- enforced by a DB trigger (20260924000700). */
+  caller_id_number_id: string | null;
+  max_attempts: number;
+  retry_interval_minutes: number;
+  /** "HH:MM:SS", contact-local (design §7). */
+  calling_window_start: string;
+  calling_window_end: string;
+  abandon_message_enabled: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -758,6 +769,87 @@ export async function updateCampaignStatus(
     .update({ status, updated_at: new Date().toISOString() })
     .eq('id', id);
   if (error) throw new Error(error.message);
+}
+
+export interface CampaignSettingsInput {
+  lines?: number;
+  amd_mode?: 'off' | 'on';
+  caller_id_number_id?: string | null;
+  max_attempts?: number;
+  retry_interval_minutes?: number;
+  calling_window_start?: string;
+  calling_window_end?: string;
+  abandon_message_enabled?: boolean;
+}
+
+/**
+ * Admin+ only -- RLS (`owner or admin can update campaigns`) is the actual authority, this is
+ * just the client call. `caller_id_number_id` must belong to the campaign's own org or the DB
+ * trigger `campaigns_check_caller_id_org` (20260924000700) rejects the update.
+ */
+export async function updateCampaignSettings(
+  id: string,
+  input: CampaignSettingsInput
+): Promise<Campaign> {
+  const { data, error } = await supabase
+    .from('campaigns')
+    .update({ ...input, updated_at: new Date().toISOString() })
+    .eq('id', id)
+    .select()
+    .single();
+  if (error) throw new Error(error.message);
+  return data as Campaign;
+}
+
+/**
+ * Soft delete (design §7 / TASK-P2-P2): sets `deleted_at` rather than issuing a DELETE. A real
+ * DELETE would cascade through dial_sessions/call_legs and destroy call history, and the RLS
+ * delete policy on campaigns was removed for exactly this reason (20260924001500) -- a hard
+ * DELETE from the client now matches zero rows under any role. Hidden from
+ * `campaigns_with_stats`/listCampaigns immediately; there is no restore UI.
+ */
+export async function deleteCampaign(id: string): Promise<void> {
+  const { error } = await supabase
+    .from('campaigns')
+    .update({ deleted_at: new Date().toISOString() })
+    .eq('id', id);
+  if (error) throw new Error(error.message);
+}
+
+/** Org members assigned to dial a campaign (design §7). RLS-enforced (TASK-P1-01): only
+ * owner/admin may insert/delete; any org member may view. */
+export async function listCampaignAgentIds(campaignId: string): Promise<string[]> {
+  const { data, error } = await supabase
+    .from('campaign_agents')
+    .select('user_id')
+    .eq('campaign_id', campaignId);
+  if (error) throw new Error(error.message);
+  return ((data ?? []) as { user_id: string }[]).map((r) => r.user_id);
+}
+
+/** Replaces the full assignment set for a campaign with `userIds` (add the new ones, remove the
+ * rest) -- the multi-select UI always submits the complete desired set, not a delta. */
+export async function setCampaignAgents(campaignId: string, userIds: string[]): Promise<void> {
+  const orgId = await getActiveOrgId();
+  const current = new Set(await listCampaignAgentIds(campaignId));
+  const desired = new Set(userIds);
+  const toAdd = userIds.filter((id) => !current.has(id));
+  const toRemove = [...current].filter((id) => !desired.has(id));
+
+  if (toAdd.length > 0) {
+    const { error } = await supabase
+      .from('campaign_agents')
+      .insert(toAdd.map((user_id) => ({ campaign_id: campaignId, user_id, org_id: orgId })));
+    if (error) throw new Error(error.message);
+  }
+  if (toRemove.length > 0) {
+    const { error } = await supabase
+      .from('campaign_agents')
+      .delete()
+      .eq('campaign_id', campaignId)
+      .in('user_id', toRemove);
+    if (error) throw new Error(error.message);
+  }
 }
 
 export async function listCampaignLeads(campaignId: string): Promise<CampaignLead[]> {
