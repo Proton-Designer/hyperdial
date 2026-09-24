@@ -56,6 +56,16 @@ Reported during the Agent-Brain install; **not fixed** — the fix needs the acc
 
 ---
 
+## 0b. `_shared/telnyx.ts`'s `joinCallToConference` calls an endpoint that no longer exists
+
+**Severity: high — verified against Telnyx's current OpenAPI spec 2026-09-23.** `POST /calls/{call_control_id}/actions/join_conference` (`supabase/functions/_shared/telnyx.ts:150-164`) has zero matches in Telnyx's published spec
+(`https://raw.githubusercontent.com/team-telnyx/openapi/master/openapi/spec3.json`). Joining an existing call into a conference is a **conference-side** action:
+`POST /conferences/{id}/actions/join` with `call_control_id` in the body. This was likely valid at some point and deprecated, or was never correct. The new
+`_shared/telnyx-client.ts` (TASK-P1-04) implements the corrected endpoint. TASK-P1-05, which switches the dial engine over to the new client, inherits the fix; the
+old `telnyx.ts` is untouched until then.
+
+---
+
 ## 1. The Analytics screen is entirely fake data
 
 **Severity: high — actively misleading.**

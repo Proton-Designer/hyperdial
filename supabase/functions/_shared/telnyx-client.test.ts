@@ -1,0 +1,184 @@
+import { assertEquals } from 'jsr:@std/assert@1';
+import {
+  amdModeToTelnyxValue,
+  buildDialPayload,
+  buildRecordStartPayload,
+  buildTranscriptionStartPayload,
+  createTelnyxClient,
+} from './telnyx-client.ts';
+
+// ---------------------------------------------------------------------------
+// Pure builder tests — no network involved.
+// ---------------------------------------------------------------------------
+
+Deno.test('amdModeToTelnyxValue: off maps to disabled, premium maps to premium', () => {
+  assertEquals(amdModeToTelnyxValue('off'), 'disabled');
+  assertEquals(amdModeToTelnyxValue('premium'), 'premium');
+});
+
+Deno.test('buildDialPayload: includes required fields with the correct AMD mapping', () => {
+  const payload = buildDialPayload({
+    connectionId: 'conn-1',
+    to: '+15551234567',
+    from: '+15557654321',
+    webhookUrl: 'https://example.com/telnyx-webhook?org=org-1',
+    clientState: 'ZW5jb2RlZA==',
+    amdMode: 'off',
+  });
+  assertEquals(payload, {
+    connection_id: 'conn-1',
+    to: '+15551234567',
+    from: '+15557654321',
+    webhook_url: 'https://example.com/telnyx-webhook?org=org-1',
+    client_state: 'ZW5jb2RlZA==',
+    timeout_secs: 25,
+    answering_machine_detection: 'disabled',
+  });
+});
+
+Deno.test('buildDialPayload: premium AMD and a custom timeout override the defaults', () => {
+  const payload = buildDialPayload({
+    connectionId: 'conn-1',
+    to: '+15551234567',
+    from: '+15557654321',
+    webhookUrl: 'https://example.com/telnyx-webhook',
+    clientState: 'ZW5jb2RlZA==',
+    amdMode: 'premium',
+    timeoutSecs: 20,
+  });
+  assertEquals(payload.answering_machine_detection, 'premium');
+  assertEquals(payload.timeout_secs, 20);
+});
+
+Deno.test('buildRecordStartPayload: defaults to mp3, requires channels', () => {
+  assertEquals(buildRecordStartPayload({ channels: 'dual' }), {
+    format: 'mp3',
+    channels: 'dual',
+  });
+  assertEquals(buildRecordStartPayload({ channels: 'single', format: 'wav' }), {
+    format: 'wav',
+    channels: 'single',
+  });
+});
+
+Deno.test('buildTranscriptionStartPayload: defaults to Deepgram + both tracks', () => {
+  assertEquals(buildTranscriptionStartPayload(), {
+    transcription_engine: 'Deepgram',
+    transcription_tracks: 'both',
+  });
+  assertEquals(buildTranscriptionStartPayload({ engine: 'Google', tracks: 'inbound' }), {
+    transcription_engine: 'Google',
+    transcription_tracks: 'inbound',
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Client request-shape tests — fetch is stubbed, no real network call.
+// ---------------------------------------------------------------------------
+
+function stubFetch(handler: (url: string, init?: RequestInit) => Response) {
+  const original = globalThis.fetch;
+  globalThis.fetch = ((url: string | URL | Request, init?: RequestInit) =>
+    Promise.resolve(handler(String(url), init))) as typeof fetch;
+  return () => {
+    globalThis.fetch = original;
+  };
+}
+
+Deno.test(
+  'createTelnyxClient.dial: posts to /calls with the API key as a Bearer token',
+  async () => {
+    let seenUrl = '';
+    let seenAuth: string | null = null;
+    let seenBody: unknown = null;
+    const restore = stubFetch((url, init) => {
+      seenUrl = url;
+      seenAuth = (init?.headers as Record<string, string>)?.Authorization ?? null;
+      seenBody = JSON.parse(String(init?.body ?? '{}'));
+      return new Response(JSON.stringify({ data: { call_control_id: 'call-1' } }), { status: 200 });
+    });
+    try {
+      const client = createTelnyxClient('test-api-key');
+      const result = await client.dial({
+        connectionId: 'conn-1',
+        to: '+15551234567',
+        from: '+15557654321',
+        webhookUrl: 'https://example.com/telnyx-webhook',
+        clientState: 'ZW5jb2RlZA==',
+        amdMode: 'off',
+      });
+      assertEquals(result, { callControlId: 'call-1' });
+      assertEquals(seenUrl, 'https://api.telnyx.com/v2/calls');
+      assertEquals(seenAuth, 'Bearer test-api-key');
+      assertEquals((seenBody as { connection_id: string }).connection_id, 'conn-1');
+    } finally {
+      restore();
+    }
+  }
+);
+
+Deno.test(
+  'createTelnyxClient.dial: throws when Telnyx does not return a call_control_id',
+  async () => {
+    const restore = stubFetch(() => new Response(JSON.stringify({ data: {} }), { status: 200 }));
+    try {
+      const client = createTelnyxClient('test-api-key');
+      let threw = false;
+      try {
+        await client.dial({
+          connectionId: 'conn-1',
+          to: '+15551234567',
+          from: '+15557654321',
+          webhookUrl: 'https://example.com/telnyx-webhook',
+          clientState: 'ZW5jb2RlZA==',
+          amdMode: 'off',
+        });
+      } catch {
+        threw = true;
+      }
+      assertEquals(threw, true);
+    } finally {
+      restore();
+    }
+  }
+);
+
+Deno.test(
+  'createTelnyxClient.joinConference: hits /conferences/{id}/actions/join, not /calls/.../join_conference',
+  async () => {
+    let seenUrl = '';
+    let seenBody: unknown = null;
+    const restore = stubFetch((url, init) => {
+      seenUrl = url;
+      seenBody = JSON.parse(String(init?.body ?? '{}'));
+      return new Response(JSON.stringify({ data: {} }), { status: 200 });
+    });
+    try {
+      const client = createTelnyxClient('test-api-key');
+      await client.joinConference('conf-1', { callControlId: 'call-1' });
+      assertEquals(seenUrl, 'https://api.telnyx.com/v2/conferences/conf-1/actions/join');
+      assertEquals((seenBody as { call_control_id: string }).call_control_id, 'call-1');
+    } finally {
+      restore();
+    }
+  }
+);
+
+Deno.test('createTelnyxClient: a non-2xx response throws with the status and body', async () => {
+  const restore = stubFetch(
+    () => new Response(JSON.stringify({ errors: [{ detail: 'bad request' }] }), { status: 400 })
+  );
+  try {
+    const client = createTelnyxClient('test-api-key');
+    let message = '';
+    try {
+      await client.hangup('call-1');
+    } catch (err) {
+      message = err instanceof Error ? err.message : String(err);
+    }
+    assertEquals(message.includes('400'), true);
+    assertEquals(message.includes('bad request'), true);
+  } finally {
+    restore();
+  }
+});
