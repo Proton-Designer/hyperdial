@@ -21,3 +21,6 @@ AGENTS.md
 ARCHITECTURE.md
 REPOSITORY_MAP.md
 PRODUCT_CONTEXT.md
+
+# Claude Code local settings and overnight run folders
+.claude/
