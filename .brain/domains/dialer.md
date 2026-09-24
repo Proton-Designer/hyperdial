@@ -26,7 +26,7 @@ answers:
 covers: "The dial-session engine: batching contacts onto N parallel Telnyx lines, AMD triage, human-answer race resolution, conference bridging, batch advance, and the live UI that mirrors it."
 excludes: "Telnyx API wrappers, number purchase/search and WebRTC credentials (domain.telephony); campaign and lead list construction (domain.campaigns)."
 tokens_est: 2694
-source_hash: 1744fad5df8daa881e294a400e9f3d8fa2292fdf9eb517551941572d85e6c2e8
+source_hash: 0f098741f482d33c7071123f0390a634f4ac6869b252c9cc38ebae06b474d7e8
 ---
 
 # Parallel Dialer
@@ -117,6 +117,11 @@ silence and no-answer are hung up and recorded silently. A "session" is one user
 
 - Telnyx numbers, WebRTC credentials, raw API wrappers → `.brain/domains/telephony.md`; campaigns and lead lists → `.brain/domains/campaigns.md`; cross-service flow and
   deployment → `.brain/architecture/system-overview.md`
+- **The rewrite in progress (TASK-P2-E1, design §4.2-4.4/§7):** a new, org-scoped `dial_sessions`/`call_legs`/`webhook_events` schema plus `claim_next_leads`/
+  `claim_leg`/`transition_leg`/`transition_session`/`apply_leg_outcome`/`record_webhook_event` RPCs (`supabase/migrations/20260924000700`/`000800`) now exist
+  alongside everything described above, replacing Redis-based state with a single Postgres source of truth and a rolling-refill queue on `campaign_leads`
+  (new `attempts`/`next_attempt_at`/`position`/`status` values). **Not wired to any engine or webhook yet** — every constraint/gotcha above still describes
+  the only engine that actually runs calls today. This whole document gets rewritten once TASK-P2-E2 lands.
 
 ## Unverified
 
