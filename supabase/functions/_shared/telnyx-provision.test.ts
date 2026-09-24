@@ -61,7 +61,8 @@ function makeMockClient(overrides: Partial<TelnyxClient> = {}): {
     createTelephonyCredential: async () => ({}),
     getTelephonyCredential: async () => ({}),
     listTelephonyCredentials: async () => [],
-    mintCredentialToken: async () => ({}),
+    findTelephonyCredentialByName: async () => null,
+    mintCredentialToken: async () => ({ token: null }),
     ...overrides,
   };
 
