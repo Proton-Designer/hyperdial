@@ -27,8 +27,8 @@ answers:
   - "what legacy Telnyx env var names are still honoured"
 covers: "Telnyx account wiring (API key, the two connection IDs, webhook auth), phone-number search/purchase/listing, and the agent's WebRTC browser leg."
 excludes: "The parallel dial loop itself — batching, AMD, call_logs state machine, Redis session state — see .brain/domains/dialer.md."
-tokens_est: 3092
-source_hash: e519f9be3b10f361895d6b99e8de8f13e7aac7af3dfb986dd53c809b422a9cdb
+tokens_est: 3467
+source_hash: 323748ba732e317a5cc8e61576cf1ad4680b524b281ac984953327c7d32eb21b
 ---
 
 # Telephony
