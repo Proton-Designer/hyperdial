@@ -93,27 +93,36 @@ insert into public.contacts (id, org_id, user_id, phone_number) values
   ('e1e13000-a000-4000-8000-00000000000b', :'org_a', 'e1e10000-a000-4000-8000-00000000000a', '+15551110002'),
   ('e1e13000-a000-4000-8000-00000000000c', :'org_a', 'e1e10000-a000-4000-8000-00000000000a', '+15551110003'),
   ('e1e13000-a000-4000-8000-00000000000d', :'org_a', 'e1e10000-a000-4000-8000-00000000000a', '+15551110004'),
-  ('e1e13000-a000-4000-8000-00000000000e', :'org_a', 'e1e10000-a000-4000-8000-00000000000a', '+15551110005');
+  ('e1e13000-a000-4000-8000-00000000000e', :'org_a', 'e1e10000-a000-4000-8000-00000000000a', '+15551110005'),
+  ('e1e13000-a000-4000-8000-0000000000a5', :'org_a', 'e1e10000-a000-4000-8000-00000000000a', '+15551110010');
 
+-- attempts here simulates what apply_leg_outcome('connected') already did to a leg that just won
+-- and hung up -- TASK-P3-E1 fix-forward item 2 (lead's review, migration 20260924002300):
+-- submit_disposition's 'queued' effect must NOT add a second increment on top of this.
 insert into public.campaign_leads (id, campaign_id, contact_id, org_id, status, attempts) values
   ('e1e15000-a000-4000-8000-00000000000a', 'e1e12000-a000-4000-8000-00000000000a', 'e1e13000-a000-4000-8000-00000000000a', :'org_a', 'in_flight', 0),
   ('e1e15000-a000-4000-8000-00000000000b', 'e1e12000-a000-4000-8000-00000000000a', 'e1e13000-a000-4000-8000-00000000000b', :'org_a', 'in_flight', 0),
   ('e1e15000-a000-4000-8000-00000000000c', 'e1e12000-a000-4000-8000-00000000000a', 'e1e13000-a000-4000-8000-00000000000c', :'org_a', 'in_flight', 0),
   ('e1e15000-a000-4000-8000-00000000000d', 'e1e12000-a000-4000-8000-00000000000a', 'e1e13000-a000-4000-8000-00000000000d', :'org_a', 'in_flight', 0),
-  ('e1e15000-a000-4000-8000-00000000000e', 'e1e12000-a000-4000-8000-00000000000a', 'e1e13000-a000-4000-8000-00000000000e', :'org_a', 'in_flight', 1);
+  ('e1e15000-a000-4000-8000-00000000000e', 'e1e12000-a000-4000-8000-00000000000a', 'e1e13000-a000-4000-8000-00000000000e', :'org_a', 'in_flight', 1),
+  -- Campaign 1's max_attempts is 3 -- already AT the max (apply_leg_outcome's own increment
+  -- brought it here), so a 'queued'-effect disposition on this one must exhaust, not requeue.
+  ('e1e15000-a000-4000-8000-0000000000a5', 'e1e12000-a000-4000-8000-00000000000a', 'e1e13000-a000-4000-8000-0000000000a5', :'org_a', 'in_flight', 3);
 
 insert into public.call_legs (id, org_id, session_id, campaign_id, contact_id, lead_id, kind, call_control_id, state) values
   ('e1e16000-a000-4000-8000-00000000000a', :'org_a', 'e1e14000-a000-4000-8000-00000000000a', 'e1e12000-a000-4000-8000-00000000000a', 'e1e13000-a000-4000-8000-00000000000a', 'e1e15000-a000-4000-8000-00000000000a', 'contact', 'p3e1-leg-interested', 'ended'),
   ('e1e16000-a000-4000-8000-00000000000b', :'org_a', 'e1e14000-a000-4000-8000-00000000000a', 'e1e12000-a000-4000-8000-00000000000a', 'e1e13000-a000-4000-8000-00000000000b', 'e1e15000-a000-4000-8000-00000000000b', 'contact', 'p3e1-leg-callback', 'ended'),
   ('e1e16000-a000-4000-8000-00000000000c', :'org_a', 'e1e14000-a000-4000-8000-00000000000a', 'e1e12000-a000-4000-8000-00000000000a', 'e1e13000-a000-4000-8000-00000000000c', 'e1e15000-a000-4000-8000-00000000000c', 'contact', 'p3e1-leg-wrongnum', 'ended'),
   ('e1e16000-a000-4000-8000-00000000000d', :'org_a', 'e1e14000-a000-4000-8000-00000000000a', 'e1e12000-a000-4000-8000-00000000000a', 'e1e13000-a000-4000-8000-00000000000d', 'e1e15000-a000-4000-8000-00000000000d', 'contact', 'p3e1-leg-voicemail', 'ended'),
-  ('e1e16000-a000-4000-8000-00000000000e', :'org_a', 'e1e14000-a000-4000-8000-00000000000a', 'e1e12000-a000-4000-8000-00000000000a', 'e1e13000-a000-4000-8000-00000000000e', 'e1e15000-a000-4000-8000-00000000000e', 'contact', 'p3e1-leg-noanswer', 'ended');
+  ('e1e16000-a000-4000-8000-00000000000e', :'org_a', 'e1e14000-a000-4000-8000-00000000000a', 'e1e12000-a000-4000-8000-00000000000a', 'e1e13000-a000-4000-8000-00000000000e', 'e1e15000-a000-4000-8000-00000000000e', 'contact', 'p3e1-leg-noanswer', 'ended'),
+  ('e1e16000-a000-4000-8000-0000000000a5', :'org_a', 'e1e14000-a000-4000-8000-00000000000a', 'e1e12000-a000-4000-8000-00000000000a', 'e1e13000-a000-4000-8000-0000000000a5', 'e1e15000-a000-4000-8000-0000000000a5', 'contact', 'p3e1-leg-voicemail-exhausted', 'ended');
 
 select public.submit_disposition('e1e16000-a000-4000-8000-00000000000a', :'org_a', 'e1e10000-a000-4000-8000-00000000000b', 'interested', 'Great chat', null);
 select public.submit_disposition('e1e16000-a000-4000-8000-00000000000b', :'org_a', 'e1e10000-a000-4000-8000-00000000000b', 'callback', 'call back later', '2026-10-05T14:00:00Z');
 select public.submit_disposition('e1e16000-a000-4000-8000-00000000000c', :'org_a', 'e1e10000-a000-4000-8000-00000000000b', 'wrong_number', null, null);
 select public.submit_disposition('e1e16000-a000-4000-8000-00000000000d', :'org_a', 'e1e10000-a000-4000-8000-00000000000b', 'voicemail', null, null);
 select public.submit_disposition('e1e16000-a000-4000-8000-00000000000e', :'org_a', 'e1e10000-a000-4000-8000-00000000000b', 'no_answer', null, null);
+select public.submit_disposition('e1e16000-a000-4000-8000-0000000000a5', :'org_a', 'e1e10000-a000-4000-8000-00000000000b', 'voicemail', null, null);
 
 select public._test_expect_eq('interested -> lead status completed',
   (select status from public.campaign_leads where id = 'e1e15000-a000-4000-8000-00000000000a'), 'completed');
@@ -126,19 +135,25 @@ select public._test_expect_eq('callback -> assigned_agent_id set to the session 
   (select assigned_agent_id::text from public.campaign_leads where id = 'e1e15000-a000-4000-8000-00000000000b'), 'e1e10000-a000-4000-8000-00000000000b');
 select public._test_expect_eq('wrong_number -> lead status exhausted',
   (select status from public.campaign_leads where id = 'e1e15000-a000-4000-8000-00000000000c'), 'exhausted');
-select public._test_expect_eq('voicemail -> lead status queued',
+select public._test_expect_eq('voicemail -> lead status queued (fix-forward item 2: not exhausted, since attempts (0) < campaign max_attempts (3))',
   (select status from public.campaign_leads where id = 'e1e15000-a000-4000-8000-00000000000d'), 'queued');
-select public._test_expect_eq('voicemail -> attempts +1 (0 -> 1)',
-  (select attempts::text from public.campaign_leads where id = 'e1e15000-a000-4000-8000-00000000000d'), '1');
+select public._test_expect_eq('voicemail -> attempts NOT incremented again here (fix-forward item 2: apply_leg_outcome already did the one real increment; stays 0)',
+  (select attempts::text from public.campaign_leads where id = 'e1e15000-a000-4000-8000-00000000000d'), '0');
+select public._test_expect_count('voicemail -> next_attempt_at pushed out by the campaign''s retry_interval_minutes (120), not left <= now() (fix-forward item 2)',
+  format('select count(*) from public.campaign_leads where id = %L and next_attempt_at > now() + interval ''100 minutes''', 'e1e15000-a000-4000-8000-00000000000d'), 1);
 select public._test_expect_eq('no_answer (manual) -> lead status queued',
   (select status from public.campaign_leads where id = 'e1e15000-a000-4000-8000-00000000000e'), 'queued');
-select public._test_expect_eq('no_answer (manual) -> attempts +1 (1 -> 2)',
-  (select attempts::text from public.campaign_leads where id = 'e1e15000-a000-4000-8000-00000000000e'), '2');
+select public._test_expect_eq('no_answer (manual) -> attempts NOT incremented again here (stays 1)',
+  (select attempts::text from public.campaign_leads where id = 'e1e15000-a000-4000-8000-00000000000e'), '1');
+select public._test_expect_eq('voicemail on a lead already AT max_attempts (3) -> exhausted, not queued (fix-forward item 2)',
+  (select status from public.campaign_leads where id = 'e1e15000-a000-4000-8000-0000000000a5'), 'exhausted');
+select public._test_expect_eq('voicemail-exhausted -> attempts still not incremented (stays 3)',
+  (select attempts::text from public.campaign_leads where id = 'e1e15000-a000-4000-8000-0000000000a5'), '3');
 select public._test_expect_count('every submitted leg got disposition_id/dispositioned_by/dispositioned_at stamped',
-  format('select count(*) from public.call_legs where id in (%L,%L,%L,%L,%L) and disposition_id is not null and dispositioned_by = %L and dispositioned_at is not null',
-    'e1e16000-a000-4000-8000-00000000000a', 'e1e16000-a000-4000-8000-00000000000b', 'e1e16000-a000-4000-8000-00000000000c', 'e1e16000-a000-4000-8000-00000000000d', 'e1e16000-a000-4000-8000-00000000000e',
+  format('select count(*) from public.call_legs where id in (%L,%L,%L,%L,%L,%L) and disposition_id is not null and dispositioned_by = %L and dispositioned_at is not null',
+    'e1e16000-a000-4000-8000-00000000000a', 'e1e16000-a000-4000-8000-00000000000b', 'e1e16000-a000-4000-8000-00000000000c', 'e1e16000-a000-4000-8000-00000000000d', 'e1e16000-a000-4000-8000-00000000000e', 'e1e16000-a000-4000-8000-0000000000a5',
     'e1e10000-a000-4000-8000-00000000000b'),
-  5);
+  6);
 
 -- ===========================================================================================
 -- 2. DNC propagation across campaigns (acceptance #2)
@@ -169,9 +184,12 @@ select public._test_expect_eq('dnc -> the OTHER campaign''s lead for the same co
 -- ===========================================================================================
 
 select attempts as voicemail_attempts_before from public.campaign_leads where id = 'e1e15000-a000-4000-8000-00000000000d' \gset
+select next_attempt_at as voicemail_next_attempt_before from public.campaign_leads where id = 'e1e15000-a000-4000-8000-00000000000d' \gset
 select public.submit_disposition('e1e16000-a000-4000-8000-00000000000d', :'org_a', 'e1e10000-a000-4000-8000-00000000000b', 'voicemail', 'updated note text', null);
 select public._test_expect_eq('re-submit: attempts unchanged (no double-apply)',
   (select attempts::text from public.campaign_leads where id = 'e1e15000-a000-4000-8000-00000000000d'), :'voicemail_attempts_before');
+select public._test_expect_eq('re-submit: next_attempt_at NOT pushed out a second time (the effect block was truly skipped, not coincidentally identical)',
+  (select next_attempt_at::text from public.campaign_leads where id = 'e1e15000-a000-4000-8000-00000000000d'), :'voicemail_next_attempt_before');
 select public._test_expect_eq('re-submit: notes ARE updated on the leg',
   (select notes from public.call_legs where id = 'e1e16000-a000-4000-8000-00000000000d'), 'updated note text');
 select public._test_expect_count('re-submit: still exactly one crm_sync_jobs row for this leg (enqueue dedupe)',
