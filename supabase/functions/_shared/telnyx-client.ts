@@ -39,6 +39,15 @@
  * string -- not JSON. `telnyxRequest` below JSON.parses every response and falls back to
  * `{ raw: text }` only when that throws, so callers of `mintCredentialToken` read the
  * token from `.raw`, not `.data`/`.token`.
+ *
+ * apiBase override (TASK-P2-E2): `createTelnyxClient(apiKey, { apiBase })` -- an explicit
+ * constructor option, not a Deno.env read inside this file, so `deno test
+ * supabase/functions/_shared` (RULES-CARD's bare command, no --allow-env) never needs env
+ * permission to exercise it. Callers that want the env-driven `TELNYX_API_BASE` override read
+ * it themselves (server-side, where env access is always available) and pass it through --
+ * see `_shared/telnyx-org-context.ts`. This exists so TASK-P2-E2's `functions serve`
+ * acceptance script can point a mock Telnyx HTTP server at it; production never sets the env
+ * var, so every real caller gets the default.
  */
 
 export type AmdMode = 'off' | 'premium';
@@ -64,13 +73,16 @@ interface TelnyxIdData {
   [key: string]: unknown;
 }
 
+const DEFAULT_TELNYX_API_BASE = 'https://api.telnyx.com/v2';
+
 async function telnyxRequest<T = unknown>(
   apiKey: string,
+  apiBase: string,
   path: string,
   init: RequestInit = {}
 ): Promise<T> {
   const method = init.method ?? 'GET';
-  const res = await fetch(`https://api.telnyx.com/v2${path}`, {
+  const res = await fetch(`${apiBase}${path}`, {
     ...init,
     headers: {
       Authorization: `Bearer ${apiKey}`,
@@ -225,8 +237,18 @@ export interface TelnyxClient {
   mintCredentialToken(credentialId: string): Promise<{ token: string | null }>;
 }
 
-export function createTelnyxClient(apiKey: string): TelnyxClient {
-  const req = <T>(path: string, init?: RequestInit) => telnyxRequest<T>(apiKey, path, init);
+export interface TelnyxClientOptions {
+  /** Overrides the base URL (default `https://api.telnyx.com/v2`) -- see the header comment. */
+  apiBase?: string;
+}
+
+export function createTelnyxClient(
+  apiKey: string,
+  options: TelnyxClientOptions = {}
+): TelnyxClient {
+  const apiBase = options.apiBase || DEFAULT_TELNYX_API_BASE;
+  const req = <T>(path: string, init?: RequestInit) =>
+    telnyxRequest<T>(apiKey, apiBase, path, init);
 
   return {
     async getBalance() {

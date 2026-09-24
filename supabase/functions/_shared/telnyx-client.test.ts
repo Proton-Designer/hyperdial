@@ -85,6 +85,39 @@ function stubFetch(handler: (url: string, init?: RequestInit) => Response) {
   };
 }
 
+Deno.test('createTelnyxClient: no apiBase option -> the real API', async () => {
+  let seenUrl = '';
+  const restore = stubFetch((url) => {
+    seenUrl = url;
+    return new Response(JSON.stringify({ data: {} }), { status: 200 });
+  });
+  try {
+    await createTelnyxClient('test-api-key').getBalance();
+    assertEquals(seenUrl, 'https://api.telnyx.com/v2/balance');
+  } finally {
+    restore();
+  }
+});
+
+Deno.test(
+  'createTelnyxClient: apiBase option redirects every request, an explicit constructor param (no env access, no special test flags)',
+  async () => {
+    let seenUrl = '';
+    const restore = stubFetch((url) => {
+      seenUrl = url;
+      return new Response(JSON.stringify({ data: {} }), { status: 200 });
+    });
+    try {
+      await createTelnyxClient('test-api-key', {
+        apiBase: 'http://localhost:9999/mock-telnyx',
+      }).getBalance();
+      assertEquals(seenUrl, 'http://localhost:9999/mock-telnyx/balance');
+    } finally {
+      restore();
+    }
+  }
+);
+
 Deno.test(
   'createTelnyxClient.dial: posts to /calls with the API key as a Bearer token',
   async () => {

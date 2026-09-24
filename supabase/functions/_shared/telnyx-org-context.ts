@@ -167,7 +167,13 @@ export async function getConnectedOrgTelnyxContext(
   }
 
   return {
-    client: createTelnyxClient(apiKey as string),
+    // TELNYX_API_BASE (TASK-P2-E2): server-side-only override so the functions-serve
+    // acceptance script can redirect this org's client at a mock Telnyx HTTP server. Reading
+    // Deno.env here (not inside telnyx-client.ts) keeps that file test-flag-free -- see its
+    // header comment.
+    client: createTelnyxClient(apiKey as string, {
+      apiBase: Deno.env.get('TELNYX_API_BASE') || undefined,
+    }),
     callControlAppId: telephony.call_control_app_id ?? null,
     credentialConnectionId: telephony.credential_connection_id ?? null,
     error: null,
