@@ -25,9 +25,29 @@ tokens_est: 933
 ## In flight
 
 **Stage 1 rebuild** (`feat/stage-1`, spec `docs/design/stage-1-architecture.md`).
-The overnight run of 2026-09-23/24 was built and tested against the LOCAL
-Supabase stack only. **Nothing has been pushed to the live project.** Migrations
-`20260924000100`–`20260924002500` are pending a reviewed `db push`.
+The overnight run of 2026-09-23/24 was built and tested against the local stack.
+**On 2026-09-24 (morning) it was integrated into the LIVE project**
+(`lahordgefwsiqzvbfpyp`), and the local Docker stack is no longer used:
+- The live DB had no migration history. Its schema matched the 7 legacy
+  migrations' end state exactly, so those were baselined as applied. Then all 24
+  migrations `20260924000100`–`002500` were applied, one transaction each,
+  through the Management API (the CLI needs the DB password). Data was preserved
+  and backfilled: 2 orgs and 2 owners, and every row got an `org_id`. A JSON
+  backup from before the push is in the overnight run folder
+  (`live-backup-*`).
+- All 28 edge functions were deployed (`--use-api`). New secrets:
+  `DIALER_SWEEPER_SECRET` and `CRM_SYNC_WORKER_SECRET`. Both pg_cron workers
+  are configured and returning 200.
+- Verified live: RLS isolation per user on real data, an end-to-end run with a
+  temporary user (deleted afterwards), GHL and Telnyx rejecting bad
+  credentials, and webhook forgeries returning 401.
+- The psql-based SQL suites were NOT run against live (they need the DB
+  password for `\gset`).
+- Live data notes: 8 contacts are not E.164 (5 junk numbers, 3 that would
+  collide), and one duplicate (org, phone) group exists, so the unique index on
+  contacts(org_id, phone_number) was not created.
+- **Auth "Confirm email" is OFF and the Site URL is localhost.** The
+  invite email-match check assumes confirmation is ON. See the next steps.
 
 **Landed** (reviewed and verified):
 - Phase 1: org tenancy + RLS, `requireOrgRole`, onboarding/invites/team,
