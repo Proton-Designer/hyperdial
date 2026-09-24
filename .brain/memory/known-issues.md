@@ -18,7 +18,7 @@ answers:
   - "what should I not trust"
 covers: "Known defects, traps, and behaviour that looks intentional but is not"
 excludes: "Planned work (see mem.active-work), deliberate design choices (see mem.decisions)"
-tokens_est: 5978
+tokens_est: 6769
 ---
 
 # Known Issues

@@ -24,13 +24,13 @@ answers:
   - "why is there a Redis if there is already a Postgres"
 covers: "Components, trust boundaries, the dial lifecycle end to end, external dependencies, and where new code belongs"
 excludes: "Per-function detail (see arch.service-map), import rules (see arch.dependency-graph), payload-level flows (see arch.data-flows), per-capability logic (see .brain/domains/)"
-tokens_est: 2080
-source_hash: f07ada36737a61d4dc30cd1e6b2dad0f42406bbabb9d810f62afa1372bd3bb06
+tokens_est: 2079
+source_hash: 7d9cbf800c6bde55fdab7c3182f61f63f2fd4557e4b3d7a805bed973257d6e67
 ---
 
 # System Overview
 
-Softdial Studio is a **parallel dialer**: one agent, many simultaneous outbound
+HyperDial is a **parallel dialer**: one agent, many simultaneous outbound
 call legs, with answering-machine detection filtering the ones a human never
 picks up. It is a three-tier system with an unusual fourth participant — the
 telephony provider calls *into* the backend, and that inbound webhook is what

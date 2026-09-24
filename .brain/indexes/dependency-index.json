@@ -2,10 +2,10 @@
   "meta": {
     "artifact": "dependency-index",
     "version": "1.0",
-    "generated_at": "2026-09-24T07:03:26.767Z",
+    "generated_at": "2026-09-24T17:00:00.643Z",
     "target": "/Users/aymanmohammed/Desktop/Softdial",
     "git": {
-      "commit": "f854854",
+      "commit": "991c827",
       "branch": "feat/stage-1",
       "dirty": true
     },
@@ -15,7 +15,20 @@
     }
   },
   "data": {
-    "internal": [],
+    "internal": [
+      {
+        "from": "scripts",
+        "to": "supabase",
+        "kind": "import",
+        "count": 1
+      },
+      {
+        "from": "supabase",
+        "to": "apps/web",
+        "kind": "import",
+        "count": 1
+      }
+    ],
     "external": [
       {
         "name": "@eslint/js",

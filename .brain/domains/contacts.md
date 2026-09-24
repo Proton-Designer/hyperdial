@@ -35,8 +35,8 @@ answers:
   - "who can edit a contact, and who can only mark it DNC"
 covers: "The contacts table, two-step CSV import, strict E.164 phone normalisation, area-code timezone derivation, per-org de-duplication, real contact editing, org-wide DNC, and the category/contact_status labels."
 excludes: "Per-call state (call_status, call_count, last_called_at) written by the dial loop — see domain.dialer. Campaign membership — see domain.campaigns."
-tokens_est: 3008
-source_hash: a9122a7786e99e5b60680bd35be62dff74b7bb0c5304f5e971e7008d4f4acdb1
+tokens_est: 3290
+source_hash: 62738fbb623c2e379609809908e501fe0d0848cd45c369afc7eaeaa205d58f59
 ---
 
 # Contacts

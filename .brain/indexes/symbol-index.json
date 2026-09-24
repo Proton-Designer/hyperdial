@@ -2,10 +2,10 @@
   "meta": {
     "artifact": "symbol-index",
     "version": "1.0",
-    "generated_at": "2026-09-24T07:03:26.767Z",
+    "generated_at": "2026-09-24T17:00:00.643Z",
     "target": "/Users/aymanmohammed/Desktop/Softdial",
     "git": {
-      "commit": "f854854",
+      "commit": "991c827",
       "branch": "feat/stage-1",
       "dirty": true
     },
@@ -58,28 +58,19 @@
         "doc": "arch.dependency-graph"
       },
       {
-        "name": "callVolumeData",
+        "name": "SLICE_COLORS",
         "kind": "const",
         "file": "apps/web/src/components/Analytics.tsx",
-        "line": 17,
+        "line": 21,
         "exported": false,
         "service": "web",
         "doc": "arch.dependency-graph"
       },
       {
-        "name": "performanceData",
-        "kind": "const",
+        "name": "ChangeBadge",
+        "kind": "function",
         "file": "apps/web/src/components/Analytics.tsx",
-        "line": 25,
-        "exported": false,
-        "service": "web",
-        "doc": "arch.dependency-graph"
-      },
-      {
-        "name": "agentData",
-        "kind": "const",
-        "file": "apps/web/src/components/Analytics.tsx",
-        "line": 32,
+        "line": 23,
         "exported": false,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -88,7 +79,7 @@
         "name": "Analytics",
         "kind": "function",
         "file": "apps/web/src/components/Analytics.tsx",
-        "line": 40,
+        "line": 39,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -133,7 +124,7 @@
         "name": "CATEGORIES",
         "kind": "const",
         "file": "apps/web/src/components/Contacts.tsx",
-        "line": 29,
+        "line": 38,
         "exported": false,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -142,7 +133,7 @@
         "name": "CONTACT_STATUSES",
         "kind": "const",
         "file": "apps/web/src/components/Contacts.tsx",
-        "line": 30,
+        "line": 39,
         "exported": false,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -151,7 +142,7 @@
         "name": "CONTACTS_PER_PAGE",
         "kind": "const",
         "file": "apps/web/src/components/Contacts.tsx",
-        "line": 31,
+        "line": 40,
         "exported": false,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -160,7 +151,7 @@
         "name": "contactDisplayName",
         "kind": "function",
         "file": "apps/web/src/components/Contacts.tsx",
-        "line": 33,
+        "line": 42,
         "exported": false,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -169,7 +160,7 @@
         "name": "Contacts",
         "kind": "function",
         "file": "apps/web/src/components/Contacts.tsx",
-        "line": 38,
+        "line": 47,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -268,7 +259,7 @@
         "name": "ProfileTab",
         "kind": "function",
         "file": "apps/web/src/components/Settings.tsx",
-        "line": 46,
+        "line": 58,
         "exported": false,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -277,7 +268,7 @@
         "name": "TeamTab",
         "kind": "function",
         "file": "apps/web/src/components/Settings.tsx",
-        "line": 168,
+        "line": 180,
         "exported": false,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -286,7 +277,25 @@
         "name": "IntegrationsTab",
         "kind": "function",
         "file": "apps/web/src/components/Settings.tsx",
-        "line": 426,
+        "line": 438,
+        "exported": false,
+        "service": "web",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "SyncStatusList",
+        "kind": "function",
+        "file": "apps/web/src/components/Settings.tsx",
+        "line": 611,
+        "exported": false,
+        "service": "web",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "DispositionsTab",
+        "kind": "function",
+        "file": "apps/web/src/components/Settings.tsx",
+        "line": 677,
         "exported": false,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -295,7 +304,7 @@
         "name": "Settings",
         "kind": "function",
         "file": "apps/web/src/components/Settings.tsx",
-        "line": 586,
+        "line": 988,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -367,7 +376,7 @@
         "name": "CATEGORIES",
         "kind": "const",
         "file": "apps/web/src/components/campaigns/CampaignManageModal.tsx",
-        "line": 26,
+        "line": 45,
         "exported": false,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -376,7 +385,7 @@
         "name": "CONTACT_STATUSES",
         "kind": "const",
         "file": "apps/web/src/components/campaigns/CampaignManageModal.tsx",
-        "line": 27,
+        "line": 46,
         "exported": false,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -385,7 +394,7 @@
         "name": "LEADS_PER_PAGE",
         "kind": "const",
         "file": "apps/web/src/components/campaigns/CampaignManageModal.tsx",
-        "line": 28,
+        "line": 47,
         "exported": false,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -394,7 +403,7 @@
         "name": "contactDisplayName",
         "kind": "function",
         "file": "apps/web/src/components/campaigns/CampaignManageModal.tsx",
-        "line": 30,
+        "line": 49,
         "exported": false,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -403,7 +412,7 @@
         "name": "formatDate",
         "kind": "function",
         "file": "apps/web/src/components/campaigns/CampaignManageModal.tsx",
-        "line": 35,
+        "line": 54,
         "exported": false,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -412,7 +421,7 @@
         "name": "CampaignManageModal",
         "kind": "function",
         "file": "apps/web/src/components/campaigns/CampaignManageModal.tsx",
-        "line": 51,
+        "line": 70,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -421,7 +430,7 @@
         "name": "AddExistingContactsModal",
         "kind": "function",
         "file": "apps/web/src/components/campaigns/CampaignManageModal.tsx",
-        "line": 969,
+        "line": 1391,
         "exported": false,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -548,6 +557,24 @@
         "kind": "function",
         "file": "apps/web/src/components/contacts/ImportContactsModal.tsx",
         "line": 34,
+        "exported": true,
+        "service": "web",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "NO_CAMPAIGN",
+        "kind": "const",
+        "file": "apps/web/src/components/contacts/ImportFromGhlModal.tsx",
+        "line": 21,
+        "exported": false,
+        "service": "web",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "ImportFromGhlModal",
+        "kind": "function",
+        "file": "apps/web/src/components/contacts/ImportFromGhlModal.tsx",
+        "line": 36,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -3172,20 +3199,47 @@
         "doc": "arch.dependency-graph"
       },
       {
-        "name": "DialerEventType",
-        "kind": "type",
+        "name": "BatchContactPreview",
+        "kind": "interface",
         "file": "apps/web/src/hooks/useDialerSession.ts",
-        "line": 13,
+        "line": 24,
         "exported": true,
         "service": "web",
         "doc": "arch.data-flows"
       },
       {
-        "name": "BatchContactPreview",
-        "kind": "interface",
+        "name": "POLL_INTERVAL_MS",
+        "kind": "const",
         "file": "apps/web/src/hooks/useDialerSession.ts",
-        "line": 26,
-        "exported": true,
+        "line": 38,
+        "exported": false,
+        "service": "web",
+        "doc": "arch.data-flows"
+      },
+      {
+        "name": "ACTIVE_SESSION_STATES",
+        "kind": "const",
+        "file": "apps/web/src/hooks/useDialerSession.ts",
+        "line": 39,
+        "exported": false,
+        "service": "web",
+        "doc": "arch.data-flows"
+      },
+      {
+        "name": "TERMINAL_LEG_STATES",
+        "kind": "const",
+        "file": "apps/web/src/hooks/useDialerSession.ts",
+        "line": 40,
+        "exported": false,
+        "service": "web",
+        "doc": "arch.data-flows"
+      },
+      {
+        "name": "contactName",
+        "kind": "function",
+        "file": "apps/web/src/hooks/useDialerSession.ts",
+        "line": 42,
+        "exported": false,
         "service": "web",
         "doc": "arch.data-flows"
       },
@@ -3193,7 +3247,7 @@
         "name": "useDialerSession",
         "kind": "function",
         "file": "apps/web/src/hooks/useDialerSession.ts",
-        "line": 48,
+        "line": 50,
         "exported": true,
         "service": "web",
         "doc": "arch.data-flows"
@@ -3334,34 +3388,34 @@
         "doc": "arch.dependency-graph"
       },
       {
-        "name": "UserPreferences",
+        "name": "AnalyticsTotals",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 185,
+        "line": 187,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
       },
       {
-        "name": "getUserPreferences",
-        "kind": "function",
+        "name": "AnalyticsCallVolumePoint",
+        "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 191,
+        "line": 201,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
       },
       {
-        "name": "saveUserPreferences",
-        "kind": "function",
+        "name": "AnalyticsDispositionSlice",
+        "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 200,
+        "line": 209,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
       },
       {
-        "name": "AppNotification",
+        "name": "AnalyticsAgentRow",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
         "line": 214,
@@ -3370,10 +3424,64 @@
         "doc": "arch.dependency-graph"
       },
       {
+        "name": "AnalyticsSummary",
+        "kind": "interface",
+        "file": "apps/web/src/lib/api.ts",
+        "line": 222,
+        "exported": true,
+        "service": "web",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "getAnalyticsSummary",
+        "kind": "function",
+        "file": "apps/web/src/lib/api.ts",
+        "line": 230,
+        "exported": true,
+        "service": "web",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "UserPreferences",
+        "kind": "interface",
+        "file": "apps/web/src/lib/api.ts",
+        "line": 247,
+        "exported": true,
+        "service": "web",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "getUserPreferences",
+        "kind": "function",
+        "file": "apps/web/src/lib/api.ts",
+        "line": 253,
+        "exported": true,
+        "service": "web",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "saveUserPreferences",
+        "kind": "function",
+        "file": "apps/web/src/lib/api.ts",
+        "line": 262,
+        "exported": true,
+        "service": "web",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "AppNotification",
+        "kind": "interface",
+        "file": "apps/web/src/lib/api.ts",
+        "line": 276,
+        "exported": true,
+        "service": "web",
+        "doc": "arch.dependency-graph"
+      },
+      {
         "name": "listNotifications",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 223,
+        "line": 285,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -3382,7 +3490,7 @@
         "name": "getUnreadNotificationCount",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 233,
+        "line": 295,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -3391,7 +3499,7 @@
         "name": "markNotificationRead",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 242,
+        "line": 304,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -3400,7 +3508,7 @@
         "name": "markAllNotificationsRead",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 250,
+        "line": 312,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -3409,7 +3517,7 @@
         "name": "OrgMember",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 260,
+        "line": 322,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -3418,7 +3526,7 @@
         "name": "listOrgMembers",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 270,
+        "line": 332,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -3427,7 +3535,7 @@
         "name": "orgMembersAction",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 280,
+        "line": 342,
         "exported": false,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -3436,7 +3544,7 @@
         "name": "changeMemberRole",
         "kind": "const",
         "file": "apps/web/src/lib/api.ts",
-        "line": 290,
+        "line": 352,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -3445,7 +3553,7 @@
         "name": "disableMember",
         "kind": "const",
         "file": "apps/web/src/lib/api.ts",
-        "line": 292,
+        "line": 354,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -3454,7 +3562,7 @@
         "name": "enableMember",
         "kind": "const",
         "file": "apps/web/src/lib/api.ts",
-        "line": 294,
+        "line": 356,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -3463,7 +3571,7 @@
         "name": "removeMember",
         "kind": "const",
         "file": "apps/web/src/lib/api.ts",
-        "line": 296,
+        "line": 358,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -3472,7 +3580,7 @@
         "name": "CreatedInvite",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 299,
+        "line": 361,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -3481,7 +3589,7 @@
         "name": "createOrgInvite",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 305,
+        "line": 367,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -3490,7 +3598,7 @@
         "name": "InvitePreview",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 319,
+        "line": 381,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -3499,7 +3607,7 @@
         "name": "previewOrgInvite",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 327,
+        "line": 389,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -3508,7 +3616,7 @@
         "name": "acceptOrgInvite",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 337,
+        "line": 399,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -3517,7 +3625,7 @@
         "name": "Profile",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 348,
+        "line": 410,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -3526,7 +3634,7 @@
         "name": "getMyProfile",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 355,
+        "line": 417,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -3535,7 +3643,7 @@
         "name": "updateMyProfile",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 369,
+        "line": 431,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -3544,7 +3652,7 @@
         "name": "listMyCampaignAssignments",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 390,
+        "line": 452,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -3553,7 +3661,7 @@
         "name": "ensureWeekSummary",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 403,
+        "line": 465,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -3562,7 +3670,7 @@
         "name": "CONTACT_CANONICAL_FIELDS",
         "kind": "const",
         "file": "apps/web/src/lib/api.ts",
-        "line": 413,
+        "line": 475,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -3571,7 +3679,7 @@
         "name": "Contact",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 429,
+        "line": 491,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -3580,7 +3688,7 @@
         "name": "ParseCsvColumn",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 458,
+        "line": 523,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -3589,7 +3697,7 @@
         "name": "ParseCsvResponse",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 465,
+        "line": 530,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -3598,7 +3706,7 @@
         "name": "parseContactsCsv",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 473,
+        "line": 538,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -3607,7 +3715,7 @@
         "name": "importContacts",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 484,
+        "line": 549,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -3616,7 +3724,7 @@
         "name": "listContacts",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 506,
+        "line": 571,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -3625,7 +3733,7 @@
         "name": "CreateContactInput",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 515,
+        "line": 580,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -3634,7 +3742,7 @@
         "name": "normalizeContactPhoneFields",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 539,
+        "line": 604,
         "exported": false,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -3643,7 +3751,7 @@
         "name": "createContact",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 558,
+        "line": 623,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -3652,7 +3760,7 @@
         "name": "UpdateContactInput",
         "kind": "type",
         "file": "apps/web/src/lib/api.ts",
-        "line": 602,
+        "line": 667,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -3661,7 +3769,7 @@
         "name": "updateContact",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 604,
+        "line": 669,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -3670,7 +3778,7 @@
         "name": "deleteContact",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 641,
+        "line": 706,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -3679,7 +3787,7 @@
         "name": "deleteContacts",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 649,
+        "line": 714,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -3688,7 +3796,7 @@
         "name": "Campaign",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 656,
+        "line": 721,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -3697,7 +3805,7 @@
         "name": "CampaignWithStats",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 669,
+        "line": 745,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -3706,7 +3814,7 @@
         "name": "CampaignLead",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 676,
+        "line": 752,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -3715,7 +3823,7 @@
         "name": "listCampaigns",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 685,
+        "line": 761,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -3724,7 +3832,7 @@
         "name": "createCampaign",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 721,
+        "line": 797,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -3733,7 +3841,7 @@
         "name": "getCampaign",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 742,
+        "line": 818,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -3742,7 +3850,52 @@
         "name": "updateCampaignStatus",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 752,
+        "line": 828,
+        "exported": true,
+        "service": "web",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "CampaignSettingsInput",
+        "kind": "interface",
+        "file": "apps/web/src/lib/api.ts",
+        "line": 839,
+        "exported": true,
+        "service": "web",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "updateCampaignSettings",
+        "kind": "function",
+        "file": "apps/web/src/lib/api.ts",
+        "line": 855,
+        "exported": true,
+        "service": "web",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "deleteCampaign",
+        "kind": "function",
+        "file": "apps/web/src/lib/api.ts",
+        "line": 876,
+        "exported": true,
+        "service": "web",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "listCampaignAgentIds",
+        "kind": "function",
+        "file": "apps/web/src/lib/api.ts",
+        "line": 886,
+        "exported": true,
+        "service": "web",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "setCampaignAgents",
+        "kind": "function",
+        "file": "apps/web/src/lib/api.ts",
+        "line": 897,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -3751,7 +3904,7 @@
         "name": "listCampaignLeads",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 763,
+        "line": 920,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -3760,7 +3913,7 @@
         "name": "addLeadsToCampaign",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 797,
+        "line": 954,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -3769,7 +3922,7 @@
         "name": "removeLeadFromCampaign",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 812,
+        "line": 969,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -3778,7 +3931,7 @@
         "name": "removeLeadsFromCampaign",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 821,
+        "line": 978,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -3787,43 +3940,52 @@
         "name": "getWebrtcCredentials",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 834,
+        "line": 991,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
       },
       {
-        "name": "DialerSessionSummary",
-        "kind": "interface",
+        "name": "DialSessionState",
+        "kind": "type",
         "file": "apps/web/src/lib/api.ts",
-        "line": 848,
+        "line": 1012,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
       },
       {
-        "name": "DialerSessionStartResponse",
-        "kind": "interface",
+        "name": "CallLegState",
+        "kind": "type",
         "file": "apps/web/src/lib/api.ts",
-        "line": 856,
+        "line": 1024,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
       },
       {
-        "name": "DialerSessionRecord",
-        "kind": "interface",
+        "name": "CallLegOutcome",
+        "kind": "type",
         "file": "apps/web/src/lib/api.ts",
-        "line": 865,
+        "line": 1035,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
       },
       {
-        "name": "DialerBatchState",
+        "name": "DialSessionRecord",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 880,
+        "line": 1038,
+        "exported": true,
+        "service": "web",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "CallLegRecord",
+        "kind": "interface",
+        "file": "apps/web/src/lib/api.ts",
+        "line": 1054,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -3832,7 +3994,7 @@
         "name": "ActiveSessionExistsError",
         "kind": "class",
         "file": "apps/web/src/lib/api.ts",
-        "line": 890,
+        "line": 1077,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -3841,7 +4003,7 @@
         "name": "startDialerSession",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 900,
+        "line": 1087,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -3850,7 +4012,7 @@
         "name": "stopDialerSession",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 1004,
+        "line": 1117,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -3859,7 +4021,7 @@
         "name": "pauseDialerSession",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 1017,
+        "line": 1128,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -3868,7 +4030,7 @@
         "name": "hangupLiveCall",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 1029,
+        "line": 1141,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -3877,7 +4039,7 @@
         "name": "getDialerSession",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 1039,
+        "line": 1151,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -3886,7 +4048,7 @@
         "name": "getActiveDialerSession",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 1056,
+        "line": 1169,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -3895,7 +4057,7 @@
         "name": "GhlIntegrationStatus",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 1074,
+        "line": 1188,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -3904,7 +4066,7 @@
         "name": "getGhlIntegrationStatus",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 1081,
+        "line": 1195,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -3913,7 +4075,7 @@
         "name": "connectGhl",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 1093,
+        "line": 1207,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -3922,7 +4084,151 @@
         "name": "disconnectGhl",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 1108,
+        "line": 1222,
+        "exported": true,
+        "service": "web",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "ImportFromGhlInput",
+        "kind": "interface",
+        "file": "apps/web/src/lib/api.ts",
+        "line": 1235,
+        "exported": true,
+        "service": "web",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "ImportFromGhlResult",
+        "kind": "interface",
+        "file": "apps/web/src/lib/api.ts",
+        "line": 1245,
+        "exported": true,
+        "service": "web",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "importFromGhl",
+        "kind": "function",
+        "file": "apps/web/src/lib/api.ts",
+        "line": 1259,
+        "exported": true,
+        "service": "web",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "CrmSyncJob",
+        "kind": "interface",
+        "file": "apps/web/src/lib/api.ts",
+        "line": 1272,
+        "exported": true,
+        "service": "web",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "listCrmSyncJobs",
+        "kind": "function",
+        "file": "apps/web/src/lib/api.ts",
+        "line": 1288,
+        "exported": true,
+        "service": "web",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "DispositionLeadEffect",
+        "kind": "type",
+        "file": "apps/web/src/lib/api.ts",
+        "line": 1302,
+        "exported": true,
+        "service": "web",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "Disposition",
+        "kind": "interface",
+        "file": "apps/web/src/lib/api.ts",
+        "line": 1304,
+        "exported": true,
+        "service": "web",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "listDispositions",
+        "kind": "function",
+        "file": "apps/web/src/lib/api.ts",
+        "line": 1319,
+        "exported": true,
+        "service": "web",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "CreateDispositionInput",
+        "kind": "interface",
+        "file": "apps/web/src/lib/api.ts",
+        "line": 1330,
+        "exported": true,
+        "service": "web",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "createDisposition",
+        "kind": "function",
+        "file": "apps/web/src/lib/api.ts",
+        "line": 1341,
+        "exported": true,
+        "service": "web",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "UpdateDispositionInput",
+        "kind": "interface",
+        "file": "apps/web/src/lib/api.ts",
+        "line": 1360,
+        "exported": true,
+        "service": "web",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "updateDisposition",
+        "kind": "function",
+        "file": "apps/web/src/lib/api.ts",
+        "line": 1373,
+        "exported": true,
+        "service": "web",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "deleteDisposition",
+        "kind": "function",
+        "file": "apps/web/src/lib/api.ts",
+        "line": 1378,
+        "exported": true,
+        "service": "web",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "SubmitDispositionInput",
+        "kind": "interface",
+        "file": "apps/web/src/lib/api.ts",
+        "line": 1383,
+        "exported": true,
+        "service": "web",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "SubmitDispositionResult",
+        "kind": "interface",
+        "file": "apps/web/src/lib/api.ts",
+        "line": 1392,
+        "exported": true,
+        "service": "web",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "submitDisposition",
+        "kind": "function",
+        "file": "apps/web/src/lib/api.ts",
+        "line": 1403,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -4027,6 +4333,141 @@
         "doc": "arch.dependency-graph"
       },
       {
+        "name": "MOCK_PORT",
+        "kind": "const",
+        "file": "scripts/dev/dialer-sim.ts",
+        "line": 54,
+        "exported": false,
+        "service": "scripts",
+        "doc": "domain.dialer"
+      },
+      {
+        "name": "MOCK_BASE",
+        "kind": "const",
+        "file": "scripts/dev/dialer-sim.ts",
+        "line": 55,
+        "exported": false,
+        "service": "scripts",
+        "doc": "domain.dialer"
+      },
+      {
+        "name": "MOCK_BASE_FOR_CONTAINER",
+        "kind": "const",
+        "file": "scripts/dev/dialer-sim.ts",
+        "line": 62,
+        "exported": false,
+        "service": "scripts",
+        "doc": "domain.dialer"
+      },
+      {
+        "name": "log",
+        "kind": "function",
+        "file": "scripts/dev/dialer-sim.ts",
+        "line": 64,
+        "exported": false,
+        "service": "scripts",
+        "doc": "domain.dialer"
+      },
+      {
+        "name": "fail",
+        "kind": "function",
+        "file": "scripts/dev/dialer-sim.ts",
+        "line": 68,
+        "exported": false,
+        "service": "scripts",
+        "doc": "domain.dialer"
+      },
+      {
+        "name": "assertEqual",
+        "kind": "function",
+        "file": "scripts/dev/dialer-sim.ts",
+        "line": 73,
+        "exported": false,
+        "service": "scripts",
+        "doc": "domain.dialer"
+      },
+      {
+        "name": "mockCalls",
+        "kind": "const",
+        "file": "scripts/dev/dialer-sim.ts",
+        "line": 91,
+        "exported": false,
+        "service": "scripts",
+        "doc": "domain.dialer"
+      },
+      {
+        "name": "startMockTelnyxServer",
+        "kind": "function",
+        "file": "scripts/dev/dialer-sim.ts",
+        "line": 96,
+        "exported": false,
+        "service": "scripts",
+        "doc": "domain.dialer"
+      },
+      {
+        "name": "mockCallControlIdForPhone",
+        "kind": "function",
+        "file": "scripts/dev/dialer-sim.ts",
+        "line": 146,
+        "exported": false,
+        "service": "scripts",
+        "doc": "domain.dialer"
+      },
+      {
+        "name": "run",
+        "kind": "function",
+        "file": "scripts/dev/dialer-sim.ts",
+        "line": 157,
+        "exported": false,
+        "service": "scripts",
+        "doc": "domain.dialer"
+      },
+      {
+        "name": "psql",
+        "kind": "function",
+        "file": "scripts/dev/dialer-sim.ts",
+        "line": 171,
+        "exported": false,
+        "service": "scripts",
+        "doc": "domain.dialer"
+      },
+      {
+        "name": "generateWebhookKeypair",
+        "kind": "function",
+        "file": "scripts/dev/dialer-sim.ts",
+        "line": 180,
+        "exported": false,
+        "service": "scripts",
+        "doc": "domain.dialer"
+      },
+      {
+        "name": "signWebhook",
+        "kind": "function",
+        "file": "scripts/dev/dialer-sim.ts",
+        "line": 190,
+        "exported": false,
+        "service": "scripts",
+        "doc": "domain.dialer"
+      },
+      {
+        "name": "sendWebhook",
+        "kind": "function",
+        "file": "scripts/dev/dialer-sim.ts",
+        "line": 204,
+        "exported": false,
+        "service": "scripts",
+        "doc": "domain.dialer"
+      },
+      {
+        "name": "main",
+        "kind": "function",
+        "file": "scripts/dev/dialer-sim.ts",
+        "line": 238,
+        "exported": false,
+        "service": "scripts",
+        "doc": "domain.dialer"
+      },
+      {
         "name": "AmdResult",
         "kind": "type",
         "file": "supabase/functions/_shared/amd.ts",
@@ -4059,6 +4500,33 @@
         "file": "supabase/functions/_shared/amd.ts",
         "line": 20,
         "exported": true,
+        "service": "supabase",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "MIGRATION_PATH",
+        "kind": "const",
+        "file": "supabase/functions/_shared/area-code-tz-sync.test.ts",
+        "line": 15,
+        "exported": false,
+        "service": "supabase",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "CAN_READ",
+        "kind": "const",
+        "file": "supabase/functions/_shared/area-code-tz-sync.test.ts",
+        "line": 20,
+        "exported": false,
+        "service": "supabase",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "parseSqlSeed",
+        "kind": "function",
+        "file": "supabase/functions/_shared/area-code-tz-sync.test.ts",
+        "line": 26,
+        "exported": false,
         "service": "supabase",
         "doc": "arch.dependency-graph"
       },
@@ -4507,169 +4975,304 @@
         "name": "dialerLog",
         "kind": "function",
         "file": "supabase/functions/_shared/dialer-engine.ts",
-        "line": 17,
+        "line": 89,
         "exported": false,
         "service": "supabase",
         "doc": "arch.data-flows"
       },
       {
-        "name": "BatchContact",
-        "kind": "interface",
-        "file": "supabase/functions/_shared/dialer-engine.ts",
-        "line": 21,
-        "exported": true,
-        "service": "supabase",
-        "doc": "arch.data-flows"
-      },
-      {
-        "name": "DecodedClientState",
-        "kind": "interface",
-        "file": "supabase/functions/_shared/dialer-engine.ts",
-        "line": 29,
-        "exported": true,
-        "service": "supabase",
-        "doc": "arch.data-flows"
-      },
-      {
-        "name": "encodeClientState",
+        "name": "devSkipAgentGate",
         "kind": "function",
         "file": "supabase/functions/_shared/dialer-engine.ts",
-        "line": 37,
-        "exported": true,
+        "line": 94,
+        "exported": false,
         "service": "supabase",
         "doc": "arch.data-flows"
       },
       {
-        "name": "decodeClientState",
+        "name": "webhookBaseUrl",
         "kind": "function",
         "file": "supabase/functions/_shared/dialer-engine.ts",
-        "line": 41,
-        "exported": true,
+        "line": 98,
+        "exported": false,
         "service": "supabase",
         "doc": "arch.data-flows"
       },
       {
-        "name": "AgentCallbackState",
-        "kind": "interface",
+        "name": "DEFAULT_SPEAK_VOICE",
+        "kind": "const",
         "file": "supabase/functions/_shared/dialer-engine.ts",
-        "line": 52,
-        "exported": true,
+        "line": 104,
+        "exported": false,
         "service": "supabase",
         "doc": "arch.data-flows"
       },
       {
-        "name": "encodeAgentCallbackState",
+        "name": "abandonMessage",
         "kind": "function",
         "file": "supabase/functions/_shared/dialer-engine.ts",
-        "line": 58,
-        "exported": true,
+        "line": 106,
+        "exported": false,
         "service": "supabase",
         "doc": "arch.data-flows"
       },
       {
-        "name": "decodeAgentCallbackState",
+        "name": "SESSION_COLUMNS",
+        "kind": "const",
+        "file": "supabase/functions/_shared/dialer-engine.ts",
+        "line": 147,
+        "exported": false,
+        "service": "supabase",
+        "doc": "arch.data-flows"
+      },
+      {
+        "name": "LEG_COLUMNS",
+        "kind": "const",
+        "file": "supabase/functions/_shared/dialer-engine.ts",
+        "line": 149,
+        "exported": false,
+        "service": "supabase",
+        "doc": "arch.data-flows"
+      },
+      {
+        "name": "loadSession",
         "kind": "function",
         "file": "supabase/functions/_shared/dialer-engine.ts",
-        "line": 64,
-        "exported": true,
+        "line": 152,
+        "exported": false,
         "service": "supabase",
         "doc": "arch.data-flows"
       },
       {
-        "name": "getContactDisplayName",
+        "name": "loadCampaign",
         "kind": "function",
         "file": "supabase/functions/_shared/dialer-engine.ts",
-        "line": 83,
-        "exported": true,
+        "line": 165,
+        "exported": false,
         "service": "supabase",
         "doc": "arch.data-flows"
       },
       {
-        "name": "fetchDialableContacts",
+        "name": "loadActiveLegs",
         "kind": "function",
         "file": "supabase/functions/_shared/dialer-engine.ts",
-        "line": 93,
-        "exported": true,
+        "line": 178,
+        "exported": false,
         "service": "supabase",
         "doc": "arch.data-flows"
       },
       {
-        "name": "fireBatch",
+        "name": "loadLegByCallControlIdOrClientLeg",
         "kind": "function",
         "file": "supabase/functions/_shared/dialer-engine.ts",
-        "line": 120,
-        "exported": true,
+        "line": 188,
+        "exported": false,
         "service": "supabase",
         "doc": "arch.data-flows"
       },
       {
-        "name": "handleAmdResult",
+        "name": "loadOrgName",
+        "kind": "function",
+        "file": "supabase/functions/_shared/dialer-engine.ts",
+        "line": 213,
+        "exported": false,
+        "service": "supabase",
+        "doc": "arch.data-flows"
+      },
+      {
+        "name": "resolvedFromNumber",
+        "kind": "function",
+        "file": "supabase/functions/_shared/dialer-engine.ts",
+        "line": 218,
+        "exported": false,
+        "service": "supabase",
+        "doc": "arch.data-flows"
+      },
+      {
+        "name": "agentLegStateFor",
+        "kind": "function",
+        "file": "supabase/functions/_shared/dialer-engine.ts",
+        "line": 233,
+        "exported": false,
+        "service": "supabase",
+        "doc": "arch.data-flows"
+      },
+      {
+        "name": "toTelnyxAmdMode",
         "kind": "function",
         "file": "supabase/functions/_shared/dialer-engine.ts",
         "line": 249,
-        "exported": true,
-        "service": "supabase",
-        "doc": "arch.data-flows"
-      },
-      {
-        "name": "handleCallHangup",
-        "kind": "function",
-        "file": "supabase/functions/_shared/dialer-engine.ts",
-        "line": 543,
-        "exported": true,
-        "service": "supabase",
-        "doc": "arch.data-flows"
-      },
-      {
-        "name": "completeBatchAndAdvanceIfNeeded",
-        "kind": "function",
-        "file": "supabase/functions/_shared/dialer-engine.ts",
-        "line": 602,
-        "exported": true,
-        "service": "supabase",
-        "doc": "arch.data-flows"
-      },
-      {
-        "name": "getContactCallCount",
-        "kind": "function",
-        "file": "supabase/functions/_shared/dialer-engine.ts",
-        "line": 690,
         "exported": false,
         "service": "supabase",
         "doc": "arch.data-flows"
       },
       {
-        "name": "getActiveCallIdsForSession",
+        "name": "startSession",
         "kind": "function",
         "file": "supabase/functions/_shared/dialer-engine.ts",
-        "line": 699,
+        "line": 257,
         "exported": true,
         "service": "supabase",
         "doc": "arch.data-flows"
       },
       {
-        "name": "markNoAnswerAndCleanup",
+        "name": "refillSession",
         "kind": "function",
         "file": "supabase/functions/_shared/dialer-engine.ts",
-        "line": 704,
+        "line": 280,
         "exported": true,
         "service": "supabase",
         "doc": "arch.data-flows"
       },
       {
-        "name": "resolveStaleBatchIfTimedOut",
+        "name": "dialLead",
         "kind": "function",
         "file": "supabase/functions/_shared/dialer-engine.ts",
-        "line": 744,
+        "line": 376,
+        "exported": false,
+        "service": "supabase",
+        "doc": "arch.data-flows"
+      },
+      {
+        "name": "RawTelnyxEvent",
+        "kind": "interface",
+        "file": "supabase/functions/_shared/dialer-engine.ts",
+        "line": 454,
         "exported": true,
         "service": "supabase",
         "doc": "arch.data-flows"
       },
       {
-        "name": "getDialerChannelForUser",
+        "name": "mapToDialerEvent",
         "kind": "function",
         "file": "supabase/functions/_shared/dialer-engine.ts",
-        "line": 825,
+        "line": 465,
+        "exported": false,
+        "service": "supabase",
+        "doc": "arch.data-flows"
+      },
+      {
+        "name": "decisionFor",
+        "kind": "function",
+        "file": "supabase/functions/_shared/dialer-engine.ts",
+        "line": 500,
+        "exported": false,
+        "service": "supabase",
+        "doc": "arch.data-flows"
+      },
+      {
+        "name": "hungUpByEngineFor",
+        "kind": "function",
+        "file": "supabase/functions/_shared/dialer-engine.ts",
+        "line": 519,
+        "exported": false,
+        "service": "supabase",
+        "doc": "arch.data-flows"
+      },
+      {
+        "name": "recordWebhookEvent",
+        "kind": "function",
+        "file": "supabase/functions/_shared/dialer-engine.ts",
+        "line": 525,
+        "exported": false,
+        "service": "supabase",
+        "doc": "arch.data-flows"
+      },
+      {
+        "name": "processTelnyxDialerEvent",
+        "kind": "function",
+        "file": "supabase/functions/_shared/dialer-engine.ts",
+        "line": 544,
+        "exported": true,
+        "service": "supabase",
+        "doc": "arch.data-flows"
+      },
+      {
+        "name": "MAX_LEG_TRANSITION_RACE_RETRIES",
+        "kind": "const",
+        "file": "supabase/functions/_shared/dialer-engine.ts",
+        "line": 595,
+        "exported": false,
+        "service": "supabase",
+        "doc": "arch.data-flows"
+      },
+      {
+        "name": "applyLegTransition",
+        "kind": "function",
+        "file": "supabase/functions/_shared/dialer-engine.ts",
+        "line": 607,
+        "exported": false,
+        "service": "supabase",
+        "doc": "arch.data-flows"
+      },
+      {
+        "name": "processContactLegEvent",
+        "kind": "function",
+        "file": "supabase/functions/_shared/dialer-engine.ts",
+        "line": 680,
+        "exported": false,
+        "service": "supabase",
+        "doc": "arch.data-flows"
+      },
+      {
+        "name": "hangupLeg",
+        "kind": "function",
+        "file": "supabase/functions/_shared/dialer-engine.ts",
+        "line": 785,
+        "exported": false,
+        "service": "supabase",
+        "doc": "arch.data-flows"
+      },
+      {
+        "name": "sendAbandonMessage",
+        "kind": "function",
+        "file": "supabase/functions/_shared/dialer-engine.ts",
+        "line": 800,
+        "exported": false,
+        "service": "supabase",
+        "doc": "arch.data-flows"
+      },
+      {
+        "name": "handleWin",
+        "kind": "function",
+        "file": "supabase/functions/_shared/dialer-engine.ts",
+        "line": 827,
+        "exported": false,
+        "service": "supabase",
+        "doc": "arch.data-flows"
+      },
+      {
+        "name": "stopSession",
+        "kind": "function",
+        "file": "supabase/functions/_shared/dialer-engine.ts",
+        "line": 923,
+        "exported": true,
+        "service": "supabase",
+        "doc": "arch.data-flows"
+      },
+      {
+        "name": "pauseSession",
+        "kind": "function",
+        "file": "supabase/functions/_shared/dialer-engine.ts",
+        "line": 961,
+        "exported": true,
+        "service": "supabase",
+        "doc": "arch.data-flows"
+      },
+      {
+        "name": "resumeToDialing",
+        "kind": "function",
+        "file": "supabase/functions/_shared/dialer-engine.ts",
+        "line": 981,
+        "exported": true,
+        "service": "supabase",
+        "doc": "arch.data-flows"
+      },
+      {
+        "name": "endLiveCall",
+        "kind": "function",
+        "file": "supabase/functions/_shared/dialer-engine.ts",
+        "line": 999,
         "exported": true,
         "service": "supabase",
         "doc": "arch.data-flows"
@@ -4711,10 +5314,10 @@
         "doc": "arch.dependency-graph"
       },
       {
-        "name": "GHL_BASE_URL",
+        "name": "DEFAULT_GHL_BASE_URL",
         "kind": "const",
         "file": "supabase/functions/_shared/ghl-client.ts",
-        "line": 29,
+        "line": 50,
         "exported": false,
         "service": "supabase",
         "doc": "arch.dependency-graph"
@@ -4723,7 +5326,7 @@
         "name": "GHL_API_VERSION",
         "kind": "const",
         "file": "supabase/functions/_shared/ghl-client.ts",
-        "line": 30,
+        "line": 51,
         "exported": false,
         "service": "supabase",
         "doc": "arch.dependency-graph"
@@ -4732,7 +5335,7 @@
         "name": "ghlRequest",
         "kind": "function",
         "file": "supabase/functions/_shared/ghl-client.ts",
-        "line": 36,
+        "line": 57,
         "exported": false,
         "service": "supabase",
         "doc": "arch.dependency-graph"
@@ -4741,7 +5344,7 @@
         "name": "UpsertContactArgs",
         "kind": "interface",
         "file": "supabase/functions/_shared/ghl-client.ts",
-        "line": 73,
+        "line": 95,
         "exported": true,
         "service": "supabase",
         "doc": "arch.dependency-graph"
@@ -4750,7 +5353,7 @@
         "name": "GhlUpsertContactPayload",
         "kind": "interface",
         "file": "supabase/functions/_shared/ghl-client.ts",
-        "line": 85,
+        "line": 107,
         "exported": true,
         "service": "supabase",
         "doc": "arch.dependency-graph"
@@ -4759,7 +5362,7 @@
         "name": "buildUpsertContactPayload",
         "kind": "function",
         "file": "supabase/functions/_shared/ghl-client.ts",
-        "line": 98,
+        "line": 120,
         "exported": true,
         "service": "supabase",
         "doc": "arch.dependency-graph"
@@ -4768,7 +5371,7 @@
         "name": "SearchContactsArgs",
         "kind": "interface",
         "file": "supabase/functions/_shared/ghl-client.ts",
-        "line": 113,
+        "line": 135,
         "exported": true,
         "service": "supabase",
         "doc": "arch.dependency-graph"
@@ -4777,7 +5380,7 @@
         "name": "buildSearchContactsQuery",
         "kind": "function",
         "file": "supabase/functions/_shared/ghl-client.ts",
-        "line": 122,
+        "line": 144,
         "exported": true,
         "service": "supabase",
         "doc": "arch.dependency-graph"
@@ -4786,7 +5389,7 @@
         "name": "AddNoteArgs",
         "kind": "interface",
         "file": "supabase/functions/_shared/ghl-client.ts",
-        "line": 131,
+        "line": 153,
         "exported": true,
         "service": "supabase",
         "doc": "arch.dependency-graph"
@@ -4795,7 +5398,7 @@
         "name": "buildAddNotePayload",
         "kind": "function",
         "file": "supabase/functions/_shared/ghl-client.ts",
-        "line": 136,
+        "line": 158,
         "exported": true,
         "service": "supabase",
         "doc": "arch.dependency-graph"
@@ -4804,7 +5407,7 @@
         "name": "CreateTaskArgs",
         "kind": "interface",
         "file": "supabase/functions/_shared/ghl-client.ts",
-        "line": 140,
+        "line": 162,
         "exported": true,
         "service": "supabase",
         "doc": "arch.dependency-graph"
@@ -4813,7 +5416,7 @@
         "name": "buildCreateTaskPayload",
         "kind": "function",
         "file": "supabase/functions/_shared/ghl-client.ts",
-        "line": 148,
+        "line": 170,
         "exported": true,
         "service": "supabase",
         "doc": "arch.dependency-graph"
@@ -4822,7 +5425,7 @@
         "name": "GhlLocation",
         "kind": "interface",
         "file": "supabase/functions/_shared/ghl-client.ts",
-        "line": 168,
+        "line": 190,
         "exported": true,
         "service": "supabase",
         "doc": "arch.dependency-graph"
@@ -4831,7 +5434,7 @@
         "name": "GhlContact",
         "kind": "interface",
         "file": "supabase/functions/_shared/ghl-client.ts",
-        "line": 173,
+        "line": 195,
         "exported": true,
         "service": "supabase",
         "doc": "arch.dependency-graph"
@@ -4840,7 +5443,16 @@
         "name": "GhlClient",
         "kind": "interface",
         "file": "supabase/functions/_shared/ghl-client.ts",
-        "line": 182,
+        "line": 207,
+        "exported": true,
+        "service": "supabase",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "CreateGhlClientOptions",
+        "kind": "interface",
+        "file": "supabase/functions/_shared/ghl-client.ts",
+        "line": 224,
         "exported": true,
         "service": "supabase",
         "doc": "arch.dependency-graph"
@@ -4849,7 +5461,223 @@
         "name": "createGhlClient",
         "kind": "function",
         "file": "supabase/functions/_shared/ghl-client.ts",
-        "line": 199,
+        "line": 228,
+        "exported": true,
+        "service": "supabase",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "stubFetch",
+        "kind": "function",
+        "file": "supabase/functions/_shared/ghl-import.test.ts",
+        "line": 11,
+        "exported": false,
+        "service": "supabase",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "ghlContact",
+        "kind": "function",
+        "file": "supabase/functions/_shared/ghl-import.test.ts",
+        "line": 20,
+        "exported": false,
+        "service": "supabase",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "pageResponse",
+        "kind": "function",
+        "file": "supabase/functions/_shared/ghl-import.test.ts",
+        "line": 24,
+        "exported": false,
+        "service": "supabase",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "GHL_IMPORT_PAGE_LIMIT",
+        "kind": "const",
+        "file": "supabase/functions/_shared/ghl-import.ts",
+        "line": 14,
+        "exported": true,
+        "service": "supabase",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "GHL_IMPORT_MAX_PAGES",
+        "kind": "const",
+        "file": "supabase/functions/_shared/ghl-import.ts",
+        "line": 18,
+        "exported": true,
+        "service": "supabase",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "FetchAllGhlContactsArgs",
+        "kind": "interface",
+        "file": "supabase/functions/_shared/ghl-import.ts",
+        "line": 20,
+        "exported": true,
+        "service": "supabase",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "FetchAllGhlContactsResult",
+        "kind": "interface",
+        "file": "supabase/functions/_shared/ghl-import.ts",
+        "line": 29,
+        "exported": true,
+        "service": "supabase",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "fetchAllGhlContacts",
+        "kind": "function",
+        "file": "supabase/functions/_shared/ghl-import.ts",
+        "line": 41,
+        "exported": true,
+        "service": "supabase",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "ExistingContactRow",
+        "kind": "interface",
+        "file": "supabase/functions/_shared/ghl-import.ts",
+        "line": 80,
+        "exported": true,
+        "service": "supabase",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "GhlImportContactFields",
+        "kind": "interface",
+        "file": "supabase/functions/_shared/ghl-import.ts",
+        "line": 86,
+        "exported": true,
+        "service": "supabase",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "PlannedUpdate",
+        "kind": "interface",
+        "file": "supabase/functions/_shared/ghl-import.ts",
+        "line": 98,
+        "exported": true,
+        "service": "supabase",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "GhlImportPlan",
+        "kind": "interface",
+        "file": "supabase/functions/_shared/ghl-import.ts",
+        "line": 103,
+        "exported": true,
+        "service": "supabase",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "PlanGhlImportArgs",
+        "kind": "interface",
+        "file": "supabase/functions/_shared/ghl-import.ts",
+        "line": 118,
+        "exported": true,
+        "service": "supabase",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "planGhlImport",
+        "kind": "function",
+        "file": "supabase/functions/_shared/ghl-import.ts",
+        "line": 139,
+        "exported": true,
+        "service": "supabase",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "stubFetch",
+        "kind": "function",
+        "file": "supabase/functions/_shared/ghl-sync-worker.test.ts",
+        "line": 10,
+        "exported": false,
+        "service": "supabase",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "JobProgress",
+        "kind": "interface",
+        "file": "supabase/functions/_shared/ghl-sync-worker.ts",
+        "line": 15,
+        "exported": true,
+        "service": "supabase",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "DispositionPayload",
+        "kind": "interface",
+        "file": "supabase/functions/_shared/ghl-sync-worker.ts",
+        "line": 23,
+        "exported": true,
+        "service": "supabase",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "buildDispositionNote",
+        "kind": "function",
+        "file": "supabase/functions/_shared/ghl-sync-worker.ts",
+        "line": 45,
+        "exported": true,
+        "service": "supabase",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "ContactFields",
+        "kind": "interface",
+        "file": "supabase/functions/_shared/ghl-sync-worker.ts",
+        "line": 57,
+        "exported": true,
+        "service": "supabase",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "ProcessDispositionJobArgs",
+        "kind": "interface",
+        "file": "supabase/functions/_shared/ghl-sync-worker.ts",
+        "line": 64,
+        "exported": true,
+        "service": "supabase",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "ProcessJobResult",
+        "kind": "interface",
+        "file": "supabase/functions/_shared/ghl-sync-worker.ts",
+        "line": 78,
+        "exported": true,
+        "service": "supabase",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "processDispositionJob",
+        "kind": "function",
+        "file": "supabase/functions/_shared/ghl-sync-worker.ts",
+        "line": 95,
+        "exported": true,
+        "service": "supabase",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "ProcessContactUpsertJobArgs",
+        "kind": "interface",
+        "file": "supabase/functions/_shared/ghl-sync-worker.ts",
+        "line": 162,
+        "exported": true,
+        "service": "supabase",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "processContactUpsertJob",
+        "kind": "function",
+        "file": "supabase/functions/_shared/ghl-sync-worker.ts",
+        "line": 172,
         "exported": true,
         "service": "supabase",
         "doc": "arch.dependency-graph"
@@ -5029,8 +5857,17 @@
         "name": "AmdMode",
         "kind": "type",
         "file": "supabase/functions/_shared/telnyx-client.ts",
-        "line": 44,
+        "line": 53,
         "exported": true,
+        "service": "supabase",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "DEFAULT_TELNYX_API_BASE",
+        "kind": "const",
+        "file": "supabase/functions/_shared/telnyx-client.ts",
+        "line": 76,
+        "exported": false,
         "service": "supabase",
         "doc": "arch.dependency-graph"
       },
@@ -5038,7 +5875,7 @@
         "name": "telnyxRequest",
         "kind": "function",
         "file": "supabase/functions/_shared/telnyx-client.ts",
-        "line": 67,
+        "line": 78,
         "exported": false,
         "service": "supabase",
         "doc": "arch.dependency-graph"
@@ -5047,7 +5884,7 @@
         "name": "DialArgs",
         "kind": "interface",
         "file": "supabase/functions/_shared/telnyx-client.ts",
-        "line": 108,
+        "line": 120,
         "exported": true,
         "service": "supabase",
         "doc": "arch.dependency-graph"
@@ -5056,7 +5893,7 @@
         "name": "TelnyxDialPayload",
         "kind": "interface",
         "file": "supabase/functions/_shared/telnyx-client.ts",
-        "line": 119,
+        "line": 131,
         "exported": true,
         "service": "supabase",
         "doc": "arch.dependency-graph"
@@ -5065,7 +5902,7 @@
         "name": "amdModeToTelnyxValue",
         "kind": "function",
         "file": "supabase/functions/_shared/telnyx-client.ts",
-        "line": 130,
+        "line": 142,
         "exported": true,
         "service": "supabase",
         "doc": "arch.dependency-graph"
@@ -5074,7 +5911,7 @@
         "name": "buildDialPayload",
         "kind": "function",
         "file": "supabase/functions/_shared/telnyx-client.ts",
-        "line": 134,
+        "line": 146,
         "exported": true,
         "service": "supabase",
         "doc": "arch.dependency-graph"
@@ -5083,7 +5920,7 @@
         "name": "RecordStartArgs",
         "kind": "interface",
         "file": "supabase/functions/_shared/telnyx-client.ts",
-        "line": 146,
+        "line": 158,
         "exported": true,
         "service": "supabase",
         "doc": "arch.dependency-graph"
@@ -5092,7 +5929,7 @@
         "name": "buildRecordStartPayload",
         "kind": "function",
         "file": "supabase/functions/_shared/telnyx-client.ts",
-        "line": 151,
+        "line": 163,
         "exported": true,
         "service": "supabase",
         "doc": "arch.dependency-graph"
@@ -5101,7 +5938,7 @@
         "name": "TranscriptionStartArgs",
         "kind": "interface",
         "file": "supabase/functions/_shared/telnyx-client.ts",
-        "line": 158,
+        "line": 170,
         "exported": true,
         "service": "supabase",
         "doc": "arch.dependency-graph"
@@ -5110,7 +5947,7 @@
         "name": "buildTranscriptionStartPayload",
         "kind": "function",
         "file": "supabase/functions/_shared/telnyx-client.ts",
-        "line": 164,
+        "line": 176,
         "exported": true,
         "service": "supabase",
         "doc": "arch.dependency-graph"
@@ -5119,7 +5956,16 @@
         "name": "TelnyxClient",
         "kind": "interface",
         "file": "supabase/functions/_shared/telnyx-client.ts",
-        "line": 178,
+        "line": 190,
+        "exported": true,
+        "service": "supabase",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "TelnyxClientOptions",
+        "kind": "interface",
+        "file": "supabase/functions/_shared/telnyx-client.ts",
+        "line": 240,
         "exported": true,
         "service": "supabase",
         "doc": "arch.dependency-graph"
@@ -5128,7 +5974,7 @@
         "name": "createTelnyxClient",
         "kind": "function",
         "file": "supabase/functions/_shared/telnyx-client.ts",
-        "line": 228,
+        "line": 245,
         "exported": true,
         "service": "supabase",
         "doc": "arch.dependency-graph"
@@ -5467,6 +6313,87 @@
         "doc": "arch.dependency-graph"
       },
       {
+        "name": "DAY_NAMES",
+        "kind": "const",
+        "file": "supabase/functions/analytics-summary/index.ts",
+        "line": 16,
+        "exported": false,
+        "service": "supabase",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "getDateRange",
+        "kind": "function",
+        "file": "supabase/functions/analytics-summary/index.ts",
+        "line": 28,
+        "exported": false,
+        "service": "supabase",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "getPreviousRange",
+        "kind": "function",
+        "file": "supabase/functions/analytics-summary/index.ts",
+        "line": 53,
+        "exported": false,
+        "service": "supabase",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "computeTotals",
+        "kind": "function",
+        "file": "supabase/functions/analytics-summary/index.ts",
+        "line": 76,
+        "exported": false,
+        "service": "supabase",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "pctChange",
+        "kind": "function",
+        "file": "supabase/functions/analytics-summary/index.ts",
+        "line": 86,
+        "exported": false,
+        "service": "supabase",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "formatTalkTime",
+        "kind": "function",
+        "file": "supabase/functions/analytics-summary/index.ts",
+        "line": 91,
+        "exported": false,
+        "service": "supabase",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "loadLegs",
+        "kind": "function",
+        "file": "supabase/functions/analytics-summary/index.ts",
+        "line": 97,
+        "exported": false,
+        "service": "supabase",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "loadAgentHours",
+        "kind": "function",
+        "file": "supabase/functions/analytics-summary/index.ts",
+        "line": 116,
+        "exported": false,
+        "service": "supabase",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "jsonResponse",
+        "kind": "function",
+        "file": "supabase/functions/analytics-summary/index.ts",
+        "line": 139,
+        "exported": false,
+        "service": "supabase",
+        "doc": "arch.dependency-graph"
+      },
+      {
         "name": "CANONICAL_FIELDS",
         "kind": "const",
         "file": "supabase/functions/contacts-parse-csv/index.ts",
@@ -5575,6 +6502,15 @@
         "doc": "arch.dependency-graph"
       },
       {
+        "name": "jsonResponse",
+        "kind": "function",
+        "file": "supabase/functions/dashboard-stats/index.ts",
+        "line": 69,
+        "exported": false,
+        "service": "supabase",
+        "doc": "arch.dependency-graph"
+      },
+      {
         "name": "get",
         "kind": "function",
         "file": "supabase/functions/deno.d.ts",
@@ -5602,10 +6538,82 @@
         "doc": "arch.dependency-graph"
       },
       {
-        "name": "log",
-        "kind": "const",
+        "name": "jsonResponse",
+        "kind": "function",
+        "file": "supabase/functions/dialer-session-disposition/index.ts",
+        "line": 30,
+        "exported": false,
+        "service": "supabase",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "jsonResponse",
+        "kind": "function",
+        "file": "supabase/functions/dialer-session-hangup-live/index.ts",
+        "line": 10,
+        "exported": false,
+        "service": "supabase",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "jsonResponse",
+        "kind": "function",
+        "file": "supabase/functions/dialer-session-pause/index.ts",
+        "line": 10,
+        "exported": false,
+        "service": "supabase",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "jsonResponse",
+        "kind": "function",
         "file": "supabase/functions/dialer-session-start/index.ts",
-        "line": 19,
+        "line": 27,
+        "exported": false,
+        "service": "supabase",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "jsonResponse",
+        "kind": "function",
+        "file": "supabase/functions/dialer-session-stop/index.ts",
+        "line": 10,
+        "exported": false,
+        "service": "supabase",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "STUCK_AFTER_SECONDS",
+        "kind": "const",
+        "file": "supabase/functions/dialer-sweeper/index.ts",
+        "line": 24,
+        "exported": false,
+        "service": "supabase",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "jsonResponse",
+        "kind": "function",
+        "file": "supabase/functions/dialer-sweeper/index.ts",
+        "line": 26,
+        "exported": false,
+        "service": "supabase",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "getSupabaseAdmin",
+        "kind": "function",
+        "file": "supabase/functions/dialer-sweeper/index.ts",
+        "line": 33,
+        "exported": false,
+        "service": "supabase",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "secretsMatch",
+        "kind": "function",
+        "file": "supabase/functions/dialer-sweeper/index.ts",
+        "line": 39,
         "exported": false,
         "service": "supabase",
         "doc": "arch.dependency-graph"
@@ -5660,6 +6668,96 @@
         "kind": "function",
         "file": "supabase/functions/ghl-disconnect/index.ts",
         "line": 20,
+        "exported": false,
+        "service": "supabase",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "jsonResponse",
+        "kind": "function",
+        "file": "supabase/functions/ghl-import/index.ts",
+        "line": 20,
+        "exported": false,
+        "service": "supabase",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "getSupabaseAdmin",
+        "kind": "function",
+        "file": "supabase/functions/ghl-import/index.ts",
+        "line": 27,
+        "exported": false,
+        "service": "supabase",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "CLAIM_BATCH_SIZE",
+        "kind": "const",
+        "file": "supabase/functions/ghl-sync-worker/index.ts",
+        "line": 25,
+        "exported": false,
+        "service": "supabase",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "jsonResponse",
+        "kind": "function",
+        "file": "supabase/functions/ghl-sync-worker/index.ts",
+        "line": 27,
+        "exported": false,
+        "service": "supabase",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "getSupabaseAdmin",
+        "kind": "function",
+        "file": "supabase/functions/ghl-sync-worker/index.ts",
+        "line": 34,
+        "exported": false,
+        "service": "supabase",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "secretsMatch",
+        "kind": "function",
+        "file": "supabase/functions/ghl-sync-worker/index.ts",
+        "line": 42,
+        "exported": false,
+        "service": "supabase",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "resolveOrgGhlContext",
+        "kind": "function",
+        "file": "supabase/functions/ghl-sync-worker/index.ts",
+        "line": 68,
+        "exported": false,
+        "service": "supabase",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "loadContactFields",
+        "kind": "function",
+        "file": "supabase/functions/ghl-sync-worker/index.ts",
+        "line": 91,
+        "exported": false,
+        "service": "supabase",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "persistGhlContactId",
+        "kind": "function",
+        "file": "supabase/functions/ghl-sync-worker/index.ts",
+        "line": 107,
+        "exported": false,
+        "service": "supabase",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "processJob",
+        "kind": "function",
+        "file": "supabase/functions/ghl-sync-worker/index.ts",
+        "line": 119,
         "exported": false,
         "service": "supabase",
         "doc": "arch.dependency-graph"
@@ -5748,6 +6846,15 @@
       {
         "name": "jsonResponse",
         "kind": "function",
+        "file": "supabase/functions/team-performance/index.ts",
+        "line": 107,
+        "exported": false,
+        "service": "supabase",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "jsonResponse",
+        "kind": "function",
         "file": "supabase/functions/telnyx-connect/index.ts",
         "line": 18,
         "exported": false,
@@ -5821,7 +6928,7 @@
         "name": "webhookLog",
         "kind": "function",
         "file": "supabase/functions/telnyx-webhook/index.ts",
-        "line": 26,
+        "line": 19,
         "exported": false,
         "service": "supabase",
         "doc": "arch.data-flows"
@@ -5830,7 +6937,7 @@
         "name": "getSupabaseAdmin",
         "kind": "function",
         "file": "supabase/functions/telnyx-webhook/index.ts",
-        "line": 30,
+        "line": 39,
         "exported": false,
         "service": "supabase",
         "doc": "arch.data-flows"
@@ -5839,7 +6946,7 @@
         "name": "loadOrgWebhookPublicKey",
         "kind": "function",
         "file": "supabase/functions/telnyx-webhook/index.ts",
-        "line": 38,
+        "line": 47,
         "exported": false,
         "service": "supabase",
         "doc": "arch.data-flows"
@@ -5848,7 +6955,7 @@
         "name": "asString",
         "kind": "function",
         "file": "supabase/functions/telnyx-webhook/index.ts",
-        "line": 54,
+        "line": 63,
         "exported": false,
         "service": "supabase",
         "doc": "arch.data-flows"
@@ -5857,7 +6964,7 @@
         "name": "processWebhook",
         "kind": "function",
         "file": "supabase/functions/telnyx-webhook/index.ts",
-        "line": 58,
+        "line": 75,
         "exported": false,
         "service": "supabase",
         "doc": "arch.data-flows"

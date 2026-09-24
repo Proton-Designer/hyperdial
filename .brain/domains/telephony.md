@@ -32,14 +32,14 @@ answers:
 covers: "Telnyx account wiring (API key, the two connection IDs, webhook auth), phone-number search/purchase/listing, and the agent's WebRTC browser leg."
 excludes: "The parallel dial loop itself — batching, AMD, call_logs state machine, Redis session state — see .brain/domains/dialer.md."
 tokens_est: 4711
-source_hash: fa8aad01699e4a27ccbf804d7858327fba81e966269e086c39e070d86a23cad3
+source_hash: 78daf13b97a103b3216ecf343d9601a80c65e084bb3bd44bc3d0546b54c528d0
 ---
 
 # Telephony
 
 ## Purpose
 
-Softdial places and receives real phone calls through Telnyx. This domain covers everything that touches the Telnyx account: authenticating to their API, owning the two different
+HyperDial places and receives real phone calls through Telnyx. This domain covers everything that touches the Telnyx account: authenticating to their API, owning the two different
 "connection" objects Telnyx exposes, letting a user buy a caller-ID number, and putting the agent's own voice on the call from the browser.
 
 ## Key concepts
@@ -144,7 +144,7 @@ Softdial places and receives real phone calls through Telnyx. This domain covers
 - **Four code strings point at a docs path that no longer exists.** The real file is `docs/guides/telnyx-call-control-setup.md`. Users following the error message hit a dead path.
 - **Fixed (TASK-P1-06, 2026-09-24): WebRTC credentials no longer leak.** `telnyx-webrtc-credentials` used to call `telephonyCredentials.create` on *every* invocation with nothing ever
   deleting the credential -- every page load or reconnect added one to the account, forever. It now get-or-creates exactly one credential per (org, member), persisted in
-  `org_members.telnyx_credential_id`; a stale/deleted id falls back to a Telnyx-side find-by-name lookup (`softdial-member-<org>-<user>`) before creating a new one, mirroring
+  `org_members.telnyx_credential_id`; a stale/deleted id falls back to a Telnyx-side find-by-name lookup (`hyperdial-member-<org>-<user>`) before creating a new one, mirroring
   `_shared/telnyx-provision.ts`'s org-level idempotent-provisioning pattern. `apps/web/src/lib/useTelnyxCall.ts`'s own token-lifetime behavior (a long-lived tab keeps one token
   forever; `disconnect()` then `connect()` to re-mint on expiry) is unchanged by this fix -- only the server-side credential churn is fixed.
 - **Token parsing is now a straight text/plain read, not tolerant multi-shape parsing.** Telnyx's `/telephony_credentials/{id}/token` response is verified (spec3.json) to be a raw

@@ -27,13 +27,15 @@ answers:
   - "how are in-app notifications listed, counted and marked read"
 covers: "The Dashboard metrics, the Analytics screen, the call_leg_analytics/dial_session_hours views behind them, the weekly-summary job, and the in-app notification bell."
 excludes: "The dial loop and call_legs state machine that produces the source data — see .brain/domains/dialer.md. Dispositions themselves — see .brain/domains/dispositions.md."
+tokens_est: 2340
+source_hash: 92c5f07e1add58d757f9884b6b977bb0aec9a816553c9d612afb6b4e39381c9a
 ---
 
 # Analytics & Notifications
 
 ## Purpose
 
-Softdial exists to raise live conversations per agent hour (CLAUDE.md/design §8), so the Dashboard and Analytics screens surface that number and its supporting metrics from real call data — no
+HyperDial exists to raise live conversations per agent hour (CLAUDE.md/design §8), so the Dashboard and Analytics screens surface that number and its supporting metrics from real call data — no
 mock data, no empty-by-construction tables, as of TASK-P4-P1.
 
 ## Key concepts

@@ -21,8 +21,8 @@ answers:
   - "how do I run the checks before pushing"
 covers: "Every command needed to develop, verify, and deploy this repository"
 excludes: "External service configuration (see tool.integrations), environment variables (see docs/reference/environment-variables.md)"
-tokens_est: 1064
-source_hash: 422d659582e4ba641e8a3adc2bd5e8b1256ef0578fa5517ddd565de97401b3be
+tokens_est: 1063
+source_hash: 03a8baef6452663a4cdaf8cb2cf38b56ce35e301d3f467296e5789a2d6663fe3
 ---
 
 # Command Registry
@@ -33,7 +33,7 @@ covers every package.
 ## Setup
 
 ```bash
-git clone --recurse-submodules https://github.com/Proton-Designer/softdial-studio.git
+git clone --recurse-submodules https://github.com/Proton-Designer/hyperdial.git
 npm install
 cp apps/web/.env.example apps/web/.env
 cp supabase/.env.example supabase/.env

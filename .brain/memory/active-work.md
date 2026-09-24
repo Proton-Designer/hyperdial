@@ -17,7 +17,7 @@ answers:
   - "what should I pick up next"
 covers: "Work in progress and the near-term backlog"
 excludes: "Shipped decisions (see mem.decisions), defects in shipped behaviour (see mem.known-issues)"
-tokens_est: 933
+tokens_est: 1917
 ---
 
 # Active Work

@@ -2,10 +2,10 @@
   "meta": {
     "artifact": "doc-index",
     "version": "1.0",
-    "generated_at": "2026-09-24T07:03:26.767Z",
+    "generated_at": "2026-09-24T17:00:00.643Z",
     "target": "/Users/aymanmohammed/Desktop/Softdial",
     "git": {
-      "commit": "f854854",
+      "commit": "991c827",
       "branch": "feat/stage-1",
       "dirty": true
     },
@@ -17,9 +17,9 @@
   "data": {
     "token_estimate_method": "heuristic-v1",
     "totals": {
-      "documents": 32,
-      "tokens_est": 63635,
-      "always_loaded_tokens_est": 2429
+      "documents": 33,
+      "tokens_est": 73651,
+      "always_loaded_tokens_est": 2452
     },
     "documents": [
       {
@@ -30,9 +30,9 @@
         "status": "canonical",
         "owner": "unassigned",
         "updated": "2026-09-21",
-        "lines": 149,
+        "lines": 150,
         "budget": null,
-        "tokens_est": 1993,
+        "tokens_est": 2029,
         "source_hash": null,
         "drift_suspect": false
       },
@@ -61,8 +61,8 @@
         "lines": 153,
         "budget": 250,
         "tokens_est": 1919,
-        "source_hash": "02f09ed4893bf521229b524853fcd93ef3eed63804ff4778560f6193c1476419",
-        "drift_suspect": false
+        "source_hash": "51366bbf18bc58f9ad5dc05f7bf51ec11bbbe78788311a4703676433c9ae0ccd",
+        "drift_suspect": true
       },
       {
         "id": "arch.dependency-graph",
@@ -75,7 +75,7 @@
         "lines": 131,
         "budget": 250,
         "tokens_est": 1626,
-        "source_hash": "eab965b3fa4f1f90eded10162059a53bd2bf44b84ed22205773680efad235b9b",
+        "source_hash": "02f3004522a0190ba16638c803d3cd30b3b1f424140cfbb7fc9cd96912abefcd",
         "drift_suspect": true
       },
       {
@@ -89,7 +89,7 @@
         "lines": 120,
         "budget": 250,
         "tokens_est": 1555,
-        "source_hash": "89fc812578aef2b7285f43afb7269bdf92347fd351f9bd106eaf359a69d3b42b",
+        "source_hash": "ad1f42b681311cca59ac9f13494ae1717002b968e298f78dc67983681d84ef04",
         "drift_suspect": true
       },
       {
@@ -102,8 +102,8 @@
         "updated": "2026-09-21",
         "lines": 156,
         "budget": 250,
-        "tokens_est": 2080,
-        "source_hash": "f07ada36737a61d4dc30cd1e6b2dad0f42406bbabb9d810f62afa1372bd3bb06",
+        "tokens_est": 2079,
+        "source_hash": "7d9cbf800c6bde55fdab7c3182f61f63f2fd4557e4b3d7a805bed973257d6e67",
         "drift_suspect": true
       },
       {
@@ -142,9 +142,9 @@
         "status": "canonical",
         "owner": "unassigned",
         "updated": "2026-09-21",
-        "lines": 79,
+        "lines": 80,
         "budget": 150,
-        "tokens_est": 905,
+        "tokens_est": 959,
         "source_hash": null,
         "drift_suspect": false
       },
@@ -155,11 +155,11 @@
         "type": "domain",
         "status": "canonical",
         "owner": "maintainer",
-        "updated": "2026-09-21",
-        "lines": 129,
+        "updated": "2026-09-24",
+        "lines": 110,
         "budget": 150,
-        "tokens_est": 2790,
-        "source_hash": "fd602cfb15f0295f191388547ce3972e4e546133468962c5ae114fef967bb935",
+        "tokens_est": 2340,
+        "source_hash": "92c5f07e1add58d757f9884b6b977bb0aec9a816553c9d612afb6b4e39381c9a",
         "drift_suspect": false
       },
       {
@@ -170,10 +170,10 @@
         "status": "canonical",
         "owner": "maintainer",
         "updated": "2026-09-24",
-        "lines": 149,
+        "lines": 147,
         "budget": 150,
-        "tokens_est": 3977,
-        "source_hash": "0e7e7b194f909ad7133670d6ddeff4a7fe5c43f083d6e0566f0ce525f162f56c",
+        "tokens_est": 3880,
+        "source_hash": "b8d3fd311248f16889b10f531365423ec36488c32179946d09361fb21c5ce0c5",
         "drift_suspect": true
       },
       {
@@ -184,10 +184,10 @@
         "status": "canonical",
         "owner": "maintainer",
         "updated": "2026-09-24",
-        "lines": 144,
+        "lines": 148,
         "budget": 150,
-        "tokens_est": 3082,
-        "source_hash": "860fd18525a303fda2d5bf83c7605cf1c58382a1812d69cd1efeb8dfc356382d",
+        "tokens_est": 3424,
+        "source_hash": "f7c4fa7ab4c7aaef7f21b7456abe7a51c3d069875241177226f31a574d3132e5",
         "drift_suspect": true
       },
       {
@@ -198,10 +198,10 @@
         "status": "canonical",
         "owner": "maintainer",
         "updated": "2026-09-24",
-        "lines": 137,
+        "lines": 145,
         "budget": 150,
-        "tokens_est": 3008,
-        "source_hash": "a9122a7786e99e5b60680bd35be62dff74b7bb0c5304f5e971e7008d4f4acdb1",
+        "tokens_est": 3290,
+        "source_hash": "62738fbb623c2e379609809908e501fe0d0848cd45c369afc7eaeaa205d58f59",
         "drift_suspect": true
       },
       {
@@ -212,10 +212,10 @@
         "status": "canonical",
         "owner": "maintainer",
         "updated": "2026-09-24",
-        "lines": 120,
+        "lines": 149,
         "budget": 150,
-        "tokens_est": 2419,
-        "source_hash": "fba225d25be200d588e62cf158889e3d2bce0d110bd8763fceb94cc6c27e3766",
+        "tokens_est": 3269,
+        "source_hash": "540085dae43bafb688ef37a220a540af5348d3551e81f4515b0971603e0960c1",
         "drift_suspect": true
       },
       {
@@ -225,12 +225,26 @@
         "type": "domain",
         "status": "canonical",
         "owner": "maintainer",
-        "updated": "2026-09-21",
-        "lines": 131,
+        "updated": "2026-09-24",
+        "lines": 264,
         "budget": 150,
-        "tokens_est": 2898,
-        "source_hash": "a4c36731f2d332220e5cc4a3bfa9f781e24c0d3c3469d35274ff1dfcb2d4f99f",
-        "drift_suspect": true
+        "tokens_est": 5856,
+        "source_hash": "30b4f8a2b005496e438e762a20c2579966e1779eeea3b4ad44ec1d24f5754809",
+        "drift_suspect": false
+      },
+      {
+        "id": "domain.dispositions",
+        "path": ".brain/domains/dispositions.md",
+        "layer": "L2",
+        "type": "domain",
+        "status": "canonical",
+        "owner": "maintainer",
+        "updated": "2026-09-24",
+        "lines": 123,
+        "budget": 150,
+        "tokens_est": 2144,
+        "source_hash": "f09bbe3ac2ad26156db6a3af17e4ce29492ec2f753bd70234d8978c74d15febe",
+        "drift_suspect": false
       },
       {
         "id": "domain.telephony",
@@ -243,7 +257,7 @@
         "lines": 164,
         "budget": 150,
         "tokens_est": 4711,
-        "source_hash": "fa8aad01699e4a27ccbf804d7858327fba81e966269e086c39e070d86a23cad3",
+        "source_hash": "78daf13b97a103b3216ecf343d9601a80c65e084bb3bd44bc3d0546b54c528d0",
         "drift_suspect": true
       },
       {
@@ -337,10 +351,10 @@
         "type": "memory",
         "status": "canonical",
         "owner": "maintainer",
-        "updated": "2026-09-21",
-        "lines": 82,
+        "updated": "2026-09-24",
+        "lines": 139,
         "budget": 100,
-        "tokens_est": 933,
+        "tokens_est": 1917,
         "source_hash": null,
         "drift_suspect": false
       },
@@ -352,9 +366,9 @@
         "status": "canonical",
         "owner": "maintainer",
         "updated": "2026-09-21",
-        "lines": 299,
+        "lines": 401,
         "budget": 300,
-        "tokens_est": 4299,
+        "tokens_est": 6425,
         "source_hash": null,
         "drift_suspect": false
       },
@@ -366,9 +380,9 @@
         "status": "canonical",
         "owner": "maintainer",
         "updated": "2026-09-23",
-        "lines": 290,
+        "lines": 331,
         "budget": 200,
-        "tokens_est": 5978,
+        "tokens_est": 6769,
         "source_hash": null,
         "drift_suspect": false
       },
@@ -397,7 +411,7 @@
         "lines": 110,
         "budget": 150,
         "tokens_est": 1204,
-        "source_hash": "9702e8c405957e18ae1a8433859da0d9a0d1c9fd36cf5fef3bf1409112b4d883",
+        "source_hash": "d4b4e79a54ac884b9b9fe6639e702c06d5ceeabb839ad59782d3cb9385314d65",
         "drift_suspect": true
       },
       {
@@ -438,8 +452,8 @@
         "updated": "2026-09-21",
         "lines": 113,
         "budget": 150,
-        "tokens_est": 1064,
-        "source_hash": "422d659582e4ba641e8a3adc2bd5e8b1256ef0578fa5517ddd565de97401b3be",
+        "tokens_est": 1063,
+        "source_hash": "03a8baef6452663a4cdaf8cb2cf38b56ce35e301d3f467296e5789a2d6663fe3",
         "drift_suspect": true
       },
       {
@@ -452,7 +466,7 @@
         "updated": "2026-09-21",
         "lines": 103,
         "budget": 120,
-        "tokens_est": 1203,
+        "tokens_est": 1202,
         "source_hash": null,
         "drift_suspect": false
       },
@@ -466,7 +480,7 @@
         "updated": "2026-09-21",
         "lines": 112,
         "budget": 200,
-        "tokens_est": 1489,
+        "tokens_est": 1488,
         "source_hash": null,
         "drift_suspect": false
       }

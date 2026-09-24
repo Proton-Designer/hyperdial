@@ -2,10 +2,10 @@
   "meta": {
     "artifact": "service-index",
     "version": "1.0",
-    "generated_at": "2026-09-24T07:03:26.767Z",
+    "generated_at": "2026-09-24T17:00:00.643Z",
     "target": "/Users/aymanmohammed/Desktop/Softdial",
     "git": {
-      "commit": "f854854",
+      "commit": "991c827",
       "branch": "feat/stage-1",
       "dirty": true
     },
@@ -33,13 +33,15 @@
         "name": "web",
         "path": "apps/web",
         "kind": "app",
-        "package": "@softdial/web",
+        "package": "@hyperdial/web",
         "language": "TypeScript",
         "entrypoint": null,
         "owner": null,
         "doc": null,
         "depends_on": [],
-        "depended_on_by": [],
+        "depended_on_by": [
+          "supabase"
+        ],
         "external": []
       },
       {
@@ -51,7 +53,9 @@
         "entrypoint": null,
         "owner": null,
         "doc": null,
-        "depends_on": [],
+        "depends_on": [
+          "supabase"
+        ],
         "depended_on_by": [],
         "external": []
       },
@@ -64,8 +68,12 @@
         "entrypoint": null,
         "owner": null,
         "doc": null,
-        "depends_on": [],
-        "depended_on_by": [],
+        "depends_on": [
+          "apps/web"
+        ],
+        "depended_on_by": [
+          "scripts"
+        ],
         "external": []
       }
     ]

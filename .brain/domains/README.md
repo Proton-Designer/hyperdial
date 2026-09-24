@@ -11,7 +11,7 @@ answers:
   - "which domain owns X"
 covers: "What qualifies as a domain, how to write one, shared vs. local domain content"
 excludes: "The domains themselves (see each domain's own .brain/domains/*.md)"
-tokens_est: 905
+tokens_est: 959
 ---
 
 # `.brain/domains/`
