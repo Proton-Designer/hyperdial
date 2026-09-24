@@ -79,10 +79,9 @@ back to a Telnyx-side find-by-name lookup (`find*ByName` on `TelnyxClient`) befo
 prior (failed) attempt already created on Telnyx instead of creating a duplicate under the same deterministic name. This supersedes the "IDs only, no Telnyx-side
 search" decision in `.brain/memory/decisions.md` — see that entry for why the ID-only shortcut wasn't actually safe across a failed-persist retry.
 
-**NEEDS-LIVE-VERIFY**: verified in a rolled-back local-DB transaction (service_role successfully calls both wrappers, key round-trips through Vault, rotation reuses
-the same secret) — but **not** yet proven via a real `supabase functions serve` + curl request against `telnyx-connect`, because that requires this migration to
-actually be applied first (the lead applies migrations, not the engineer who writes them) and the local Postgres container was crash-looping (see `mem.lessons`)
-during this task, independent of anything in this migration. Also not yet checked against a real Telnyx account.
+**2026-09-24 update:** the lead applied migration `20260924000500` and reviewed the wrapper ACLs and the find-by-name fix — both correct. Still owed before this
+closes: the `functions serve` + curl acceptance run (signed POST → 200, unsigned/wrong-org/stale-timestamp → 401, `telnyx-connect` run twice against a mock →
+second run reuses). Real Telnyx account check remains NEEDS-LIVE-VERIFY regardless.
 
 Originally reported by eng1 (TASK-P1-05 review), fixed by eng2.
 
@@ -222,6 +221,23 @@ restrict which columns a matching row may change without a trigger. An agent can
 **Fix when the `dnc` column lands** (design §7 / a future contacts task): either add a
 `BEFORE UPDATE` trigger that rejects a non-owner/admin change touching any column other than
 `dnc`, or split `dnc` into its own table with its own narrower policy.
+
+---
+
+## 8. Ten service-role functions still scope by `user_id` alone, not `org_id`/role
+
+**Severity: medium — not a cross-org leak today** (`user_id` is globally unique, RLS still bounds
+every table) **but wrong once a user belongs to more than one org, and narrower than design §2.**
+
+TASK-P1-02 added `requireOrgRole` to `contacts-import`/`-parse-csv`, `dashboard-stats`,
+`team-performance`, `ensure-week-summary` (`domain.auth`). Left out of scope (eng2's lane, logged per
+the task's own instruction): `telnyx-list-numbers`/`-search-numbers`/`-purchase-number`/
+`-webrtc-credentials`, all six `dialer-session-*` (`telnyx-connect`/`-disconnect`/`-webhook` are
+already org-aware, TASK-P1-05). A multi-org user would see both orgs' numbers/sessions mixed
+together from these; `telnyx-purchase-number` also has no owner/admin role check.
+
+**Fix:** apply `requireOrgRole` the same way when these are next touched (Phase 2 for `dialer-*`;
+alongside `telnyx-connect` for `telnyx-*`).
 
 ---
 

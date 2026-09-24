@@ -25,6 +25,21 @@ Things that cost someone time, written down so they cost the next person none.
 
 ---
 
+## A client-side filter that mirrors old RLS silently under-matches once RLS changes
+
+`apps/web/src/lib/api.ts`'s `deleteContact`/`deleteContacts` (pre-TASK-P1-02) added `.eq('user_id',
+user.id)` on top of the `id` filter — harmless when RLS itself was `auth.uid() = user_id`, since it
+was redundant with what RLS already enforced. TASK-P1-01 changed `contacts` DELETE to
+`private.has_org_role(org_id, ['owner','admin'])` — role-based, not literal-ownership-based — but the
+client filter was never updated. The bug doesn't surface as an error: `supabase.from(...).delete()`
+matching zero rows returns success with an empty result, so an owner deleting a contact an agent (or
+another admin) had created would appear to succeed in the UI and silently do nothing. Found by
+testing the actual RLS-governed path with curl, not by reading the code — reading it looked fine
+since the extra filter looked like reasonable defense in depth. **Apply it:** whenever an RLS policy
+moves from "the row's own `user_id` column" to any other authorization model (role, org membership),
+grep the client for filters mirroring the *old* model and remove them — let RLS be the only
+authority, since a client-side filter that used to be redundant can quietly become wrong.
+
 ## A denial-testing helper can swallow its own failure signal
 
 Writing `supabase/tests/rls_org_matrix.sql` (TASK-P1-01), the first draft of `_test_expect_insert_denied()` did `EXECUTE p_query; RAISE EXCEPTION 'FAIL ...'; EXCEPTION WHEN insufficient_privilege
@@ -136,13 +151,18 @@ is swept on the next event, not on a schedule.
 
 ---
 
-## The local Supabase Postgres container can crash-loop independently of whatever SQL you're running
+## Calling a revoked function as a role without EXECUTE segfaults this local Postgres 17.6 image
 
-While verifying the TASK-P1-05 fix (2026-09-24, `mem.known-issues` #0c), `psql` connections repeatedly died mid-script with "server closed the connection
-unexpectedly." `docker logs supabase_db_Softdial` showed the container restarting every 15–30 seconds ("database system was not properly shut down; automatic
-recovery in progress") — confirmed independent of the query by reproducing the same drop with a trivial, unrelated one-line SQL statement, and by observing restarts
-recur on their own cadence with no client connected at all.
+**Correction, 2026-09-24 (the lead's own repro):** the entry originally written here blamed the crashes on unrelated container instability, "independent of the
+query." That was wrong — I only tested with a *different* trivial statement, not the actual triggering shape, and mistook a real, deterministic crash for a
+coincidence. The actual trigger, reproduced by the lead with a minimal case: **querying a function as a role that has no EXECUTE on it** (i.e. a real "permission
+denied for function" — not a table or schema denial, both of which are fine) segfaults this specific local Postgres image outright, taking the container down; it
+restarts on its own ("database system was not properly shut down; automatic recovery in progress") a few seconds later.
 
-**Apply it:** if a local-DB verification step dies with "connection to server was lost," check `docker ps`/`docker logs <db container>` for a restart loop before
-assuming the SQL (or the migration under test) is at fault. A rolled-back transaction that completes several assertions before dying is still real signal for the
-parts that ran — don't discard a partial-but-clean result just because the session was later cut off by the container bouncing.
+This happened here while verifying TASK-P1-05's fix (`mem.known-issues` #0c): the negative-control check — calling the new `public.set_org_telnyx_key` wrapper as
+`authenticated`, which has no EXECUTE on it by design — is exactly the crash shape, not an unrelated flake.
+
+**Apply it:** never call a function as a role you expect to lack EXECUTE, even inside a `BEGIN...ROLLBACK` test — the crash happens before any transaction
+semantics matter. Assert the *permission*, not the *denial*, with `select has_function_privilege('role_name', 'schema.fn(arg_types)', 'EXECUTE')` instead of
+provoking the actual error. This generalizes past this one bug: any future negative-control test for a revoked function needs the same treatment, or it will take
+the local DB down instead of proving the revoke works.
