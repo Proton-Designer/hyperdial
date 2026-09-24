@@ -100,26 +100,13 @@ Originally reported by eng1 (TASK-P1-05 review), fixed by eng2.
 
 ---
 
-## 1. The Analytics screen is entirely fake data
+## 1. ~~The Analytics screen is entirely fake data~~ — SUPERSEDED by TASK-P4-P1 (2026-09-24)
 
-**Severity: high — actively misleading.**
-
-`apps/web/src/components/Analytics.tsx` imports **nothing** from `@/lib/api`. Every chart on it renders module-level constants hardcoded at `Analytics.tsx:17-38`:
-
-`callVolumeData` (invented weekday call counts), `performanceData` (an invented disposition split), and `agentData` — **five invented people** ("Sarah Chen", "James Wilson", "Alex Kumar", "Maria
-Garcia", "Tom Anderson").
-
-The numbers never change, never load, and bear no relation to the account viewing them. It is a design mock wired into the navigation. **Do not** debug why analytics "aren't updating", and do not cite
-any figure from it. Verified 2026-09-21.
-
-**`Dashboard.tsx` is wired for real** — it calls `getDashboardStats()` and `getTeamPerformanceChart()` (`:64,74`). **But it reads an empty table.** All three analytics functions aggregate
-`call_events`, and **nothing in this repository ever writes `call_events`** — the dial loop writes `call_logs`, a different table (`supabase/functions/_shared/dialer-engine.ts:195`). Verified
-2026-09-21: `call_events` appears only in the migration and in one `SELECT` in each of the three functions.
-
-So the Dashboard's zeros are **correct behaviour over an empty table**, not a bug in the functions. Fixing the metrics means writing `call_events` from the webhook (the unique index on
-`telnyx_call_session_id` suggests that was the intent), not debugging `dashboard-stats`. The fourth Dashboard tile, "Revenue Pipeline", is the literal string `'Coming soon'` (`Dashboard.tsx:163`).
-
-Net: **Analytics is fake data; Dashboard is real code over no data.** Neither screen shows a true number today.
+Analytics.tsx and Dashboard.tsx now read real data (`call_leg_analytics`/`dial_session_hours`
+views over `call_legs`/`dial_sessions`/`dispositions`), not `call_events` (still empty, still
+unwritten, now also unread). See `.brain/domains/analytics.md`. "Revenue Pipeline" tile replaced
+with the real conversations-per-agent-hour metric. `call_events` itself not yet deleted (a later
+Phase-4 cleanup item).
 
 ---
 

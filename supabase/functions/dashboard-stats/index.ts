@@ -2,6 +2,12 @@ import { createClient } from 'npm:@supabase/supabase-js@2';
 import { corsHeaders, corsPreflightResponse } from '../_shared/cors.ts';
 import { requireOrgRole } from '../_shared/auth.ts';
 
+/**
+ * TASK-P4-P1: reads `call_leg_analytics` (a real dial-session-backed view, TASK-P2-E2/E1's
+ * call_legs + TASK-P3-E1's dispositions) instead of `call_events`, which nothing in this repo
+ * writes (CLAUDE.md's own known-issue -- see .brain/domains/analytics.md). Response shape is
+ * UNCHANGED from before this task (Dashboard.tsx needs no changes for this endpoint).
+ */
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return corsPreflightResponse();
 
@@ -24,23 +30,23 @@ Deno.serve(async (req) => {
     const todayStartStr = todayStart.toISOString();
     const todayEndStr = todayEnd.toISOString();
 
-    const { data: outboundToday } = await supabase
-      .from('call_events')
-      .select('id, outcome, duration_seconds')
+    const { data: legsToday, error: legsError } = await supabase
+      .from('call_leg_analytics')
+      .select('is_connected, duration_seconds')
       .eq('org_id', orgId)
-      .eq('user_id', userId)
-      .eq('direction', 'outbound')
-      .gte('started_at', todayStartStr)
-      .lt('started_at', todayEndStr);
+      .eq('agent_id', userId)
+      .gte('created_at', todayStartStr)
+      .lt('created_at', todayEndStr);
+    if (legsError) return jsonResponse(500, { error: legsError.message });
 
-    const list = outboundToday ?? [];
+    const list = legsToday ?? [];
     const callsToday = list.length;
-    const answeredCount = list.filter((r: { outcome: string }) => r.outcome === 'answered').length;
-    const connectRate = callsToday > 0 ? Math.round((answeredCount / callsToday) * 1000) / 10 : 0;
+    const connectedCount = list.filter((r) => r.is_connected).length;
+    const connectRate = callsToday > 0 ? Math.round((connectedCount / callsToday) * 1000) / 10 : 0;
     const talkTimeSeconds = list
-      .filter((r: { outcome: string }) => r.outcome === 'answered')
+      .filter((r) => r.is_connected)
       .reduce(
-        (sum: number, r: { duration_seconds?: number }) => sum + (r.duration_seconds ?? 0),
+        (sum: number, r: { duration_seconds: number | null }) => sum + (r.duration_seconds ?? 0),
         0
       );
 
@@ -48,20 +54,21 @@ Deno.serve(async (req) => {
     const mins = Math.floor((talkTimeSeconds % 3600) / 60);
     const talkTimeFormatted = hours > 0 ? `${hours}h ${mins}m` : `${mins}m`;
 
-    return new Response(
-      JSON.stringify({
-        callsToday,
-        connectRate,
-        talkTimeFormatted,
-        talkTimeSeconds,
-      }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return jsonResponse(200, {
+      callsToday,
+      connectRate,
+      talkTimeFormatted,
+      talkTimeSeconds,
+    });
   } catch (err) {
     console.error('dashboard-stats error:', err);
-    return new Response(JSON.stringify({ error: String(err) }), {
-      status: 500,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    });
+    return jsonResponse(500, { error: String(err) });
   }
 });
+
+function jsonResponse(status: number, payload: Record<string, unknown>): Response {
+  return new Response(JSON.stringify(payload), {
+    status,
+    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+  });
+}

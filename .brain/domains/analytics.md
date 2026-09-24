@@ -5,124 +5,105 @@ layer: L2
 type: domain
 status: canonical
 owner: maintainer
-updated: 2026-09-21
+updated: 2026-09-24
 sources:
+  - supabase/migrations/20260924002400_analytics_real_data.sql
   - supabase/functions/dashboard-stats/index.ts
   - supabase/functions/team-performance/index.ts
+  - supabase/functions/analytics-summary/index.ts
   - supabase/functions/ensure-week-summary/index.ts
-  - supabase/migrations/20250213000001_create_call_events_and_notifications.sql
   - apps/web/src/components/Dashboard.tsx
   - apps/web/src/components/Analytics.tsx
-  - apps/web/src/components/TopNavigation.tsx
+  - apps/web/src/lib/api.ts
 related:
   - domain.dialer
+  - domain.dispositions
   - domain.auth
-  - arch.system-overview
 answers:
   - "is the Analytics screen real data or a mock"
   - "where do the Dashboard's Calls Today / Connect Rate / Talk Time numbers come from"
-  - "what writes rows into call_events, and why are my dashboard metrics always zero"
+  - "how is live conversations per agent-hour computed"
   - "how is the weekly summary notification created and when"
   - "how are in-app notifications listed, counted and marked read"
-  - "where is the dashboard chart date range stored"
-  - "what is the difference between call_logs and call_events"
-covers: "The Dashboard metrics and team-performance chart, the call_events aggregation functions behind them, the Analytics screen's status, the weekly-summary job, and the in-app notification bell."
-excludes: "The dial loop, AMD, and the call_logs state machine that actually records calls — see .brain/domains/dialer.md. Telnyx wiring — see .brain/domains/telephony.md."
-tokens_est: 2790
-source_hash: fd602cfb15f0295f191388547ce3972e4e546133468962c5ae114fef967bb935
+covers: "The Dashboard metrics, the Analytics screen, the call_leg_analytics/dial_session_hours views behind them, the weekly-summary job, and the in-app notification bell."
+excludes: "The dial loop and call_legs state machine that produces the source data — see .brain/domains/dialer.md. Dispositions themselves — see .brain/domains/dispositions.md."
 ---
 
 # Analytics & Notifications
 
 ## Purpose
 
-Softdial exists to raise live conversations per agent hour, so the agent needs to see that number. This domain is the reporting surface: the Dashboard's headline metrics and trend chart, and
-the notification bell that delivers a weekly recap. Most of that surface is not yet connected to real call data — read "Constraints & gotchas" before trusting anything here.
+Softdial exists to raise live conversations per agent hour (CLAUDE.md/design §8), so the Dashboard and Analytics screens surface that number and its supporting metrics from real call data — no
+mock data, no empty-by-construction tables, as of TASK-P4-P1.
 
 ## Key concepts
 
 | Term | Means |
 |---|---|
-| `call_events` | The analytics table. One row per call session, with `outcome` and `duration_seconds`. **Every analytics query reads it; nothing in this repo writes it.** |
-| `call_logs` | The *operational* table the dial loop actually writes (`supabase/functions/_shared/dialer-engine.ts:195`). Different table, not read by any analytics function. |
-| Connect rate | `answered / total outbound`, as a percentage to one decimal (`supabase/functions/dashboard-stats/index.ts:36`). |
-| Talk time | Sum of `duration_seconds` over `outcome = 'answered'` rows only (`supabase/functions/dashboard-stats/index.ts:37-42`). |
-| Week summary | A `notifications` row of `type = 'week_summary'` whose `body` is a JSON string, not prose (`supabase/functions/ensure-week-summary/index.ts:82-96`). |
+| `call_leg_analytics` | A `security_invoker` view over `call_legs` (kind='contact') joined to `dial_sessions` (for `agent_id`) and `dispositions`. Every analytics query reads this now, not `call_events`. |
+| `dial_session_hours` | A `security_invoker` view: one row per dial session, `session_hours` = wall-clock `ended_at - started_at`, null while a session is still running. The agent-hours denominator for the north-star metric. |
+| Conversations / agent-hour | `count(is_connected) / sum(session_hours)` over a date range — the literal north-star metric. **Approximation**: `session_hours` is the WHOLE session span, including any paused/wrap_up time within it — there's no per-state-transition duration log to subtract that out precisely. |
+| `call_events` | The OLD analytics table. Still exists, still empty, **nothing reads it anymore as of this task** — not deleted here (that's Phase 4's own later "remove call_events" line item). |
 
 ## Where the code lives
 
 | What | Path | Notes |
 |---|---|---|
-| **Real** dashboard UI | `apps/web/src/components/Dashboard.tsx` | Fetches at `:64` and `:74` |
-| **Mock** analytics UI | `apps/web/src/components/Analytics.tsx` | Hardcoded constants at `:17-38` |
-| Today's metrics | `supabase/functions/dashboard-stats/index.ts` | Single-user, UTC day |
-| Trend chart | `supabase/functions/team-performance/index.ts` | Day buckets, 7d/30d/custom |
-| Weekly recap job | `supabase/functions/ensure-week-summary/index.ts` | Fridays only |
-| Client contract | `apps/web/src/lib/api.ts:68-189` | Stats, chart, prefs, notifications |
-| Notification bell | `apps/web/src/components/TopNavigation.tsx:70-109` | Fetch, count, mark read |
-| Schema + RLS | `supabase/migrations/20250213000001_create_call_events_and_notifications.sql` | Three tables |
-| Screen routing | `apps/web/src/components/MainApp.tsx:71` | Renders the mock Analytics tab |
+| The two views | `supabase/migrations/20260924002400_analytics_real_data.sql` | `security_invoker=on` — RLS on `call_legs`/`dial_sessions` (already agent-vs-admin scoped) is what actually enforces visibility, not a filter re-implemented here |
+| Today's metrics | `supabase/functions/dashboard-stats/index.ts` | Single-user, UTC day, same response shape as before this task |
+| Trend chart | `supabase/functions/team-performance/index.ts` | Day buckets, 7d/30d/custom, same response shape as before |
+| **New**: full Analytics backend | `supabase/functions/analytics-summary/index.ts` | Totals + period-over-period deltas, call volume, disposition breakdown, agent leaderboard |
+| Weekly recap job | `supabase/functions/ensure-week-summary/index.ts` | Fridays only, unchanged shape |
+| **Real** Dashboard UI | `apps/web/src/components/Dashboard.tsx` | Unchanged this task (its two endpoints kept their response shape) |
+| **Real** Analytics UI | `apps/web/src/components/Analytics.tsx` | Full rewrite — real data, loading + empty states, a 7d/30d toggle |
+| Client contract | `apps/web/src/lib/api.ts` | `DashboardStats`/`TeamPerformancePoint` unchanged; `AnalyticsSummary` new |
+| Notification bell | `apps/web/src/components/TopNavigation.tsx` | Unchanged |
+| Schema + RLS | `supabase/migrations/20250213000001_create_call_events_and_notifications.sql` | `notifications`/`user_preferences` (still relevant); `call_events` (now unread) |
 
 ## How it works
 
-1. **Dashboard mounts** — `getDashboardStats()` (`apps/web/src/components/Dashboard.tsx:74`) hits `dashboard-stats`, which selects today's outbound `call_events` for `user.id` and derives
-   calls, connect rate and talk time (`supabase/functions/dashboard-stats/index.ts:25-46`).
-2. **Range is restored** — `getUserPreferences()` reads `user_preferences` directly over PostgREST (`apps/web/src/lib/api.ts:115-122`); changing the range upserts it back (`:124-136`).
-3. **Chart loads** — `getTeamPerformanceChart()` (`apps/web/src/components/Dashboard.tsx:64`) calls `team-performance`, which pre-seeds one bucket per day in the range then counts rows into
-   it (`supabase/functions/team-performance/index.ts:61-85`), so gaps render as zeros rather than disappearing.
-4. **Bell mounts** — `TopNavigation` fires `ensureWeekSummary()` once (`apps/web/src/components/TopNavigation.tsx:70`) and `getUnreadNotificationCount()` (`:74`); opening the panel calls
-   `listNotifications()` (`:81`).
-5. **Week summary** — `ensure-week-summary` returns early unless today is Friday (`supabase/functions/ensure-week-summary/index.ts:29`), dedupes, aggregates last Mon–Sun, and inserts a
-   `notifications` row with a JSON `body` (`:82-96`).
-6. **Read state** — clicking an item stamps `read_at` (`apps/web/src/lib/api.ts:166-172`); "Mark all read" stamps every null (`:174-180`). The badge is a client-side decrement
-   (`apps/web/src/components/TopNavigation.tsx:96`).
+1. **Dashboard mounts** — `getDashboardStats()` hits `dashboard-stats`, which selects today's `call_leg_analytics` rows for the caller's own `agent_id` and derives calls/connect-rate/talk-time.
+2. **Trend chart** — `getTeamPerformanceChart()` calls `team-performance`, org-wide for owner/admin or own-only for an agent (`requireOrgRole`'s role, same split as before), bucketed by day.
+3. **Analytics mounts** — `getAnalyticsSummary(range)` calls `analytics-summary`: loads the current range's legs AND the immediately-preceding equal-length range (for `%ChangePct` deltas), plus `dial_session_hours` for the agent-hour denominator, then computes totals, a zero-filled day-bucketed call-volume series (`voicemails` = `outcome='machine'`, not a disposition key — available even before a leg is ever dispositioned), a disposition/outcome breakdown, and an agent leaderboard (org-wide for owner/admin, a single self-row for an agent).
+4. **Week summary** — unchanged mechanics, now reads `call_leg_analytics` instead of `call_events`.
 
 ## Integration points
 
 | Direction | With | Via |
 |---|---|---|
-| Depends on | `domain.auth` | `getUserFromRequest()` in all three Edge Functions; RLS `auth.uid()` for direct table reads |
-| Depends on | `domain.dialer` | *Intended* producer of `call_events` — see gotchas; currently no link exists |
-| Depends on | Supabase Postgres | `call_events`, `notifications`, `user_preferences` |
-| Depended on by | `apps/web/src/components/Dashboard.tsx`, `apps/web/src/components/TopNavigation.tsx` | `apps/web/src/lib/api.ts` |
+| Depends on | domain.dialer | `call_legs`/`dial_sessions` and their existing RLS |
+| Depends on | domain.dispositions | `call_leg_analytics.disposition_label`/`disposition_key` |
+| Depended on by | Dashboard.tsx, Analytics.tsx | `apps/web/src/lib/api.ts` |
 
 ## Constraints & gotchas
 
-- **The Analytics screen is a design mock. It is not wired to anything.** `apps/web/src/components/Analytics.tsx` imports nothing from `apps/web/src/lib/api.ts` — only Recharts, Lucide and
-  Motion. Every chart renders module-level constants at `apps/web/src/components/Analytics.tsx:17-38` — `callVolumeData`, `performanceData`, and `agentData`, which lists five invented people
-  (Sarah Chen, James Wilson, Alex Kumar, Maria Garcia, Tom Anderson) — and the metric tiles are hardcoded strings. It is still routed into the nav at
-  `apps/web/src/components/MainApp.tsx:71`, so it looks live. **`apps/web/src/components/Dashboard.tsx` is the real one**, the only screen calling the analytics API. Do not "fix a bug" seen
-  on Analytics; there is no data path to fix.
-- **Nothing writes `call_events`.** It is referenced in exactly four places: the migration, and a `SELECT` in each of the three Edge Functions. The dial loop writes `call_logs` instead
-  (`supabase/functions/_shared/dialer-engine.ts:195`, `supabase/functions/telnyx-webhook/index.ts:232`). So the Dashboard's real wiring aggregates an empty table — zero calls, 0%, "0m" is
-  expected behaviour, not a bug.
-- **`team-performance` is real code over that same empty table** — genuine, correct aggregation that returns real data the moment `call_events` is populated. **As of TASK-P1-02 it is genuinely
-  team-wide** for an owner/admin (filters `org_id` only); an agent still gets their own rows only (`org_id` + `user_id`, `supabase/functions/team-performance/index.ts:56-64`, gated by
-  `requireOrgRole`, design §2's "team stats: owner/admin all, agent own only").
-- **"Revenue Pipeline" is a literal placeholder** — the fourth Dashboard tile is the string `'Coming soon'` (`apps/web/src/components/Dashboard.tsx:163`).
-- **`ensure-week-summary` only works on a Friday** (`:29`), and only if the user opens the app that day — it fires from a component mount (`apps/web/src/components/TopNavigation.tsx:70`),
-  not cron. Miss that Friday and the summary is never written; nothing backfills.
-- **Its dedupe is a `LIKE` over the body text** (`supabase/functions/ensure-week-summary/index.ts:44-51`) — `%<week_start>%` against the JSON blob, not a unique constraint. Two concurrent
-  tab loads on a Friday can both miss and insert twice.
-- **A week-summary `body` is JSON, not display text** — `TopNavigation` parses it, falling back to raw text on a throw (`apps/web/src/components/TopNavigation.tsx:215-232`). Change the
-  producer's shape and the bell silently renders a JSON blob.
-- **All three functions set `verify_jwt = false`** (`supabase/config.toml:371-378`). As of TASK-P1-02 they call `requireOrgRole()`, not raw `getUserFromRequest()`, then use the service-role key
-  (bypasses RLS) filtered by `org_id` + role — see `.brain/domains/auth.md`.
-- **`notifications` has no INSERT policy at all** (migration `:61-62`) — only SELECT and UPDATE. Clients cannot create notifications; only a service-role function can. The UPDATE policy also
-  has no `WITH CHECK` (migration `:57-59`), and `markAllNotificationsRead()` issues an unfiltered `UPDATE ... IS NULL` (`apps/web/src/lib/api.ts:174-180`) — scoping rests entirely on the
-  USING clause.
-- **Everything is UTC-bucketed** (`supabase/functions/dashboard-stats/index.ts:18-21`, `supabase/functions/team-performance/index.ts:64,70`) — a UTC-8 agent's evening calls land on
-  tomorrow's bucket.
-- **`call_events.user_id` is `ON DELETE SET NULL`** (migration `:4`) — deleting a user orphans their rows rather than removing them, and they vanish from every query.
+- **`session_hours` is a wall-clock approximation, not precise agent-active-time** — see Key concepts. If a future task adds a state-transition duration log, this is the place to make the
+  denominator exact instead.
+- **A session only counts toward agent-hours once it has `ended_at` set** — a live, still-`dialing` session contributes nothing to the metric yet (avoids a moving-target denominator mid-query).
+- **The call-volume chart's "voicemails" bucket is `outcome='machine'`, not a disposition key** — chosen deliberately so the chart has real data even before the mandatory wrap-up form (E4, not
+  built yet) exists to let anyone actually disposition a call as "Left voicemail".
+- **`analytics-summary`'s agent leaderboard is a single row for an agent role** (their own numbers only), a full ranked list for owner/admin — design §2's permission matrix, same split
+  `team-performance` already used.
+- **Everything is still UTC-bucketed** (unchanged from before this task) — a UTC-8 agent's evening calls land on tomorrow's bucket.
+- **`call_events` still exists and is still empty** — nothing in this repo writes OR reads it anymore as of this task. Deleting the table itself is a separate, later Phase-4 cleanup item (design
+  §8's own "remove Redis and call_events" line), out of this task's scope.
+- **`notifications` has no INSERT policy at all**, and its UPDATE policy has no `WITH CHECK` — unchanged pre-existing behavior, not touched by this task.
+- **The three edge functions still use `requireOrgRole` + a service-role client + explicit `org_id`/`agent_id` filters**, not a new user-JWT-forwarded PostgREST client — `security_invoker` on
+  the two views makes them RLS-correct for a FUTURE direct client query, but service_role always bypasses RLS regardless, so these functions' own explicit filters are still what scopes their
+  results today. A deliberate choice to avoid introducing an auth pattern nothing else in this repo uses, not an oversight.
 
 ## Not covered here
 
-- Dial loop, AMD, batching, and the `call_logs` table → `.brain/domains/dialer.md`
-- Telnyx webhook ingress and signature handling → `.brain/domains/telephony.md`
+- Dial loop, AMD, batching, and the `call_legs`/`dial_sessions` state machine → `.brain/domains/dialer.md`
+- The disposition list and `submit_disposition`'s effects → `.brain/domains/dispositions.md`
 - Auth, `getUserFromRequest()`, and RLS conventions → `.brain/domains/auth.md`
 
 ## Unverified
 
-- That `call_events` was *intended* to be written by the Telnyx webhook is inferred from the migration's comments (`:1`, `:24`, `:29`) and the unique index on `telnyx_call_session_id`
-  (`:18`). No such writer exists in this repo, and no record in `.brain/memory/` was consulted to confirm the intent.
-- Whether a deployed environment holds `call_events` rows from an out-of-repo source (manual SQL, a prior branch) was not checked — only this repository was.
+- A live browser render check of Dashboard/Analytics against real seeded data was not done this
+  task (skipped as not cheap given session time constraints, not because it was judged
+  unnecessary) — `npm run build`'s clean `tsc --noEmit` plus the SQL test suite's metric-math
+  positive control are what's actually been verified. NEEDS-LIVE-VERIFY.
+- Whether `analytics-summary`'s period-over-period deltas feel right on a real, noisy dataset
+  (small-number percentage swings can look dramatic) was not checked against real data — only
+  the arithmetic itself (`pctChange`) was reasoned through, not empirically observed.

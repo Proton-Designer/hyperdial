@@ -61,23 +61,24 @@ Deno.serve(async (req) => {
       );
     }
 
+    // TASK-P4-P1: call_leg_analytics (real call_legs/dial_sessions data) replaces call_events,
+    // which nothing in this repo writes.
     const { data: rows } = await supabase
-      .from('call_events')
-      .select('outcome, duration_seconds')
+      .from('call_leg_analytics')
+      .select('is_connected, duration_seconds')
       .eq('org_id', orgId)
-      .eq('user_id', user.id)
-      .eq('direction', 'outbound')
-      .gte('started_at', start)
-      .lte('started_at', end);
+      .eq('agent_id', user.id)
+      .gte('created_at', start)
+      .lte('created_at', end);
 
     const list = rows ?? [];
     const calls = list.length;
-    const answered = list.filter((r: { outcome: string }) => r.outcome === 'answered').length;
+    const answered = list.filter((r: { is_connected: boolean }) => r.is_connected).length;
     const connectRate = calls > 0 ? Math.round((answered / calls) * 1000) / 10 : 0;
     const talkTimeSeconds = list
-      .filter((r: { outcome: string }) => r.outcome === 'answered')
+      .filter((r: { is_connected: boolean }) => r.is_connected)
       .reduce(
-        (sum: number, r: { duration_seconds?: number }) => sum + (r.duration_seconds ?? 0),
+        (sum: number, r: { duration_seconds: number | null }) => sum + (r.duration_seconds ?? 0),
         0
       );
     const hours = Math.floor(talkTimeSeconds / 3600);

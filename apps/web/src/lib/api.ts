@@ -182,6 +182,68 @@ export async function getTeamPerformanceChart(
   return (data.data ?? []) as TeamPerformancePoint[];
 }
 
+// --- Analytics (TASK-P4-P1, design §8 Phase 4) ---
+
+export interface AnalyticsTotals {
+  totalCalls: number;
+  totalCallsChangePct: number | null;
+  connectRate: number;
+  connectRateChangePct: number | null;
+  talkTimeSeconds: number;
+  talkTimeFormatted: string;
+  talkTimeChangePct: number | null;
+  /** Connected calls / total agent-hours dialed (CLAUDE.md's north-star metric). Null when there
+   *  is no ended dial session in range to compute a denominator from yet. */
+  conversationsPerAgentHour: number | null;
+  conversationsPerAgentHourChangePct: number | null;
+}
+
+export interface AnalyticsCallVolumePoint {
+  day: string;
+  date: string;
+  calls: number;
+  connections: number;
+  voicemails: number;
+}
+
+export interface AnalyticsDispositionSlice {
+  name: string;
+  value: number;
+}
+
+export interface AnalyticsAgentRow {
+  agentId: string;
+  name: string;
+  calls: number;
+  connections: number;
+  rate: number;
+}
+
+export interface AnalyticsSummary {
+  totals: AnalyticsTotals;
+  callVolumeData: AnalyticsCallVolumePoint[];
+  dispositionBreakdown: AnalyticsDispositionSlice[];
+  /** Every agent in the org for owner/admin; a single self-row for an agent (design §2). */
+  agentPerformance: AnalyticsAgentRow[];
+}
+
+export async function getAnalyticsSummary(
+  range: '7d' | '30d' | 'custom',
+  customStart?: string,
+  customEnd?: string
+): Promise<AnalyticsSummary> {
+  const params = new URLSearchParams({ range });
+  if (range === 'custom' && customStart) params.set('custom_start', customStart);
+  if (range === 'custom' && customEnd) params.set('custom_end', customEnd);
+  const res = await fetch(`${getFunctionsUrl()}/analytics-summary?${params}`, {
+    method: 'GET',
+    headers: await getEdgeFunctionHeaders(),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Failed to load analytics summary');
+  return data as AnalyticsSummary;
+}
+
 export interface UserPreferences {
   team_performance_range?: '7d' | '30d' | 'custom';
   custom_start?: string;
