@@ -120,7 +120,6 @@ are the deliberate exceptions: personal, not org-shared (see `20260924000300`'s 
 | `campaign_leads` | SELECT: owner/admin see all, agent sees only leads on a campaign they're assigned to (`campaign_agents`). INSERT `has_org_role([owner,admin])` **and** both `campaign_id` and `contact_id` verified to belong to the same `org_id` — fixes the auth.md finding that the old policy only checked campaign ownership, never the contact's. UPDATE/DELETE `has_org_role([owner,admin])`. |
 | `contacts` | SELECT/UPDATE: owner/admin see and edit all; agent sees/edits only contacts reachable through an assigned campaign (`campaign_agents` → `campaign_leads`). **The agent UPDATE is full-row, not DNC-scoped — there is no `dnc` column yet.** See known-issues #7. INSERT/DELETE `has_org_role([owner,admin])`. |
 | `user_phone_numbers` | SELECT `is_org_member` (any role, to pick a caller ID); INSERT/UPDATE/DELETE `has_org_role([owner,admin])`. |
-| `call_events` | SELECT: owner/admin see all; agent sees only their own (`user_id = auth.uid()`). **`org_id` is nullable** (mirrors `user_id`, see `mem.decisions`). Writes stay service-role only. |
 | `notifications` | Unchanged: SELECT/UPDATE `user_id = auth.uid()`. Personal, not org-scoped even though `org_id` was added to the table (FK/cascade hygiene only). |
 | `user_preferences` | Unchanged: SELECT/INSERT/UPDATE `auth.uid() = user_id`. No `org_id` column — stays per-user. |
 | `dialer_sessions` | SELECT: owner/admin see all; agent sees only their own. All writes via Edge Functions. |
@@ -134,7 +133,6 @@ are the deliberate exceptions: personal, not org-shared (see `20260924000300`'s 
 - **`getUserFromRequest` round-trips to GoTrue every request** (`:20-27`), adding auth latency on the dial loop's critical path.
 - **Service-role clients bypass RLS entirely** — the guard is hand-written scoping, and omitting it is a silent cross-tenant read with no second layer to catch it.
 - **`notifications` UPDATE has `USING` but no `WITH CHECK`; verified fine** (Postgres falls back to `USING`). No INSERT policy by design — writes come only from `ensure-week-summary`'s service-role client.
-- **`call_events.user_id` is nullable** (`20250213000001:4`); a null-`user_id` row is invisible to everyone, not a leak, but orphaned and unreachable.
 - **`Access-Control-Allow-Origin: '*'`** (`supabase/functions/_shared/cors.ts:2`) — safe only because identity is a bearer token, not a cookie.
 - **Email confirmation is off; password floor is 6 characters** (`supabase/config.toml:210`, `:175`) and the strength meter never blocks a weak one — anyone can create an account and immediately dial.
 - **`raw_user_meta_data` is user-writable via the client SDK** — display-only, never an input to an authorization decision.

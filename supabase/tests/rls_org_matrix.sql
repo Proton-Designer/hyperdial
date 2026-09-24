@@ -114,8 +114,10 @@ insert into public.dialer_sessions (id, org_id, user_id, campaign_id)
   values ('9c1f7a11-a005-4000-8000-00000000000a', :'org_a', '9c1f7a11-a000-4000-8000-00000000000a', '9c1f7a11-a002-4000-8000-00000000000a');
 insert into public.call_logs (id, org_id, user_id, campaign_id, contact_id, call_control_id)
   values ('9c1f7a11-a006-4000-8000-00000000000a', :'org_a', '9c1f7a11-a000-4000-8000-00000000000a', '9c1f7a11-a002-4000-8000-00000000000a', '9c1f7a11-a001-4000-8000-00000000000a', 'cc-a');
-insert into public.call_events (id, org_id, user_id, telnyx_call_session_id, direction, from_number, to_number, started_at)
-  values ('9c1f7a11-a007-4000-8000-00000000000a', :'org_a', '9c1f7a11-a000-4000-8000-00000000000a', 'sess-a', 'outbound', '+15550001111', '+15551110001', now());
+-- call_events itself was dropped in TASK-P4-P2 (20260924002500) -- nothing reads or writes it
+-- anymore (TASK-P4-P1 moved analytics onto call_leg_analytics/dial_session_hours instead), so
+-- its fixture row and the 3 assertions that used to reference it were removed from this file in
+-- the same commit as the drop, rather than left pointing at a table that no longer exists.
 
 -- Business data: org B (owned by owner-b, unrelated to org A)
 
@@ -141,7 +143,6 @@ select public._test_expect_count('user_phone_numbers/owner-a sees number A', 'se
 select public._test_expect_count('notifications/owner-a sees own notification', 'select count(*) from public.notifications where id = ''9c1f7a11-a004-4000-8000-00000000000a''', 1);
 select public._test_expect_count('dialer_sessions/owner-a sees org session (owner)', 'select count(*) from public.dialer_sessions where id = ''9c1f7a11-a005-4000-8000-00000000000a''', 1);
 select public._test_expect_count('call_logs/owner-a sees org call (owner)', 'select count(*) from public.call_logs where id = ''9c1f7a11-a006-4000-8000-00000000000a''', 1);
-select public._test_expect_count('call_events/owner-a sees org event (owner)', 'select count(*) from public.call_events where id = ''9c1f7a11-a007-4000-8000-00000000000a''', 1);
 select public._test_expect_count('orgs/owner-a sees own org', format('select count(*) from public.orgs where id = %L', :'org_a'), 1);
 select public._test_expect_count('org_members/owner-a sees full roster', format('select count(*) from public.org_members where org_id = %L', :'org_a'), 3);
 
@@ -162,7 +163,6 @@ select public._test_expect_count('contacts/agent-a sees contact A (assigned via 
 select public._test_expect_count('campaign_leads/agent-a sees lead A (assigned campaign)', 'select count(*) from public.campaign_leads where campaign_id = ''9c1f7a11-a002-4000-8000-00000000000a''', 1);
 select public._test_expect_count('dialer_sessions/agent-a does NOT see owner-a''s session (agent = own only)', 'select count(*) from public.dialer_sessions where id = ''9c1f7a11-a005-4000-8000-00000000000a''', 0);
 select public._test_expect_count('call_logs/agent-a does NOT see owner-a''s call (agent = own only)', 'select count(*) from public.call_logs where id = ''9c1f7a11-a006-4000-8000-00000000000a''', 0);
-select public._test_expect_count('call_events/agent-a does NOT see owner-a''s event (agent = own only)', 'select count(*) from public.call_events where id = ''9c1f7a11-a007-4000-8000-00000000000a''', 0);
 select public._test_expect_count('org_members/agent-a sees full roster (member visibility, not role-gated)', format('select count(*) from public.org_members where org_id = %L', :'org_a'), 3);
 
 -- Negative cases: owner-b, an unrelated org, must see none of org A's rows.
@@ -176,7 +176,6 @@ select public._test_expect_count('campaign_agents/owner-b does NOT see assignmen
 select public._test_expect_count('user_phone_numbers/owner-b does NOT see number A', 'select count(*) from public.user_phone_numbers where id = ''9c1f7a11-a003-4000-8000-00000000000a''', 0);
 select public._test_expect_count('dialer_sessions/owner-b does NOT see session A', 'select count(*) from public.dialer_sessions where id = ''9c1f7a11-a005-4000-8000-00000000000a''', 0);
 select public._test_expect_count('call_logs/owner-b does NOT see call A', 'select count(*) from public.call_logs where id = ''9c1f7a11-a006-4000-8000-00000000000a''', 0);
-select public._test_expect_count('call_events/owner-b does NOT see event A', 'select count(*) from public.call_events where id = ''9c1f7a11-a007-4000-8000-00000000000a''', 0);
 select public._test_expect_count('orgs/owner-b does NOT see org A', format('select count(*) from public.orgs where id = %L', :'org_a'), 0);
 select public._test_expect_count('org_members/owner-b does NOT see org A roster', format('select count(*) from public.org_members where org_id = %L', :'org_a'), 0);
 select public._test_expect_count('profiles/owner-b does NOT see owner-a''s profile', 'select count(*) from public.profiles where user_id = ''9c1f7a11-a000-4000-8000-00000000000a''', 0);

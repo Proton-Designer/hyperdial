@@ -43,7 +43,7 @@ mock data, no empty-by-construction tables, as of TASK-P4-P1.
 | `call_leg_analytics` | A `security_invoker` view over `call_legs` (kind='contact') joined to `dial_sessions` (for `agent_id`) and `dispositions`. Every analytics query reads this now, not `call_events`. |
 | `dial_session_hours` | A `security_invoker` view: one row per dial session, `session_hours` = wall-clock `ended_at - started_at`, null while a session is still running. The agent-hours denominator for the north-star metric. |
 | Conversations / agent-hour | `count(is_connected) / sum(session_hours)` over a date range — the literal north-star metric. **Approximation**: `session_hours` is the WHOLE session span, including any paused/wrap_up time within it — there's no per-state-transition duration log to subtract that out precisely. |
-| `call_events` | The OLD analytics table. Still exists, still empty, **nothing reads it anymore as of this task** — not deleted here (that's Phase 4's own later "remove call_events" line item). |
+| `call_events` | The OLD analytics table. **Dropped in TASK-P4-P2** (`20260924002500`) — it never appears in `\d` output on a schema built after that migration; mentioned here only for history. |
 
 ## Where the code lives
 
@@ -58,7 +58,7 @@ mock data, no empty-by-construction tables, as of TASK-P4-P1.
 | **Real** Analytics UI | `apps/web/src/components/Analytics.tsx` | Full rewrite — real data, loading + empty states, a 7d/30d toggle |
 | Client contract | `apps/web/src/lib/api.ts` | `DashboardStats`/`TeamPerformancePoint` unchanged; `AnalyticsSummary` new |
 | Notification bell | `apps/web/src/components/TopNavigation.tsx` | Unchanged |
-| Schema + RLS | `supabase/migrations/20250213000001_create_call_events_and_notifications.sql` | `notifications`/`user_preferences` (still relevant); `call_events` (now unread) |
+| Schema + RLS | `supabase/migrations/20250213000001_create_call_events_and_notifications.sql` | `notifications`/`user_preferences` still relevant; the `call_events` half of this file is dropped as of `20260924002500` |
 
 ## How it works
 
@@ -85,8 +85,8 @@ mock data, no empty-by-construction tables, as of TASK-P4-P1.
 - **`analytics-summary`'s agent leaderboard is a single row for an agent role** (their own numbers only), a full ranked list for owner/admin — design §2's permission matrix, same split
   `team-performance` already used.
 - **Everything is still UTC-bucketed** (unchanged from before this task) — a UTC-8 agent's evening calls land on tomorrow's bucket.
-- **`call_events` still exists and is still empty** — nothing in this repo writes OR reads it anymore as of this task. Deleting the table itself is a separate, later Phase-4 cleanup item (design
-  §8's own "remove Redis and call_events" line), out of this task's scope.
+- **`call_events` is gone** (`20260924002500`, TASK-P4-P2) — a schema built from these migrations never has it. Redis itself is a separate, still-open Phase-4 line item (design §8's "remove
+  Redis and call_events") — `_shared/redis.ts` still exists, untouched by this task.
 - **`notifications` has no INSERT policy at all**, and its UPDATE policy has no `WITH CHECK` — unchanged pre-existing behavior, not touched by this task.
 - **The three edge functions still use `requireOrgRole` + a service-role client + explicit `org_id`/`agent_id` filters**, not a new user-JWT-forwarded PostgREST client — `security_invoker` on
   the two views makes them RLS-correct for a FUTURE direct client query, but service_role always bypasses RLS regardless, so these functions' own explicit filters are still what scopes their
