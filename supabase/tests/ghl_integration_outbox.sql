@@ -187,6 +187,37 @@ select public._test_expect_count('org_integrations_status: org B owner sees none
 
 reset role;
 
+-- TASK-P3-P3: claim_crm_sync_jobs' lease reclaim (20260924002100). A job stuck in 'running'
+-- for over 10 minutes (its worker crashed/timed out before calling complete/fail) is reclaimed
+-- as a failed attempt; one still within the lease window is left alone; one already at
+-- attempts=7 goes straight to 'dead' instead of being requeued for a 9th try.
+
+insert into public.crm_sync_jobs (id, org_id, provider, kind, payload, status, updated_at)
+values ('9c1fb000-a000-4000-8000-000000000001', :'org_a', 'ghl', 'contact_upsert', '{}'::jsonb, 'running', now() - interval '15 minutes');
+insert into public.crm_sync_jobs (id, org_id, provider, kind, payload, status, updated_at)
+values ('9c1fb000-a000-4000-8000-000000000002', :'org_a', 'ghl', 'contact_upsert', '{}'::jsonb, 'running', now() - interval '2 minutes');
+insert into public.crm_sync_jobs (id, org_id, provider, kind, payload, status, updated_at, attempts)
+values ('9c1fb000-a000-4000-8000-000000000003', :'org_a', 'ghl', 'contact_upsert', '{}'::jsonb, 'running', now() - interval '15 minutes', 7);
+
+select public.claim_crm_sync_jobs(10);
+
+select public._test_expect_eq('lease: a job stuck >10min is reclaimed to queued',
+  (select status from public.crm_sync_jobs where id = '9c1fb000-a000-4000-8000-000000000001'), 'queued');
+select public._test_expect_count('lease: the reclaim counts as an attempt',
+  $q$select count(*) from public.crm_sync_jobs where id = '9c1fb000-a000-4000-8000-000000000001' and attempts = 1$q$, 1);
+select public._test_expect_count('lease: reclaimed job is not itself re-claimed by the same call (backoff pushed next_run_at into the future)',
+  $q$select count(*) from public.crm_sync_jobs where id = '9c1fb000-a000-4000-8000-000000000001' and next_run_at > now()$q$, 1);
+
+select public._test_expect_eq('lease: a job stuck <10min is left alone',
+  (select status from public.crm_sync_jobs where id = '9c1fb000-a000-4000-8000-000000000002'), 'running');
+select public._test_expect_count('lease: the untouched job keeps attempts=0',
+  $q$select count(*) from public.crm_sync_jobs where id = '9c1fb000-a000-4000-8000-000000000002' and attempts = 0$q$, 1);
+
+select public._test_expect_eq('lease: a stuck job already at attempts=7 goes straight to dead, not a 9th queued attempt',
+  (select status from public.crm_sync_jobs where id = '9c1fb000-a000-4000-8000-000000000003'), 'dead');
+select public._test_expect_count('lease: the dead job stops at attempts=8',
+  $q$select count(*) from public.crm_sync_jobs where id = '9c1fb000-a000-4000-8000-000000000003' and attempts = 8$q$, 1);
+
 do $$ begin raise notice 'ALL GHL INTEGRATION / OUTBOX ASSERTIONS PASSED'; end $$;
 
 rollback;

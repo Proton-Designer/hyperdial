@@ -13,6 +13,10 @@ set -euo pipefail
 DB="postgresql://postgres:postgres@127.0.0.1:54322/postgres"
 
 echo "[crm-sync-concurrency] seeding fixture"
+# psql -t -A still prints the "INSERT 0 1" command tag on its own line after a RETURNING
+# value (confirmed live -- -t only suppresses column headers/row-count footers for a SELECT,
+# not a DML command tag), so a bare $(psql ...) capture picks up both lines. Filter to the
+# UUID-shaped line specifically, same technique the claim-set comparison below already uses.
 OWNER_ID=$(psql "$DB" -t -A -c "
   insert into auth.users (instance_id, id, aud, role, email, encrypted_password, email_confirmed_at,
     raw_app_meta_data, raw_user_meta_data, created_at, updated_at, confirmation_token, recovery_token,
@@ -22,15 +26,30 @@ OWNER_ID=$(psql "$DB" -t -A -c "
     'crm-concurrency-test@example.com', crypt('x', gen_salt('bf')), now(), '{}', '{}', now(), now(),
     '', '', '', '', '', '', '', '', false, false)
   returning id;
-")
-ORG_ID=$(psql "$DB" -t -A -c "select active_org_id from public.profiles where user_id = '$OWNER_ID';")
+" | grep -E '^[0-9a-f-]{36}$')
+if [ -z "$OWNER_ID" ]; then
+  echo "[crm-sync-concurrency] FAIL: could not create the fixture owner user"
+  exit 1
+fi
 
+# Registered as soon as OWNER_ID exists, not after every later step -- so a failure anywhere
+# below (including the org lookup on the very next line) still cleans up the user/org instead
+# of leaking a fixture row into the shared local DB (found live: an earlier version of this
+# script left exactly that behind after an unrelated bug aborted it mid-run).
 cleanup() {
   echo "[crm-sync-concurrency] cleanup"
-  psql "$DB" -t -A -c "delete from public.orgs where id = '$ORG_ID';" >/dev/null || true
+  if [ -n "${ORG_ID:-}" ]; then
+    psql "$DB" -t -A -c "delete from public.orgs where id = '$ORG_ID';" >/dev/null || true
+  fi
   psql "$DB" -t -A -c "delete from auth.users where id = '$OWNER_ID';" >/dev/null || true
 }
 trap cleanup EXIT
+
+ORG_ID=$(psql "$DB" -t -A -c "select active_org_id from public.profiles where user_id = '$OWNER_ID';" | grep -E '^[0-9a-f-]{36}$')
+if [ -z "$ORG_ID" ]; then
+  echo "[crm-sync-concurrency] FAIL: profiles.active_org_id was not auto-provisioned for the owner user"
+  exit 1
+fi
 
 psql "$DB" -t -A -c "
   insert into public.crm_sync_jobs (org_id, provider, kind, payload)

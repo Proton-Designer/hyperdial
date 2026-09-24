@@ -11,6 +11,7 @@
  * the exponential backoff, so a retry never redoes a step that already succeeded.
  */
 import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2';
+import { timingSafeEqual } from 'jsr:@std/crypto@1/timing-safe-equal';
 import { corsHeaders, corsPreflightResponse } from '../_shared/cors.ts';
 import { createGhlClient, type GhlClient } from '../_shared/ghl-client.ts';
 import {
@@ -32,6 +33,18 @@ function jsonResponse(body: unknown, status = 200): Response {
 
 function getSupabaseAdmin() {
   return createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
+}
+
+/** A plain `===` on the raw secret leaks its length/prefix through response-time differences
+ *  (a timing side channel) -- compare bytes in constant time instead (TASK-P3-P3, caught in
+ *  review). Different lengths short-circuit to false immediately, which is fine: the secret's
+ *  length isn't itself a secret, only its exact content is. */
+function secretsMatch(a: string, b: string): boolean {
+  const enc = new TextEncoder();
+  const aBytes = enc.encode(a);
+  const bBytes = enc.encode(b);
+  if (aBytes.length !== bBytes.length) return false;
+  return timingSafeEqual(aBytes, bBytes);
 }
 
 interface CrmSyncJobRow {
@@ -167,7 +180,7 @@ Deno.serve(async (req: Request) => {
   const providedSecret = req.headers.get('X-Cron-Secret');
   // Fail closed: an unset expectedSecret never means "allow everything" (known-issues #0's
   // lesson from the Telnyx webhook applies here too) -- both must be present and equal.
-  if (!expectedSecret || !providedSecret || providedSecret !== expectedSecret) {
+  if (!expectedSecret || !providedSecret || !secretsMatch(providedSecret, expectedSecret)) {
     return jsonResponse({ error: 'Unauthorized' }, 401);
   }
 
