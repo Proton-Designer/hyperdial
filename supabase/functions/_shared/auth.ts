@@ -3,6 +3,8 @@ import { corsHeaders } from './cors.ts';
 
 export type OrgRole = 'owner' | 'admin' | 'agent';
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export async function getUserFromRequest(
   req: Request
 ): Promise<{ user: { id: string }; error: Response | null }> {
@@ -103,6 +105,12 @@ export async function requireOrgRole(
 
   if (!orgId) {
     return { user: null, orgId: null, role: null, error: jsonError(400, 'No org selected') };
+  }
+  // A malformed X-Org-Id used to reach the org_members query below, where Postgres's own "invalid
+  // input syntax for type uuid" surfaced as membershipError -> a 500, not a 400. profiles.active_org_id
+  // is always a real uuid (it's a DB column), so this only ever rejects a bad header value.
+  if (!UUID_RE.test(orgId)) {
+    return { user: null, orgId: null, role: null, error: jsonError(400, 'Invalid org id') };
   }
 
   const { data: membership, error: membershipError } = await supabase
