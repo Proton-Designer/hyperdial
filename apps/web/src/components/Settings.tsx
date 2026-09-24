@@ -15,6 +15,10 @@ import {
   UserX,
   UserCheck,
   Mail,
+  ListChecks,
+  Plus,
+  Pencil,
+  X,
 } from 'lucide-react';
 import { usePhoneNumbers } from '@/contexts/PhoneNumbersContext';
 import { useAuth } from '@/contexts/AuthContext';
@@ -37,13 +41,19 @@ import {
   getTelnyxConnectionStatus,
   connectTelnyx,
   disconnectTelnyx,
+  listDispositions,
+  createDisposition,
+  updateDisposition,
+  deleteDisposition,
   type OrgMember,
   type GhlIntegrationStatus,
   type CrmSyncJob,
   type TelnyxConnectionStatus,
+  type Disposition,
+  type DispositionLeadEffect,
 } from '@/lib/api';
 
-type SettingsTab = 'profile' | 'phone' | 'team' | 'integrations' | 'security';
+type SettingsTab = 'profile' | 'phone' | 'team' | 'integrations' | 'dispositions' | 'security';
 
 function ProfileTab() {
   const { user } = useAuth();
@@ -651,6 +661,330 @@ function SyncStatusList() {
   );
 }
 
+const LEAD_EFFECT_LABEL: Record<DispositionLeadEffect, string> = {
+  completed: 'Completed',
+  callback: 'Callback',
+  exhausted: 'Exhausted',
+  dnc: 'Do not call',
+  queued: 'Requeue (+1 attempt)',
+};
+
+/** Settings -> Dispositions editor (TASK-P3-E1, design §5), admin+ only. A simple list edit per
+ *  the task spec: `key`/`lead_effect` are fixed at creation (see api.ts's UpdateDispositionInput
+ *  comment for why) -- editing here covers label/GHL tag/task-creation/sort/active. The mandatory
+ *  wrap-up form (E4, not built yet) is the other consumer of this table; nothing here depends on
+ *  it landing. */
+function DispositionsTab() {
+  const { role } = useOrg();
+  const isAdmin = role === 'owner' || role === 'admin';
+
+  const [dispositions, setDispositions] = useState<Disposition[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [savingId, setSavingId] = useState<string | null>(null);
+  const [showCreate, setShowCreate] = useState(false);
+  const [creating, setCreating] = useState(false);
+
+  const [newKey, setNewKey] = useState('');
+  const [newLabel, setNewLabel] = useState('');
+  const [newLeadEffect, setNewLeadEffect] = useState<DispositionLeadEffect>('completed');
+  const [newGhlTag, setNewGhlTag] = useState('');
+  const [newCreatesTask, setNewCreatesTask] = useState(false);
+
+  const [editLabel, setEditLabel] = useState('');
+  const [editGhlTag, setEditGhlTag] = useState('');
+  const [editCreatesTask, setEditCreatesTask] = useState(false);
+
+  const load = useCallback(() => {
+    setLoading(true);
+    listDispositions()
+      .then(setDispositions)
+      .catch((e) => setError(String(e)))
+      .finally(() => setLoading(false));
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const startEdit = (d: Disposition) => {
+    setEditingId(d.id);
+    setEditLabel(d.label);
+    setEditGhlTag(d.ghl_tag ?? '');
+    setEditCreatesTask(d.creates_task);
+  };
+
+  const saveEdit = async (id: string) => {
+    setSavingId(id);
+    setError(null);
+    try {
+      await updateDisposition(id, {
+        label: editLabel.trim(),
+        ghl_tag: editGhlTag.trim() || null,
+        creates_task: editCreatesTask,
+      });
+      setEditingId(null);
+      load();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setSavingId(null);
+    }
+  };
+
+  const toggleActive = async (d: Disposition) => {
+    setSavingId(d.id);
+    setError(null);
+    try {
+      await updateDisposition(d.id, { active: !d.active });
+      load();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setSavingId(null);
+    }
+  };
+
+  const handleDelete = async (d: Disposition) => {
+    setSavingId(d.id);
+    setError(null);
+    try {
+      await deleteDisposition(d.id);
+      load();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setSavingId(null);
+    }
+  };
+
+  const handleCreate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setCreating(true);
+    setError(null);
+    try {
+      await createDisposition({
+        key: newKey.trim(),
+        label: newLabel.trim(),
+        lead_effect: newLeadEffect,
+        ghl_tag: newGhlTag.trim() || null,
+        creates_task: newCreatesTask,
+        sort: dispositions.length * 10 + 10,
+      });
+      setNewKey('');
+      setNewLabel('');
+      setNewLeadEffect('completed');
+      setNewGhlTag('');
+      setNewCreatesTask(false);
+      setShowCreate(false);
+      load();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  return (
+    <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
+      <h1 className="text-3xl font-bold text-white mb-2">Dispositions</h1>
+      <p className="text-[#B0BEC5] mb-8">
+        The outcomes agents choose after each call, and their effect on the lead and on GHL.
+      </p>
+
+      {error && (
+        <div className="mb-6 p-4 rounded-xl bg-red-500/10 border border-red-500/30 text-red-400 text-sm">
+          {error}
+        </div>
+      )}
+
+      {!isAdmin ? (
+        <p className="text-sm text-[#B0BEC5]">Only an owner or admin can manage dispositions.</p>
+      ) : loading ? (
+        <div className="flex items-center justify-center py-12">
+          <Loader2 className="w-8 h-8 text-[#00D9FF] animate-spin" />
+        </div>
+      ) : (
+        <div className="bg-[#1A2332]/60 backdrop-blur-xl rounded-2xl p-6 border border-white/5 max-w-2xl">
+          <div className="space-y-2 mb-4">
+            {dispositions.map((d) => (
+              <div key={d.id} className="py-3 border-b border-white/5 last:border-0">
+                {editingId === d.id ? (
+                  <div className="space-y-3">
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={editLabel}
+                        onChange={(e) => setEditLabel(e.target.value)}
+                        className="flex-1 bg-[#1E2A3A] border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-[#00D9FF]"
+                        placeholder="Label"
+                      />
+                      <input
+                        type="text"
+                        value={editGhlTag}
+                        onChange={(e) => setEditGhlTag(e.target.value)}
+                        className="flex-1 bg-[#1E2A3A] border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-[#00D9FF]"
+                        placeholder="GHL tag (optional)"
+                      />
+                    </div>
+                    <label className="flex items-center gap-2 text-sm text-[#B0BEC5]">
+                      <input
+                        type="checkbox"
+                        checked={editCreatesTask}
+                        onChange={(e) => setEditCreatesTask(e.target.checked)}
+                      />
+                      Creates a GHL task
+                    </label>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => saveEdit(d.id)}
+                        disabled={savingId === d.id}
+                        className="px-4 py-2 bg-gradient-to-r from-[#00D9FF] to-[#0066FF] rounded-lg text-white text-sm font-medium disabled:opacity-50 flex items-center gap-2"
+                      >
+                        {savingId === d.id && <Loader2 className="w-4 h-4 animate-spin" />}
+                        Save
+                      </button>
+                      <button
+                        onClick={() => setEditingId(null)}
+                        className="px-4 py-2 bg-white/5 border border-white/10 rounded-lg text-[#B0BEC5] text-sm"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <div
+                        className={`text-sm font-medium ${d.active ? 'text-white' : 'text-[#B0BEC5] line-through'}`}
+                      >
+                        {d.label}
+                      </div>
+                      <div className="text-xs text-[#B0BEC5] mt-0.5">
+                        {LEAD_EFFECT_LABEL[d.lead_effect]}
+                        {d.ghl_tag ? ` · GHL tag "${d.ghl_tag}"` : ' · no GHL tag'}
+                        {d.creates_task ? ' · creates task' : ''}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      <button
+                        onClick={() => toggleActive(d)}
+                        disabled={savingId === d.id}
+                        className={`px-2.5 py-1 rounded-full text-xs border disabled:opacity-50 ${
+                          d.active
+                            ? 'bg-[#00E676]/10 text-[#00E676] border-[#00E676]/20'
+                            : 'bg-white/5 text-[#B0BEC5] border-white/10'
+                        }`}
+                      >
+                        {d.active ? 'Active' : 'Inactive'}
+                      </button>
+                      <button
+                        onClick={() => startEdit(d)}
+                        className="p-1.5 text-[#B0BEC5] hover:text-white"
+                        title="Edit"
+                      >
+                        <Pencil className="w-4 h-4" />
+                      </button>
+                      <button
+                        onClick={() => handleDelete(d)}
+                        disabled={savingId === d.id}
+                        className="p-1.5 text-[#B0BEC5] hover:text-red-400 disabled:opacity-50"
+                        title="Delete"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+
+          {showCreate ? (
+            <form onSubmit={handleCreate} className="space-y-3 pt-4 border-t border-white/5">
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={newKey}
+                  onChange={(e) => setNewKey(e.target.value)}
+                  required
+                  pattern="[a-z0-9_]+"
+                  title="lowercase letters, numbers and underscores only"
+                  className="flex-1 bg-[#1E2A3A] border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-[#00D9FF]"
+                  placeholder="key (e.g. not_home)"
+                />
+                <input
+                  type="text"
+                  value={newLabel}
+                  onChange={(e) => setNewLabel(e.target.value)}
+                  required
+                  className="flex-1 bg-[#1E2A3A] border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-[#00D9FF]"
+                  placeholder="Label shown to agents"
+                />
+              </div>
+              <div className="flex gap-2">
+                <select
+                  value={newLeadEffect}
+                  onChange={(e) => setNewLeadEffect(e.target.value as DispositionLeadEffect)}
+                  className="flex-1 bg-[#1E2A3A] border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-[#00D9FF]"
+                >
+                  {(Object.keys(LEAD_EFFECT_LABEL) as DispositionLeadEffect[]).map((k) => (
+                    <option key={k} value={k}>
+                      {LEAD_EFFECT_LABEL[k]}
+                    </option>
+                  ))}
+                </select>
+                <input
+                  type="text"
+                  value={newGhlTag}
+                  onChange={(e) => setNewGhlTag(e.target.value)}
+                  className="flex-1 bg-[#1E2A3A] border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-[#00D9FF]"
+                  placeholder="GHL tag (optional)"
+                />
+              </div>
+              <label className="flex items-center gap-2 text-sm text-[#B0BEC5]">
+                <input
+                  type="checkbox"
+                  checked={newCreatesTask}
+                  onChange={(e) => setNewCreatesTask(e.target.checked)}
+                />
+                Creates a GHL task (only meaningful for a "Callback"-style effect)
+              </label>
+              <div className="flex gap-2">
+                <button
+                  type="submit"
+                  disabled={creating}
+                  className="px-4 py-2 bg-gradient-to-r from-[#00D9FF] to-[#0066FF] rounded-lg text-white text-sm font-medium disabled:opacity-50 flex items-center gap-2"
+                >
+                  {creating && <Loader2 className="w-4 h-4 animate-spin" />}
+                  Add disposition
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowCreate(false)}
+                  className="px-4 py-2 bg-white/5 border border-white/10 rounded-lg text-[#B0BEC5] text-sm flex items-center gap-2"
+                >
+                  <X className="w-4 h-4" />
+                  Cancel
+                </button>
+              </div>
+            </form>
+          ) : (
+            <button
+              onClick={() => setShowCreate(true)}
+              className="mt-2 px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-[#B0BEC5] text-sm flex items-center gap-2"
+            >
+              <Plus className="w-4 h-4" />
+              Add disposition
+            </button>
+          )}
+        </div>
+      )}
+    </motion.div>
+  );
+}
+
 export function Settings() {
   const {
     numbers: phoneNumbers,
@@ -734,13 +1068,19 @@ export function Settings() {
     ...(!isAgent ? [{ id: 'phone' as SettingsTab, label: 'Telephony', icon: Phone }] : []),
     ...(!isAgent ? [{ id: 'team' as SettingsTab, label: 'Team', icon: UsersIcon }] : []),
     ...(!isAgent ? [{ id: 'integrations' as SettingsTab, label: 'Integrations', icon: Zap }] : []),
+    ...(!isAgent
+      ? [{ id: 'dispositions' as SettingsTab, label: 'Dispositions', icon: ListChecks }]
+      : []),
     { id: 'security' as SettingsTab, label: 'Security', icon: Shield },
   ];
 
   useEffect(() => {
     if (
       isAgent &&
-      (activeTab === 'phone' || activeTab === 'team' || activeTab === 'integrations')
+      (activeTab === 'phone' ||
+        activeTab === 'team' ||
+        activeTab === 'integrations' ||
+        activeTab === 'dispositions')
     ) {
       setActiveTab('profile');
     }
@@ -1053,6 +1393,8 @@ export function Settings() {
               {activeTab === 'team' && !isAgent && <TeamTab />}
 
               {activeTab === 'integrations' && !isAgent && <IntegrationsTab />}
+
+              {activeTab === 'dispositions' && !isAgent && <DispositionsTab />}
 
               {activeTab === 'security' ? (
                 <motion.div

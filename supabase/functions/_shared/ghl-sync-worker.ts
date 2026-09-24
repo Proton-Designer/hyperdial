@@ -25,6 +25,15 @@ export interface DispositionPayload {
   disposition_label: string;
   notes: string | null;
   callback_at: string | null;
+  /** TASK-P3-E1: the org's per-disposition GHL tag (`dispositions.ghl_tag`), null for a
+   *  disposition design §5 marks note-only or no-GHL-effect (e.g. "Left voicemail", "No answer
+   *  (manual)") -- `processDispositionJob` skips the tag-add step entirely when this is null,
+   *  rather than falling back to `disposition_key` as an implicit tag. */
+  ghl_tag: string | null;
+  /** TASK-P3-E1: `dispositions.creates_task` -- only "Callback" is true by default. Gates the
+   *  task-creation step together with `callback_at` (a task with no due date isn't meaningful),
+   *  so a future org-customized disposition can't accidentally create a dateless task either. */
+  creates_task: boolean;
   agent_name: string;
   duration_seconds: number;
   recording_url: string | null;
@@ -116,12 +125,14 @@ export async function processDispositionJob(
     }
 
     if (!progress.tag_added) {
-      await args.client.addTags(ghlContactId, [args.payload.disposition_key]);
+      if (args.payload.ghl_tag) {
+        await args.client.addTags(ghlContactId, [args.payload.ghl_tag]);
+      }
       progress.tag_added = true;
     }
 
     if (!progress.task_created) {
-      if (args.payload.callback_at) {
+      if (args.payload.creates_task && args.payload.callback_at) {
         await args.client.createTask(ghlContactId, {
           title: `Callback: ${args.payload.disposition_label}`,
           dueDate: args.payload.callback_at,

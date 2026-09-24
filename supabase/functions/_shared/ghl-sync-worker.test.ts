@@ -21,6 +21,8 @@ const PAYLOAD: DispositionPayload = {
   disposition_label: 'Interested',
   notes: 'Wants a callback next week',
   callback_at: '2026-10-01T15:00:00.000Z',
+  ghl_tag: 'Interested',
+  creates_task: true,
   agent_name: 'Jane Agent',
   duration_seconds: 142,
   recording_url: 'https://example.com/rec/1',
@@ -210,6 +212,68 @@ Deno.test(
         ghlContactId: null,
         contactFields: { firstName: 'Alice', lastName: 'Doe', phone: '+14155552671' },
         payload: { ...PAYLOAD, callback_at: null },
+        progress: {},
+      });
+      assertEquals(result.ok, true);
+      assertEquals(result.progress.task_created, true);
+      assertEquals(
+        calls.some((c) => c.endsWith('/tasks')),
+        false
+      );
+    } finally {
+      restore();
+    }
+  }
+);
+
+Deno.test(
+  'processDispositionJob: null ghl_tag (TASK-P3-E1, e.g. "voicemail"/"no_answer") skips the tag step entirely but still marks it done',
+  async () => {
+    const calls: string[] = [];
+    const restore = stubFetch((url, init) => {
+      calls.push(`${init?.method ?? 'GET'} ${new URL(url).pathname}`);
+      if (url.includes('/contacts/upsert')) return Response.json({ contact: { id: 'ghl-1' } });
+      return Response.json({ id: 'ok' });
+    });
+    try {
+      const client: GhlClient = createGhlClient('tok');
+      const result = await processDispositionJob({
+        client,
+        locationId: 'loc-1',
+        ghlContactId: null,
+        contactFields: { firstName: 'Alice', lastName: 'Doe', phone: '+14155552671' },
+        payload: { ...PAYLOAD, ghl_tag: null },
+        progress: {},
+      });
+      assertEquals(result.ok, true);
+      assertEquals(result.progress.tag_added, true);
+      assertEquals(
+        calls.some((c) => c.endsWith('/tags')),
+        false
+      );
+    } finally {
+      restore();
+    }
+  }
+);
+
+Deno.test(
+  'processDispositionJob: creates_task=false (TASK-P3-E1) skips task creation even with a callback_at set',
+  async () => {
+    const calls: string[] = [];
+    const restore = stubFetch((url, init) => {
+      calls.push(`${init?.method ?? 'GET'} ${new URL(url).pathname}`);
+      if (url.includes('/contacts/upsert')) return Response.json({ contact: { id: 'ghl-1' } });
+      return Response.json({ id: 'ok' });
+    });
+    try {
+      const client: GhlClient = createGhlClient('tok');
+      const result = await processDispositionJob({
+        client,
+        locationId: 'loc-1',
+        ghlContactId: null,
+        contactFields: { firstName: 'Alice', lastName: 'Doe', phone: '+14155552671' },
+        payload: { ...PAYLOAD, creates_task: false },
         progress: {},
       });
       assertEquals(result.ok, true);

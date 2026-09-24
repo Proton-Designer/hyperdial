@@ -417,6 +417,15 @@ verify_jwt = false
 verify_jwt = false
 [functions.dialer-session-active]
 verify_jwt = false
+[functions.dialer-session-hangup-live]
+# Pre-existing gap, found while adding this task's own entry below: TASK-P2-E2 shipped this
+# function using the same custom-auth (getUserFromRequest) pattern as every other dialer-session-*
+# function but never added its config.toml entry -- a real deployed gateway would 401 it before
+# its own auth code ever runs, same class of bug as TASK-P3-P3's ghl-import/ghl-sync-worker gaps.
+# Fixed proactively in the same commit rather than filing it and moving on.
+verify_jwt = false
+[functions.dialer-session-disposition]
+verify_jwt = false
 
 [edge_runtime]
 enabled = true

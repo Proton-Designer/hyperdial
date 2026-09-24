@@ -1234,3 +1234,124 @@ export async function listCrmSyncJobs(): Promise<CrmSyncJob[]> {
   if (error) throw new Error(error.message);
   return (data ?? []) as CrmSyncJob[];
 }
+
+// --- Dispositions (TASK-P3-E1, design §5) ---
+
+export type DispositionLeadEffect = 'completed' | 'callback' | 'exhausted' | 'dnc' | 'queued';
+
+export interface Disposition {
+  id: string;
+  org_id: string;
+  key: string;
+  label: string;
+  lead_effect: DispositionLeadEffect;
+  ghl_tag: string | null;
+  creates_task: boolean;
+  sort: number;
+  active: boolean;
+}
+
+/** Every org's dispositions (including inactive ones -- the Settings editor lists both; the
+ *  wrap-up form, once E4 lands, filters to active=true itself). RLS scopes this to the caller's
+ *  own org regardless of the explicit .eq below (belt and suspenders, same as listCrmSyncJobs). */
+export async function listDispositions(): Promise<Disposition[]> {
+  const orgId = await getActiveOrgId();
+  const { data, error } = await supabase
+    .from('dispositions')
+    .select('id, org_id, key, label, lead_effect, ghl_tag, creates_task, sort, active')
+    .eq('org_id', orgId)
+    .order('sort', { ascending: true });
+  if (error) throw new Error(error.message);
+  return (data ?? []) as Disposition[];
+}
+
+export interface CreateDispositionInput {
+  key: string;
+  label: string;
+  lead_effect: DispositionLeadEffect;
+  ghl_tag?: string | null;
+  creates_task?: boolean;
+  sort?: number;
+}
+
+/** admin+ only (RLS-enforced) -- a straight insert through the `dispositions` table, no edge
+ *  function needed. "A simple list edit is fine" per the task spec. */
+export async function createDisposition(input: CreateDispositionInput): Promise<Disposition> {
+  const orgId = await getActiveOrgId();
+  const { data, error } = await supabase
+    .from('dispositions')
+    .insert({
+      org_id: orgId,
+      key: input.key,
+      label: input.label,
+      lead_effect: input.lead_effect,
+      ghl_tag: input.ghl_tag ?? null,
+      creates_task: input.creates_task ?? false,
+      sort: input.sort ?? 0,
+    })
+    .select('id, org_id, key, label, lead_effect, ghl_tag, creates_task, sort, active')
+    .single();
+  if (error) throw new Error(error.message);
+  return data as Disposition;
+}
+
+export interface UpdateDispositionInput {
+  label?: string;
+  ghl_tag?: string | null;
+  creates_task?: boolean;
+  sort?: number;
+  active?: boolean;
+}
+
+/** `key` and `lead_effect` are intentionally not editable here -- crm_sync_jobs payloads and any
+ *  already-submitted call_legs rows reference a disposition by id, but the GHL worker tags by
+ *  `ghl_tag` and the wrap-up form groups by `lead_effect`; changing either on an existing row
+ *  after it's been used would retroactively reinterpret past dispositions. Deactivate + create a
+ *  new one instead. */
+export async function updateDisposition(id: string, patch: UpdateDispositionInput): Promise<void> {
+  const { error } = await supabase.from('dispositions').update(patch).eq('id', id);
+  if (error) throw new Error(error.message);
+}
+
+export async function deleteDisposition(id: string): Promise<void> {
+  const { error } = await supabase.from('dispositions').delete().eq('id', id);
+  if (error) throw new Error(error.message);
+}
+
+export interface SubmitDispositionInput {
+  legId: string;
+  dispositionKey: string;
+  notes?: string;
+  /** ISO 8601. Required by the backend only when the chosen disposition's lead_effect is
+   *  'callback'; ignored otherwise. */
+  callbackAt?: string;
+}
+
+export interface SubmitDispositionResult {
+  sessionId: string;
+  alreadySubmitted: boolean;
+  /** How many new legs the post-submit refill dialed (0 is normal -- most refills find nothing
+   *  newly due, or the session already left 'dialing' again before this ran). */
+  dialed: number;
+}
+
+/** The mandatory wrap-up form (E4, components/dialer/**, not built yet as of this task) will
+ *  call this once submitted. Not used anywhere in the UI yet -- exported now so that work has
+ *  a typed contract to build against without touching this file again. */
+export async function submitDisposition(
+  input: SubmitDispositionInput
+): Promise<SubmitDispositionResult> {
+  const res = await fetch(`${getFunctionsUrl()}/dialer-session-disposition`, {
+    method: 'POST',
+    headers: await getEdgeFunctionHeaders(),
+    body: JSON.stringify({
+      legId: input.legId,
+      dispositionKey: input.dispositionKey,
+      notes: input.notes,
+      callbackAt: input.callbackAt,
+    }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Failed to submit disposition');
+  return data as SubmitDispositionResult;
+}
