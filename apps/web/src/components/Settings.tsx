@@ -33,8 +33,12 @@ import {
   getGhlIntegrationStatus,
   connectGhl,
   disconnectGhl,
+  getTelnyxConnectionStatus,
+  connectTelnyx,
+  disconnectTelnyx,
   type OrgMember,
   type GhlIntegrationStatus,
+  type TelnyxConnectionStatus,
 } from '@/lib/api';
 
 type SettingsTab = 'profile' | 'phone' | 'team' | 'integrations' | 'security';
@@ -598,6 +602,57 @@ export function Settings() {
   const [purchaseLoading, setPurchaseLoading] = useState<string | null>(null);
   const [phoneError, setPhoneError] = useState<string | null>(null);
 
+  const [telnyxStatus, setTelnyxStatus] = useState<TelnyxConnectionStatus | null>(null);
+  const [telnyxStatusLoading, setTelnyxStatusLoading] = useState(true);
+  const [telnyxError, setTelnyxError] = useState<string | null>(null);
+  const [telnyxApiKey, setTelnyxApiKey] = useState('');
+  const [telnyxWebhookPublicKey, setTelnyxWebhookPublicKey] = useState('');
+  const [telnyxConnecting, setTelnyxConnecting] = useState(false);
+  const [telnyxDisconnecting, setTelnyxDisconnecting] = useState(false);
+
+  const loadTelnyxStatus = useCallback(() => {
+    setTelnyxStatusLoading(true);
+    getTelnyxConnectionStatus()
+      .then(setTelnyxStatus)
+      .catch((e) => setTelnyxError(String(e)))
+      .finally(() => setTelnyxStatusLoading(false));
+  }, []);
+
+  useEffect(() => {
+    loadTelnyxStatus();
+  }, [loadTelnyxStatus]);
+
+  const handleConnectTelnyx = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setTelnyxConnecting(true);
+    setTelnyxError(null);
+    try {
+      await connectTelnyx(telnyxApiKey.trim(), telnyxWebhookPublicKey.trim());
+      setTelnyxApiKey('');
+      setTelnyxWebhookPublicKey('');
+      loadTelnyxStatus();
+    } catch (e) {
+      setTelnyxError(String(e));
+    } finally {
+      setTelnyxConnecting(false);
+    }
+  };
+
+  const handleDisconnectTelnyx = async () => {
+    setTelnyxDisconnecting(true);
+    setTelnyxError(null);
+    try {
+      await disconnectTelnyx();
+      loadTelnyxStatus();
+    } catch (e) {
+      setTelnyxError(String(e));
+    } finally {
+      setTelnyxDisconnecting(false);
+    }
+  };
+
+  const isTelnyxConnected = telnyxStatus?.status === 'connected';
+
   // Design §2: Team management and number purchase ("Buy or release numbers") are owner/admin
   // only. This is cosmetic tab-visibility narrowing -- org-members/org-invite-create/
   // user_phone_numbers RLS all independently reject an agent regardless of what this array
@@ -608,7 +663,7 @@ export function Settings() {
     // "Phone Numbers" mount point: eng2 owns the Telephony/BYO-Telnyx backend (org_telephony,
     // telnyx-connect/-disconnect) and is expected to extend this tab -- coordinate through this
     // task's log rather than restructuring it here.
-    ...(!isAgent ? [{ id: 'phone' as SettingsTab, label: 'Phone Numbers', icon: Phone }] : []),
+    ...(!isAgent ? [{ id: 'phone' as SettingsTab, label: 'Telephony', icon: Phone }] : []),
     ...(!isAgent ? [{ id: 'team' as SettingsTab, label: 'Team', icon: UsersIcon }] : []),
     ...(!isAgent ? [{ id: 'integrations' as SettingsTab, label: 'Integrations', icon: Zap }] : []),
     { id: 'security' as SettingsTab, label: 'Security', icon: Shield },
@@ -692,7 +747,108 @@ export function Settings() {
 
               {activeTab === 'phone' && !isAgent && (
                 <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
-                  <h1 className="text-3xl font-bold text-white mb-8">Phone Numbers</h1>
+                  <h1 className="text-3xl font-bold text-white mb-2">Telephony</h1>
+                  <p className="text-[#B0BEC5] mb-8">
+                    Connect your org's own Telnyx account, then buy and share phone numbers across
+                    the team.
+                  </p>
+
+                  {telnyxError && (
+                    <div className="mb-6 p-4 rounded-xl bg-red-500/10 border border-red-500/30 text-red-400 text-sm">
+                      {telnyxError}
+                    </div>
+                  )}
+
+                  {telnyxStatusLoading ? (
+                    <div className="flex items-center justify-center py-12">
+                      <Loader2 className="w-8 h-8 text-[#00D9FF] animate-spin" />
+                    </div>
+                  ) : (
+                    <div className="bg-[#1A2332]/60 backdrop-blur-xl rounded-2xl p-6 border border-white/5 mb-8">
+                      <div className="flex items-center justify-between mb-4">
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-[#00D9FF] to-[#0066FF] flex items-center justify-center">
+                            <Phone className="w-5 h-5 text-white" />
+                          </div>
+                          <div>
+                            <div className="text-white font-medium">Telnyx</div>
+                            <div className="text-sm text-[#B0BEC5]">
+                              {isTelnyxConnected && telnyxStatus?.api_key_last4
+                                ? `Key ending in ${telnyxStatus.api_key_last4}`
+                                : 'Not connected'}
+                            </div>
+                          </div>
+                        </div>
+                        <span
+                          className={`px-2.5 py-1 rounded-full text-xs border ${
+                            isTelnyxConnected
+                              ? 'bg-[#00E676]/10 text-[#00E676] border-[#00E676]/20'
+                              : 'bg-white/5 text-[#B0BEC5] border-white/10'
+                          }`}
+                        >
+                          {isTelnyxConnected
+                            ? 'Connected'
+                            : telnyxStatus?.status === 'pending_verification'
+                              ? 'Pending'
+                              : 'Disconnected'}
+                        </span>
+                      </div>
+
+                      {role !== 'owner' ? (
+                        <p className="text-sm text-[#B0BEC5]">
+                          Only the org owner can connect or disconnect Telnyx.
+                        </p>
+                      ) : isTelnyxConnected ? (
+                        <button
+                          onClick={handleDisconnectTelnyx}
+                          disabled={telnyxDisconnecting}
+                          className="px-5 py-2.5 bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 rounded-xl text-red-400 text-sm font-medium disabled:opacity-50 flex items-center gap-2"
+                        >
+                          {telnyxDisconnecting && <Loader2 className="w-4 h-4 animate-spin" />}
+                          Disconnect
+                        </button>
+                      ) : (
+                        <form onSubmit={handleConnectTelnyx} className="space-y-4">
+                          <div>
+                            <label className="block text-sm text-[#B0BEC5] mb-2">
+                              Telnyx API Key
+                            </label>
+                            <input
+                              type="password"
+                              value={telnyxApiKey}
+                              onChange={(e) => setTelnyxApiKey(e.target.value)}
+                              required
+                              className="w-full bg-[#1E2A3A] border border-white/10 rounded-xl px-4 py-3 text-white placeholder-[#B0BEC5]/50 focus:outline-none focus:border-[#00D9FF]"
+                              placeholder="KEY..."
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-sm text-[#B0BEC5] mb-2">
+                              Webhook Public Key
+                            </label>
+                            <input
+                              type="text"
+                              value={telnyxWebhookPublicKey}
+                              onChange={(e) => setTelnyxWebhookPublicKey(e.target.value)}
+                              required
+                              className="w-full bg-[#1E2A3A] border border-white/10 rounded-xl px-4 py-3 text-white placeholder-[#B0BEC5]/50 focus:outline-none focus:border-[#00D9FF]"
+                              placeholder="From your Telnyx portal's public keys page"
+                            />
+                          </div>
+                          <button
+                            type="submit"
+                            disabled={telnyxConnecting}
+                            className="px-6 py-3 bg-gradient-to-r from-[#00D9FF] to-[#0066FF] rounded-xl text-white font-semibold disabled:opacity-50 flex items-center gap-2"
+                          >
+                            {telnyxConnecting && <Loader2 className="w-4 h-4 animate-spin" />}
+                            Connect Telnyx
+                          </button>
+                        </form>
+                      )}
+                    </div>
+                  )}
+
+                  <h2 className="text-xl font-bold text-white mb-4">Phone Numbers</h2>
 
                   {(phoneError || phoneNumbersError) && (
                     <div className="mb-6 p-4 rounded-xl bg-red-500/10 border border-red-500/30 text-red-400 text-sm">
@@ -738,71 +894,79 @@ export function Settings() {
                     )}
                   </div>
 
-                  <div className="bg-gradient-to-r from-[#0066FF]/10 to-[#00D9FF]/10 backdrop-blur-xl rounded-2xl p-8 border border-[#0066FF]/20">
-                    <h3 className="text-xl font-bold text-white mb-4">Purchase Numbers</h3>
-                    <p className="text-[#B0BEC5] mb-4">
-                      Search by area code (e.g. 415, 920) or leave blank to browse US numbers.
-                    </p>
-                    <div className="flex gap-2 mb-4">
-                      <input
-                        type="text"
-                        placeholder="Area code (e.g. 415) or leave blank"
-                        value={searchAreaCode}
-                        onChange={(e) =>
-                          setSearchAreaCode(e.target.value.replace(/\D/g, '').slice(0, 3))
-                        }
-                        className="flex-1 bg-[#1E2A3A] border border-white/10 rounded-xl px-4 py-3 text-white placeholder-[#B0BEC5]/50 focus:outline-none focus:border-[#00D9FF]"
-                      />
-                      <button
-                        onClick={handleSearchNumbers}
-                        disabled={searchLoading}
-                        className="px-6 py-3 bg-gradient-to-r from-[#00D9FF] to-[#0066FF] rounded-xl text-white font-semibold disabled:opacity-50 flex items-center gap-2"
-                      >
-                        {searchLoading ? (
-                          <Loader2 className="w-5 h-5 animate-spin" />
-                        ) : (
-                          <Search className="w-5 h-5" />
-                        )}
-                        Search
-                      </button>
+                  {!isTelnyxConnected ? (
+                    <div className="bg-gradient-to-r from-[#0066FF]/10 to-[#00D9FF]/10 backdrop-blur-xl rounded-2xl p-8 border border-[#0066FF]/20 text-center">
+                      <p className="text-[#B0BEC5]">
+                        Connect your org's Telnyx account above to search and purchase numbers.
+                      </p>
                     </div>
-                    {searchLoading && (
-                      <div className="py-4 text-center text-[#B0BEC5]">
-                        Searching Telnyx marketplace…
+                  ) : (
+                    <div className="bg-gradient-to-r from-[#0066FF]/10 to-[#00D9FF]/10 backdrop-blur-xl rounded-2xl p-8 border border-[#0066FF]/20">
+                      <h3 className="text-xl font-bold text-white mb-4">Purchase Numbers</h3>
+                      <p className="text-[#B0BEC5] mb-4">
+                        Search by area code (e.g. 415, 920) or leave blank to browse US numbers.
+                      </p>
+                      <div className="flex gap-2 mb-4">
+                        <input
+                          type="text"
+                          placeholder="Area code (e.g. 415) or leave blank"
+                          value={searchAreaCode}
+                          onChange={(e) =>
+                            setSearchAreaCode(e.target.value.replace(/\D/g, '').slice(0, 3))
+                          }
+                          className="flex-1 bg-[#1E2A3A] border border-white/10 rounded-xl px-4 py-3 text-white placeholder-[#B0BEC5]/50 focus:outline-none focus:border-[#00D9FF]"
+                        />
+                        <button
+                          onClick={handleSearchNumbers}
+                          disabled={searchLoading}
+                          className="px-6 py-3 bg-gradient-to-r from-[#00D9FF] to-[#0066FF] rounded-xl text-white font-semibold disabled:opacity-50 flex items-center gap-2"
+                        >
+                          {searchLoading ? (
+                            <Loader2 className="w-5 h-5 animate-spin" />
+                          ) : (
+                            <Search className="w-5 h-5" />
+                          )}
+                          Search
+                        </button>
                       </div>
-                    )}
-                    {searchAttempted && !searchLoading && searchResults.length === 0 && (
-                      <div className="py-4 text-center text-[#B0BEC5] text-sm">
-                        No numbers found for this area. Try a different area code or leave blank for
-                        US numbers.
-                      </div>
-                    )}
-                    {searchResults.length > 0 && (
-                      <div className="space-y-2 max-h-48 overflow-y-auto">
-                        {searchResults.map((n) => (
-                          <div
-                            key={n.phone_number}
-                            className="flex items-center justify-between p-3 bg-[#1E2A3A]/60 rounded-lg"
-                          >
-                            <span className="text-white font-medium">{n.phone_number}</span>
-                            <span className="text-[#B0BEC5] text-sm">
-                              {n.monthly_cost ? `$${n.monthly_cost}/mo` : ''}
-                            </span>
-                            <button
-                              onClick={() => handlePurchaseNumber(n.phone_number)}
-                              disabled={purchaseLoading === n.phone_number}
-                              className="px-4 py-2 bg-[#00E676]/20 hover:bg-[#00E676]/30 border border-[#00E676]/30 rounded-lg text-[#00E676] text-sm font-medium disabled:opacity-50 flex items-center gap-1"
+                      {searchLoading && (
+                        <div className="py-4 text-center text-[#B0BEC5]">
+                          Searching Telnyx marketplace…
+                        </div>
+                      )}
+                      {searchAttempted && !searchLoading && searchResults.length === 0 && (
+                        <div className="py-4 text-center text-[#B0BEC5] text-sm">
+                          No numbers found for this area. Try a different area code or leave blank
+                          for US numbers.
+                        </div>
+                      )}
+                      {searchResults.length > 0 && (
+                        <div className="space-y-2 max-h-48 overflow-y-auto">
+                          {searchResults.map((n) => (
+                            <div
+                              key={n.phone_number}
+                              className="flex items-center justify-between p-3 bg-[#1E2A3A]/60 rounded-lg"
                             >
-                              {purchaseLoading === n.phone_number ? (
-                                <Loader2 className="w-4 h-4 animate-spin" />
-                              ) : null}
-                              Purchase
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
+                              <span className="text-white font-medium">{n.phone_number}</span>
+                              <span className="text-[#B0BEC5] text-sm">
+                                {n.monthly_cost ? `$${n.monthly_cost}/mo` : ''}
+                              </span>
+                              <button
+                                onClick={() => handlePurchaseNumber(n.phone_number)}
+                                disabled={purchaseLoading === n.phone_number}
+                                className="px-4 py-2 bg-[#00E676]/20 hover:bg-[#00E676]/30 border border-[#00E676]/30 rounded-lg text-[#00E676] text-sm font-medium disabled:opacity-50 flex items-center gap-1"
+                              >
+                                {purchaseLoading === n.phone_number ? (
+                                  <Loader2 className="w-4 h-4 animate-spin" />
+                                ) : null}
+                                Purchase
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </motion.div>
               )}
 

@@ -93,6 +93,52 @@ export async function purchasePhoneNumber(phoneNumber: string) {
   return data as { success: boolean; phone_number: string };
 }
 
+// --- Org Telnyx connection (TASK-P1-06) ---
+
+export interface TelnyxConnectionStatus {
+  status: 'disconnected' | 'pending_verification' | 'connected' | 'error';
+  api_key_last4: string | null;
+  verified_at: string | null;
+}
+
+/** Reads the safe `org_telephony_status` view -- the base table has no client policies at all. */
+export async function getTelnyxConnectionStatus(): Promise<TelnyxConnectionStatus | null> {
+  const orgId = await getActiveOrgId();
+  const { data, error } = await supabase
+    .from('org_telephony_status')
+    .select('status, api_key_last4, verified_at')
+    .eq('org_id', orgId)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return data as TelnyxConnectionStatus | null;
+}
+
+export async function connectTelnyx(
+  apiKey: string,
+  webhookPublicKey: string
+): Promise<{ status: string; callControlApplicationId: string }> {
+  const orgId = await getActiveOrgId();
+  const res = await fetch(`${getFunctionsUrl()}/telnyx-connect`, {
+    method: 'POST',
+    headers: await getEdgeFunctionHeaders(),
+    body: JSON.stringify({ orgId, apiKey, webhookPublicKey }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Failed to connect Telnyx');
+  return data;
+}
+
+export async function disconnectTelnyx(): Promise<void> {
+  const orgId = await getActiveOrgId();
+  const res = await fetch(`${getFunctionsUrl()}/telnyx-disconnect`, {
+    method: 'POST',
+    headers: await getEdgeFunctionHeaders(),
+    body: JSON.stringify({ orgId }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || 'Failed to disconnect Telnyx');
+}
+
 export interface DashboardStats {
   callsToday: number;
   connectRate: number;
