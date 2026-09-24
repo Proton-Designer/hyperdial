@@ -834,6 +834,18 @@ export function Settings() {
                               className="w-full bg-[#1E2A3A] border border-white/10 rounded-xl px-4 py-3 text-white placeholder-[#B0BEC5]/50 focus:outline-none focus:border-[#00D9FF]"
                               placeholder="From your Telnyx portal's public keys page"
                             />
+                            <p className="text-xs text-[#B0BEC5]/70 mt-1.5">
+                              Find this in your{' '}
+                              <a
+                                href="https://portal.telnyx.com"
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-[#00D9FF] hover:underline"
+                              >
+                                Telnyx Portal
+                              </a>{' '}
+                              under API Keys → Public Key.
+                            </p>
                           </div>
                           <button
                             type="submit"
