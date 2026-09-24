@@ -270,6 +270,43 @@ tree. The build does not depend on either, so a plain clone still works.
 
 ---
 
+## 2026-09-24 — `dialer-sweeper`: the second `pg_cron` job in this repo
+
+**Status:** Active · **Decided by:** eng2 (TASK-P2-E5)
+
+**Context:** `claim_next_leads`/`transition_leg`/`transition_session`/`apply_leg_outcome` are all
+"only ever fires in response to a webhook or an API call" — nothing periodically re-checks
+state a lost webhook can leave stranded (a leg with no event for minutes, an in_flight lead
+whose leg already resolved but never got `apply_leg_outcome` applied, a session whose agent leg
+died). TASK-P3-P3 had already built the first `pg_cron`/`pg_net` scaffolding in this repo
+(`private.crm_sync_worker_config`/`trigger_ghl_sync_worker`, `20260924002000`) for the exact
+same class of problem in the GHL outbox — a periodic reconciliation worker, not a request-driven
+one.
+
+**Decision:** Reuse that scaffolding's shape verbatim for a second, independent worker rather
+than generalizing it into one shared "cron worker" abstraction: `private.dialer_sweeper_config`
+(a second one-row Vault-backed config singleton), `private.trigger_dialer_sweeper()`, and
+`cron.schedule('dialer-sweeper', '30 seconds', ...)` (`20260924001700_dialer_sweeper_cron.sql`).
+**This repo now has two `pg_cron` jobs**: `ghl-sync-worker` (every 1 minute) and `dialer-sweeper`
+(every 30 seconds, pg_cron 1.6.4's sub-minute `'N seconds'` schedule syntax, verified directly
+against the local instance before relying on it). Two tables/two trigger functions instead of
+one generalized "worker config" table was a deliberate choice: the two workers have different
+polling cadences, different secret env vars, and no shared caller — a shared table would only
+save a few lines of boilerplate at the cost of coupling two otherwise-independent lanes' schemas
+together.
+
+**Alternatives considered:**
+- *One generic `private.cron_worker_config(name, url, secret)` table for all future workers* —
+  rejected for now: two data points isn't enough to know the right shape for a third worker yet,
+  and premature generalization here would touch TASK-P3-P3's already-shipped migration.
+
+**Consequences:** any THIRD periodic worker this repo adds should look at both
+`20260924002000_ghl_push_worker.sql` and `20260924001700_dialer_sweeper_cron.sql` before writing
+a new one — if the shape is still identical a third time, that's the actual signal to
+generalize, not before.
+
+---
+
 ## Reconstructed from code — not from a written record
 
 The following predate this install. The reasoning is **inferred from the

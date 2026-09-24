@@ -297,6 +297,19 @@ agent calling `campaigns_with_stats` directly still gets every org campaign row 
 no leads). Not fixed here: narrowing `campaigns` SELECT itself is a real RLS change, out of this
 task's scope.
 
+## 11. `dialer-sweeper` never reaps a stuck-but-`claimed` (actively bridged) leg
+
+**Severity: low, deliberate.** `run_dialer_sweep`'s staleness check (TASK-P2-E5,
+`20260924001700_dialer_sweeper_cron.sql`) excludes `call_legs.state = 'claimed'` entirely,
+regardless of age. Reasoning: a real live call is silent on the webhook stream for its whole
+duration by design — only `call.hangup` fires at the end — so "no webhook event in 60s" can't
+distinguish a genuinely-ongoing conversation from a `claimed` leg whose hangup webhook got lost.
+Forcibly hanging up a live call on that false positive is worse than leaving the rare true-dead-
+`claimed`-leg case unresolved until Telnyx's own eventual timeout/`time_limit` hangup delivery.
+If this ever needs closing, it needs a real signal a lost webhook can't fake — e.g. a periodic
+Telnyx call-status poll (`GET /calls/{id}`) — not a longer staleness window on the same webhook-
+silence heuristic, which would just make real long calls false-positive instead.
+
 ---
 
 ## Not issues — deliberate, documented elsewhere

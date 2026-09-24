@@ -206,15 +206,49 @@ them anymore — see "Not covered here" for what's actually dead versus still re
   service-role client, matching the migration's own "no client INSERT/UPDATE/DELETE policy
   anywhere" design.
 
+## dialer-sweeper (TASK-P2-E5): the safety net for a lost webhook
+
+- `public.run_dialer_sweep(p_stuck_after_seconds default 60)` (SQL RPC,
+  `20260924001700_dialer_sweeper_cron.sql`), called every 30s by `pg_cron`/`pg_net`
+  (`private.trigger_dialer_sweeper`, configured via `private.set_dialer_sweeper_config(url,
+  secret)` -- same Vault-backed global config shape as `ghl-sync-worker`'s cron, a no-op until
+  configured) and directly by the `dialer-sweeper` Edge Function (shared-secret `X-Cron-Secret`
+  header, service role, not a user JWT -- the caller is Postgres itself).
+- Reconciles three things a lost webhook can strand forever, all built on the engine's OWN
+  idempotent primitives (`transition_leg`/`transition_session`'s expected-state no-op,
+  `apply_leg_outcome`'s `outcome_applied_at` gate) rather than a new locking scheme -- a leg or
+  session a REAL webhook resolves in the tiny window between the sweep's own SELECT and its
+  transition call simply loses that race safely, exactly like any other caller of these RPCs:
+  1. A pre-connect/hangup-pending contact leg (anything non-terminal except `claimed`) with no
+     `webhook_events` row (or none ever, falling back to `created_at`) for over the threshold --
+     ended as `failed`/`no_answer`, then `apply_leg_outcome`.
+  2. A session whose agent leg independently reached `ended` -- `paused_agent_lost`. No agent
+     legs exist yet (E3's job); this is a no-op in production today, exercised in tests via a
+     synthetic `kind='agent'` leg.
+  3. In_flight leads a leg can no longer speak for: an ended leg with a decided outcome that
+     never got applied (TASK-P2-E2's own carried item 5 -- `record_webhook_event` commits its
+     dedupe row before processing runs, so a webhook whose processing throws after that commit
+     is lost outright), and a lead whose latest leg ended with no outcome at all or has no leg
+     row -- requeued directly at attempts **+0** (bookkeeping catching up, not a real attempt).
+     A `connected` outcome is excluded by construction (never null), so a completed call's lead
+     correctly stays `in_flight` until Phase 3's disposition submission, not requeued out from
+     under it.
+- **Deliberate gap, not an oversight:** an active `claimed` (bridged, talking) leg is NEVER
+  reaped by staleness, at any age. A real live call is silent on the webhook stream for its
+  whole duration by design (only `call.hangup` fires at the end) -- webhook silence alone can't
+  tell "on a real call" apart from "the hangup webhook got lost," and hanging up a live
+  conversation on that false positive is worse than leaving the rare true-dead-`claimed`-leg
+  case to Telnyx's own eventual timeout delivery. See `.brain/memory/known-issues.md`.
+
 ## Not covered here
 
 - Telnyx numbers, WebRTC credentials, raw API wrappers → `.brain/domains/telephony.md`; campaigns
   and lead lists → `.brain/domains/campaigns.md`; cross-service flow and deployment →
   `.brain/architecture/system-overview.md`.
 - The agent's own WebRTC leg and joining it to the conference (E3), the dialer UI's own redesign
-  around the new `legs`-array contract (E4), the sweeper for stuck/timed-out legs (E5), and
-  dispositions submitting a session out of `wrap_up` for real (Phase 3) are all explicitly out of
-  scope for the engine described here and not yet built.
+  around the new `legs`-array contract (E4), and dispositions submitting a session out of
+  `wrap_up` for real (Phase 3) are all explicitly out of scope for the engine described here and
+  not yet built.
 
 ## Unverified
 
