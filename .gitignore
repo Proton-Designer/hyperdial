@@ -36,3 +36,6 @@ supabase/.branches/
 
 # Agent-Brain generated scan artifacts (indexes are committed, scans are not)
 .brain/.scan/
+
+# overnight-session run folders
+.claude/overnight/

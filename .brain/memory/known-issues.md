@@ -5,7 +5,7 @@ layer: L2
 type: memory
 status: canonical
 owner: maintainer
-updated: 2026-09-21
+updated: 2026-09-23
 related:
   - mem.active-work
   - mem.decisions
@@ -99,6 +99,20 @@ Recorded rather than fixed: fixing them changes dial-loop behaviour and needs th
 
 Further findings from the same extraction — unguarded read-modify-write on batch state, losing legs never reaching `no_answer`, batch advance skipping contacts — are in `.brain/domains/dialer.md`
 under *Constraints & gotchas*. **Specific and plausible, but not independently confirmed.** Treat as leads, not facts.
+
+---
+
+## 1c. Further findings from the 2026-09-23 audits (verified in source)
+
+Superseded in design by `docs/design/stage-1-architecture.md`; recorded here until that lands.
+
+- **The agent is never bridged by default.** `CampaignManageModal.tsx` sends no `agentCallControlId` (localStorage key written only by the manual single-dial flow) and `callbackNumber` defaults empty, so the winning contact joins a conference with nobody in it while `HUMAN_CONNECTED` / `contacted` / `connected` are all recorded (`dialer-engine.ts:530-538`).
+- **Losing legs are stuck at `dialing` forever.** `handleCallHangup` deletes Redis `call:{id}` (`dialer-engine.ts:555`) before `markNoAnswerAndCleanup` re-reads it, which then no-ops (`:704-712`). Stop never marks legs terminal either.
+- **Pause is a one-way dead end.** No resume endpoint; late webhooks for a paused session hang up legs without advancing the batch.
+- **WebRTC credential leak.** `telnyx-webrtc-credentials` creates a new Telnyx credential per call and never deletes old ones.
+- **Lines cap is 5, not 10** (`dialer-session-start/index.ts:63`, DB `CHECK BETWEEN 1 AND 5`).
+- **`Settings.tsx` Profile / Billing / Team / Integrations tabs are mock** ("John Doe", fake $149 plan, "Coming Soon"). Same class as #1.
+- **`dialer-session-start` never checks campaign ownership** or campaign status; `campaign_leads` INSERT RLS does not check contact ownership.
 
 ---
 
