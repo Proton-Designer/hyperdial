@@ -72,6 +72,29 @@ begin
 end;
 $$;
 
+-- Same shape as _test_expect_insert_denied, for an UPDATE. TASK-P4-P2: the
+-- contacts_agent_update_scope trigger (TASK-P2-P1, 20260924001300) raises errcode 42501
+-- specifically (`using errcode = '42501'`), so it is caught by insufficient_privilege here same
+-- as a real RLS WITH CHECK violation would be -- from this helper's point of view the two are
+-- indistinguishable, and that's the point (both mean "the write was rejected").
+create or replace function public._test_expect_update_denied(p_label text, p_query text)
+returns void language plpgsql as $$
+declare
+  v_denied boolean := false;
+begin
+  begin
+    execute p_query;
+  exception
+    when insufficient_privilege then
+      v_denied := true;
+  end;
+  if not v_denied then
+    raise exception 'FAIL [%]: update succeeded but should have been denied', p_label;
+  end if;
+  raise notice 'PASS [%]: update correctly denied', p_label;
+end;
+$$;
+
 -- Fixtures (as postgres; table owner bypasses RLS) --------------------------
 
 insert into auth.users (
@@ -223,12 +246,21 @@ select public._test_expect_insert_denied('campaign_agents/owner-b cannot attach 
   format('insert into public.campaign_agents (campaign_id, user_id, org_id) values (%L, %L, %L)',
     '9c1f7a11-a002-4000-8000-00000000000a', '9c1f7a11-b000-4000-8000-00000000000a', :'org_b'));
 
--- Agent can update a contact reachable through their assigned campaign; owner-b cannot touch it.
+-- Agent can update a contact reachable through their assigned campaign, but ONLY the dnc column
+-- as of TASK-P2-P1's contacts_agent_update_scope trigger (20260924001300) -- this file predates
+-- that trigger and originally asserted a full-row update succeeding, which the trigger now
+-- correctly rejects. Updated for the real contract (TASK-P4-P2, found while dry-running this
+-- file for an unrelated task): the agent CAN flip dnc; the agent CANNOT change any other column.
 reset role;
 set local role authenticated;
 select set_config('request.jwt.claims', '{"sub":"9c1f7a11-a000-4000-8000-00000000000c","role":"authenticated"}', true);
-select public._test_expect_affected('contacts/agent-a can update assigned contact A',
-  'update public.contacts set notes = ''touched by agent'' where id = ''9c1f7a11-a001-4000-8000-00000000000a''', 1);
+select public._test_expect_affected('contacts/agent-a CAN flip dnc on assigned contact A',
+  'update public.contacts set dnc = true where id = ''9c1f7a11-a001-4000-8000-00000000000a''', 1);
+reset role;
+set local role authenticated;
+select set_config('request.jwt.claims', '{"sub":"9c1f7a11-a000-4000-8000-00000000000c","role":"authenticated"}', true);
+select public._test_expect_update_denied('contacts/agent-a CANNOT change other columns (notes) on assigned contact A -- 42501',
+  'update public.contacts set notes = ''touched by agent'' where id = ''9c1f7a11-a001-4000-8000-00000000000a''');
 
 reset role;
 set local role authenticated;
