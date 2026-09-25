@@ -666,6 +666,66 @@ committed separately per the lead's "commit L1 and L7 separately if practical":
 Checks: `npm run test:functions` 220 passed / 0 failed / 1 pre-existing ignored (up from 208 at
 #18); `npm run check`/`npm run build` clean.
 
+## 20. ~~No agent could start their own session (only entry point was CampaignManageModal, hidden from agents by #16) + the L1×L5 client-ownership blocker~~ — FIXED by TASK-L7 (2026-09-25)
+
+Two things landed in one commit because the re-reviewer's fix (see #19) and eng1's own L4 finding
+turned out to need the exact same redesign: `audit/L1/review-notes-r2.md`'s BLOCKER,
+`audit/L5/review-notes.md` (independently reconfirming the same blocker), and
+`board/01-assigned/TASK-L7-agent-start-from-dialer.md`.
+
+- **The BLOCKER**: `CampaignManageModal.tsx` used to run its own `useTelnyxCall()` pre-flight
+  client (no `sessionId`) the moment its Start modal opened, then call `startDialerSession`
+  itself. `dialer-session-start` dials the agent leg SYNCHRONOUSLY, before its HTTP response
+  returns — so for that whole window the pre-flight client was the ONLY registered client, and
+  it rejected the real agent-leg INVITE (its inbound handler hangs up anything that doesn't
+  match a `sessionId` it was told to expect, and it was never told one). Every Start landed on
+  "Your line dropped" (`ready_pending` → `paused_agent_lost`) before the intern ever saw a
+  connected line.
+- **The redesign (fixes the blocker AND delivers TASK-L7 in the same commit)**: exactly one
+  `TelnyxRTC` client per tab now, owned entirely by `Dialer.tsx`. `CampaignManageModal.tsx` no
+  longer registers a client or calls `startDialerSession` at all — its Start button just hands
+  off which campaign to start (`lib/dialerLaunchIntent.ts`, a same-tab in-memory intent, chosen
+  over threading a new prop through `MainApp.tsx`, which is eng1's file and out of this lane) and
+  navigates to the Dialer. The Dialer registers its client FIRST (mic-permission check via
+  `getUserMedia`, then `connect()`), and only THEN calls `startDialerSession` — closing most of
+  the race. The remaining sliver (the server may still dial before this hook's own `sessionId`
+  option has taken effect in a committed render) is closed by
+  `useTelnyxCall.ts`'s new `beginAgentLegExpectation`/`endAgentLegExpectation`: while "expecting"
+  is on, ANY inbound `kind:'agent'` call is answered regardless of exact session match (nothing
+  else can plausibly be inviting this member's own credential to an agent-kind call in that
+  window) — cleared only once an effect confirms the real `sessionId` has actually committed in
+  a render, not immediately on the API response (an earlier draft of this fix cleared it right
+  after `setState`, which only QUEUES a re-render — reopening the same race for one more tick).
+- **TASK-L7 itself**: `Dialer.tsx` now shows a `StartSessionPanel` (name/lines/caller-ID/queued
+  count + a Start button) whenever no session is active, for every role — `listCampaigns()`
+  already agent-filters vs. returns everything for owner/admin, so no new endpoint was needed.
+  Empty state for an unassigned agent: "No campaigns assigned yet — ask your manager." A 409
+  existing-session conflict offers "Open it" (opens the existing session in place) instead of
+  CampaignManageModal's old "Stop & start new" flow (dropped — TASK-L7's spec only asked for
+  "offer Open it"; a manager who really wants to stop-and-restart still can from the Dialer once
+  it's open).
+- **UI-6 (auto re-join on refresh), delivered as a side effect of the same redesign**: a refresh
+  that restores a session already sitting in `paused_agent_lost` now calls Reconnect
+  automatically once (guarded by session id, not a plain boolean, so a later genuinely-new
+  agent-lost event still gets its own attempt) — the manual Reconnect button stays as the
+  fallback/retry path.
+- **The other MAJOR half of #19 (mic-permission check)**: landed here since Start now lives in
+  `Dialer.tsx` — `navigator.mediaDevices.getUserMedia({audio:true})` runs before registering the
+  client, surfacing a denied/unavailable mic as a clear error instead of a silent ~25s ring.
+- **Dead code removed**: `CampaignManageModal.tsx`'s own `AGENT_NOT_REGISTERED` message-mapping
+  was unreachable on both paths it covered (per `audit/L5/review-notes.md`) — removed along with
+  the ~250 lines of now-dead Start-modal/conflict-dialog state and JSX this redesign obsoleted.
+
+Checks: `npm run check && npm run build` clean; `npm run test:functions` unaffected (frontend-
+only diff). Dev fixture harnesses: `?dev_start_session=1` (`StartSessionHarness.tsx`, this
+task's own `no_campaigns`/`list`/`preflight_failing`/`starting`/`conflict` states) and the
+existing `?dev_dialer_states=1`. **NEEDS-LIVE-VERIFY** (no real browser/WebRTC/mic in this
+environment, and the Claude-in-Chrome extension was not connected this session either —
+verified only via `npm run check`/`build`/a dev-server module-transform smoke curl): the actual
+INVITE timing race this fix closes, real mic-permission prompts, and the full Start → ring →
+answer path from both entry points (Dialer's own list, and CampaignManageModal → navigate →
+Dialer).
+
 ---
 
 ## Not issues — deliberate, documented elsewhere

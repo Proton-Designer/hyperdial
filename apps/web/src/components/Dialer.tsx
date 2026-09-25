@@ -11,10 +11,28 @@ import { useDialerSession } from '@/hooks/useDialerSession';
 import { ParallelDialerUI } from './dialer/ParallelDialerUI';
 import { DialerStateBanner } from './dialer/DialerStateBanner';
 import { WrapUpModal } from './dialer/WrapUpModal';
-import { getActiveDialerSession } from '@/lib/api';
+import { StartSessionPanel } from './dialer/StartSessionPanel';
+import {
+  getActiveDialerSession,
+  listCampaigns,
+  startDialerSession,
+  ActiveSessionExistsError,
+  type CampaignWithStats,
+} from '@/lib/api';
 import { playConnectChime } from '@/lib/dialerSoundCue';
+import { consumePendingStartCampaignId } from '@/lib/dialerLaunchIntent';
 
 const REMOTE_AUDIO_ID = 'telnyx-remote-audio';
+
+/** TASK-L7: the credential get-or-create path (`_shared/agent-webrtc-credential.ts`) is
+ *  self-healing now, so this should be unreachable in practice -- mapped defensively anyway,
+ *  same text CampaignManageModal used before this task moved the Start flow here. */
+function friendlyStartSessionError(message: string): string {
+  if (message.includes('AGENT_NOT_REGISTERED')) {
+    return "Your phone line isn't registered yet. Wait a few seconds for it to connect, then try again.";
+  }
+  return message;
+}
 
 export type DialerStatus = 'idle' | 'dialing' | 'ringing' | 'connected';
 
@@ -42,6 +60,20 @@ export function Dialer({
     campaignId: string;
   } | null>(null);
 
+  // TASK-L7: the campaigns list backing the new "start a session" panel -- null while loading,
+  // [] for a genuinely empty (unassigned) agent. listCampaigns() already agent-filters vs.
+  // returns everything for owner/admin (api.ts's own comment); no new endpoint needed.
+  const [assignedCampaigns, setAssignedCampaigns] = useState<CampaignWithStats[] | null>(null);
+  const [campaignsError, setCampaignsError] = useState<string | null>(null);
+  const [startingCampaignId, setStartingCampaignId] = useState<string | null>(null);
+  const [startError, setStartError] = useState<string | null>(null);
+  const [startConflict, setStartConflict] = useState<{
+    campaignId: string;
+    campaignName: string;
+    existingSessionId: string;
+  } | null>(null);
+  const pendingIntentConsumedRef = useRef(false);
+
   const effectiveSessionId = parallelSessionId ?? restoredParallelContext?.sessionId ?? null;
   const effectiveCampaignId = parallelCampaignId ?? restoredParallelContext?.campaignId ?? null;
   const parallelSession = useDialerSession(effectiveSessionId);
@@ -59,6 +91,8 @@ export function Dialer({
     connect: connectAgentLine,
     isReady: agentLineReady,
     isConnecting: agentLineConnecting,
+    beginAgentLegExpectation,
+    endAgentLegExpectation,
   } = useTelnyxCall({
     remoteElementId: REMOTE_AUDIO_ID,
     sessionId: effectiveSessionId ?? undefined,
@@ -121,6 +155,148 @@ export function Dialer({
       cancelled = true;
     };
   }, [parallelSessionId]);
+
+  // UI-6: on a refresh that restores a session already sitting in paused_agent_lost, re-join
+  // automatically instead of waiting for the intern to notice and click the manual Reconnect
+  // button (still rendered by DialerStateBanner as the fallback/retry path). Guarded by session
+  // id, not a plain boolean, so a genuinely new agent-lost event later in the same mount still
+  // gets its own attempt -- this only suppresses re-firing for the SAME already-attempted one.
+  const autoReconnectAttemptedSessionIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    const session = parallelSession.session;
+    if (!session || session.state !== 'paused_agent_lost') return;
+    if (autoReconnectAttemptedSessionIdRef.current === session.id) return;
+    autoReconnectAttemptedSessionIdRef.current = session.id;
+    void handleReconnectAgentLine();
+  }, [parallelSession.session, handleReconnectAgentLine]);
+
+  // Runs after `effectiveSessionId` (and therefore this hook's own `sessionId` option) has
+  // actually committed in a render -- the point at which the exact-match path in
+  // useTelnyxCall.ts is guaranteed wired up, so the broader "any agent-kind call" expectation
+  // from handleStartSessionForCampaign below is safe to drop. See that function's own comment.
+  useEffect(() => {
+    if (effectiveSessionId) endAgentLegExpectation();
+  }, [effectiveSessionId, endAgentLegExpectation]);
+
+  // TASK-L7: the campaign list backing the "start a session" panel, shown whenever there's no
+  // active session. Re-fires once a session ends (effectiveSessionId back to null) for a fresh
+  // queued-count.
+  useEffect(() => {
+    if (effectiveSessionId) return;
+    let cancelled = false;
+    setAssignedCampaigns(null);
+    setCampaignsError(null);
+    listCampaigns()
+      .then((campaigns) => {
+        if (!cancelled) setAssignedCampaigns(campaigns);
+      })
+      .catch((e) => {
+        if (!cancelled) {
+          setCampaignsError(e instanceof Error ? e.message : 'Failed to load campaigns');
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [effectiveSessionId]);
+
+  /**
+   * TASK-L1 x L5 redesign, delivered here: this hook's WebRTC client is now the ONLY one
+   * registered anywhere in the app (CampaignManageModal no longer runs its own pre-flight
+   * client -- see this task's own commit). Registering fully BEFORE calling startDialerSession
+   * closes most of the L1x L5 race (the server dials the agent leg synchronously, before the
+   * HTTP response returns); `beginAgentLegExpectation` closes the remainder (the brief window
+   * between "server may have already dialed" and "this hook's own sessionId option is set to
+   * the real id it's about to learn") -- see that function's own comment in useTelnyxCall.ts.
+   */
+  const handleStartSessionForCampaign = useCallback(
+    async (campaign: CampaignWithStats) => {
+      if (campaign.total_contacts === 0) {
+        toast.error('Add contacts before starting a session');
+        return;
+      }
+      setStartError(null);
+      setStartConflict(null);
+      setStartingCampaignId(campaign.id);
+      try {
+        // Mic-permission pre-check (L1 re-review MAJOR): fail fast and clearly instead of a
+        // silent ~25s ring inside the SDK's own call.answer() on a denied/unavailable mic.
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          stream.getTracks().forEach((t) => t.stop());
+        } catch {
+          setStartError(
+            'Microphone access is required to take calls. Allow microphone access and try again.'
+          );
+          return;
+        }
+        if (!agentLineReady) {
+          try {
+            await connectAgentLine();
+          } catch (err) {
+            setStartError(err instanceof Error ? err.message : "Couldn't register your phone line");
+            return;
+          }
+        }
+        beginAgentLegExpectation();
+        let started = false;
+        try {
+          const { sessionId } = await startDialerSession({ campaignId: campaign.id });
+          started = true;
+          // Deliberately NOT clearing the expectation flag here: setting this state only
+          // QUEUES a re-render, and the hook's `optionsRef` (which the exact-match path
+          // reads) only picks up the real sessionId once that render actually commits. See
+          // the effect below, keyed on `effectiveSessionId`, which clears it once that render
+          // has genuinely happened -- clearing here would reopen the exact race this exists
+          // to close, for the window between this line and that commit.
+          setRestoredParallelContext({ sessionId, campaignId: campaign.id });
+          toast.success('Parallel dialing session started');
+        } finally {
+          if (!started) endAgentLegExpectation();
+        }
+      } catch (e) {
+        if (e instanceof ActiveSessionExistsError) {
+          setStartConflict({
+            campaignId: campaign.id,
+            campaignName: campaign.name,
+            existingSessionId: e.existingSessionId,
+          });
+          return;
+        }
+        setStartError(
+          friendlyStartSessionError(e instanceof Error ? e.message : 'Failed to start session')
+        );
+      } finally {
+        setStartingCampaignId(null);
+      }
+    },
+    [agentLineReady, connectAgentLine, beginAgentLegExpectation, endAgentLegExpectation]
+  );
+
+  // TASK-L7: CampaignManageModal's Start button no longer starts a session itself (that was
+  // the L1x L5 blocker's root cause -- a second WebRTC client). It just navigates here and
+  // leaves a same-tab intent for which campaign to start; consumed exactly once per mount, and
+  // only once the real campaign list has loaded (consuming it any earlier would drop it, since
+  // the intent store clears itself on read).
+  useEffect(() => {
+    if (effectiveSessionId) return;
+    if (!assignedCampaigns) return;
+    if (pendingIntentConsumedRef.current) return;
+    pendingIntentConsumedRef.current = true;
+    const pendingCampaignId = consumePendingStartCampaignId();
+    if (!pendingCampaignId) return;
+    const campaign = assignedCampaigns.find((c) => c.id === pendingCampaignId);
+    if (campaign) void handleStartSessionForCampaign(campaign);
+  }, [effectiveSessionId, assignedCampaigns, handleStartSessionForCampaign]);
+
+  const handleOpenStartConflict = useCallback(() => {
+    if (!startConflict) return;
+    setRestoredParallelContext({
+      sessionId: startConflict.existingSessionId,
+      campaignId: startConflict.campaignId,
+    });
+    setStartConflict(null);
+  }, [startConflict]);
 
   // When cached numbers load, select first if none selected
   useEffect(() => {
@@ -316,6 +492,21 @@ export function Dialer({
               )}
             </>
           )}
+
+        {(!isParallelMode || parallelSession.error) && (
+          <StartSessionPanel
+            campaigns={assignedCampaigns}
+            campaignsError={campaignsError}
+            userNumbers={userNumbers}
+            startingCampaignId={startingCampaignId}
+            micRegistering={agentLineConnecting}
+            startError={startError}
+            conflict={startConflict}
+            onStart={(campaign) => void handleStartSessionForCampaign(campaign)}
+            onOpenConflict={handleOpenStartConflict}
+            onDismissConflict={() => setStartConflict(null)}
+          />
+        )}
 
         {(!isParallelMode || parallelSession.error) && (
           <AnimatePresence mode="wait">

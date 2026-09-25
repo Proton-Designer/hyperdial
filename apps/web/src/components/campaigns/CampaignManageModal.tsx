@@ -27,10 +27,6 @@ import {
   removeLeadFromCampaign,
   removeLeadsFromCampaign,
   listContacts,
-  startDialerSession,
-  stopDialerSession,
-  getDialerSession,
-  ActiveSessionExistsError,
   type CampaignWithStats,
   type CampaignSettingsInput,
   type CampaignLead,
@@ -41,7 +37,7 @@ import { ImportContactsModal } from '../contacts/ImportContactsModal';
 import { AddContactModal } from '../contacts/AddContactModal';
 import { usePhoneNumbers } from '../../contexts/PhoneNumbersContext';
 import { useOrg } from '../../contexts/OrgContext';
-import { useTelnyxCall } from '../../lib/useTelnyxCall';
+import { setPendingStartCampaignId } from '../../lib/dialerLaunchIntent';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
 
 const CATEGORIES = ['All', 'Cold', 'Warm', 'Follow Up', 'Voicemail', 'Booked'] as const;
@@ -51,17 +47,6 @@ const LEADS_PER_PAGE = 50;
 function contactDisplayName(c: Contact): string {
   const name = [c.first_name, c.last_name].filter(Boolean).join(' ').trim();
   return name || c.business_name || '—';
-}
-
-/** TASK-L1 added scope (L5): dialer-session-reconnect still surfaces this code for a missing
- *  WebRTC credential; dialer-session-start's own credential path is now self-healing
- *  (_shared/agent-webrtc-credential.ts) and no longer throws this literally, but map it defensively
- *  anyway in case any dial-loop path still does -- a raw error code is not a "clear message". */
-function friendlyStartSessionError(message: string): string {
-  if (message.includes('AGENT_NOT_REGISTERED')) {
-    return "Your phone line isn't registered yet. Wait a few seconds for it to connect, then try again.";
-  }
-  return message;
 }
 
 function formatDate(s: string | null): string {
@@ -86,18 +71,10 @@ export function CampaignManageModal({
   onClose,
   onRefreshList,
   onNavigateToDialer,
-  onStartParallelDial,
-  onOpenDialerWithSession,
 }: CampaignManageModalProps) {
   const { numbers: userNumbers } = usePhoneNumbers();
   const { role } = useOrg();
   const canManage = role === 'owner' || role === 'admin';
-  // TASK-L1 added scope (L5): whoever clicks Start Session becomes that session's agent_id
-  // (dialer-session-start), so THEY need a working WebRTC line before the engine ever dials the
-  // agent leg -- eng2 couldn't gate this from their own lane since this button lives here.
-  // Reuses useTelnyxCall's own connect()/isReady exactly as Dialer.tsx does (no sessionId here --
-  // this is a readiness pre-check, not joining a session yet); does not modify the hook itself.
-  const agentLinePreflight = useTelnyxCall();
   const [campaign, setCampaign] = useState<CampaignWithStats | null>(null);
   const [leads, setLeads] = useState<CampaignLead[]>([]);
   const [settingsForm, setSettingsForm] = useState<CampaignSettingsInput | null>(null);
@@ -119,62 +96,6 @@ export function CampaignManageModal({
   const [leadsPage, setLeadsPage] = useState(0);
   const [confirmRemoveContactId, setConfirmRemoveContactId] = useState<string | null>(null);
   const [confirmBulkRemove, setConfirmBulkRemove] = useState(false);
-  const [startDialModalOpen, setStartDialModalOpen] = useState(false);
-  const [linesCount, setLinesCount] = useState<1 | 2 | 3 | 4 | 5>(3);
-  const [selectedFromNumber, setSelectedFromNumber] = useState<string | null>(null);
-  const [callbackNumber, setCallbackNumber] = useState('');
-  const [startingDial, setStartingDial] = useState(false);
-  /** When start returns 409, we show "Open Dialer" / "Stop & start new" dialog; this is the existing session id. */
-  const [activeSessionConflictId, setActiveSessionConflictId] = useState<string | null>(null);
-  /** BUG-11/TASK-L5: whether the conflicting session is on a live human call right now, and who
-   *  with -- fetched once per conflict so "Stop & start new" can warn before hanging up on
-   *  someone, instead of doing it silently. `undefined` = still checking; `null` = not live. */
-  const [conflictLiveCallWith, setConflictLiveCallWith] = useState<string | null | undefined>(
-    undefined
-  );
-  /** A second, explicit confirmation is required before actually stopping a session that's on a
-   *  live call -- "Stop & start new" itself only opens this when conflictLiveCallWith is set. */
-  const [confirmStopLiveCall, setConfirmStopLiveCall] = useState(false);
-
-  // BUG-11/TASK-L5: as soon as a conflict is detected, find out whether the OTHER session is
-  // actually on a live call right now (state on_call/connecting, or a set active_leg_id) so
-  // "Stop & start new" can name the contact before hanging up on them instead of doing it blind.
-  useEffect(() => {
-    if (!activeSessionConflictId) {
-      setConflictLiveCallWith(undefined);
-      return;
-    }
-    let cancelled = false;
-    setConflictLiveCallWith(undefined);
-    getDialerSession(activeSessionConflictId)
-      .then(({ session, legs }) => {
-        if (cancelled) return;
-        const onLiveCall =
-          session.state === 'on_call' ||
-          session.state === 'connecting' ||
-          Boolean(session.active_leg_id);
-        if (!onLiveCall) {
-          setConflictLiveCallWith(null);
-          return;
-        }
-        const activeLeg = legs.find((l) => l.id === session.active_leg_id);
-        const contact = activeLeg?.contact;
-        const name = contact
-          ? [contact.first_name, contact.last_name].filter(Boolean).join(' ').trim() ||
-            contact.business_name ||
-            'this contact'
-          : 'this contact';
-        setConflictLiveCallWith(name);
-      })
-      .catch(() => {
-        // Can't confirm either way -- fail toward the safer assumption (warn) rather than
-        // silently treating an unknown state as "not live".
-        if (!cancelled) setConflictLiveCallWith('this contact');
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [activeSessionConflictId]);
 
   const fetchCampaign = useCallback(async () => {
     if (!campaignId) return;
@@ -322,175 +243,25 @@ export function CampaignManageModal({
     }
   };
 
+  /**
+   * TASK-L1 re-review (L1x L5 blocker) + TASK-L7: this used to run its own WebRTC pre-flight
+   * client and call startDialerSession directly -- exactly the second, unsynchronized client
+   * that raced the server's own (synchronous) agent-leg dial and caused every Start to land on
+   * "Your line dropped". The Dialer is now the ONLY place that registers a client or starts a
+   * session; this just hands off which campaign to start (a same-tab, in-memory intent -- see
+   * dialerLaunchIntent.ts) and navigates there. The Dialer's own Start panel shows the SAME
+   * campaign list (owners/admins see every campaign, same as this modal), including the mic-
+   * permission check, the 409-existing-session "Open it" offer, and the actual start.
+   */
   const handleStartParallelDialing = () => {
-    console.info('[CampaignManageModal] checkpoint:start_click', {
-      campaignId,
-      totalContacts: campaign?.total_contacts ?? 0,
-      userNumbers: userNumbers.length,
-    });
     if (!campaignId) return;
     if ((campaign?.total_contacts ?? 0) === 0) {
       toast.error('Add contacts before starting a session');
       return;
     }
-    setSelectedFromNumber(userNumbers[0]?.phone_number ?? null);
-    setStartDialModalOpen(true);
-    // Kick off the WebRTC pre-flight the moment the modal opens, not on submit -- gives the
-    // connection the whole time the manager spends picking a number/lines/callback to finish
-    // registering, same as Dialer.tsx's own "connect the moment there's something to serve" note.
-    if (!agentLinePreflight.isReady && !agentLinePreflight.isConnecting) {
-      agentLinePreflight.connect().catch(() => {
-        // Surfaced via agentLinePreflight.error, rendered in the modal below.
-      });
-    }
-  };
-
-  const handleConfirmStartParallelDialing = async () => {
-    console.info('[CampaignManageModal] checkpoint:confirm_start', {
-      campaignId,
-      linesCount,
-      selectedFromNumber,
-    });
-    if (!campaignId) return;
-    const fromNumber = selectedFromNumber?.trim();
-    if (!fromNumber) {
-      toast.error('Choose a phone number to call from');
-      return;
-    }
-
-    setStartingDial(true);
-    try {
-      console.info('[CampaignManageModal] checkpoint:api_startDialerSession_call', {
-        campaignId,
-        linesCount,
-      });
-      // TASK-P2-E2: the engine now resolves the caller ID from the campaign's own
-      // caller_id_number_id (TASK-P2-P1) instead of a per-session choice, and there is no
-      // agent leg yet (E3). `fromNumber`/`agentCallControlId`/`agentCallbackNumber` are no
-      // longer sent -- the "choose a number" step above is currently a no-op pending E4's UI
-      // pass (it will become "set your campaign's caller ID" once that surface exists).
-      const result = await startDialerSession({
-        campaignId,
-        lines: linesCount,
-      });
-      console.info('[CampaignManageModal] checkpoint:api_startDialerSession_success', {
-        campaignId,
-        sessionId: result.sessionId,
-      });
-      setStartDialModalOpen(false);
-      onStartParallelDial({ sessionId: result.sessionId, campaignId });
-      onNavigateToDialer();
-      toast.success('Parallel dialing session started');
-    } catch (e) {
-      if (e instanceof ActiveSessionExistsError) {
-        console.warn('[CampaignManageModal] checkpoint:existing_session_conflict', {
-          campaignId,
-          existingSessionId: e.existingSessionId,
-        });
-        setStartDialModalOpen(false);
-        setActiveSessionConflictId(e.existingSessionId);
-        return;
-      }
-      const message = friendlyStartSessionError(
-        e instanceof Error ? e.message : 'Failed to start session'
-      );
-      console.warn('[CampaignManageModal] start parallel dial failed', {
-        campaignId,
-        error: message,
-      });
-      toast.error(message);
-    } finally {
-      setStartingDial(false);
-    }
-  };
-
-  const handleOpenDialerFromConflict = () => {
-    const existingId = activeSessionConflictId;
-    const cid = campaignId;
-    console.info('[CampaignManageModal] checkpoint:open_dialer_from_conflict', {
-      campaignId: cid,
-      existingSessionId: existingId,
-    });
-    setActiveSessionConflictId(null);
-    setStartDialModalOpen(false);
-    if (existingId && cid && onOpenDialerWithSession) {
-      onOpenDialerWithSession({ sessionId: existingId, campaignId: cid });
-    } else {
-      onNavigateToDialer();
-    }
-  };
-
-  const handleStopAndStartNew = async () => {
-    // BUG-11/TASK-L5: a live human call gets one more explicit warning before this hangs up on
-    // them -- this first click just opens that confirmation; the actual stop+start only runs
-    // from handleConfirmStopLiveCall (or directly below, when there's no live call to warn about).
-    if (conflictLiveCallWith) {
-      setConfirmStopLiveCall(true);
-      return;
-    }
-    await doStopAndStartNew();
-  };
-
-  const handleConfirmStopLiveCall = async () => {
-    setConfirmStopLiveCall(false);
-    await doStopAndStartNew();
-  };
-
-  const doStopAndStartNew = async () => {
-    const existingId = activeSessionConflictId;
-    console.info('[CampaignManageModal] checkpoint:stop_and_start_new_click', {
-      campaignId,
-      existingSessionId: existingId,
-      linesCount,
-      selectedFromNumber,
-    });
-    if (!existingId || !campaignId) return;
-    const fromNumber = selectedFromNumber?.trim();
-    if (!fromNumber) {
-      toast.error('Choose a phone number to call from');
-      return;
-    }
-    setStartingDial(true);
-    try {
-      console.info('[CampaignManageModal] checkpoint:stop_existing_session_call', {
-        existingSessionId: existingId,
-      });
-      await stopDialerSession(existingId);
-      console.info('[CampaignManageModal] checkpoint:stop_existing_session_success', {
-        existingSessionId: existingId,
-      });
-      setActiveSessionConflictId(null);
-      console.info('[CampaignManageModal] checkpoint:start_new_session_after_stop', {
-        campaignId,
-        linesCount,
-      });
-      // See the other startDialerSession call site's comment (TASK-P2-E2).
-      const result = await startDialerSession({
-        campaignId,
-        lines: linesCount,
-      });
-      console.info('[CampaignManageModal] checkpoint:start_new_session_success', {
-        campaignId,
-        sessionId: result.sessionId,
-      });
-      setStartDialModalOpen(false);
-      onStartParallelDial({ sessionId: result.sessionId, campaignId });
-      onNavigateToDialer();
-      toast.success('Previous session stopped; new parallel dialing session started');
-    } catch (e) {
-      console.warn('[CampaignManageModal] checkpoint:stop_and_start_new_failed', {
-        campaignId,
-        existingSessionId: existingId,
-        error: e instanceof Error ? e.message : String(e),
-      });
-      toast.error(
-        friendlyStartSessionError(
-          e instanceof Error ? e.message : 'Failed to stop or start session'
-        )
-      );
-    } finally {
-      setStartingDial(false);
-    }
+    setPendingStartCampaignId(campaignId);
+    onClose();
+    onNavigateToDialer();
   };
 
   const handleImportSuccess = () => {
@@ -1212,251 +983,6 @@ export function CampaignManageModal({
         onClose={() => setAddNewOpen(false)}
         onSuccess={handleAddNewSuccess}
       />
-
-      {/* Start parallel dial modal */}
-      <AnimatePresence>
-        {startDialModalOpen && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 flex items-center justify-center p-4"
-            style={{ zIndex: 10000 }}
-          >
-            <div
-              className="absolute inset-0 bg-black/60"
-              onClick={() => !startingDial && setStartDialModalOpen(false)}
-              aria-hidden
-            />
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.95 }}
-              className="relative z-[1] w-full max-w-md rounded-2xl border border-white/10 bg-[#1A2332] shadow-xl p-6"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <h3 className="text-xl font-bold text-white mb-2">Start Parallel Dial</h3>
-              <p className="text-sm text-[#B0BEC5] mb-4">
-                We&apos;ll dial up to <span className="text-white font-semibold">{linesCount}</span>{' '}
-                numbers at once and connect you instantly when someone answers.
-              </p>
-              <p className="text-sm text-[#B0BEC5] mb-4">
-                Campaign: <span className="text-white">{campaign?.name ?? 'Campaign'}</span>
-              </p>
-              {userNumbers.length === 0 ? (
-                <p className="text-sm text-[#FFB300] mb-5">
-                  Purchase a phone number in Settings to call from.
-                </p>
-              ) : (
-                <div className="mb-5">
-                  <label className="text-sm text-[#B0BEC5] block mb-2">Call from</label>
-                  <Select
-                    value={selectedFromNumber ?? userNumbers[0]?.phone_number ?? ''}
-                    onValueChange={setSelectedFromNumber}
-                  >
-                    <SelectTrigger className="w-full bg-[#1E2A3A] border-white/10 text-white">
-                      <SelectValue placeholder="Select number" />
-                    </SelectTrigger>
-                    <SelectContent
-                      className="bg-[#1E2A3A] border-white/10"
-                      style={{ zIndex: 10001 }}
-                    >
-                      {userNumbers.map((num) => (
-                        <SelectItem
-                          key={num.id}
-                          value={num.phone_number}
-                          className="bg-[#1E2A3A] hover:bg-white/10 focus:bg-white/10 text-white focus:text-white"
-                        >
-                          {num.phone_number}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              )}
-              <Select
-                value={String(linesCount)}
-                onValueChange={(v) => setLinesCount(Number(v) as 1 | 2 | 3 | 4 | 5)}
-              >
-                <SelectTrigger className="w-[120px] bg-[#1E2A3A] border-white/10 text-white">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent className="bg-[#1E2A3A] border-white/10" style={{ zIndex: 10001 }}>
-                  {[1, 2, 3, 4, 5].map((n) => (
-                    <SelectItem
-                      key={n}
-                      value={String(n)}
-                      className="bg-[#1E2A3A] hover:bg-white/10 focus:bg-white/10 text-white focus:text-white"
-                    >
-                      {n}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-
-              <div className="mb-5">
-                <label className="text-sm text-[#B0BEC5] block mb-2">
-                  Callback Number <span className="text-[#B0BEC5]/50">(Optional)</span>
-                </label>
-                <input
-                  type="tel"
-                  placeholder="e.g. your mobile number"
-                  value={callbackNumber}
-                  onChange={(e) => setCallbackNumber(e.target.value)}
-                  className="w-full bg-[#1E2A3A] border border-white/10 rounded-md px-3 py-2 text-white placeholder:text-white/20 focus:outline-none focus:border-[#00D9FF]"
-                />
-                <p className="text-xs text-[#B0BEC5]/70 mt-1">
-                  We&apos;ll call this number when a human answers. Leave empty if you are already
-                  connected via WebRTC/SIP.
-                </p>
-              </div>
-              {!agentLinePreflight.isReady && (
-                <p className="text-xs mb-3 text-[#B0BEC5]">
-                  {agentLinePreflight.error ? (
-                    <span className="text-[#FF3D00]">
-                      Couldn&apos;t register your phone line: {agentLinePreflight.error}
-                    </span>
-                  ) : (
-                    'Registering your phone line…'
-                  )}
-                </p>
-              )}
-              <div className="flex justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => setStartDialModalOpen(false)}
-                  disabled={startingDial}
-                  className="px-4 py-2 rounded-lg bg-[#1E2A3A] text-white disabled:opacity-60"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={handleConfirmStartParallelDialing}
-                  disabled={
-                    startingDial ||
-                    userNumbers.length === 0 ||
-                    !selectedFromNumber ||
-                    !agentLinePreflight.isReady
-                  }
-                  className="px-4 py-2 rounded-lg bg-gradient-to-r from-[#00D9FF] to-[#0066FF] text-white disabled:opacity-60 flex items-center gap-2"
-                >
-                  {(startingDial || (!agentLinePreflight.isReady && !agentLinePreflight.error)) && (
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                  )}
-                  Start Session
-                </button>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* Active session conflict: offer Open Dialer or Stop & start new */}
-      <AnimatePresence>
-        {activeSessionConflictId && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 flex items-center justify-center p-4"
-            style={{ zIndex: 10001 }}
-          >
-            <div
-              className="absolute inset-0 bg-black/60"
-              onClick={() => setActiveSessionConflictId(null)}
-              aria-hidden
-            />
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.95 }}
-              className="relative z-[1] w-full max-w-sm rounded-2xl border border-white/10 bg-[#1A2332] shadow-xl p-6"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <p className="text-white mb-6">
-                An active dialer session already exists for this campaign. Open the Dialer to resume
-                it, or stop it and start a new session.
-              </p>
-              <div className="flex flex-col sm:flex-row justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={handleOpenDialerFromConflict}
-                  className="px-4 py-2 rounded-lg bg-[#1E2A3A] text-white hover:bg-[#252F3E]"
-                >
-                  Open Dialer
-                </button>
-                <button
-                  type="button"
-                  onClick={handleStopAndStartNew}
-                  disabled={
-                    startingDial || !selectedFromNumber || conflictLiveCallWith === undefined
-                  }
-                  className="px-4 py-2 rounded-lg bg-gradient-to-r from-[#00D9FF] to-[#0066FF] text-white disabled:opacity-60 flex items-center justify-center gap-2"
-                >
-                  {(startingDial || conflictLiveCallWith === undefined) && (
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                  )}
-                  Stop & start new
-                </button>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* BUG-11/TASK-L5: second confirmation before "Stop & start new" hangs up a LIVE call --
-          default focus on Cancel so a reflexive Enter/click doesn't accidentally hang up on
-          someone. Only ever opened when conflictLiveCallWith is set (see handleStopAndStartNew). */}
-      <AnimatePresence>
-        {confirmStopLiveCall && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 flex items-center justify-center p-4"
-            style={{ zIndex: 10002 }}
-          >
-            <div
-              className="absolute inset-0 bg-black/60"
-              onClick={() => setConfirmStopLiveCall(false)}
-              aria-hidden
-            />
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.95 }}
-              className="relative z-[1] w-full max-w-sm rounded-2xl border border-[#FF3D00]/40 bg-[#1A2332] shadow-xl p-6"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <p className="text-white mb-6">
-                This hangs up your live call with{' '}
-                <span className="font-semibold">{conflictLiveCallWith}</span>. Stop anyway?
-              </p>
-              <div className="flex flex-col sm:flex-row justify-end gap-2">
-                <button
-                  type="button"
-                  autoFocus
-                  onClick={() => setConfirmStopLiveCall(false)}
-                  disabled={startingDial}
-                  className="px-4 py-2 rounded-lg bg-[#1E2A3A] text-white hover:bg-[#252F3E] disabled:opacity-60"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={handleConfirmStopLiveCall}
-                  disabled={startingDial}
-                  className="px-4 py-2 rounded-lg bg-[#FF3D00] text-white hover:bg-[#FF3D00]/90 disabled:opacity-60 flex items-center justify-center gap-2"
-                >
-                  {startingDial && <Loader2 className="w-4 h-4 animate-spin" />}
-                  Stop anyway
-                </button>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
 
       {/* Remove-from-campaign confirmation */}
       <AnimatePresence>

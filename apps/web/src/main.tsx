@@ -20,6 +20,12 @@ if (devHarness?.has('dev_wrapup')) {
   import('./dev/DialerStatesHarness.tsx').then(({ DialerStatesHarness }) => {
     root.render(<DialerStatesHarness />);
   });
+} else if (devHarness?.has('dev_start_session')) {
+  // TASK-L7: StartSessionPanel's own states (no campaigns/list/pre-flight failing/starting/
+  // 409 conflict) with fixture data, no live session/DB. `?dev_start_session=1`.
+  import('./dev/StartSessionHarness.tsx').then(({ StartSessionHarness }) => {
+    root.render(<StartSessionHarness />);
+  });
 } else {
   root.render(<App />);
 }
