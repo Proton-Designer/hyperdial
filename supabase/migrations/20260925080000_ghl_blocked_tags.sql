@@ -31,6 +31,28 @@ create or replace view public.org_integrations_status
   from public.org_integrations i
   where private.is_org_member(i.org_id);
 
+-- SECURITY FIX (lead review, pre-apply): org_integrations_status and org_telephony_status are
+-- simple single-table views (no DISTINCT/GROUP BY/join), which Postgres treats as automatically
+-- updatable (information_schema.views.is_updatable = YES) -- and because both are deliberately
+-- security_invoker=false (so they can read past the base table's zero-policy RLS; see each view's
+-- own original header), an INSERT/UPDATE/DELETE issued directly against the view runs with the
+-- VIEW OWNER's privileges, not the caller's -- completely bypassing the "zero client policies"
+-- protection those base tables were built around. Supabase's project-level default privileges
+-- grant INSERT/UPDATE/DELETE/TRUNCATE/TRIGGER/REFERENCES on every public-schema relation
+-- (views included) to anon/authenticated by default; only `grant select ... to authenticated` was
+-- ever added on top, which does not remove the rest. Proven live (rolled back): an intern-level
+-- authenticated user's `update org_telephony_status set call_control_app_id = ...` updated the
+-- row in the real org_telephony base table. G7 widens the same hole -- an intern could otherwise
+-- clear ghl_dnc_tags/ghl_paused_tags through org_integrations_status, bypassing the owner/admin
+-- check ghl-update-blocked-tags enforces. Neither view was ever meant to be written through --
+-- both close that gap here, for both views, since they share the exact same root cause.
+revoke insert, update, delete, truncate, trigger, references
+  on public.org_integrations_status, public.org_telephony_status
+  from anon, authenticated;
+-- Belt and braces: is_org_member(...) already returns false for anon, so anon's SELECT already
+-- yields zero rows -- revoked anyway so "can anon read this view at all" is never a question.
+revoke select on public.org_integrations_status, public.org_telephony_status from anon;
+
 -- contacts.ghl_tags: raw snapshot of the contact's GHL tags as of its last import (TASK-G7). Lets
 -- a re-import detect "this contact WAS paused (per its previously stored tags) and no longer is"
 -- without a second live GHL round trip -- see ghl-import.ts's unpausedCount for the read side.

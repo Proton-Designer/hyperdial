@@ -1134,6 +1134,40 @@ whose migrated-in canonical dispositions collided in `sort` with its pre-existin
   `apps/web/src/lib/api.ts` needed no change (`updateDisposition` already accepts a partial
   `{sort}` patch; this was always a direct Supabase client call, never an Edge Function/RPC).
 
+## 31. FIXED (before ever applied) — `org_integrations_status`/`org_telephony_status` were
+writable directly by any authenticated user, bypassing their base tables' zero-policy RLS
+
+- Found by the lead during TASK-G7 review, before `20260925080000` was ever applied to live.
+  `org_integrations_status` and `org_telephony_status` are plain single-table `SELECT` views (no
+  `DISTINCT`/`GROUP BY`/join) -- which Postgres treats as automatically updatable
+  (`information_schema.views.is_updatable = 'YES'`) -- and both are deliberately
+  `security_invoker = false` (see each view's own header: needed so the view itself can read past
+  its base table's intentional zero client policies). An `INSERT`/`UPDATE`/`DELETE` issued directly
+  against either view therefore ran with the VIEW OWNER's privileges, not the caller's, completely
+  defeating the "zero client policies" protection both base tables (`org_integrations`,
+  `org_telephony`) were built around. Only `grant select ... to authenticated` was ever added on
+  top of Supabase's project-level default privileges (which grant `INSERT`/`UPDATE`/`DELETE`/
+  `TRUNCATE`/`TRIGGER`/`REFERENCES` on every `public`-schema relation, views included, to
+  `anon`/`authenticated` by default) -- that select grant does not remove the rest. Proven live
+  (rolled back): an intern-level `authenticated` session's
+  `update org_telephony_status set call_control_app_id = ...` updated the real `org_telephony`
+  base-table row. TASK-G7 widened the same hole -- an intern could otherwise clear
+  `ghl_dnc_tags`/`ghl_paused_tags` straight through `org_integrations_status`, bypassing the
+  owner/admin check `ghl-update-blocked-tags` enforces.
+- **Fixed inside `20260925080000` itself** (never applied with the hole present):
+  `revoke insert, update, delete, truncate, trigger, references on org_integrations_status,
+  org_telephony_status from anon, authenticated` (both views, same root cause), plus `revoke
+  select ... from anon` on both (belt and braces -- `is_org_member(...)` already returns false
+  for `anon`, so this changes nothing functionally, it just removes the question). `authenticated`
+  keeps `SELECT` on both -- the legitimate read path (`getGhlIntegrationStatus`/
+  `getTelnyxConnectionStatus` in `api.ts`, both `.select()`-only, grepped to confirm neither client
+  path nor anything else ever writes through either view) is unaffected.
+- **Reusable check for any future `security_invoker = false` view over a zero-client-policy
+  table**: check `information_schema.views.is_updatable` for that view, and if it's `YES`, revoke
+  `INSERT`/`UPDATE`/`DELETE`/`TRUNCATE`/`TRIGGER`/`REFERENCES` from `anon`/`authenticated`
+  explicitly -- `grant select` alone is not sufficient, Supabase's default privileges already gave
+  those roles everything else.
+
 ---
 
 ## Not issues — deliberate, documented elsewhere
