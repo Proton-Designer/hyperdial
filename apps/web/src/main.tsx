@@ -32,6 +32,12 @@ if (devHarness?.has('dev_wrapup')) {
   import('./dev/IncomingCallHarness.tsx').then(({ IncomingCallHarness }) => {
     root.render(<IncomingCallHarness />);
   });
+} else if (devHarness?.has('dev_webrtc_retry')) {
+  // TASK-I1 review fix (eng1 finding #2): the WebRTC connect-retry backoff's pure math,
+  // rendered directly (no test runner exists for the web client). `?dev_webrtc_retry=1`.
+  import('./dev/WebrtcRetryHarness.tsx').then(({ WebrtcRetryHarness }) => {
+    root.render(<WebrtcRetryHarness />);
+  });
 } else {
   root.render(<App />);
 }

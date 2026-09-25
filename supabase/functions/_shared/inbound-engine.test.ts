@@ -539,6 +539,74 @@ Deno.test(
   }
 );
 
+Deno.test(
+  'a second inbound call while the first is still bridged goes down the busy path, not ' +
+    'double-joined into the same conference (eng1 review-eng1.md finding #4)',
+  async () => {
+    const db = new FakeDb();
+    const server = new FakeTelnyxServer();
+    const restore = stubTelnyxFetch(server);
+    const supabase = createFakeSupabase(db, makeExtraRpc(db));
+    const client = createTelnyxClient('fake-key');
+    seedOrg(db, { sharedDestinationNumber: '+15559990000' });
+    seedIntern(db, { userId: 'intern-1', lastSeenAt: new Date().toISOString() });
+    db.insert('dial_sessions', {
+      id: 'sess-joinable',
+      org_id: ORG_ID,
+      campaign_id: CAMPAIGN_ID,
+      agent_id: 'intern-1',
+      state: 'dialing',
+      conference_id: 'conf-1',
+    });
+    db.insert('user_phone_numbers', {
+      id: 'num-1',
+      org_id: ORG_ID,
+      phone_number: '+12145550000',
+      assigned_user_id: 'intern-1',
+    });
+    try {
+      // Caller A: bridges in as usual, pausing the session for the whole duration of the call.
+      const argsA = freshInboundArgs({ callControlId: 'call-a', from: '+15125551111' });
+      await handleFreshInboundCall(supabase, client, argsA);
+      let rowA = loadRow(db, 'call-a');
+      assertEquals(rowA.state, 'bridging_session');
+      assertEquals(
+        db.table('dial_sessions').get('sess-joinable')!.state,
+        'paused',
+        'caller A bridged in, session paused for the whole duration'
+      );
+
+      // Caller B: a second inbound call for the SAME intern while caller A is still live.
+      const argsB = freshInboundArgs({ callControlId: 'call-b', from: '+15125552222' });
+      await handleFreshInboundCall(supabase, client, argsB);
+      const rowB = loadRow(db, 'call-b');
+
+      // Must NOT be routed to bridging_session (which would join B into A's own conference) --
+      // goes down the busy fallback chain instead. No forward number is set for intern-1 in
+      // this fixture, so the first fallback step is the shared destination.
+      assertEquals(rowB.state, 'ringing_shared');
+      assertEquals(
+        server.transfers.length,
+        1,
+        'exactly one transfer -- caller B to the shared line'
+      );
+      assertEquals(server.transfers[0].callControlId, argsB.callControlId);
+      assertEquals(server.joins.length, 0, 'caller B was never joined into any conference');
+
+      // Caller A's own row/session are untouched by B's routing.
+      rowA = loadRow(db, 'call-a');
+      assertEquals(rowA.state, 'bridging_session');
+      assertEquals(
+        db.table('dial_sessions').get('sess-joinable')!.state,
+        'paused',
+        "caller A's session is still paused, not disturbed by B's routing decision"
+      );
+    } finally {
+      restore();
+    }
+  }
+);
+
 Deno.test('webhook redelivery (same event id twice) is a no-op the second time', async () => {
   const db = new FakeDb();
   const server = new FakeTelnyxServer();

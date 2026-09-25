@@ -24,25 +24,53 @@ export const INBOUND_PRESENCE_WINDOW_MS = 2 * 60 * 1000;
 export interface DialSessionSnapshot {
   id: string;
   state: string;
+  /** Review fix (eng1 review-eng1.md finding #4): needed to tell "paused, empty conference,
+   *  safe to join" apart from "paused BECAUSE a prior inbound call is already bridged into it"
+   *  -- both look identical as a bare `state`. */
+  pauseReason: string | null;
 }
 
 /** No dial_session in on_call/connecting/wrap_up -- the task's own literal definition of
  *  "free." A session that HAS an active_leg_id in some other state shouldn't exist per the
- *  state machine's own invariants, so state alone is sufficient here. */
+ *  state machine's own invariants, so state alone is sufficient here.
+ *
+ *  Review fix (eng1 review-eng1.md finding #4): a session `'paused'` because a PRIOR inbound
+ *  call is already bridged into it (`pauseSession(..., 'inbound_call')`) is ALSO busy in every
+ *  practical sense -- the intern's WebRTC leg is occupied with that caller -- even though its
+ *  bare `state` isn't one of the three outbound-call-shaped busy states. Without this, a second
+ *  inbound call for the same intern would see `internBusyOnACall = false` and try
+ *  `'ringing_intern'` (transferring a SECOND invite at an already-occupied WebRTC client) instead
+ *  of going straight down the busy fallback chain (cell -> shared -> voicemail) as intended. */
 export function isAgentBusyOnACall(session: DialSessionSnapshot | null): boolean {
   if (!session) return false;
-  return (
-    session.state === 'on_call' || session.state === 'connecting' || session.state === 'wrap_up'
-  );
+  if (
+    session.state === 'on_call' ||
+    session.state === 'connecting' ||
+    session.state === 'wrap_up'
+  ) {
+    return true;
+  }
+  return session.state === 'paused' && session.pauseReason === 'inbound_call';
 }
 
 /** A session in ready/dialing/paused is one whose conference already has the agent's own
- *  WebRTC leg in it and nobody else -- "join it like a winner" is safe. `ready_pending` (agent
- *  leg not even up yet) and `paused_agent_lost` (agent's own leg is gone) are deliberately
- *  excluded: there is no live agent leg in that conference to bridge the caller to. */
+ *  WebRTC leg in it -- "join it like a winner" is safe, PROVIDED it's not already hosting a
+ *  bridged caller from an EARLIER inbound call. `ready_pending` (agent leg not even up yet) and
+ *  `paused_agent_lost` (agent's own leg is gone) are deliberately excluded: there is no live
+ *  agent leg in that conference to bridge the caller to.
+ *
+ *  Review fix (eng1 review-eng1.md finding #4): `'paused'` alone is ambiguous -- a session is
+ *  ALSO paused (same state string) for the entire duration a prior inbound caller is bridged
+ *  into it (`pauseSession(..., 'inbound_call')`, inbound-engine.ts's `enterStep`), which is NOT
+ *  an empty, safe-to-join conference. Without this check, a second inbound call for the same
+ *  intern while the first one is still live would ALSO be routed to `bridging_session` and
+ *  joined into the SAME conference -- two unrelated callers bridged together. `'paused'` is
+ *  joinable only when `pauseReason` is anything OTHER than `'inbound_call'` (a manual pause, or
+ *  none at all). */
 export function isAgentInJoinableSession(session: DialSessionSnapshot | null): boolean {
   if (!session) return false;
-  return session.state === 'ready' || session.state === 'dialing' || session.state === 'paused';
+  if (session.state === 'ready' || session.state === 'dialing') return true;
+  return session.state === 'paused' && session.pauseReason !== 'inbound_call';
 }
 
 export function isAgentOnline(lastSeenAt: string | null, nowMs: number = Date.now()): boolean {
@@ -84,16 +112,34 @@ export function planInboundSteps(inputs: InboundRoutingInputs): InboundStep[] {
   return steps;
 }
 
-/** The step immediately after `current` in a freshly recomputed plan -- null once `current` was
- *  the last one (voicemail exhausted: caller hung up before or during it, INB-4's 'missed'). */
+/** Fixed priority order for `nextInboundStep` below -- never derived from a freshly recomputed
+ *  plan's own array position (see that function's own header comment for why). */
+const STEP_PRIORITY: Record<InboundStep, number> = {
+  bridging_session: 0,
+  ringing_intern: 1,
+  ringing_cell: 2,
+  ringing_shared: 3,
+  voicemail: 4,
+};
+
+/** The next step to try, ranked strictly AFTER `current` -- never "the entry after `current`'s
+ *  own position in a freshly recomputed plan," which silently dead-ends (review fix, eng1
+ *  review-eng1.md finding #3: `buildRoutingInputs` re-reads live inputs on every call, so if
+ *  they changed enough that `current` no longer appears in the fresh plan at all -- e.g. the
+ *  intern started a NEW dial session mid-ring, so 'ringing_intern' drops out in favor of
+ *  'bridging_session' -- `indexOf` returned -1 and the caller silently hung up on the caller
+ *  with no Telnyx command at all: real dead air). Ranking by a FIXED priority order instead and
+ *  taking the first step in the fresh plan whose rank exceeds `current`'s own rank means this
+ *  only ever returns null when `current` was already `'voicemail'` (rank 4, nothing outranks
+ *  it) -- `planInboundSteps` always includes `'voicemail'` unconditionally, so there is always a
+ *  real next step to advance to unless the chain was already exhausted. */
 export function nextInboundStep(
   current: InboundStep,
   inputs: InboundRoutingInputs
 ): InboundStep | null {
   const plan = planInboundSteps(inputs);
-  const index = plan.indexOf(current);
-  if (index === -1 || index === plan.length - 1) return null;
-  return plan[index + 1];
+  const currentRank = STEP_PRIORITY[current];
+  return plan.find((step) => STEP_PRIORITY[step] > currentRank) ?? null;
 }
 
 /** INB-4's exact 4-value outcome, derived from which step the call was on when it ended and

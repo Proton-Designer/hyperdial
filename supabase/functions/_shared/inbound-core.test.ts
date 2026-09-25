@@ -11,42 +11,81 @@ import {
   type InboundRoutingInputs,
 } from './inbound-core.ts';
 
-Deno.test('isAgentBusyOnACall: true only for on_call/connecting/wrap_up', () => {
-  assertEquals(isAgentBusyOnACall(null), false);
-  for (const state of ['on_call', 'connecting', 'wrap_up']) {
-    assertEquals(isAgentBusyOnACall({ id: 's', state }), true, state);
+Deno.test(
+  'isAgentBusyOnACall: true for on_call/connecting/wrap_up, and for paused-for-inbound_call',
+  () => {
+    assertEquals(isAgentBusyOnACall(null), false);
+    for (const state of ['on_call', 'connecting', 'wrap_up']) {
+      assertEquals(isAgentBusyOnACall({ id: 's', state, pauseReason: null }), true, state);
+    }
+    // Review fix (eng1 review-eng1.md finding #4): a prior bridged inbound call also counts as
+    // busy, even though the bare state is 'paused' -- the intern's WebRTC leg is occupied.
+    assertEquals(
+      isAgentBusyOnACall({ id: 's', state: 'paused', pauseReason: 'inbound_call' }),
+      true,
+      'paused for a prior inbound call -- busy'
+    );
+    for (const state of [
+      'ready_pending',
+      'ready',
+      'dialing',
+      'paused_agent_lost',
+      'stopped',
+      'completed',
+    ]) {
+      assertEquals(isAgentBusyOnACall({ id: 's', state, pauseReason: null }), false, state);
+    }
+    assertEquals(
+      isAgentBusyOnACall({ id: 's', state: 'paused', pauseReason: null }),
+      false,
+      'plain manual pause -- not busy'
+    );
+    assertEquals(
+      isAgentBusyOnACall({ id: 's', state: 'paused', pauseReason: 'manual' }),
+      false,
+      'a different pause reason -- not busy'
+    );
   }
-  for (const state of [
-    'ready_pending',
-    'ready',
-    'dialing',
-    'paused',
-    'paused_agent_lost',
-    'stopped',
-    'completed',
-  ]) {
-    assertEquals(isAgentBusyOnACall({ id: 's', state }), false, state);
-  }
-});
+);
 
-Deno.test('isAgentInJoinableSession: true only for ready/dialing/paused', () => {
-  assertEquals(isAgentInJoinableSession(null), false);
-  for (const state of ['ready', 'dialing', 'paused']) {
-    assertEquals(isAgentInJoinableSession({ id: 's', state }), true, state);
+Deno.test(
+  'isAgentInJoinableSession: true only for ready/dialing/paused (not from inbound_call)',
+  () => {
+    assertEquals(isAgentInJoinableSession(null), false);
+    for (const state of ['ready', 'dialing']) {
+      assertEquals(isAgentInJoinableSession({ id: 's', state, pauseReason: null }), true, state);
+    }
+    assertEquals(
+      isAgentInJoinableSession({ id: 's', state: 'paused', pauseReason: null }),
+      true,
+      'paused, no reason'
+    );
+    assertEquals(
+      isAgentInJoinableSession({ id: 's', state: 'paused', pauseReason: 'manual' }),
+      true,
+      'paused, manual reason'
+    );
+    // Review fix (eng1 review-eng1.md finding #4): 'paused' because a PRIOR inbound call is
+    // already bridged into this same conference is NOT safe to join a second caller into.
+    assertEquals(
+      isAgentInJoinableSession({ id: 's', state: 'paused', pauseReason: 'inbound_call' }),
+      false,
+      'paused for a prior inbound call -- NOT joinable'
+    );
+    // Explicitly excluded even though they're not "busy" either: no live agent leg to bridge to.
+    for (const state of [
+      'ready_pending',
+      'paused_agent_lost',
+      'on_call',
+      'connecting',
+      'wrap_up',
+      'stopped',
+      'completed',
+    ]) {
+      assertEquals(isAgentInJoinableSession({ id: 's', state, pauseReason: null }), false, state);
+    }
   }
-  // Explicitly excluded even though they're not "busy" either: no live agent leg to bridge to.
-  for (const state of [
-    'ready_pending',
-    'paused_agent_lost',
-    'on_call',
-    'connecting',
-    'wrap_up',
-    'stopped',
-    'completed',
-  ]) {
-    assertEquals(isAgentInJoinableSession({ id: 's', state }), false, state);
-  }
-});
+);
 
 Deno.test('isAgentOnline: within the 2-minute window, not outside it, not for null', () => {
   const now = Date.parse('2026-09-25T12:00:00Z');
@@ -168,11 +207,48 @@ Deno.test(
 );
 
 Deno.test(
-  'nextInboundStep: a step that is not in the (recomputed) plan at all returns null, not a crash',
+  'nextInboundStep: a step that is not in the (recomputed) plan at all advances to the next ' +
+    'higher-ranked step instead of dead-ending -- never silent dead air (eng1 review fix #3)',
   () => {
     // e.g. the intern went offline between the first webhook and this one -- 'ringing_intern'
-    // is legitimately gone from a freshly recomputed plan. Must not throw or silently resume it.
-    assertEquals(nextInboundStep('ringing_intern', inputs({ hasSharedDestination: true })), null);
+    // is legitimately gone from a freshly recomputed plan. Ranking by a FIXED priority order
+    // (not `indexOf`-ing the stale step into the fresh plan) means this advances to whatever
+    // real step outranks it (here, ringing_shared) rather than returning null and leaving the
+    // caller on a dead leg with no further Telnyx command ever issued.
+    assertEquals(
+      nextInboundStep('ringing_intern', inputs({ hasSharedDestination: true })),
+      'ringing_shared'
+    );
+  }
+);
+
+Deno.test(
+  'nextInboundStep: only returns null when current was already the last-ranked step ' +
+    '(voicemail) -- the ONLY real "nothing left to try" case',
+  () => {
+    // Mirrors finding #3's own repro: the intern started a session mid-ring, so a freshly
+    // recomputed plan now leads with 'bridging_session' instead of 'ringing_intern' -- but
+    // bridging_session is ranked BEFORE ringing_intern (it's a higher-priority path we've
+    // already moved past for this call), so it's correctly skipped, not resumed backward.
+    assertEquals(
+      nextInboundStep(
+        'ringing_intern',
+        inputs({
+          hasAssignedIntern: true,
+          joinableSessionId: 'session-1',
+          hasSharedDestination: true,
+        })
+      ),
+      'ringing_shared'
+    );
+    // Only 'voicemail' itself (rank 4, nothing outranks it) ever returns null.
+    assertEquals(
+      nextInboundStep(
+        'voicemail',
+        inputs({ hasAssignedIntern: true, joinableSessionId: 'session-1' })
+      ),
+      null
+    );
   }
 );
 

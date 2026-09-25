@@ -143,6 +143,29 @@ export interface InboundSettings {
   voicemail_greeting_text: string;
 }
 
+/** TASK-I1 review fix (eng1 review-eng1.md finding #6): resolves the caller's contact record for
+ *  IncomingCallBanner. Deliberately wider than contacts' own RLS -- see
+ *  `20260925070102_lookup_contact_by_phone.sql`'s own comment for why a plain
+ *  `.from('contacts')` query would silently under-match for an agent. */
+export interface CallerContactMatch {
+  id: string;
+  business_name: string | null;
+  first_name: string | null;
+  last_name: string | null;
+  phone_number: string;
+}
+
+export async function lookupContactByPhone(phoneE164: string): Promise<CallerContactMatch | null> {
+  const orgId = await getActiveOrgId();
+  const { data, error } = await supabase.rpc('lookup_contact_by_phone', {
+    p_org_id: orgId,
+    p_phone_e164: phoneE164,
+  });
+  if (error) throw new Error(error.message);
+  const row = (data as CallerContactMatch[] | null)?.[0];
+  return row ?? null;
+}
+
 /** Same "member read, owner/admin write, direct client upsert against RLS" shape as
  *  getNumberPoolSettings/updateNumberPoolSettings -- no Edge Function needed. */
 export async function getInboundSettings(): Promise<InboundSettings> {

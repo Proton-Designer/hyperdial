@@ -7,12 +7,15 @@ import { useDialerSession } from '@/hooks/useDialerSession';
 import { ParallelDialerUI } from './dialer/ParallelDialerUI';
 import { DialerStateBanner } from './dialer/DialerStateBanner';
 import { IncomingCallBanner } from './dialer/IncomingCallBanner';
+import { CallForwardingCard } from './dialer/CallForwardingCard';
 import { WrapUpModal } from './dialer/WrapUpModal';
 import { StartSessionPanel } from './dialer/StartSessionPanel';
 import { ManualDialPanel } from './dialer/ManualDialPanel';
 import {
   getActiveDialerSession,
   getDialerSession,
+  getTelnyxConnectionStatus,
+  lookupContactByPhone,
   listCampaigns,
   startDialerSession,
   updateMyPresenceHeartbeat,
@@ -24,6 +27,11 @@ import {
 import { playConnectChime } from '@/lib/dialerSoundCue';
 import { consumePendingStartCampaignId } from '@/lib/dialerLaunchIntent';
 import { useSingleTabLock } from '@/lib/useSingleTabLock';
+import {
+  WEBRTC_RETRY_BASE_MS,
+  nextWebrtcRetryDelayMs,
+  isDefinitiveTelnyxNotConnectedError,
+} from '@/lib/webrtcRetry';
 
 const REMOTE_AUDIO_ID = 'telnyx-remote-audio';
 
@@ -157,6 +165,35 @@ function DialerBody({
     sessionId: effectiveSessionId ?? undefined,
   });
 
+  // TASK-I1 review fix (eng1 review-eng1.md finding #6): resolve the caller's contact name for
+  // the incoming-call banner, matched by E.164 within the org -- see lookupContactByPhone's own
+  // comment for why this can't just be a plain client-side `.from('contacts')` query. Keyed on
+  // the pending call's own id so a stale lookup from a PRIOR call can't ever apply to a new one.
+  const [pendingCallContactName, setPendingCallContactName] = useState<string | null>(null);
+  useEffect(() => {
+    if (!pendingInboundCall?.fromE164) {
+      setPendingCallContactName(null);
+      return;
+    }
+    let cancelled = false;
+    lookupContactByPhone(pendingInboundCall.fromE164)
+      .then((contact) => {
+        if (cancelled) return;
+        const name = contact
+          ? contact.business_name ||
+            `${contact.first_name ?? ''} ${contact.last_name ?? ''}`.trim() ||
+            null
+          : null;
+        setPendingCallContactName(name);
+      })
+      .catch(() => {
+        if (!cancelled) setPendingCallContactName(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [pendingInboundCall?.callId, pendingInboundCall?.fromE164]);
+
   // Proactively register the WebRTC client whenever this tab owns the agent line -- not just
   // when there's a parallel session to serve. Originally gated on `effectiveSessionId` (the
   // agent leg's inbound call has nowhere to be auto-answered until this has run, covering
@@ -171,13 +208,79 @@ function DialerBody({
   // dialer-engine.ts's agentSipUri no longer has a registration backstop to fall back on --
   // it's self-healing (get-or-create) regardless of whether the browser has connected yet, so
   // this effect running promptly (session or not) is what makes an intern actually reachable.
+  //
+  // Review fix (eng1 review-eng1.md finding #2, live-confirmed 108+ req/15s): dropping the
+  // session gate meant this effect now runs continuously for every org, including the DEFAULT
+  // "Telnyx not connected" state -- and `agentLineConnecting` flipping back to false on a failed
+  // `connect()` was itself one of this effect's own dependencies, so a failure re-satisfied its
+  // re-entry condition and fired again immediately, forever, with no backoff. Two independent
+  // fixes: (1) never even attempt a connect until `getTelnyxConnectionStatus()` confirms the org
+  // IS connected (checked once per isAgentLineOwner transition, below) -- the common "no Telnyx
+  // yet" case now issues zero credential requests, not an infinite retry of failing ones; (2)
+  // any OTHER failure retries on an exponential backoff (5s -> 5min cap, `webrtcRetry.ts`) driven
+  // by its own setTimeout chain, not by React re-running this effect -- `agentLineReady`/
+  // `agentLineConnecting` are read via refs inside the retry closure instead of being dependency-
+  // array entries, so a connect attempt's own state transitions can no longer re-trigger this
+  // effect and bypass the backoff the way the original bug did.
+  const [orgTelnyxConnected, setOrgTelnyxConnected] = useState<boolean | null>(null);
   useEffect(() => {
-    if (!isAgentLineOwner) return;
-    if (agentLineReady || agentLineConnecting) return;
-    connectAgentLine().catch(() => {
-      // Surfaced via useTelnyxCall's own `error` state; DialerStateBanner renders it.
-    });
-  }, [isAgentLineOwner, agentLineReady, agentLineConnecting, connectAgentLine]);
+    if (!isAgentLineOwner) {
+      setOrgTelnyxConnected(null);
+      return;
+    }
+    let cancelled = false;
+    getTelnyxConnectionStatus()
+      .then((status) => {
+        if (!cancelled) setOrgTelnyxConnected(status?.status === 'connected');
+      })
+      .catch(() => {
+        if (!cancelled) setOrgTelnyxConnected(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isAgentLineOwner]);
+
+  const agentLineReadyRef = useRef(agentLineReady);
+  const agentLineConnectingRef = useRef(agentLineConnecting);
+  useEffect(() => {
+    agentLineReadyRef.current = agentLineReady;
+    agentLineConnectingRef.current = agentLineConnecting;
+  }, [agentLineReady, agentLineConnecting]);
+
+  useEffect(() => {
+    if (!isAgentLineOwner || orgTelnyxConnected !== true) return;
+
+    let cancelled = false;
+    let retryDelayMs = WEBRTC_RETRY_BASE_MS;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const attempt = () => {
+      if (cancelled) return;
+      if (agentLineReadyRef.current || agentLineConnectingRef.current) return;
+      connectAgentLine()
+        .then(() => {
+          retryDelayMs = WEBRTC_RETRY_BASE_MS;
+        })
+        .catch((e) => {
+          if (cancelled) return;
+          // Surfaced via useTelnyxCall's own `error` state; DialerStateBanner renders it.
+          const message = e instanceof Error ? e.message : String(e);
+          if (isDefinitiveTelnyxNotConnectedError(message)) {
+            setOrgTelnyxConnected(false);
+            return;
+          }
+          retryTimer = setTimeout(attempt, retryDelayMs);
+          retryDelayMs = nextWebrtcRetryDelayMs(retryDelayMs);
+        });
+    };
+    attempt();
+
+    return () => {
+      cancelled = true;
+      if (retryTimer) clearTimeout(retryTimer);
+    };
+  }, [isAgentLineOwner, orgTelnyxConnected, connectAgentLine]);
 
   // TASK-I1 (INB-3): presence heartbeat, the only server-visible "seen recently" signal
   // (`isAgentOnline`, inbound-core.ts) -- there's no server-visible WebRTC-registration status
@@ -614,6 +717,7 @@ function DialerBody({
         {pendingInboundCall && (
           <IncomingCallBanner
             fromE164={pendingInboundCall.fromE164}
+            contactName={pendingCallContactName}
             onAnswer={answerPendingInboundCall}
             onDecline={declinePendingInboundCall}
           />
@@ -708,6 +812,8 @@ function DialerBody({
             onDismissConflict={() => setStartConflict(null)}
           />
         )}
+
+        {(!isParallelMode || parallelSession.error) && <CallForwardingCard />}
 
         {(!isParallelMode || parallelSession.error) && (
           <ManualDialPanel

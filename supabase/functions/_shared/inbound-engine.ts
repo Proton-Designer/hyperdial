@@ -163,7 +163,7 @@ async function buildRoutingInputs(
 
   const { data: session } = await supabase
     .from('dial_sessions')
-    .select('id, state')
+    .select('id, state, pause_reason')
     .eq('org_id', orgId)
     .eq('agent_id', routedToUserId)
     .order('started_at', { ascending: false })
@@ -171,7 +171,11 @@ async function buildRoutingInputs(
     .maybeSingle();
 
   const sessionSnapshot = session
-    ? { id: session.id as string, state: session.state as string }
+    ? {
+        id: session.id as string,
+        state: session.state as string,
+        pauseReason: (session.pause_reason as string | null) ?? null,
+      }
     : null;
 
   return {
@@ -268,7 +272,21 @@ async function enterStep(
       await advanceInboundCall(supabase, client, args, step);
       return;
     }
-    await pauseSession(supabase, args.orgId, args.joinableSessionId, 'inbound_call');
+    // Review fix (eng1 review-eng1.md finding #4): pauseSession's CAS (expects
+    // ['dialing','ready']) can lose the race -- e.g. a concurrent second inbound call, or the
+    // intern's own session having moved on between buildRoutingInputs' read and this write. The
+    // return value was previously discarded, so a lost CAS still fell through to answering and
+    // joining the caller into whatever conference_id the session happened to have, unconditionally.
+    // Treat a lost CAS exactly like "no joinable session" -- advance past this step instead.
+    const paused = await pauseSession(supabase, args.orgId, args.joinableSessionId, 'inbound_call');
+    if (!paused) {
+      inboundLog('bridging_session_pause_cas_lost', {
+        inboundCallId: args.inboundCallId,
+        joinableSessionId: args.joinableSessionId,
+      });
+      await advanceInboundCall(supabase, client, args, step);
+      return;
+    }
     await client.answer(args.callControlId);
     return;
   }
