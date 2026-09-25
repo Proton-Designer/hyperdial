@@ -984,6 +984,45 @@ genuinely separate browser processes/machines).
 
 ---
 
+## 25. ~~`call_legs.duration_seconds` was never written -- Talk Time always showed 0m~~ -- FIXED by TASK-M1 (2026-09-25)
+
+- **The gap**: the transition RPCs supported `duration_seconds` (`transition_leg`'s own
+  `p_fields` case-when, `20260924000800_dialer_rpcs.sql:179`), but `dialer-engine.ts` never
+  passed it on any leg-ending path -- `call_leg_analytics.duration_seconds` was always null, so
+  the Dashboard's Talk Time card always rendered `0m` regardless of real call activity. Also
+  blocked the user's own ask to replace the ambiguous "Revenue Pipeline" card ("Coming soon",
+  `Dashboard.tsx`) with something genuinely useful -- "Conversations / hr" needs a real duration
+  to know which connected legs actually count as a conversation (>= 30s).
+- **Fix**: a new `call_legs.bridged_at` column, stamped by `handleWin` (dialer-engine.ts) right
+  after the winning leg's conference create/join actually succeeds -- never on a failed join.
+  `duration_seconds = ended_at - (bridged_at ?? answered_at ?? claimed_at)`, computed on all
+  THREE leg-ending paths that can produce a `connected` outcome: the real `call.hangup` webhook
+  (`applyLegTransition`, gated on `result.outcome === 'connected'`), the sweeper's
+  `reap_dead_claimed_leg` (SQL-only -- no TS event exists for this path), and an agent-lost
+  claimed leg (which was never directly touched by `handleAgentLegLost` -- it becomes a stale
+  candidate the sweeper's reap path picks up, same as any other timed-out claimed leg). See
+  `.brain/domains/dialer.md` and `.brain/domains/analytics.md` for the full mechanism and the
+  fallback-chain rationale (the winning leg's own `call.answered` never gets `answered_at`
+  written -- it's the claim-win branch that resolves it, not the generic event path -- so
+  `claimed_at` is a REAL second fallback, not a defensive no-op one).
+- Fixed the SAME masking-bug class (M4, #21/#22) one more time while here: the fake
+  `transition_leg` in `dialer-engine.test.ts` was still a blind `Object.assign` (unlike
+  `transition_session`'s fake, already fixed to an allowlist after M4) -- would have silently
+  accepted a `p_fields` key the real SQL doesn't write. Now allowlisted the same way.
+- `supabase/functions/_shared/analytics-core.ts` (new): pure `isConversation`/
+  `computeConversationsPerHour`, deno-tested directly, since Edge Function `index.ts` handlers
+  have no test files of their own in this repo (`dashboard-stats/index.ts` just calls in).
+- Deferred, not wired: `Analytics.tsx`'s per-agent table is still fully mock data (CLAUDE.md's
+  own known-issue, unchanged) -- a real "Conv/hr" column there needs a per-agent breakdown
+  `team-performance`/`analytics-summary` don't return today.
+- Checks: `deno test` 240 -> 247 (0 failed); `npm run check`/`npm run build` clean.
+  `supabase/tests/dialer_sweeper.sql` extended with `duration_seconds` assertions on the reap
+  path (NEEDS-LIVE-VERIFY, same as the rest of that file -- local Docker is retired). The new
+  migration (`20260925020000_call_legs_duration_conversations.sql`) is committed but not yet
+  applied anywhere.
+
+---
+
 ## Not issues — deliberate, documented elsewhere
 
 - Redis alongside Postgres → `mem.decisions`

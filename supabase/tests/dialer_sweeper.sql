@@ -256,6 +256,14 @@ select public._test_expect_count('pass 2: F/G/H leads still in_flight', 'select 
 -- exercises the SQL primitives that decision calls: run_dialer_sweep's own new
 -- stale_claimed_legs SELECT (never mutates), reap_dead_claimed_leg's atomicity/idempotency,
 -- and the corrected agent-lost states list.
+--
+-- TASK-M1 addendum: reap_dead_claimed_leg (20260925020000_call_legs_duration_conversations.sql)
+-- now also writes duration_seconds, since this is the ONE reap path that has no TS-side
+-- call.hangup event to compute it from -- the sweeper decided the leg is dead, it was never
+-- told to hang up. J/K/L below have no bridged_at fixture value (nothing in this SQL-only
+-- scenario stands in for handleWin's own TS-side bridge stamp), so every assertion here is
+-- exercising the answered_at fallback specifically, not the bridged_at happy path (that one is
+-- deno-tested directly in dialer-engine.test.ts, TASK-M1's own scenario).
 -- ===========================================================================================
 
 insert into public.contacts (id, org_id, user_id, phone_number, timezone) values
@@ -357,11 +365,25 @@ select public._test_expect_eq('reap_dead_claimed_leg(K): applied', :'reaped_k', 
 select public._test_expect_eq('leg K: ended, hangup_cause timeout, outcome still connected (untouched)', (select state || '/' || hangup_cause || '/' || outcome from public.call_legs where id = '9e5e0000-a050-4000-8000-000000000021'), 'ended/timeout/connected');
 select public._test_expect_eq('session L6-2: moved to wrap_up, active_leg_id cleared (K was its active_leg_id)', (select state || '/active=' || coalesce(active_leg_id::text, '<null>') from public.dial_sessions where id = '9e5e0000-a040-4000-8000-000000000021'), 'wrap_up/active=<null>');
 select public._test_expect_eq('lead for K: attempts 1, still in_flight (a CONNECTED outcome waits on disposition, not requeued)', (select status || '/' || attempts::text from public.campaign_leads where id = '9e5e0000-a030-4000-8000-000000000021'), 'in_flight/1');
+-- TASK-M1: K's bridged_at was never set by this fixture (SQL has no equivalent of handleWin's
+-- own bridge stamp) -- reap must fall back to answered_at (both = claimed_at = 40 min ago
+-- here), landing duration_seconds around 2400s. A wide tolerance band (not an exact literal)
+-- because `now()` moves between the fixture insert and this assertion.
+select public._test_expect_count(
+  'leg K: duration_seconds ~2400s (40 min, from answered_at fallback)',
+  'select count(*) from public.call_legs where id = ''9e5e0000-a050-4000-8000-000000000021'' and duration_seconds between 2395 and 2410',
+  1
+);
 
 -- Idempotency / race-safety: calling it again on the now-'ended' K is a no-op, not a re-apply.
 select public.reap_dead_claimed_leg('9e5e0000-a050-4000-8000-000000000021', 'timeout') as reaped_k_again \gset
 select public._test_expect_eq('reap_dead_claimed_leg(K) again: false (already resolved)', :'reaped_k_again', 'false');
 select public._test_expect_eq('lead for K: attempts still 1 after the no-op re-reap', (select attempts from public.campaign_leads where id = '9e5e0000-a030-4000-8000-000000000021'), '1');
+select public._test_expect_count(
+  'leg K: duration_seconds unchanged by the no-op re-reap',
+  'select count(*) from public.call_legs where id = ''9e5e0000-a050-4000-8000-000000000021'' and duration_seconds between 2395 and 2410',
+  1
+);
 
 -- J: confirmed not-alive by Telnyx (simulated -- the real Telnyx call is deno-tested) -- TS
 -- would call this with 'call_not_alive'.
@@ -370,6 +392,11 @@ select public._test_expect_eq('reap_dead_claimed_leg(J): applied', :'reaped_j', 
 select public._test_expect_eq('leg J: ended, hangup_cause call_not_alive', (select state || '/' || hangup_cause from public.call_legs where id = '9e5e0000-a050-4000-8000-000000000020'), 'ended/call_not_alive');
 select public._test_expect_eq('session L6-1: moved to wrap_up, active_leg_id cleared (J was its active_leg_id)', (select state || '/active=' || coalesce(active_leg_id::text, '<null>') from public.dial_sessions where id = '9e5e0000-a040-4000-8000-000000000020'), 'wrap_up/active=<null>');
 select public._test_expect_eq('lead for J: attempts 1, in_flight', (select status || '/' || attempts::text from public.campaign_leads where id = '9e5e0000-a030-4000-8000-000000000020'), 'in_flight/1');
+select public._test_expect_count(
+  'leg J: duration_seconds ~600s (10 min, from answered_at fallback -- no bridged_at fixture)',
+  'select count(*) from public.call_legs where id = ''9e5e0000-a050-4000-8000-000000000020'' and duration_seconds between 598 and 610',
+  1
+);
 
 -- L (review fix, MAJOR 1): outcome was NULL (the win-outcome patch never landed) -- reap must
 -- coalesce it to 'connected', exactly what the real call.hangup path would have written
@@ -381,6 +408,13 @@ select public._test_expect_eq('reap_dead_claimed_leg(L): applied', :'reaped_l', 
 select public._test_expect_eq('leg L: ended, outcome coalesced to connected (was NULL)', (select state || '/' || coalesce(outcome, '<null>') from public.call_legs where id = '9e5e0000-a050-4000-8000-000000000023'), 'ended/connected');
 select public._test_expect_eq('session L6-4: moved to wrap_up, active_leg_id cleared (L was its active_leg_id)', (select state || '/active=' || coalesce(active_leg_id::text, '<null>') from public.dial_sessions where id = '9e5e0000-a040-4000-8000-000000000023'), 'wrap_up/active=<null>');
 select public._test_expect_eq('lead for L: attempts 1, in_flight (NOT requeued at attempts+0)', (select status || '/' || attempts::text from public.campaign_leads where id = '9e5e0000-a030-4000-8000-000000000022'), 'in_flight/1');
+-- TASK-M1: L's outcome was NULL going in (the win-outcome patch never landed) -- duration_seconds
+-- must STILL be computed (the coalesce is only on `outcome`, not on skipping the whole write).
+select public._test_expect_count(
+  'leg L: duration_seconds ~600s even though outcome had to be coalesced first',
+  'select count(*) from public.call_legs where id = ''9e5e0000-a050-4000-8000-000000000023'' and duration_seconds between 598 and 610',
+  1
+);
 
 -- Confirm the next sweep does NOT requeue L's lead (the regression the dry-run reproduced pre-fix).
 select * from public.run_dialer_sweep() \gset sweep4_

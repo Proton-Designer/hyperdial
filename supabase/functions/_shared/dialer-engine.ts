@@ -179,12 +179,25 @@ interface CallLegRow {
   kind: 'contact' | 'agent';
   call_control_id: string;
   state: LegState;
+  /** Set on a LOSING contact leg's own call.answered (via applyLegTransition) -- the WINNING
+   *  leg's call.answered is handled by the separate claim-win branch in processContactLegEvent,
+   *  which never sets it (claim_leg's own `claimed_at` is the winner's equivalent timestamp).
+   *  Talk-duration fallback, in order, is `bridged_at ?? answered_at ?? claimed_at`. */
+  answered_at: string | null;
+  /** Set by claim_leg's own SQL the moment a contact leg wins the race -- see `answered_at`'s
+   *  comment for why the winner needs this as its second fallback, not just the first. */
+  claimed_at: string | null;
+  /** TASK-M1: stamped by `handleWin` right after the winner leg's conference create/join
+   *  actually succeeds -- never on a failed join, so this stays null (falls back to
+   *  `answered_at`/`claimed_at`) exactly when the leg genuinely never got bridged into live
+   *  audio. */
+  bridged_at: string | null;
 }
 
 const SESSION_COLUMNS =
   'id, org_id, campaign_id, agent_id, state, lines, amd_mode, agent_leg_id, active_leg_id, conference_id, paused_agent_lost_from';
 const LEG_COLUMNS =
-  'id, org_id, session_id, campaign_id, contact_id, lead_id, kind, call_control_id, state';
+  'id, org_id, session_id, campaign_id, contact_id, lead_id, kind, call_control_id, state, answered_at, claimed_at, bridged_at';
 
 async function loadSession(
   supabase: SupabaseClient,
@@ -955,7 +968,24 @@ async function applyLegTransition(
     if (result.next === 'claimed') fields.claimed_at = new Date().toISOString();
     if (event.eventType === 'call.hangup') {
       fields.hangup_cause = event.hangupCause;
-      fields.ended_at = new Date().toISOString();
+      const endedAt = new Date();
+      fields.ended_at = endedAt.toISOString();
+      // TASK-M1: talk duration is bridge-to-hangup, not answer-to-hangup -- a losing/abandoned/
+      // machine leg was never bridged and keeps duration_seconds null (hangupOutcome only
+      // returns 'connected' for a leg that reached 'claimed', dialer-core.ts). Falls back to
+      // answered_at when the winner's own conference create/join failed (handleWin caught the
+      // error and never stamped bridged_at) -- still a real, if imprecise, talk duration rather
+      // than leaving a genuinely-connected call's Talk Time at zero.
+      if (result.outcome === 'connected') {
+        const bridgeStart =
+          currentLeg.bridged_at ?? currentLeg.answered_at ?? currentLeg.claimed_at;
+        if (bridgeStart) {
+          fields.duration_seconds = Math.max(
+            0,
+            Math.round((endedAt.getTime() - new Date(bridgeStart).getTime()) / 1000)
+          );
+        }
+      }
     }
 
     const { data: applied, error: transitionError } = await supabase.rpc('transition_leg', {
@@ -1598,6 +1628,20 @@ async function handleWin(
       conferenceId,
       winnerLegId: winnerLeg.id,
     });
+    // TASK-M1: only stamped once the create/join actually succeeded above (this line is
+    // unreached on a thrown error) -- a leg that never really got bridged into live audio
+    // falls back to answered_at for its talk-duration calc instead of lying about a bridge
+    // time. `conferenceId` can still be falsy here if createConference succeeded but Telnyx
+    // returned no id (existing edge case, unrelated to this task) -- guard on it explicitly
+    // rather than stamping a bridge that has no conference behind it.
+    if (conferenceId) {
+      await supabase.rpc('transition_leg', {
+        p_call_control_id: winnerLeg.call_control_id,
+        p_expected_states: ['claimed'],
+        p_new_state: 'claimed',
+        p_fields: { bridged_at: new Date().toISOString() },
+      });
+    }
   } catch (err) {
     dialerLog('handle_win_conference_failed', { sessionId: session.id, error: String(err) });
   }

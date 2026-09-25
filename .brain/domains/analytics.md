@@ -5,13 +5,15 @@ layer: L2
 type: domain
 status: canonical
 owner: maintainer
-updated: 2026-09-24
+updated: 2026-09-25
 sources:
   - supabase/migrations/20260924002400_analytics_real_data.sql
+  - supabase/migrations/20260925020000_call_legs_duration_conversations.sql
   - supabase/functions/dashboard-stats/index.ts
   - supabase/functions/team-performance/index.ts
   - supabase/functions/analytics-summary/index.ts
   - supabase/functions/ensure-week-summary/index.ts
+  - supabase/functions/_shared/analytics-core.ts
   - apps/web/src/components/Dashboard.tsx
   - apps/web/src/components/Analytics.tsx
   - apps/web/src/lib/api.ts
@@ -21,8 +23,10 @@ related:
   - domain.auth
 answers:
   - "is the Analytics screen real data or a mock"
-  - "where do the Dashboard's Calls Today / Connect Rate / Talk Time numbers come from"
+  - "where do the Dashboard's Calls Today / Connect Rate / Talk Time / Conversations-per-hr numbers come from"
   - "how is live conversations per agent-hour computed"
+  - "what counts as a conversation"
+  - "why was Talk Time always 0m"
   - "how is the weekly summary notification created and when"
   - "how are in-app notifications listed, counted and marked read"
 covers: "The Dashboard metrics, the Analytics screen, the call_leg_analytics/dial_session_hours views behind them, the weekly-summary job, and the in-app notification bell."
@@ -46,17 +50,23 @@ mock data, no empty-by-construction tables, as of TASK-P4-P1.
 | `dial_session_hours` | A `security_invoker` view: one row per dial session, `session_hours` = wall-clock `ended_at - started_at`, null while a session is still running. The agent-hours denominator for the north-star metric. |
 | Conversations / agent-hour | `count(is_connected) / sum(session_hours)` over a date range — the literal north-star metric. **Approximation**: `session_hours` is the WHOLE session span, including any paused/wrap_up time within it — there's no per-state-transition duration log to subtract that out precisely. |
 | `call_events` | The OLD analytics table. **Dropped in TASK-P4-P2** (`20260924002500`) — it never appears in `\d` output on a schema built after that migration; mentioned here only for history. |
+| **Talk duration** (`call_legs.duration_seconds`, TASK-M1) | Seconds from when a contact leg was BRIDGED into the agent's conference (`call_legs.bridged_at`, stamped by `handleWin`, dialer-engine.ts, right after a successful conference create/join — never on a failed join) to the leg's hangup. Falls back to `answered_at`, then `claimed_at`, when `bridged_at` is null (the leg never got bridged into live audio, or — for a winning contact leg specifically — `answered_at` itself is never written either, since the winner's own `call.answered` is handled by the claim-win branch directly, not the generic event handler that stamps it). Written on all three leg-ending paths: the real `call.hangup` webhook (`dialer-engine.ts`'s `applyLegTransition`), the sweeper's `reap_dead_claimed_leg` (SQL-only — there is no TS event for this path), and an agent-lost claimed leg (which always ends up going through the sweeper's reap path too, since `handleAgentLegLost` deliberately never touches the still-`claimed` leg — see `.brain/domains/dialer.md`). |
+| **Conversation** (TASK-M1) | A contact leg with `outcome = 'connected'` and `duration_seconds >= 30`. Losing/abandoned/machine legs never get a `duration_seconds` at all (not 0) — the connected gate is on `outcome`, not `state`. |
+| **Dialing hours (today)** (`dialing_hours_today(org_id, agent_id)` RPC) | `sum(coalesce(ended_at, now()) - started_at)`, clipped to `[start of today, now]`, over the agent's `dial_sessions` — **includes a still-RUNNING session** (unlike `dial_session_hours` below, which only counts ended ones), so the number is live during the day, not just after a session ends. "Today" is midnight **America/Chicago** — no org has a timezone column yet (checked every migration); this is a hardcoded default until one exists. |
+| **Conversations / hr** (TASK-M1, replaces the old "Revenue Pipeline" Dashboard card) | `conversations / dialing_hours_today`, rounded to 1 decimal, or `null` (UI renders "—") when `dialing_hours_today < 0.1` — avoids a nonsense spike right after Go Ready. Pure math lives in `_shared/analytics-core.ts` (`computeConversationsPerHour`/`isConversation`), unit-tested directly since `dashboard-stats/index.ts` itself has no test file (no Edge Function `index.ts` in this repo does). |
 
 ## Where the code lives
 
 | What | Path | Notes |
 |---|---|---|
 | The two views | `supabase/migrations/20260924002400_analytics_real_data.sql` | `security_invoker=on` — RLS on `call_legs`/`dial_sessions` (already agent-vs-admin scoped) is what actually enforces visibility, not a filter re-implemented here |
-| Today's metrics | `supabase/functions/dashboard-stats/index.ts` | Single-user, UTC day, same response shape as before this task |
+| Today's metrics | `supabase/functions/dashboard-stats/index.ts` | Single-user (every role sees only their own numbers — this is the personal daily widget, not team-performance's org-wide rollup), UTC day for the existing fields; TASK-M1 adds `conversationsToday`/`dialingHoursToday`/`conversationsPerHour` |
+| Conversations/hr math | `supabase/functions/_shared/analytics-core.ts` | Pure, deno-tested (`analytics-core.test.ts`) — the 30s conversation gate and the 0.1h floor rule live here, not inline in the handler |
+| Duration write + dialing-hours RPC | `supabase/migrations/20260925020000_call_legs_duration_conversations.sql` | `bridged_at` column, `transition_leg`/`reap_dead_claimed_leg` updated to write `duration_seconds`, new `dialing_hours_today(org_id, agent_id)` function |
 | Trend chart | `supabase/functions/team-performance/index.ts` | Day buckets, 7d/30d/custom, same response shape as before |
 | **New**: full Analytics backend | `supabase/functions/analytics-summary/index.ts` | Totals + period-over-period deltas, call volume, disposition breakdown, agent leaderboard |
 | Weekly recap job | `supabase/functions/ensure-week-summary/index.ts` | Fridays only, unchanged shape |
-| **Real** Dashboard UI | `apps/web/src/components/Dashboard.tsx` | Unchanged this task (its two endpoints kept their response shape) |
+| **Real** Dashboard UI | `apps/web/src/components/Dashboard.tsx` | TASK-M1: the 4th hero card ("Revenue Pipeline", hardcoded "Coming soon") is now "Conversations / hr" with a subtext line and an info tooltip |
 | **Real** Analytics UI | `apps/web/src/components/Analytics.tsx` | Full rewrite — real data, loading + empty states, a 7d/30d toggle |
 | Client contract | `apps/web/src/lib/api.ts` | `DashboardStats`/`TeamPerformancePoint` unchanged; `AnalyticsSummary` new |
 | Notification bell | `apps/web/src/components/TopNavigation.tsx` | Unchanged |
@@ -64,7 +74,7 @@ mock data, no empty-by-construction tables, as of TASK-P4-P1.
 
 ## How it works
 
-1. **Dashboard mounts** — `getDashboardStats()` hits `dashboard-stats`, which selects today's `call_leg_analytics` rows for the caller's own `agent_id` and derives calls/connect-rate/talk-time.
+1. **Dashboard mounts** — `getDashboardStats()` hits `dashboard-stats`, which selects today's `call_leg_analytics` rows for the caller's own `agent_id` and derives calls/connect-rate/talk-time, then (TASK-M1) reuses that same rowset for `conversationsToday` and calls the `dialing_hours_today` RPC for the denominator.
 2. **Trend chart** — `getTeamPerformanceChart()` calls `team-performance`, org-wide for owner/admin or own-only for an agent (`requireOrgRole`'s role, same split as before), bucketed by day.
 3. **Analytics mounts** — `getAnalyticsSummary(range)` calls `analytics-summary`: loads the current range's legs AND the immediately-preceding equal-length range (for `%ChangePct` deltas), plus `dial_session_hours` for the agent-hour denominator, then computes totals, a zero-filled day-bucketed call-volume series (`voicemails` = `outcome='machine'`, not a disposition key — available even before a leg is ever dispositioned), a disposition/outcome breakdown, and an agent leaderboard (org-wide for owner/admin, a single self-row for an agent).
 4. **Week summary** — unchanged mechanics, now reads `call_leg_analytics` instead of `call_events`.
@@ -93,6 +103,13 @@ mock data, no empty-by-construction tables, as of TASK-P4-P1.
 - **The three edge functions still use `requireOrgRole` + a service-role client + explicit `org_id`/`agent_id` filters**, not a new user-JWT-forwarded PostgREST client — `security_invoker` on
   the two views makes them RLS-correct for a FUTURE direct client query, but service_role always bypasses RLS regardless, so these functions' own explicit filters are still what scopes their
   results today. A deliberate choice to avoid introducing an auth pattern nothing else in this repo uses, not an oversight.
+- **`dashboard-stats` scopes EVERY field, including the new ones, to the caller's own `agent_id` — for every role, including owner/admin.** There is no org-wide rollup on this endpoint; that's
+  `team-performance`'s job. TASK-M1's own task file assumed this endpoint already varied scope by role the way the OTHER dashboard cards do — it does not; verified by reading the code, not
+  assumed from the task description (CLAUDE.md: "when a summary and the code disagree, the code is right"). The new fields simply match the existing, real behavior.
+- **No `orgs` table has a timezone column** (checked every migration) — `dialing_hours_today` hardcodes **America/Chicago** for "today"'s midnight boundary. If an org timezone column is ever
+  added, this function is the one place that needs to start reading it instead.
+- **`Analytics.tsx`'s per-agent table is still fully mock data** (unchanged by TASK-M1, see CLAUDE.md's own known-issue) — a real "Conv/hr" column there would need a per-agent breakdown
+  `team-performance`/`analytics-summary` don't currently return. Deferred, not wired; see `.brain/memory/known-issues.md`.
 
 ## Not covered here
 
@@ -109,3 +126,10 @@ mock data, no empty-by-construction tables, as of TASK-P4-P1.
 - Whether `analytics-summary`'s period-over-period deltas feel right on a real, noisy dataset
   (small-number percentage swings can look dramatic) was not checked against real data — only
   the arithmetic itself (`pctChange`) was reasoned through, not empirically observed.
+- TASK-M1's `20260925020000` migration (bridged_at, transition_leg/reap_dead_claimed_leg
+  duration writes, dialing_hours_today) is committed but NOT yet applied anywhere — local
+  Docker is retired, so its SQL correctness rests on `supabase/tests/dialer_sweeper.sql`'s new
+  assertions (NEEDS-LIVE-VERIFY, same as the rest of that file) plus the deno-tested TS side
+  (`dialer-engine.test.ts`) for the real call.hangup path. Ask the lead to run a manual
+  post-live-test-call check: every connected leg has a non-null `duration_seconds`, and the
+  Dashboard's Conversations/hr matches a manual `call_leg_analytics` count.

@@ -172,6 +172,22 @@ const TRANSITION_SESSION_FIELDS = [
   'paused_agent_lost_from',
 ];
 
+/** Same masking-bug class as TRANSITION_SESSION_FIELDS above (M4) -- transition_leg's fake used
+ *  to be a blind `Object.assign`, which would have silently accepted a p_fields key the real
+ *  SQL (20260924000800_dialer_rpcs.sql + 20260925020000's bridged_at/duration_seconds addition)
+ *  doesn't write, exactly the way M4 went unnoticed. Must track that function's case-when arms
+ *  exactly. */
+const TRANSITION_LEG_FIELDS = [
+  'outcome',
+  'amd_result',
+  'hangup_cause',
+  'answered_at',
+  'claimed_at',
+  'bridged_at',
+  'ended_at',
+  'duration_seconds',
+];
+
 function rpc(
   db: FakeDb,
   name: string,
@@ -250,7 +266,18 @@ function rpc(
       );
       if (!leg || !expected.includes(leg.state as string)) return { data: false, error: null };
       leg.state = args.p_new_state;
-      Object.assign(leg, (args.p_fields as Row | undefined) ?? {});
+      const fields = (args.p_fields as Row | undefined) ?? {};
+      for (const key of Object.keys(fields)) {
+        if (!TRANSITION_LEG_FIELDS.includes(key)) {
+          throw new Error(
+            `fake transition_leg: unrecognized p_fields key '${key}' -- the real SQL function ` +
+              `does not write it either; add it to both if that's intentional`
+          );
+        }
+      }
+      for (const key of TRANSITION_LEG_FIELDS) {
+        if (key in fields) leg[key] = fields[key];
+      }
       return { data: true, error: null };
     }
 
@@ -1171,6 +1198,267 @@ Deno.test(
         db.table('call_legs').get(contactLeg.id as string)!.state,
         'claimed',
         'the live claimed contact must still be untouched after the aborted reconnect'
+      );
+    } finally {
+      restoreFetch();
+    }
+  }
+);
+
+// ---------------------------------------------------------------------------
+// TASK-M1: call_legs.duration_seconds was never written (the RPC supported it,
+// dialer-engine.ts never passed it) -- Talk Time always showed 0m and "Conversations / hr"
+// needs a real duration to know which connected legs count as a conversation (>= 30s).
+// ---------------------------------------------------------------------------
+
+Deno.test(
+  "TASK-M1: a connected leg's own call.hangup writes duration_seconds from bridged_at, and stays null for a losing leg",
+  async () => {
+    const db = new FakeDb();
+    const server = new FakeTelnyxServer();
+    const restoreFetch = stubTelnyxFetch(server);
+    const supabase = createFakeSupabase(db);
+    const { orgId, campaignId, agentId } = seedFixtures(db);
+    try {
+      const { sessionId } = await startSession(supabase, {
+        orgId,
+        campaignId,
+        agentId,
+        lines: 3,
+        amdMode: 'off',
+      });
+      const agentLeg = [...db.table('call_legs').values()].find((l) => l.kind === 'agent')!;
+      await processTelnyxDialerEvent(
+        supabase,
+        agentEvent(
+          orgId,
+          sessionId,
+          agentLeg.id as string,
+          agentLeg.call_control_id as string,
+          'call.answered'
+        )
+      );
+      const contactLegs = [...db.table('call_legs').values()].filter((l) => l.kind === 'contact');
+      const winnerLeg = contactLegs[0];
+      const loserLeg = contactLegs[1];
+
+      await processTelnyxDialerEvent(
+        supabase,
+        contactEvent(
+          orgId,
+          sessionId,
+          winnerLeg.id as string,
+          winnerLeg.call_control_id as string,
+          'call.answered'
+        )
+      );
+      const winnerRowAfterWin = db.table('call_legs').get(winnerLeg.id as string)!;
+      assertEquals(winnerRowAfterWin.state, 'claimed');
+      assertExists(
+        winnerRowAfterWin.bridged_at,
+        'handleWin must stamp bridged_at on a successful join'
+      );
+
+      // Backdate the bridge so the test doesn't need to actually wait -- same technique the
+      // rest of this file uses (fixed fixtures, not real elapsed time) to make the assertion a
+      // real positive control instead of "duration_seconds is truthy".
+      const bridgedAt = new Date(Date.now() - 90_000);
+      winnerRowAfterWin.bridged_at = bridgedAt.toISOString();
+
+      await processTelnyxDialerEvent(
+        supabase,
+        contactEvent(
+          orgId,
+          sessionId,
+          winnerLeg.id as string,
+          winnerLeg.call_control_id as string,
+          'call.hangup',
+          { hangup_cause: 'normal_clearing' }
+        )
+      );
+      const winnerRowAfterHangup = db.table('call_legs').get(winnerLeg.id as string)!;
+      assertEquals(winnerRowAfterHangup.state, 'ended');
+      assertEquals(winnerRowAfterHangup.outcome, 'connected');
+      const duration = winnerRowAfterHangup.duration_seconds as number;
+      assertEquals(duration >= 89 && duration <= 92, true, `expected ~90s, got ${duration}`);
+
+      // The loser (dropped, never bridged, never answered) gets a normal hangup too -- its
+      // outcome becomes 'dropped', not 'connected', so duration_seconds is never computed at
+      // all (negative control for the `result.outcome === 'connected'` gate above).
+      const loserRow = db.table('call_legs').get(loserLeg.id as string)!;
+      assertEquals(loserRow.state, 'dropped');
+      await processTelnyxDialerEvent(
+        supabase,
+        contactEvent(
+          orgId,
+          sessionId,
+          loserLeg.id as string,
+          loserLeg.call_control_id as string,
+          'call.hangup',
+          { hangup_cause: 'normal_clearing' }
+        )
+      );
+      const loserRowAfterHangup = db.table('call_legs').get(loserLeg.id as string)!;
+      assertEquals(loserRowAfterHangup.outcome, 'dropped');
+      assertEquals(
+        loserRowAfterHangup.duration_seconds ?? null,
+        null,
+        'a leg that was never bridged/connected must never get a duration_seconds'
+      );
+    } finally {
+      restoreFetch();
+    }
+  }
+);
+
+Deno.test(
+  'TASK-M1: redelivering the same call.hangup webhook is a no-op -- duration_seconds is not recomputed',
+  async () => {
+    const db = new FakeDb();
+    const server = new FakeTelnyxServer();
+    const restoreFetch = stubTelnyxFetch(server);
+    const supabase = createFakeSupabase(db);
+    const { orgId, campaignId, agentId } = seedFixtures(db);
+    try {
+      const { sessionId } = await startSession(supabase, {
+        orgId,
+        campaignId,
+        agentId,
+        lines: 1,
+        amdMode: 'off',
+      });
+      const agentLeg = [...db.table('call_legs').values()].find((l) => l.kind === 'agent')!;
+      await processTelnyxDialerEvent(
+        supabase,
+        agentEvent(
+          orgId,
+          sessionId,
+          agentLeg.id as string,
+          agentLeg.call_control_id as string,
+          'call.answered'
+        )
+      );
+      const contactLeg = [...db.table('call_legs').values()].find((l) => l.kind === 'contact')!;
+      await processTelnyxDialerEvent(
+        supabase,
+        contactEvent(
+          orgId,
+          sessionId,
+          contactLeg.id as string,
+          contactLeg.call_control_id as string,
+          'call.answered'
+        )
+      );
+      db.table('call_legs').get(contactLeg.id as string)!.bridged_at = new Date(
+        Date.now() - 45_000
+      ).toISOString();
+
+      const hangupEvent = contactEvent(
+        orgId,
+        sessionId,
+        contactLeg.id as string,
+        contactLeg.call_control_id as string,
+        'call.hangup',
+        { hangup_cause: 'normal_clearing' }
+      );
+      await processTelnyxDialerEvent(supabase, hangupEvent);
+      const durationAfterFirst = db.table('call_legs').get(contactLeg.id as string)!
+        .duration_seconds as number;
+      assertEquals(durationAfterFirst >= 44 && durationAfterFirst <= 47, true);
+
+      // A second call.hangup for the same leg, deliberately with a FRESH event id -- so this
+      // exercises the state-CAS idempotency (legTransition('ended', call.hangup) returns null,
+      // dialer-core.ts: "if (current === 'ended') return null"), not just record_webhook_event's
+      // own event-id dedup, which is the deeper guarantee that also covers an out-of-order
+      // duplicate Telnyx delivery carrying a different event id for the same underlying hangup.
+      await processTelnyxDialerEvent(supabase, { ...hangupEvent, eventId: crypto.randomUUID() });
+      const durationAfterRetry = db.table('call_legs').get(contactLeg.id as string)!
+        .duration_seconds as number;
+      assertEquals(
+        durationAfterRetry,
+        durationAfterFirst,
+        'a redelivered hangup must not recompute duration_seconds'
+      );
+    } finally {
+      restoreFetch();
+    }
+  }
+);
+
+Deno.test(
+  'TASK-M1: a failed conference join leaves bridged_at null -- duration_seconds falls back to claimed_at (the winner never gets its own answered_at written)',
+  async () => {
+    const db = new FakeDb();
+    const server = new FakeTelnyxServer();
+    const restoreFetch = stubTelnyxFetch(server);
+    const supabase = createFakeSupabase(db);
+    const { orgId, campaignId, agentId } = seedFixtures(db);
+    try {
+      const { sessionId } = await startSession(supabase, {
+        orgId,
+        campaignId,
+        agentId,
+        lines: 1,
+        amdMode: 'off',
+      });
+      const agentLeg = [...db.table('call_legs').values()].find((l) => l.kind === 'agent')!;
+      await processTelnyxDialerEvent(
+        supabase,
+        agentEvent(
+          orgId,
+          sessionId,
+          agentLeg.id as string,
+          agentLeg.call_control_id as string,
+          'call.answered'
+        )
+      );
+      const contactLeg = [...db.table('call_legs').values()].find((l) => l.kind === 'contact')!;
+
+      server.failNextConferenceJoin = true;
+      await processTelnyxDialerEvent(
+        supabase,
+        contactEvent(
+          orgId,
+          sessionId,
+          contactLeg.id as string,
+          contactLeg.call_control_id as string,
+          'call.answered'
+        )
+      );
+      const winnerRow = db.table('call_legs').get(contactLeg.id as string)!;
+      assertEquals(winnerRow.state, 'claimed');
+      assertEquals(winnerRow.outcome, 'connected');
+      assertEquals(
+        winnerRow.bridged_at ?? null,
+        null,
+        'a leg whose conference join threw must never get a bridged_at it does not deserve'
+      );
+      // The winner's own call.answered is handled by processContactLegEvent's claim-win branch
+      // directly, never by applyLegTransition -- so answered_at is never written for it.
+      // claim_leg's own claimed_at is the winner's real equivalent, and this is exactly why the
+      // fallback chain is bridged_at ?? answered_at ?? claimed_at, not just the first two.
+      assertEquals(winnerRow.answered_at ?? null, null);
+      assertExists(winnerRow.claimed_at, 'claim_leg must still have stamped claimed_at');
+
+      winnerRow.claimed_at = new Date(Date.now() - 60_000).toISOString();
+      await processTelnyxDialerEvent(
+        supabase,
+        contactEvent(
+          orgId,
+          sessionId,
+          contactLeg.id as string,
+          contactLeg.call_control_id as string,
+          'call.hangup',
+          { hangup_cause: 'normal_clearing' }
+        )
+      );
+      const winnerRowAfterHangup = db.table('call_legs').get(contactLeg.id as string)!;
+      assertEquals(winnerRowAfterHangup.bridged_at ?? null, null);
+      const duration = winnerRowAfterHangup.duration_seconds as number;
+      assertEquals(
+        duration >= 59 && duration <= 62,
+        true,
+        `expected ~60s from claimed_at fallback, got ${duration}`
       );
     } finally {
       restoreFetch();

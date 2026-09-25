@@ -4,11 +4,12 @@ import {
   Phone,
   Target,
   Clock,
-  DollarSign,
+  MessagesSquare,
   Phone as PhoneIcon,
   Upload,
   Plus,
   Loader2,
+  Info,
 } from 'lucide-react';
 import {
   AreaChart,
@@ -58,6 +59,9 @@ export function Dashboard({
     callsToday: number;
     connectRate: number;
     talkTimeFormatted: string;
+    conversationsToday: number;
+    dialingHoursToday: number;
+    conversationsPerHour: number | null;
   } | null>(null);
   const [statsLoading, setStatsLoading] = useState(true);
   const [statsError, setStatsError] = useState<string | null>(null);
@@ -87,6 +91,9 @@ export function Dashboard({
           callsToday: data.callsToday,
           connectRate: data.connectRate,
           talkTimeFormatted: data.talkTimeFormatted,
+          conversationsToday: data.conversationsToday,
+          dialingHoursToday: data.dialingHoursToday,
+          conversationsPerHour: data.conversationsPerHour,
         })
       )
       .catch((e) => setStatsError(e instanceof Error ? e.message : String(e)))
@@ -168,13 +175,24 @@ export function Dashboard({
       loading: statsLoading,
     },
     {
-      icon: DollarSign,
-      label: 'Revenue Pipeline',
-      value: 'Coming soon',
+      icon: MessagesSquare,
+      label: 'Conversations / hr',
+      value:
+        statsLoading || statsError
+          ? '—'
+          : stats?.conversationsPerHour == null
+            ? '—'
+            : String(stats.conversationsPerHour),
+      subtext:
+        statsLoading || statsError || !stats
+          ? undefined
+          : `${stats.conversationsToday} conversation${stats.conversationsToday === 1 ? '' : 's'} · ${stats.dialingHoursToday.toFixed(1)}h dialing`,
+      tooltip:
+        'Contact calls bridged to you and talked for 30 seconds or more, divided by hours spent in an active dialing session today.',
       color: '#0066FF',
       bgColor: 'bg-[#0066FF]/10',
       borderColor: 'border-[#0066FF]/20',
-      loading: false,
+      loading: statsLoading,
     },
   ];
 
@@ -202,7 +220,17 @@ export function Dashboard({
                 {metric.loading && <Loader2 className="w-5 h-5 text-[#B0BEC5] animate-spin" />}
               </div>
               <div className="text-4xl font-bold text-white mb-1">{metric.value}</div>
-              <div className="text-sm text-[#B0BEC5]">{metric.label}</div>
+              <div className="text-sm text-[#B0BEC5] flex items-center gap-1.5">
+                {metric.label}
+                {'tooltip' in metric && metric.tooltip && (
+                  <span title={metric.tooltip}>
+                    <Info className="w-3.5 h-3.5 text-[#B0BEC5]/70 cursor-help" />
+                  </span>
+                )}
+              </div>
+              {'subtext' in metric && metric.subtext && (
+                <div className="text-xs text-[#B0BEC5]/70 mt-1">{metric.subtext}</div>
+              )}
             </motion.div>
           );
         })}

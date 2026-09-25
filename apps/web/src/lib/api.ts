@@ -146,6 +146,13 @@ export interface DashboardStats {
   connectRate: number;
   talkTimeFormatted: string;
   talkTimeSeconds: number;
+  /** TASK-M1: a connected leg with duration_seconds >= 30 (.brain/domains/analytics.md). */
+  conversationsToday: number;
+  /** Rounded to 1 decimal; includes any still-running session, clipped to today so far. */
+  dialingHoursToday: number;
+  /** null (render "—") when dialingHoursToday < 0.1 -- avoids a nonsense spike on a trivial
+   *  denominator right after Go Ready. */
+  conversationsPerHour: number | null;
 }
 
 export async function getDashboardStats(): Promise<DashboardStats> {

@@ -1,12 +1,18 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { corsHeaders, corsPreflightResponse } from '../_shared/cors.ts';
 import { requireOrgRole } from '../_shared/auth.ts';
+import { computeConversationsPerHour, isConversation } from '../_shared/analytics-core.ts';
 
 /**
  * TASK-P4-P1: reads `call_leg_analytics` (a real dial-session-backed view, TASK-P2-E2/E1's
  * call_legs + TASK-P3-E1's dispositions) instead of `call_events`, which nothing in this repo
- * writes (CLAUDE.md's own known-issue -- see .brain/domains/analytics.md). Response shape is
- * UNCHANGED from before this task (Dashboard.tsx needs no changes for this endpoint).
+ * writes (CLAUDE.md's own known-issue -- see .brain/domains/analytics.md).
+ *
+ * TASK-M1 adds conversationsToday/dialingHoursToday/conversationsPerHour ("Conversations / hr",
+ * replacing the ambiguous "Revenue Pipeline" card) on top of the SAME scoping this endpoint
+ * already used for every existing field: every role's own numbers (agent_id = the caller), not
+ * an org-wide rollup for owner/admin -- this is the personal daily widget, org-wide totals are
+ * team-performance's job. Definitions live in .brain/domains/analytics.md.
  */
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return corsPreflightResponse();
@@ -54,11 +60,28 @@ Deno.serve(async (req) => {
     const mins = Math.floor((talkTimeSeconds % 3600) / 60);
     const talkTimeFormatted = hours > 0 ? `${hours}h ${mins}m` : `${mins}m`;
 
+    // "Conversation" (.brain/domains/analytics.md): a connected leg with duration_seconds >= 30.
+    // Reuses the SAME today-scoped, per-agent rowset the other cards above already fetched --
+    // no second query needed. isConversation/computeConversationsPerHour are pure and unit
+    // tested directly (analytics-core.test.ts) since this index.ts has no test file of its own.
+    const conversationsToday = list.filter(isConversation).length;
+
+    const { data: dialingHoursRaw, error: dialingHoursError } = await supabase.rpc(
+      'dialing_hours_today',
+      { p_org_id: orgId, p_agent_id: userId }
+    );
+    if (dialingHoursError) return jsonResponse(500, { error: dialingHoursError.message });
+    const dialingHoursToday = Number(dialingHoursRaw ?? 0);
+    const conversationsPerHour = computeConversationsPerHour(conversationsToday, dialingHoursToday);
+
     return jsonResponse(200, {
       callsToday,
       connectRate,
       talkTimeFormatted,
       talkTimeSeconds,
+      conversationsToday,
+      dialingHoursToday: Math.round(dialingHoursToday * 10) / 10,
+      conversationsPerHour,
     });
   } catch (err) {
     console.error('dashboard-stats error:', err);

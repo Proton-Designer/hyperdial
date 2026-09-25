@@ -398,3 +398,34 @@ superseded decision above knowingly accepted.
 
 **Do not undo without understanding:** reverting to ID-only reuse silently reopens both the deleted-row case and — more importantly — the every-single-retry case a
 future persistence failure (of any kind, not just this specific RPC bug) would reintroduce.
+
+### "Dialing hours today" defaults to America/Chicago, not a per-org timezone
+
+**Status:** Active · **Decided by:** eng2 (TASK-M1, 2026-09-25)
+
+**Context:** the task's own spec said "use the org's timezone if one exists, else America/Chicago." Grepped every migration before writing `dialing_hours_today`
+(`20260925020000_call_legs_duration_conversations.sql`) — no `orgs` table has a timezone column today, so there was nothing to prefer over the fallback.
+
+**Decision:** hardcode America/Chicago for "today"'s midnight boundary (`date_trunc('day', now() at time zone 'America/Chicago') at time zone 'America/Chicago'`).
+Verified against the code rather than assuming the task description's premise was current (CLAUDE.md's own standing instruction).
+
+**Do not undo without understanding:** if an org timezone column is ever added, `dialing_hours_today` is the one place that needs to start reading it — every
+agent's "today" currently resets at the same instant regardless of where they actually are.
+
+### `dashboard-stats`'s new Conversations/hr fields keep the SAME per-agent scoping as every existing field on that endpoint, not an org-wide rollup for owner/admin
+
+**Status:** Active · **Decided by:** eng2 (TASK-M1, 2026-09-25)
+
+**Context:** TASK-M1's own task file said the new fields should scope "the same scoping dashboard-stats already uses for the other cards" and described that as
+"an agent sees their own numbers; owner/admin see the whole org." Reading `dashboard-stats/index.ts` before writing anything showed that's not what the endpoint
+actually does — every existing field (`callsToday`/`connectRate`/`talkTimeFormatted`) is filtered by `.eq('agent_id', userId)` unconditionally, for every role. Its
+own comment says so explicitly: "this is the caller's own personal daily widget... every role can see their own numbers." The org-wide rollup is `team-performance`'s
+job, a different endpoint.
+
+**Decision:** matched the endpoint's REAL existing behavior (own-agent-only, every role) rather than the task description's assumption about it — CLAUDE.md: "when
+a summary and the code disagree, the code is right — fix the summary." Noted in `.brain/domains/analytics.md`'s gotchas instead of silently building the org-wide
+version the task file described.
+
+**Do not undo without understanding:** if a FUTURE task wants an org-wide Conversations/hr for owner/admin, that's a new capability on `team-performance` (or a
+new endpoint), not a scoping change to this one — changing `dashboard-stats` itself to vary by role would also change the three EXISTING fields' behavior for
+every current caller of this endpoint.

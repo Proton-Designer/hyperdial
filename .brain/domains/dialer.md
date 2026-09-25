@@ -5,7 +5,7 @@ layer: L2
 type: domain
 status: canonical
 owner: maintainer
-updated: 2026-09-24
+updated: 2026-09-25
 sources:
   - supabase/functions/_shared/dialer-core.ts
   - supabase/functions/_shared/dialer-engine.ts
@@ -19,6 +19,7 @@ sources:
   - supabase/migrations/20260924000800_dialer_rpcs.sql
   - supabase/migrations/20260924001000_dialer_rpc_fixes.sql
   - supabase/migrations/20260924001900_dialer_engine_fix_forward.sql
+  - supabase/migrations/20260925020000_call_legs_duration_conversations.sql
   - scripts/dev/dialer-sim.ts
   - supabase/tests/run-dialer-concurrency-test.sh
 related:
@@ -126,7 +127,10 @@ them anymore — see "Not covered here" for what's actually dead versus still re
    `legTransition`+`transition_leg` path for the win (a real bug this session's own acceptance
    script caught: that generic path always lost the race against `claim_leg`'s own write).
 5. **`handleWin`** (right after a win): creates the conference (first winner ever) or joins it
-   (later winners), then resolves every *other* active leg in the session from a snapshot — still-
+   (later winners) and, TASK-M1, stamps `call_legs.bridged_at` right after that actually succeeds
+   (never on a thrown error) — the moment the winner's audio is genuinely live in the agent's
+   conference, and the start of its "talk duration" for analytics (`.brain/domains/analytics.md`).
+   Then resolves every *other* active leg in the session from a snapshot — still-
    ringing legs go straight to `dropped` (silent hangup); already-answered/amd_pending legs go to
    `abandoned` (speak the abandon message, then hang up once `call.speak.ended` confirms it played
    — sending the message a SECOND time on that confirmation event was a real bug, fix-forward
@@ -141,7 +145,12 @@ them anymore — see "Not covered here" for what's actually dead versus still re
 6. **On any leg reaching `ended`** (natural `call.hangup`, or one the engine commanded): `transition_leg`
    persists the outcome (`hangupOutcome` — a `machine`/`dropped`/`abandoned`/`claimed` state short-
    circuits to preserve that decision regardless of `hangup_cause`; otherwise the cause maps to
-   `busy`/`no_answer`/`failed`), then `apply_leg_outcome` (E1's RPC — the single source of truth for
+   `busy`/`no_answer`/`failed`). TASK-M1: exactly when that outcome comes out `connected`,
+   `applyLegTransition` also computes `duration_seconds` as `ended_at - (bridged_at ?? answered_at
+   ?? claimed_at)` — the winning contact leg's OWN `call.answered` never sets `answered_at` (it's
+   handled by the claim-win branch directly, not this generic path), so `claimed_at` is the real
+   second fallback, not just a defensive one. Every other outcome (dropped/abandoned/machine/busy/
+   no_answer/failed) never gets a `duration_seconds` at all. Then `apply_leg_outcome` (E1's RPC — the single source of truth for
    the lead's `status`/`attempts`/`next_attempt_at`; never recomputed in TS for a live write). If
    the ended leg was the session's own winner, the session moves to `wrap_up` (no more refill);
    otherwise, if still `dialing`, `refillSession` runs again. **If `transition_leg` loses a race**
@@ -271,7 +280,14 @@ them anymore — see "Not covered here" for what's actually dead versus still re
      -- an API error or a genuinely live call is left alone. Either path reaps through the same
      new `reap_dead_claimed_leg` SQL primitive, which replicates the normal `call.hangup`
      outcome path exactly (`transition_leg` -> ended, `apply_leg_outcome`, and -- only if this
-     leg was the session's `active_leg_id` -- `transition_session` -> `wrap_up`).
+     leg was the session's `active_leg_id` -- `transition_session` -> `wrap_up`). TASK-M1:
+     `reap_dead_claimed_leg` also computes `duration_seconds` itself (SQL-side, `bridged_at ??
+     answered_at ?? claimed_at` fallback) since this is the one leg-ending path with no TS-side
+     `call.hangup` event to compute it from -- the leg was never told to hang up, the sweeper
+     decided it must already be dead. This is also how an agent-lost claimed leg's
+     `duration_seconds` gets written: `handleAgentLegLost` deliberately never touches the still-
+     `claimed` leg (see its own step 1/2 above), so it becomes exactly this kind of stale
+     candidate, reaped and given a duration the same way any other timed-out claimed leg is.
 
 ## Not covered here
 
