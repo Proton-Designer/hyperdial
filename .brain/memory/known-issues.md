@@ -898,6 +898,40 @@ real Telnyx/multi-machine test in this environment): the reconnect fix against a
 agent-lost-while-reconnecting sequence, and the tab lock against two genuinely separate browser
 processes/machines rather than two tabs of the same automated browser session.
 
+## 24. TASK-L1r4 round 5 review (review-notes-r5.md, eng2): 1 major -- fixed (2026-09-25, round 6, eng1)
+
+- **MAJOR (follower tab still polled and played the connect chime)**: `Dialer.tsx`'s
+  `otherTabOpen && !isAgentLineOwner` early return (#23) sat at the END of the component body,
+  AFTER every hook -- React runs every hook top-to-bottom on every render regardless of a later
+  `return`, so a non-owner ("follower") tab still called `useDialerSession`, whose own internal
+  3s poll kept hitting `dialer-session-get` indefinitely, and the UI-8 connect-chime effect
+  (no ownership guard at all) played `playConnectChime()` OUT LOUD the instant a contact
+  connected on the OWNER tab's real call -- audible from a tab simultaneously showing "HyperDial
+  is open in another tab" and that never registered a WebRTC client. The two effects that could
+  register a REAL second client or place a real call (the eager-connect effect, the
+  auto-reconnect effect) were already correctly gated and stayed that way -- this was about
+  background network/audio activity a fully-inert follower tab should not have, not a
+  reopening of the core two-live-clients danger.
+  Fixed structurally, not just with another guard: `Dialer` is now a thin outer component that
+  calls ONLY `useSingleTabLock` and decides whether to mount a new `DialerBody` component (every
+  other hook in the file, including `useDialerSession`'s poll and the chime effect, now lives
+  there) -- a non-owner tab never mounts `DialerBody` at all, so none of its hooks run, not just
+  "run but produce different JSX."
+- **2 of 3 `useSingleTabLock.ts` minors fixed, cheap**: the dead `'heartbeat'` broadcast branch
+  (nothing ever sent one, only the fallback poll covered staleness) now actually sends one from
+  the owner's heartbeat interval, delivering on the file's own "near-instant handoff" claim
+  instead of relying solely on the ~1.5s poll; the false-positive "other tab open" window after
+  a non-clean tab close (a killed process, not a normal close) now has an explicit comment at
+  `STALE_AFTER_MS` naming it as an accepted tradeoff rather than an implicit one. The third
+  minor (a brief dual-owner window when two tabs open at nearly the same instant) is left as
+  documented, self-correcting behavior -- eliminating it needs a real leader-election handshake,
+  not a cheap fix, and per the review it only affects the first seconds after opening, before
+  either tab could plausibly have an active call yet.
+
+Checks: `npm run check`/`npm run build` clean (0 errors; only pre-existing warnings). This round
+touched no `_shared`/Deno files. NEEDS-LIVE-VERIFY: unchanged from #23 (the tab lock against two
+genuinely separate browser processes/machines).
+
 ---
 
 ## Not issues — deliberate, documented elsewhere

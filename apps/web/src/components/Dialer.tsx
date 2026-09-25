@@ -37,11 +37,63 @@ interface DialerProps {
   onClearParallelContext?: () => void;
 }
 
+/**
+ * Review fix (L1r4 round 6, review-notes-r5.md, MAJOR): a plain `return <blocked-banner/>`
+ * placed at the end of the OLD single component body did not stop a non-owner tab's hooks from
+ * running -- React executes every hook top-to-bottom on every render regardless of a LATER
+ * return statement, so `useDialerSession`'s 3s poll and the UI-8 connect-chime effect kept
+ * firing (and the chime kept playing OUT LOUD) in a follower tab that was simultaneously
+ * showing "HyperDial is open in another tab." The only way to actually stop those hooks from
+ * running at all is to not call them in the first place: this outer `Dialer` owns ONLY the
+ * single-tab-lock check, and renders `DialerBody` -- which owns every other hook in this file,
+ * including `useDialerSession`'s poll -- ONLY for the owner tab. A non-owner tab never mounts
+ * `DialerBody` at all, so none of its hooks/effects/polling ever run there.
+ */
 export function Dialer({
   parallelSessionId = null,
   parallelCampaignId = null,
   onClearParallelContext,
 }: DialerProps) {
+  const { isOwner: isAgentLineOwner, otherTabOpen } = useSingleTabLock();
+
+  // `otherTabOpen` only becomes true once useSingleTabLock's own effect has actually run and
+  // found a live owner elsewhere -- on the very first render of the one-and-only real tab, both
+  // this and `isOwner` start false, so this deliberately does NOT block on `!isAgentLineOwner`
+  // alone (that would also block the normal single-tab case for one render).
+  if (otherTabOpen && !isAgentLineOwner) {
+    return (
+      <div className="flex h-[calc(100vh-72px)] items-center justify-center p-8">
+        <div className="max-w-md text-center rounded-2xl border border-[#FFB300]/30 bg-[#FFB300]/10 p-8">
+          <p className="text-white font-semibold text-lg mb-2">HyperDial is open in another tab</p>
+          <p className="text-[#B0BEC5] text-sm">
+            Your phone line can only be registered in one browser tab at a time. Close this tab, or
+            close the other one and refresh this page.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <DialerBody
+      parallelSessionId={parallelSessionId}
+      parallelCampaignId={parallelCampaignId}
+      onClearParallelContext={onClearParallelContext}
+      isAgentLineOwner={isAgentLineOwner}
+    />
+  );
+}
+
+interface DialerBodyProps extends DialerProps {
+  isAgentLineOwner: boolean;
+}
+
+function DialerBody({
+  parallelSessionId = null,
+  parallelCampaignId = null,
+  onClearParallelContext,
+  isAgentLineOwner,
+}: DialerBodyProps) {
   const { numbers: userNumbers } = usePhoneNumbers();
   const [selectedFromNumber, setSelectedFromNumber] = useState<string | null>(null);
   const [callDuration, setCallDuration] = useState(0);
@@ -71,12 +123,11 @@ export function Dialer({
   const effectiveCampaignId = parallelCampaignId ?? restoredParallelContext?.campaignId ?? null;
   const parallelSession = useDialerSession(effectiveSessionId);
 
-  // Review fix (L1r4 round 5, review-notes-r4.md, now REQUIRED): Dialer is permanently mounted
-  // (TASK-L1r4 M3), so a second open browser tab would otherwise ALSO register a WebRTC client
-  // for the same agent -- see useSingleTabLock's own header comment. Every place below that
-  // registers the client or could trigger a real call must check `isOwner`.
-  const { isOwner: isAgentLineOwner, otherTabOpen } = useSingleTabLock();
-
+  // `isAgentLineOwner` comes from the outer `Dialer` (see its own header comment) -- every place
+  // below that registers a WebRTC client or could trigger a real call still checks it, as
+  // defense-in-depth for the narrow initial-render window before ownership resolves; the outer
+  // component is what guarantees THIS component's hooks (the poll above, the chime effect
+  // below) don't run at all once a non-owner state is confirmed.
   // TASK-L1: sessionId (when a parallel session exists) makes this SAME hook instance also
   // auto-answer the agent leg's inbound call for that session -- see useTelnyxCall.ts's own
   // header comment. Outside parallel mode (manual single-line dialer), sessionId is undefined
@@ -498,27 +549,6 @@ export function Dialer({
       toast.error(e instanceof Error ? e.message : 'Failed to stop session');
     }
   }, [parallelSession.sessionId, parallelSession.stop, onClearParallelContext]);
-
-  // Review fix (L1r4 round 5, review-notes-r4.md, now REQUIRED): a non-owner tab must not
-  // register a WebRTC client or auto-answer anything -- the simplest way to guarantee that is
-  // to never render anything that could trigger it (the Start button, the manual dialer) at
-  // all, rather than trust every call site's own individual guard alone. `otherTabOpen` only
-  // becomes true once useSingleTabLock's own effect has actually run and found a live owner
-  // elsewhere -- on the very first render of the one-and-only real tab, both this and `isOwner`
-  // start false, so this deliberately does NOT block on `!isAgentLineOwner` alone.
-  if (otherTabOpen && !isAgentLineOwner) {
-    return (
-      <div className="flex h-[calc(100vh-72px)] items-center justify-center p-8">
-        <div className="max-w-md text-center rounded-2xl border border-[#FFB300]/30 bg-[#FFB300]/10 p-8">
-          <p className="text-white font-semibold text-lg mb-2">HyperDial is open in another tab</p>
-          <p className="text-[#B0BEC5] text-sm">
-            Your phone line can only be registered in one browser tab at a time. Close this tab, or
-            close the other one and refresh this page.
-          </p>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div className="flex h-[calc(100vh-72px)]">

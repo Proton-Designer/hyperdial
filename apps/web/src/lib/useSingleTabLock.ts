@@ -3,6 +3,12 @@ import { useEffect, useRef, useState } from 'react';
 const LOCK_KEY = 'hyperdial_agent_line_lock';
 const CHANNEL_NAME = 'hyperdial-agent-line-lock';
 const HEARTBEAT_MS = 1500;
+/** Review fix (round 6, review-notes-r5.md, minor 3): a tab closed without `beforeunload`
+ *  firing (a killed process, not a normal navigate-away) leaves a non-stale lock behind, so a
+ *  new tab opened within this window shows "HyperDial is open in another tab" for a session
+ *  that has, in fact, already ended -- self-heals once the lock goes stale, at most
+ *  `STALE_AFTER_MS + HEARTBEAT_MS` (~5.5s) later. Accepted tradeoff (this whole mechanism is a
+ *  safety net, not a hard guarantee -- see this file's own header comment), not a bug. */
 const STALE_AFTER_MS = 4000;
 
 interface LockRecord {
@@ -93,6 +99,13 @@ export function useSingleTabLock(): { isOwner: boolean; otherTabOpen: boolean } 
       channel?.postMessage({ type: 'claim', tabId });
       heartbeatTimer = setInterval(() => {
         writeLock({ tabId, heartbeatAt: Date.now() });
+        // Review fix (round 6, review-notes-r5.md, minor 1): this used to only write to
+        // localStorage here -- `onMessage` below has always branched on a 'heartbeat' broadcast
+        // type that nothing ever sent, a dead branch the fallback poll happened to make
+        // harmless. Actually sending it delivers on this file's own "near-instant handoff"
+        // claim: a follower learns the owner is still alive the moment this fires, not only
+        // once its own next poll tick happens to land.
+        channel?.postMessage({ type: 'heartbeat', tabId });
       }, HEARTBEAT_MS);
     };
 
