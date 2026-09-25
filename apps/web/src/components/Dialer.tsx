@@ -14,6 +14,7 @@ import { WrapUpModal } from './dialer/WrapUpModal';
 import { StartSessionPanel } from './dialer/StartSessionPanel';
 import {
   getActiveDialerSession,
+  getDialerSession,
   listCampaigns,
   startDialerSession,
   ActiveSessionExistsError,
@@ -23,16 +24,6 @@ import { playConnectChime } from '@/lib/dialerSoundCue';
 import { consumePendingStartCampaignId } from '@/lib/dialerLaunchIntent';
 
 const REMOTE_AUDIO_ID = 'telnyx-remote-audio';
-
-/** TASK-L7: the credential get-or-create path (`_shared/agent-webrtc-credential.ts`) is
- *  self-healing now, so this should be unreachable in practice -- mapped defensively anyway,
- *  same text CampaignManageModal used before this task moved the Start flow here. */
-function friendlyStartSessionError(message: string): string {
-  if (message.includes('AGENT_NOT_REGISTERED')) {
-    return "Your phone line isn't registered yet. Wait a few seconds for it to connect, then try again.";
-  }
-  return message;
-}
 
 export type DialerStatus = 'idle' | 'dialing' | 'ringing' | 'connected';
 
@@ -99,11 +90,13 @@ export function Dialer({
   });
 
   // Proactively register the WebRTC client the moment there's a parallel session to serve --
-  // the agent leg's inbound call has nowhere to be auto-answered until this has run. This is
-  // the closest this lane can get to AUD-7's "connect before Go Ready" pre-flight without
-  // editing CampaignManageModal.tsx's own Start Session button (owned by the other lane) --
-  // the actual hard backstop if a member skips this entirely is server-side
-  // (dialer-session-start's AGENT_NOT_REGISTERED, from dialer-engine.ts's agentSipUri).
+  // the agent leg's inbound call has nowhere to be auto-answered until this has run. Covers
+  // restoring an already-active session on mount/refresh; a fresh Start already registers
+  // (mic check -> connect -> Go Ready) inside handleStartSessionForCampaign below before this
+  // effect would ever need to. dialer-engine.ts's agentSipUri no longer has a registration
+  // backstop to fall back on -- it's self-healing (get-or-create) regardless of whether the
+  // browser has connected yet, so this effect running promptly is what makes the agent leg's
+  // inbound call actually answerable, not just a nice-to-have.
   useEffect(() => {
     if (!effectiveSessionId) return;
     if (agentLineReady || agentLineConnecting) return;
@@ -158,17 +151,33 @@ export function Dialer({
 
   // UI-6: on a refresh that restores a session already sitting in paused_agent_lost, re-join
   // automatically instead of waiting for the intern to notice and click the manual Reconnect
-  // button (still rendered by DialerStateBanner as the fallback/retry path). Guarded by session
-  // id, not a plain boolean, so a genuinely new agent-lost event later in the same mount still
-  // gets its own attempt -- this only suppresses re-firing for the SAME already-attempted one.
-  const autoReconnectAttemptedSessionIdRef = useRef<string | null>(null);
+  // button (still rendered by DialerStateBanner as the fallback/retry path).
+  //
+  // Review fix (L1 round-3 review-notes-r3.md, MAJOR 2): this used to fire as soon as the
+  // polled session read paused_agent_lost, with no check that the WebRTC client was actually
+  // registered yet -- right after a page refresh the connect effect above is still in flight,
+  // so the reconnect's INVITE went to a not-yet-registered credential and the new leg failed
+  // immediately. Now gated on `agentLineReady`: the effect still runs on every session/readiness
+  // change, but does nothing until the line is actually up, and re-fires the moment it becomes
+  // ready if the session is still (or newly) in paused_agent_lost at that point.
+  //
+  // Also: the once-guard is now keyed on the LOST agent leg's own id (`session.agent_leg_id`,
+  // which still points at the just-lost leg while paused_agent_lost -- a successful Reconnect
+  // relinks it to the new leg once that leg answers), not the session id. Keying on session id
+  // meant a SECOND agent-leg drop later in the same page visit (same session, same id) was
+  // silently ignored forever -- the ref already "remembered" this session from the first drop.
+  // Keying on the leg id instead means each distinct drop gets exactly one auto-reconnect.
+  const autoReconnectAttemptedLegIdRef = useRef<string | null>(null);
   useEffect(() => {
     const session = parallelSession.session;
     if (!session || session.state !== 'paused_agent_lost') return;
-    if (autoReconnectAttemptedSessionIdRef.current === session.id) return;
-    autoReconnectAttemptedSessionIdRef.current = session.id;
+    if (!agentLineReady) return;
+    const lostAgentLegId = session.agent_leg_id;
+    if (!lostAgentLegId) return;
+    if (autoReconnectAttemptedLegIdRef.current === lostAgentLegId) return;
+    autoReconnectAttemptedLegIdRef.current = lostAgentLegId;
     void handleReconnectAgentLine();
-  }, [parallelSession.session, handleReconnectAgentLine]);
+  }, [parallelSession.session, agentLineReady, handleReconnectAgentLine]);
 
   // Runs after `effectiveSessionId` (and therefore this hook's own `sessionId` option) has
   // actually committed in a render -- the point at which the exact-match path in
@@ -256,21 +265,46 @@ export function Dialer({
         }
       } catch (e) {
         if (e instanceof ActiveSessionExistsError) {
-          setStartConflict({
-            campaignId: campaign.id,
-            campaignName: campaign.name,
-            existingSessionId: e.existingSessionId,
-          });
+          // Review fix (minor, L1r4/review-notes-r3.md): sessions are per-agent, not
+          // per-campaign (SEC-8) -- the existing session this 409 refers to can belong to a
+          // completely different campaign than the one just clicked. Look up the real session
+          // so both the conflict banner's text and "Open it" reflect what's ACTUALLY running,
+          // not the campaign the agent happened to click Start on.
+          const existingSessionId = e.existingSessionId;
+          try {
+            const { session: existingSession } = await getDialerSession(existingSessionId);
+            const existingCampaign = assignedCampaigns?.find(
+              (c) => c.id === existingSession.campaign_id
+            );
+            setStartConflict({
+              campaignId: existingSession.campaign_id,
+              campaignName: existingCampaign?.name ?? 'another campaign',
+              existingSessionId,
+            });
+          } catch {
+            // Couldn't resolve the real session -- fall back to the attempted campaign's own
+            // name/id so the banner still renders; "Open it" may point at the wrong campaign
+            // in this fallback case only (unchanged from before this fix).
+            setStartConflict({
+              campaignId: campaign.id,
+              campaignName: campaign.name,
+              existingSessionId,
+            });
+          }
           return;
         }
-        setStartError(
-          friendlyStartSessionError(e instanceof Error ? e.message : 'Failed to start session')
-        );
+        setStartError(e instanceof Error ? e.message : 'Failed to start session');
       } finally {
         setStartingCampaignId(null);
       }
     },
-    [agentLineReady, connectAgentLine, beginAgentLegExpectation, endAgentLegExpectation]
+    [
+      agentLineReady,
+      connectAgentLine,
+      beginAgentLegExpectation,
+      endAgentLegExpectation,
+      assignedCampaigns,
+    ]
   );
 
   // TASK-L7: CampaignManageModal's Start button no longer starts a session itself (that was

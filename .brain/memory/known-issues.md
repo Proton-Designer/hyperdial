@@ -726,6 +726,81 @@ INVITE timing race this fix closes, real mic-permission prompts, and the full St
 answer path from both entry points (Dialer's own list, and CampaignManageModal → navigate →
 Dialer).
 
+## 21. TASK-L1/L7 round-3 review: 3 majors -- fixed (2026-09-25, TASK-L1r4, temporary cross-lane by eng1)
+
+`audit/L1/review-notes-r3.md` (no blocker; the r2 blocker was confirmed fixed). eng2 was on L6,
+so eng1 fixed these under a lead-approved, temporary cross-lane grant (own file:
+`board/05-completed/TASK-L1r4-start-flow-fixes.md`).
+
+- **MAJOR 1 (any org campaign startable by an agent)**: `dialer-session-start/index.ts` only
+  ever checked the campaign's own `org_id` -- there was no `campaign_agents` membership check,
+  so a crafted request (or a stale client-side campaign id) let an agent start dialing on a
+  campaign they were never assigned to; the Dialer's own list already filtered correctly, but
+  nothing enforced it server-side. Fixed: `role === 'agent'` now requires a `campaign_agents`
+  row for `(campaign_id, user_id)` -> 403 `NOT_ASSIGNED_TO_CAMPAIGN` otherwise. Owner/admin
+  unchanged (no assignment concept for them). Not also added to the `dial_sessions_require_
+  active_campaign` insert trigger (the task's own "ideally" stretch goal) -- that migration is
+  outside this task's granted file ownership; the edge function is the only real entry point a
+  browser client can reach anyway.
+- **MAJOR 2 (auto-reconnect fires before the line is registered)**: `Dialer.tsx`'s UI-6
+  auto-reconnect effect used to fire as soon as the polled session read `paused_agent_lost`,
+  with no check that `useTelnyxCall`'s client had actually finished registering -- right after a
+  page refresh the connect effect is still in flight, so the reconnect's INVITE went out before
+  anything could auto-answer it and immediately failed. Its once-guard was also keyed on the
+  session id, so a SECOND agent-leg drop later in the same page visit was silently ignored
+  forever (the ref already "remembered" that session from the first drop). Fixed: gated on
+  `agentLineReady`, and re-keyed on `session.agent_leg_id` (the lost leg's own id, which only
+  changes once a NEW leg is established) instead of the session id -- each distinct drop now
+  gets exactly one auto-reconnect, and only once the line is genuinely ready.
+- **MAJOR 3 (tab switch drops the agent line)**: `MainApp.tsx` only rendered `<Dialer/>` while
+  `activeTab === 'dialer'`, so switching tabs mid-call unmounted it -- `useTelnyxCall`'s cleanup
+  effect called `disconnect()`, dropping the agent's own WebRTC leg while the customer stayed
+  connected hearing nobody (-> `paused_agent_lost`). Fixed by keeping `Dialer` permanently
+  mounted and CSS-hiding it (`display:none`) when another tab is active, instead of
+  conditionally rendering it -- preserves "exactly one client per tab" trivially (it now only
+  ever mounts once for the whole app session) and removes it from the tab order/a11y tree while
+  hidden, same as not rendering it at all. Verified the mechanism itself empirically in a
+  temporary (not committed) Playwright-driven harness reproducing both the old
+  conditional-render pattern and the new mounted-but-hidden pattern side by side: the old one
+  mounted/unmounted on every toggle (reproducing the bug), the new one mounted exactly once and
+  never unmounted across repeated toggles.
+- **minor (connect() in-flight/error handling)**: `useTelnyxCall.ts`'s `connect()` treated any
+  truthy `clientRef` as "already connected" -- but that ref is set synchronously right after
+  `client.connect()`, well before `telnyx.ready` fires, so a second call made while a connection
+  was still in flight resolved immediately instead of waiting for the real result, and a FAILED
+  connection left the same dead client sitting there forever, so every later `connect()` call
+  kept resolving immediately against it with no way to actually retry. Fixed: an in-flight
+  promise ref is returned to a concurrent caller instead of a fresh one, and the client ref is
+  cleared on error.
+- **minor (409 "Open it" opened the wrong campaign)**: sessions are per-agent, not per-campaign
+  (SEC-8), so the existing session a `dialer-session-start` 409 refers to can belong to a
+  different campaign than the one just clicked -- `Dialer.tsx`'s conflict banner used the
+  ATTEMPTED campaign's own name/id instead of the real one. Fixed: looks up the actual existing
+  session (`getDialerSession`) to resolve its real `campaign_id` (and name, from the
+  already-loaded assigned-campaigns list) before showing the conflict banner or letting "Open
+  it" navigate.
+- **nit**: removed the dead `AGENT_NOT_REGISTERED` string-matching in
+  `dialer-session-reconnect/index.ts` and `Dialer.tsx` (nothing throws that string anymore --
+  `dialer-engine.ts`'s `agentSipUri` has been self-healing via get-or-create since #18's B1);
+  also corrected a stale comment in `Dialer.tsx` still describing a since-removed
+  `AGENT_NOT_REGISTERED` server backstop and a since-moved "owned by the other lane" Start
+  button.
+- **NOT done**: the multi-tab-open detection minor (BroadcastChannel/localStorage lock + a
+  warning banner) -- out of scope for this pass given the 3 majors were the trigger; every open
+  tab still silently registers the same credential.
+
+Checks: `npm run check`/`npm run build` clean (0 errors; only pre-existing warnings, none in
+this diff). `npm run test:functions`/`deno test --allow-all supabase/functions/_shared` could
+NOT be run to completion -- eng2's own concurrent uncommitted TASK-L6 work
+(`_shared/telnyx-client.ts`'s new `getCallStatus`, not yet wired into
+`telnyx-provision.test.ts`'s fixture) fails the directory-wide type-check this command does
+before running anything, unrelated to this diff. Verified instead: `deno check` on both touched
+Deno files individually (clean), full `npm run check`/`build` clean. NEEDS-LIVE-VERIFY (no
+`functions serve`/real Telnyx in this environment): the campaign-assignment 403 against a real
+DB, the reconnect timing fix against a real refresh-mid-agent-lost, and the tab-switch fix
+against the real `Dialer`/`useTelnyxCall` (only the underlying React mount pattern was
+hands-on-verified, in isolation).
+
 ---
 
 ## Not issues — deliberate, documented elsewhere

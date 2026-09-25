@@ -79,13 +79,22 @@ export function MainApp() {
               onNavigateToCampaigns={() => setActiveTab('campaigns')}
             />
           )}
-          {activeTab === 'dialer' && (
+          {/* Review fix (L1 round-3 review-notes-r3.md, MAJOR 3): the Dialer used to only render
+              (and its useTelnyxCall client only exist) while activeTab === 'dialer', so leaving
+              the tab mid-session unmounted it -- disconnect()'s cleanup dropped the agent's own
+              WebRTC leg, hanging up on the customer's ears (they'd hear nobody) while the call
+              itself stayed technically alive server-side until it, too, was cleaned up. Keeping
+              Dialer permanently mounted and only CSS-hiding it when another tab is active keeps
+              the SAME TelnyxRTC client (and the "exactly one client per tab" invariant) alive
+              across every tab switch; `display: none` also removes it from the tab order/a11y
+              tree while hidden, same as not rendering it at all. */}
+          <div style={activeTab === 'dialer' ? undefined : { display: 'none' }}>
             <Dialer
               parallelSessionId={parallelDialContext?.sessionId ?? null}
               parallelCampaignId={parallelDialContext?.campaignId ?? null}
               onClearParallelContext={() => setParallelDialContext(null)}
             />
-          )}
+          </div>
           {activeTab === 'contacts' && <Contacts />}
           {activeTab === 'campaigns' && (
             <Campaigns

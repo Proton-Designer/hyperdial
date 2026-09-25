@@ -46,6 +46,7 @@ Deno.serve(async (req) => {
   const {
     user,
     orgId,
+    role,
     error: authError,
   } = await requireTelnyxOrgRole(req, ['owner', 'admin', 'agent']);
   if (authError) return authError;
@@ -97,6 +98,26 @@ Deno.serve(async (req) => {
           'This campaign has no caller ID number set. Choose one in the campaign settings first.',
         code: 'MISSING_CALLER_ID',
       });
+    }
+
+    // Review fix (L1 round-3 review-notes-r3.md, MAJOR 1): owners/admins may start any org
+    // campaign (unchanged), but an agent must actually be assigned to it -- the Dialer's own
+    // campaign list (listMyCampaignAssignments) already filters to this, but nothing enforced
+    // it server-side, so a crafted request could start dialing on an unassigned campaign.
+    if (role === 'agent') {
+      const { data: assignment, error: assignmentError } = await supabase
+        .from('campaign_agents')
+        .select('campaign_id')
+        .eq('campaign_id', campaignId)
+        .eq('user_id', user.id)
+        .maybeSingle();
+      if (assignmentError) return jsonResponse(500, { error: assignmentError.message });
+      if (!assignment) {
+        return jsonResponse(403, {
+          error: 'You are not assigned to this campaign.',
+          code: 'NOT_ASSIGNED_TO_CAMPAIGN',
+        });
+      }
     }
 
     // Per-agent, not per-campaign (SEC-8) -- see this file's header. `dial_sessions_one_active_

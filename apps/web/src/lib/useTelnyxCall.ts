@@ -119,12 +119,24 @@ export function useTelnyxCall(options: UseTelnyxCallOptions = {}) {
     window.localStorage.setItem(ACTIVE_AGENT_CALL_CONTROL_ID_KEY, candidate);
   }, []);
 
+  /** Review fix (minor, L1r4/review-notes-r3.md): `connect()` used to key its early-return
+   *  purely off `clientRef.current` being set -- but that ref is populated synchronously right
+   *  after `client.connect()`, well before `telnyx.ready` fires, so a SECOND call made while a
+   *  connection was still in flight resolved immediately (as if already connected) instead of
+   *  waiting for the real result. Worse, a failed connection (bad token, `telnyx.error`) left
+   *  that same now-dead client sitting in `clientRef` forever, so every later `connect()` call
+   *  kept resolving immediately against it too -- there was no way to actually retry. This ref
+   *  tracks the in-flight promise itself so a second caller awaits the SAME attempt, and the
+   *  catch handler below clears `clientRef` on failure so the next call genuinely starts over. */
+  const connectPromiseRef = useRef<Promise<void> | null>(null);
+
   const connect = useCallback((): Promise<void> => {
+    if (connectPromiseRef.current) return connectPromiseRef.current;
     if (clientRef.current) return Promise.resolve();
     setIsConnecting(true);
     setError(null);
 
-    return (async () => {
+    const promise = (async () => {
       const { token } = await getWebrtcCredentials();
       if (!token) throw new Error('No token received');
 
@@ -225,11 +237,20 @@ export function useTelnyxCall(options: UseTelnyxCallOptions = {}) {
         client.connect();
         clientRef.current = client;
       });
-    })().catch((err: unknown) => {
-      setError(err instanceof Error ? err.message : String(err));
-      setIsConnecting(false);
-      throw err;
-    });
+    })()
+      .catch((err: unknown) => {
+        setError(err instanceof Error ? err.message : String(err));
+        setIsConnecting(false);
+        // Clear the dead client so the NEXT connect() call actually retries instead of
+        // resolving immediately against a client that never reached telnyx.ready.
+        clientRef.current = null;
+        throw err;
+      })
+      .finally(() => {
+        connectPromiseRef.current = null;
+      });
+    connectPromiseRef.current = promise;
+    return promise;
     // Review fix (M5) follow-on: this body now reads `optionsRef.current` exclusively (never
     // closes over `options` directly), so `options.remoteElementId`/`options.sessionId` are no
     // longer real dependencies -- keeping them just churned `connect`'s own identity (and the

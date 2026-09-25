@@ -76,14 +76,10 @@ Deno.serve(async (req) => {
 
     return jsonResponse(200, { status: 'reconnecting' });
   } catch (err) {
+    // Review fix (L1 round-3 review-notes-r3.md, nit): AGENT_NOT_REGISTERED hasn't been thrown
+    // by anything on this path since B1 (dialer-engine.ts's agentSipUri is self-healing via
+    // _shared/agent-webrtc-credential.ts's get-or-create) -- this mapping was dead.
     const msg = err instanceof Error ? err.message : String(err);
-    if (msg.includes('AGENT_NOT_REGISTERED')) {
-      return jsonResponse(400, {
-        error:
-          'Your WebRTC client is not registered. Connect it (mic permission + WebRTC token) before reconnecting.',
-        code: 'AGENT_NOT_REGISTERED',
-      });
-    }
     console.error('dialer-session-reconnect error:', err);
     return jsonResponse(500, { error: msg });
   }
