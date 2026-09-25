@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { LogoMark, Logo } from '@/components/brand/Logo';
+import { Logo } from '@/components/brand/Logo';
 import { ConvergeBackground } from '@/components/brand/ConvergeBackground';
 
 /**
@@ -13,11 +13,11 @@ export function AuthSplitLayout({ children }: { children: ReactNode }) {
       <div className="hidden lg:flex lg:w-[55%] relative overflow-hidden">
         <ConvergeBackground />
         <div className="relative z-10 flex flex-col justify-center px-16 max-w-xl">
-          <LogoMark size={44} className="mb-8" />
+          <Logo size={44} wordmarkClassName="text-3xl" className="mb-8" />
           <h1 className="text-4xl font-semibold text-text-primary leading-tight mb-4">
-            One agent. Many lines.
+            Stop waiting on rings.
             <br />
-            Every live conversation.
+            Start collecting conversations.
           </h1>
           <p className="text-body text-text-secondary max-w-md">
             Dial multiple lines at once — the first human answer connects you, the rest hang up
