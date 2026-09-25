@@ -174,7 +174,11 @@ export function DialerStatesHarness() {
           connectedAnsweredAt={scenario.connectedContactId ? ANSWERED_2MIN_AGO : null}
           onPause={() => window.alert('Pause clicked (fixture, no-op)')}
           onResume={() => window.alert('Resume clicked (fixture, no-op)')}
-          onStop={() => window.alert('Stop clicked (fixture, no-op)')}
+          onStop={(opts) =>
+            window.alert(
+              `Stop confirmed (fixture, no-op)${opts?.force ? ' -- force:true (via confirm dialog)' : ''}`
+            )
+          }
           onMuteChange={() => {}}
           onEndLiveCall={() => window.alert('End live call clicked (fixture, no-op)')}
         />

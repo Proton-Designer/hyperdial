@@ -35,6 +35,9 @@ import {
   reconnectAgentLeg,
   processTelnyxDialerEvent,
   pauseSession,
+  stopSession,
+  AGENT_DIAL_TIMEOUT_SECS,
+  AGENT_DIAL_TIME_LIMIT_SECS,
   type RawTelnyxEvent,
 } from './dialer-engine.ts';
 import type { DialClientStateKind } from './client-state.ts';
@@ -599,9 +602,11 @@ Deno.test(
       assertExists(agentLeg1, 'agent leg row should exist after Go Ready');
       assertEquals(agentLeg1.state, 'initiated');
       assertEquals(sessionAfterStart.agent_leg_id, agentLeg1.id);
-      // BUG-8 is contact-only: the agent leg dial must NOT carry time_limit_secs.
+      // TASK-S1/BUG-8: the agent leg's own dial now explicitly carries its own (longer) ring
+      // timeout and max call length, not Telnyx's implicit defaults.
       const agentDial1 = server.calls.get(agentLeg1.call_control_id as string)!;
-      assertEquals(agentDial1.body.time_limit_secs, undefined);
+      assertEquals(agentDial1.body.timeout_secs, AGENT_DIAL_TIMEOUT_SECS);
+      assertEquals(agentDial1.body.time_limit_secs, AGENT_DIAL_TIME_LIMIT_SECS);
       assertEquals(agentDial1.to, 'sip:agent-sip-user@sip.telnyx.com');
       assertEquals(
         (agentDial1.body.custom_headers as { name: string }[])[0].name,
@@ -2176,6 +2181,148 @@ Deno.test(
         4,
         'the 4th lead must be dialed immediately -- the voicemail-dropping leg does not hold the slot'
       );
+    } finally {
+      restoreFetch();
+    }
+  }
+);
+
+// ---------------------------------------------------------------------------
+// BUG-11 (TASK-S1): stopSession refuses to silently hang up a live claimed contact leg.
+// ---------------------------------------------------------------------------
+
+/** Drives Go Ready -> agent answers -> dialing -> one contact answers (amd off, so it claims
+ *  immediately) -> session on_call, exactly like the main end-to-end test's own winner-joins-
+ *  conference step, but as a standalone helper for the stopSession tests below. */
+async function bootstrapToOnCall(
+  db: FakeDb,
+  supabase: ReturnType<typeof createFakeSupabase>,
+  args: { orgId: string; campaignId: string; agentId: string }
+): Promise<{ sessionId: string; winnerLegId: string; winnerCallControlId: string }> {
+  const { sessionId } = await startSession(supabase, {
+    orgId: args.orgId,
+    campaignId: args.campaignId,
+    agentId: args.agentId,
+    lines: 3,
+    amdMode: 'off',
+  });
+  const agentLeg = [...db.table('call_legs').values()].find((l) => l.kind === 'agent')!;
+  await processTelnyxDialerEvent(
+    supabase,
+    agentEvent(
+      args.orgId,
+      sessionId,
+      agentLeg.id as string,
+      agentLeg.call_control_id as string,
+      'call.answered'
+    )
+  );
+  const winnerLeg = [...db.table('call_legs').values()].find((l) => l.kind === 'contact')!;
+  await processTelnyxDialerEvent(
+    supabase,
+    contactEvent(
+      args.orgId,
+      sessionId,
+      winnerLeg.id as string,
+      winnerLeg.call_control_id as string,
+      'call.answered'
+    )
+  );
+  return {
+    sessionId,
+    winnerLegId: winnerLeg.id as string,
+    winnerCallControlId: winnerLeg.call_control_id as string,
+  };
+}
+
+Deno.test(
+  'BUG-11: stopSession refuses (live_call_in_progress) when a contact leg is claimed and force is not passed -- nothing is hung up, session state is unchanged',
+  async () => {
+    const db = new FakeDb();
+    const server = new FakeTelnyxServer();
+    const restoreFetch = stubTelnyxFetch(server);
+    const supabase = createFakeSupabase(db);
+    const { orgId, campaignId, agentId } = seedFixtures(db);
+    try {
+      const { sessionId, winnerCallControlId } = await bootstrapToOnCall(db, supabase, {
+        orgId,
+        campaignId,
+        agentId,
+      });
+      assertEquals(db.table('dial_sessions').get(sessionId)!.state, 'on_call');
+
+      const result = await stopSession(supabase, orgId, sessionId);
+      assertEquals(result, { ok: false, reason: 'live_call_in_progress' });
+      assertEquals(
+        db.table('dial_sessions').get(sessionId)!.state,
+        'on_call',
+        'a refused stop must not transition the session'
+      );
+      assertEquals(
+        server.requests.some(
+          (r) => r.method === 'POST' && r.path === `/v2/calls/${winnerCallControlId}/actions/hangup`
+        ),
+        false,
+        'a refused stop must not hang up the live leg'
+      );
+    } finally {
+      restoreFetch();
+    }
+  }
+);
+
+Deno.test(
+  'BUG-11: stopSession with force:true hangs up the claimed leg and stops the session (the confirm dialog\'s "Hang up and stop")',
+  async () => {
+    const db = new FakeDb();
+    const server = new FakeTelnyxServer();
+    const restoreFetch = stubTelnyxFetch(server);
+    const supabase = createFakeSupabase(db);
+    const { orgId, campaignId, agentId } = seedFixtures(db);
+    try {
+      const { sessionId, winnerCallControlId } = await bootstrapToOnCall(db, supabase, {
+        orgId,
+        campaignId,
+        agentId,
+      });
+
+      const result = await stopSession(supabase, orgId, sessionId, true);
+      assertEquals(result, { ok: true });
+      assertEquals(db.table('dial_sessions').get(sessionId)!.state, 'stopped');
+      assertEquals(
+        server.requests.some(
+          (r) => r.method === 'POST' && r.path === `/v2/calls/${winnerCallControlId}/actions/hangup`
+        ),
+        true,
+        'force:true must hang up the live leg'
+      );
+    } finally {
+      restoreFetch();
+    }
+  }
+);
+
+Deno.test(
+  'BUG-11: stopSession with no claimed contact leg succeeds without force -- Stop still "always works" outside on_call',
+  async () => {
+    const db = new FakeDb();
+    const server = new FakeTelnyxServer();
+    const restoreFetch = stubTelnyxFetch(server);
+    const supabase = createFakeSupabase(db);
+    const { orgId, campaignId, agentId } = seedFixtures(db);
+    try {
+      const { sessionId } = await startSession(supabase, {
+        orgId,
+        campaignId,
+        agentId,
+        lines: 3,
+        amdMode: 'off',
+      });
+      assertEquals(db.table('dial_sessions').get(sessionId)!.state, 'ready_pending');
+
+      const result = await stopSession(supabase, orgId, sessionId);
+      assertEquals(result, { ok: true });
+      assertEquals(db.table('dial_sessions').get(sessionId)!.state, 'stopped');
     } finally {
       restoreFetch();
     }

@@ -127,14 +127,18 @@ export interface DialArgs {
   from: string;
   webhookUrl: string;
   clientState: string;
-  /** Telnyx default is 30s, min 5, max 600 (CallRequest.timeout_secs). Design uses 25s. */
+  /** Telnyx default is 30s, min 5, max 600 (CallRequest.timeout_secs). Contact dials pass 25s;
+   *  the agent leg's own dial passes 45s (TASK-S1/BUG-8 -- see dialer-engine.ts's
+   *  AGENT_DIAL_TIMEOUT_SECS for why it's longer). */
   timeoutSecs?: number;
   amdMode: AmdMode;
-  /** CallRequest.time_limit_secs (verified against spec3.json, 2026-09-24 -- TASK-L1/BUG-8):
-   *  "Sets the maximum duration of a Call Control Leg in seconds... default is 14400 (4h)."
-   *  Every CONTACT dial passes 1800 (30min) explicitly -- the 4h default is sized for a
-   *  human agent call, not a parallel-dial candidate leg that should never run that long.
-   *  Omitted (agent leg dials) falls through to Telnyx's own 14400s default. */
+  /** CallRequest.time_limit_secs (verified against spec3.json, 2026-09-24 -- TASK-L1/BUG-8;
+   *  re-verified 2026-09-25 -- TASK-S1): "Sets the maximum duration of a Call Control Leg in
+   *  seconds... default AND max is 14400 (4h)." Every CONTACT dial passes 1800 (30min)
+   *  explicitly -- a parallel-dial candidate leg should never run that long. The agent leg's
+   *  own dial now ALSO passes this explicitly (14400, dialer-engine.ts's
+   *  AGENT_DIAL_TIME_LIMIT_SECS) -- same as Telnyx's own default/max, but explicit so it can't
+   *  silently drift if Telnyx ever changes it (TASK-S1/BUG-8). */
   timeLimitSecs?: number;
   /** CallRequest.custom_headers (verified against spec3.json): "Custom headers to be added
    *  to the SIP INVITE." This is how the agent leg's dial carries a session-identifying

@@ -16,6 +16,7 @@ import {
   startDialerSession,
   ActiveSessionExistsError,
   ReconnectAlreadyInFlightError,
+  LiveCallInProgressError,
   type CampaignWithStats,
 } from '@/lib/api';
 import { playConnectChime } from '@/lib/dialerSoundCue';
@@ -538,20 +539,37 @@ function DialerBody({
     }
   }, [parallelSession.sessionId, parallelSession.pause]);
 
-  const handleParallelStop = useCallback(async () => {
-    if (!parallelSession.sessionId) {
-      toast.error('Session not loaded yet');
-      return;
-    }
-    try {
-      await parallelSession.stop();
-      setRestoredParallelContext(null);
-      onClearParallelContext?.();
-      toast.success('Session stopped');
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Failed to stop session');
-    }
-  }, [parallelSession.sessionId, parallelSession.stop, onClearParallelContext]);
+  const handleParallelStop = useCallback(
+    async (opts?: { force?: boolean }) => {
+      if (!parallelSession.sessionId) {
+        toast.error('Session not loaded yet');
+        return;
+      }
+      try {
+        await parallelSession.stop(opts);
+        setRestoredParallelContext(null);
+        onClearParallelContext?.();
+        toast.success('Session stopped');
+      } catch (e) {
+        // BUG-11: the confirm dialog (ParallelDialerUI) is what normally prevents this --
+        // seeing it here means a human connected in the moment between the UI's last poll and
+        // this click. Surface it plainly rather than the generic failure message so the intern
+        // understands why Stop didn't work, and just re-clicking Stop shows the real dialog.
+        if (e instanceof LiveCallInProgressError) {
+          toast.error('A prospect just connected -- click Stop again to confirm.');
+          await parallelSession.loadSession(parallelSession.sessionId);
+          return;
+        }
+        toast.error(e instanceof Error ? e.message : 'Failed to stop session');
+      }
+    },
+    [
+      parallelSession.sessionId,
+      parallelSession.stop,
+      parallelSession.loadSession,
+      onClearParallelContext,
+    ]
+  );
 
   return (
     <div className="flex h-full">
@@ -609,7 +627,7 @@ function DialerBody({
                 connectedAnsweredAt={parallelSession.connectedAnsweredAt}
                 onPause={handleParallelPause}
                 onResume={() => void handleParallelResume()}
-                onStop={() => void handleParallelStop()}
+                onStop={(opts) => void handleParallelStop(opts)}
                 onMuteChange={setMuted}
                 onEndLiveCall={handleEndLiveCallParallel}
               />

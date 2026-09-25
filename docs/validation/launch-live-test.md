@@ -159,6 +159,28 @@ the ~90s sweeper reap for a stuck `voicemail_dropping` leg is covered by the dry
 `dialer-engine.test.ts`'s own timeout tests instead, the same way B8 covers the general sweeper
 reap without forcing a live lost webhook.
 
+### B12 — Safety fixes: confirm-before-Stop + ring timeout / max call length (TASK-S1) — no migration, code-only
+
+| #     | Step                                                                                                                                                         | Expected                                                                                                                                                                        | ☐   |
+| ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --- |
+| B12.1 | Start a session, let a contact answer and bridge (on_call), then click **Stop session**.                                                                     | A confirm dialog appears: "A prospect is on the line. Stop the session and hang up on them?" with "Keep calling" (default-focused) and "Hang up and stop".                      | ☐   |
+| B12.2 | Click **Keep calling**.                                                                                                                                      | The dialog closes, the call and session are completely unaffected — still `on_call`, still bridged.                                                                             | ☐   |
+| B12.3 | Click **Stop session** again, then **Hang up and stop**.                                                                                                     | The live call ends, the session moves to `stopped`. Same as clicking Stop today outside `on_call` (B12.4) — no second confirmation.                                             | ☐   |
+| B12.4 | With no contact bridged (`dialing`/`ready`/`paused`/etc.), click **Stop session**.                                                                           | Stops immediately, no confirm dialog — matches existing behavior exactly.                                                                                                       | ☐   |
+| B12.5 | Let a dialed contact's phone simply not pick up (no voicemail, no reject) for the full ring window.                                                          | The leg hangs up on its own after ~25s (`timeout_secs`) with outcome `no_answer` — it does not ring indefinitely.                                                               | ☐   |
+| B12.6 | Go Ready and leave the WebRTC tab foregrounded but don't click Accept if a manual test call is placed to your own agent leg (lab-only; skip if impractical). | The agent leg's own ring window is noticeably longer than a contact's (~45s) before it gives up — confirms `AGENT_DIAL_TIMEOUT_SECS` is actually applied, not just unit-tested. | ☐   |
+
+BUG-8's max-call-length (30 min contact / 4h agent leg) and BUG-11's exact confirm-dialog copy/focus
+behavior are both exercised end-to-end in `dialer-engine.test.ts` (`stopSession` refuses without
+`force` when a leg is `claimed`, and the real dial payload's `timeout_secs`/`time_limit_secs` are
+asserted for both leg kinds) and via a screenshot of the confirm dialog through the
+`?dev_dialer_states=1` harness (`on_call` state) — B12 above only covers what a real click-through/
+real call can add on top of that: the actual UI gate under a live human, and the ring timeout
+actually firing against a real unanswered number. Forcing a real 4-hour agent-leg time-limit
+hangup or a real 30-minute contact time-limit hangup live is impractical within a test session and
+is not part of this checklist; both are unit-tested (`dialer-core.ts`'s `hangupOutcome` for
+`hangup_cause: 'time_limit'`) instead.
+
 ---
 
 ## C. Evidence to capture

@@ -1,8 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { motion } from 'motion/react';
 import { ContactBatchCard } from './ContactBatchCard';
 import { LiveCallPanel } from './LiveCallPanel';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/components/ui/utils';
+import { useFocusTrap } from '@/hooks/useFocusTrap';
 import type { BatchContactPreview } from '@/hooks/useDialerSession';
 import type { DialSessionState } from '@/lib/api';
 
@@ -23,9 +26,62 @@ interface ParallelDialerUIProps {
   connectedAnsweredAt: string | null;
   onPause: () => void;
   onResume: () => void;
-  onStop: () => void;
+  /** BUG-11: `force` is only ever passed `true` from the confirm dialog's "Hang up and stop"
+   *  button -- see this component's own `StopConfirmDialog` and api.ts's `LiveCallInProgressError`. */
+  onStop: (opts?: { force?: boolean }) => void;
   onMuteChange: (muted: boolean) => void;
   onEndLiveCall: () => void;
+}
+
+/** BUG-11: "A prospect is on the line" confirm dialog, same portal/focus-trap/motion shape as
+ *  AddContactModal.tsx. Only ever rendered while `sessionState === 'on_call'` (StopButton below
+ *  owns that gate), so there's always a live human to name in the copy. */
+function StopConfirmDialog({
+  onKeepCalling,
+  onHangUpAndStop,
+}: {
+  onKeepCalling: () => void;
+  onHangUpAndStop: () => void;
+}) {
+  const modalRef = useRef<HTMLDivElement>(null);
+  useFocusTrap(modalRef, true);
+
+  return createPortal(
+    <div
+      className="fixed inset-0 flex items-center justify-center p-4"
+      style={{ zIndex: 10000 }}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="stop-confirm-title"
+    >
+      <div className="absolute inset-0 bg-black/60" onClick={onKeepCalling} aria-hidden="true" />
+      <motion.div
+        ref={modalRef}
+        tabIndex={-1}
+        initial={{ opacity: 0, scale: 0.95 }}
+        animate={{ opacity: 1, scale: 1 }}
+        className="relative z-[1] w-full max-w-sm rounded-app-lg border border-border-subtle bg-surface-1 p-5 shadow-app-md outline-none"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h2 id="stop-confirm-title" className="text-page-title text-text-primary mb-2">
+          A prospect is on the line
+        </h2>
+        <p className="text-body text-text-secondary mb-5">Stop the session and hang up on them?</p>
+        {/* "Keep calling" comes first in DOM order on purpose -- useFocusTrap auto-focuses the
+            first focusable element on open, and the safe/default action (not the destructive
+            one) is what a stray Enter/Space should activate. */}
+        <div className="flex flex-col sm:flex-row sm:justify-end gap-2">
+          <Button variant="primary" onClick={onKeepCalling}>
+            Keep calling
+          </Button>
+          <Button variant="danger" onClick={onHangUpAndStop}>
+            Hang up and stop
+          </Button>
+        </div>
+      </motion.div>
+    </div>,
+    document.body
+  );
 }
 
 /** Session states where clicking Pause could do anything (pauseSession's own gate) -- disabled
@@ -88,6 +144,18 @@ export function ParallelDialerUI({
   const elapsed = useElapsed(sessionState === 'on_call' ? connectedAnsweredAt : null);
   const chip = STATUS_CHIP[sessionState];
 
+  // BUG-11: gate Stop behind a confirm dialog whenever a live human is bridged right now.
+  // `sessionState === 'on_call'` is the same signal STATUS_CHIP/the elapsed timer above already
+  // use for "connected" -- it's only reached once a contact leg is actually claimed/bridged.
+  const [showStopConfirm, setShowStopConfirm] = useState(false);
+  const handleStopClick = () => {
+    if (sessionState === 'on_call') {
+      setShowStopConfirm(true);
+      return;
+    }
+    onStop();
+  };
+
   const getContactState = (contactId: string): 'dialing' | 'connecting' | 'connected' => {
     if (connectedContactId === contactId) return 'connected';
     if (answeredContactId === contactId) return 'connecting';
@@ -132,8 +200,9 @@ export function ParallelDialerUI({
                 Pause
               </Button>
             )}
-            {/* Stop always works, in every state, per this task's own spec. */}
-            <Button variant="danger-ghost" size="sm" onClick={onStop}>
+            {/* Stop always works, in every state, per this task's own spec -- but BUG-11 gates
+                it behind a confirm dialog while a human is actually on the line. */}
+            <Button variant="danger-ghost" size="sm" onClick={handleStopClick}>
               Stop session
             </Button>
           </div>
@@ -178,6 +247,16 @@ export function ParallelDialerUI({
           answeredAt={connectedAnsweredAt}
           onToggleMute={onMuteChange}
           onEndCall={onEndLiveCall}
+        />
+      )}
+
+      {showStopConfirm && (
+        <StopConfirmDialog
+          onKeepCalling={() => setShowStopConfirm(false)}
+          onHangUpAndStop={() => {
+            setShowStopConfirm(false);
+            onStop({ force: true });
+          }}
         />
       )}
     </div>

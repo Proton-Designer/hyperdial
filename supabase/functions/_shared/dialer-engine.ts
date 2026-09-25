@@ -148,11 +148,33 @@ function dialerLog(step: string, meta: Record<string, unknown> = {}): void {
 const AGENT_SESSION_HEADER_NAME = 'X-Hyperdial-Session';
 
 /** CallRequest.time_limit_secs for every CONTACT dial (BUG-8) -- see telnyx-client.ts's
- *  DialArgs header comment for the spec citation. Not applied to the agent leg dial, which
- *  keeps Telnyx's own 4h default (an agent shift, not a parallel-dial candidate). Exported
- *  (TASK-L6) so dialer-sweeper-core.ts's own hard-timeout check uses this SAME value, not an
- *  independently-maintained copy that could drift out of sync with the actual dial. */
+ *  DialArgs header comment for the spec citation. Exported (TASK-L6) so
+ *  dialer-sweeper-core.ts's own hard-timeout check uses this SAME value, not an independently-
+ *  maintained copy that could drift out of sync with the actual dial. */
 export const CONTACT_DIAL_TIME_LIMIT_SECS = 1800;
+
+/** TASK-S1/BUG-8: the agent leg's own ring timeout and max call length, decided and made
+ *  EXPLICIT rather than relying on Telnyx's own defaults (re-verified against the real
+ *  CallRequest schema, spec3.json, 2026-09-25 -- `timeout_secs` default 30/min 5/max 600,
+ *  `time_limit_secs` default AND max 14400 (4h)):
+ *  - `AGENT_DIAL_TIMEOUT_SECS` (45s, longer than `CONTACT_DIAL_TIME_LIMIT_SECS`'s 25s ring
+ *    timeout on purpose): the agent leg rings the intern's OWN browser tab (a WebRTC SDK
+ *    incoming-call popup), which needs more slack than a phone physically ringing -- the tab
+ *    may be backgrounded, the SDK needs a moment to raise the notification, and a human has to
+ *    notice and click Accept, none of which apply to a contact's phone. If the agent leg times
+ *    out anyway, the existing agent-lost path (`handleAgentLegLost`) already recovers the
+ *    session into `paused_agent_lost` with a manual/auto Reconnect -- a longer ring here costs
+ *    nothing extra, it only avoids a false "missed" when the intern was right there.
+ *  - `AGENT_DIAL_TIME_LIMIT_SECS` (14400s/4h): equal to Telnyx's own default/max, but passed
+ *    EXPLICITLY so it can never silently drift if Telnyx ever changes its own default -- this
+ *    is a single continuous WebRTC leg held for an entire dialing shift (Go Ready to Stop), not
+ *    a single call, so the cap is sized for "longer than any real uninterrupted shift", not a
+ *    per-call limit. If a shift genuinely runs past 4h, Telnyx sends `call.hangup` with
+ *    `hangup_cause: 'time_limit'`, `handleAgentLegLost` treats it exactly like any other agent-
+ *    leg drop (`paused_agent_lost`, Reconnect re-dials a fresh leg), so this is a currently-
+ *    latent, self-recovering edge case, not a hard stop. */
+export const AGENT_DIAL_TIMEOUT_SECS = 45;
+export const AGENT_DIAL_TIME_LIMIT_SECS = 14400;
 
 function webhookBaseUrl(): string {
   return `${Deno.env.get('SUPABASE_URL')}/functions/v1/telnyx-webhook`;
@@ -570,7 +592,8 @@ async function dialAgentLegInternal(
       from: fromNumber,
       webhookUrl,
       clientState,
-      timeoutSecs: 25,
+      timeoutSecs: AGENT_DIAL_TIMEOUT_SECS,
+      timeLimitSecs: AGENT_DIAL_TIME_LIMIT_SECS,
       amdMode: 'off',
       customHeaders: [{ name: AGENT_SESSION_HEADER_NAME, value: session.id }],
     });
@@ -2042,16 +2065,36 @@ async function handleWin(
 // Session control (dialer-session-{stop,pause,hangup-live}, and resume for testing)
 // ---------------------------------------------------------------------------
 
+/**
+ * BUG-11: stopping a session with a live human bridged to the agent must not silently hang up
+ * on them. `ParallelDialerUI` shows a confirm dialog whenever `sessionState === 'on_call'` and
+ * only ever sends `force: true` once the intern has explicitly picked "Hang up and stop" (or
+ * there was nothing live to confirm in the first place, in which case `force` is irrelevant --
+ * the check below is a no-op when no leg is `claimed`). This server-side check is what actually
+ * closes the gap for a STALE client build that predates the confirm dialog and never sends
+ * `force` at all: it gets refused (`live_call_in_progress`) instead of silently hanging up a
+ * live prospect, and it also closes the narrow race where the session goes `on_call` in the
+ * moment between the UI's last poll and a stop click that (per the client's own stale view)
+ * didn't need to confirm anything.
+ *
+ * Returns `{ ok: boolean; reason?: string }` (same convention as `reconnectAgentLeg`) rather
+ * than throwing, since "refused, here's why" is an expected outcome here, not a failure.
+ */
 export async function stopSession(
   supabase: SupabaseClient,
   orgId: string,
-  sessionId: string
-): Promise<void> {
+  sessionId: string,
+  force = false
+): Promise<{ ok: boolean; reason?: string }> {
   const session = await loadSession(supabase, sessionId);
-  if (!session || session.org_id !== orgId) return;
+  if (!session || session.org_id !== orgId) return { ok: false, reason: 'not_found' };
+
+  const legs = await loadActiveLegs(supabase, sessionId);
+  if (!force && legs.some((leg) => leg.kind === 'contact' && leg.state === 'claimed')) {
+    return { ok: false, reason: 'live_call_in_progress' };
+  }
 
   const { client } = await getConnectedOrgTelnyxContext(supabase, orgId);
-  const legs = await loadActiveLegs(supabase, sessionId);
   if (client) {
     for (const leg of legs) {
       try {
@@ -2078,6 +2121,7 @@ export async function stopSession(
     p_fields: { ended_at: new Date().toISOString() },
   });
   dialerLog('stop_session_done', { sessionId, hungUpLegs: legs.length });
+  return { ok: true };
 }
 
 export async function pauseSession(

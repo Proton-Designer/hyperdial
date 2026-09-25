@@ -122,12 +122,15 @@ export function useDialerSession(initialSessionId: string | null = null) {
     [loadSession]
   );
 
-  const stop = useCallback(async () => {
-    if (!state.sessionId) return null;
-    const res = await stopDialerSession(state.sessionId);
-    await loadSession(state.sessionId);
-    return res;
-  }, [loadSession, state.sessionId]);
+  const stop = useCallback(
+    async (opts?: { force?: boolean }) => {
+      if (!state.sessionId) return null;
+      const res = await stopDialerSession(state.sessionId, opts);
+      await loadSession(state.sessionId);
+      return res;
+    },
+    [loadSession, state.sessionId]
+  );
 
   const pause = useCallback(async () => {
     if (!state.sessionId) return null;

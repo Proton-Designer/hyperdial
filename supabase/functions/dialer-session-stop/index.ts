@@ -6,6 +6,9 @@ import { readJsonBody } from '../_shared/http-json.ts';
 
 interface StopBody {
   sessionId?: string;
+  /** BUG-11: only true once the client's own confirm dialog has been shown (or there was no
+   *  live human to confirm) -- see stopSession's own header comment in dialer-engine.ts. */
+  force?: boolean;
 }
 
 function jsonResponse(status: number, payload: Record<string, unknown>): Response {
@@ -55,7 +58,13 @@ Deno.serve(async (req) => {
       return jsonResponse(403, { error: 'Not your session' });
     }
 
-    await stopSession(supabase, orgId, sessionId);
+    const result = await stopSession(supabase, orgId, sessionId, body.force === true);
+    if (!result.ok && result.reason === 'live_call_in_progress') {
+      return jsonResponse(409, {
+        error: 'A prospect is on the line. Confirm before hanging up on them.',
+        code: 'LIVE_CALL_IN_PROGRESS',
+      });
+    }
 
     return jsonResponse(200, { status: 'stopped' });
   } catch (err) {

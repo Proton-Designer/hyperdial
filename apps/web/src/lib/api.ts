@@ -1207,6 +1207,18 @@ export class ReconnectAlreadyInFlightError extends Error {
   }
 }
 
+/** BUG-11: the server refused to stop the session because a contact leg is `claimed` (a live
+ *  human bridged to the agent) and the request didn't pass `force: true`. `ParallelDialerUI`'s
+ *  own confirm dialog is what normally prevents this from ever being thrown in practice --
+ *  seeing it means the session went live in the moment between the UI's last poll and the
+ *  click, not a real gap in the confirm flow. */
+export class LiveCallInProgressError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'LiveCallInProgressError';
+  }
+}
+
 export async function startDialerSession(args: {
   campaignId: string;
   /** Overrides the campaign's own default `lines` (1-7) for this session only. */
@@ -1237,14 +1249,24 @@ export async function startDialerSession(args: {
   return data as { sessionId: string };
 }
 
-export async function stopDialerSession(sessionId: string): Promise<{ status: 'stopped' }> {
+/** `force` (BUG-11): pass true only once the confirm dialog has been shown and accepted (or
+ *  there was no live human to confirm) -- see `LiveCallInProgressError`'s own comment. */
+export async function stopDialerSession(
+  sessionId: string,
+  opts?: { force?: boolean }
+): Promise<{ status: 'stopped' }> {
   const res = await fetch(`${getFunctionsUrl()}/dialer-session-stop`, {
     method: 'POST',
     headers: await getEdgeFunctionHeaders(),
-    body: JSON.stringify({ sessionId }),
+    body: JSON.stringify({ sessionId, force: opts?.force === true }),
   });
   const data = await res.json();
-  if (!res.ok) throw new Error(data.error || 'Failed to stop dialer session');
+  if (!res.ok) {
+    if (res.status === 409 && data.code === 'LIVE_CALL_IN_PROGRESS') {
+      throw new LiveCallInProgressError(data.error || 'A prospect is on the line.');
+    }
+    throw new Error(data.error || 'Failed to stop dialer session');
+  }
   return data as { status: 'stopped' };
 }
 
