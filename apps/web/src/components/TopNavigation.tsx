@@ -146,15 +146,27 @@ export function TopNavigation({ activeTab = 'dashboard', onTabChange }: TopNavig
     <nav className="fixed top-0 left-0 right-0 h-[72px] bg-[#1A2332]/60 backdrop-blur-xl border-b border-white/5 flex items-center px-6 z-50">
       {/* Left Section */}
       <div className="flex items-center gap-8">
-        <div className="flex items-center gap-3">
+        <button
+          type="button"
+          onClick={() => onTabChange?.('dashboard')}
+          aria-label="Go to dashboard"
+          className="flex items-center gap-3 rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-[#00D9FF]"
+        >
           <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-[#00D9FF] to-[#0066FF] flex items-center justify-center">
             <div className="w-6 h-6 border-2 border-white rounded-full" />
           </div>
           <span className="text-xl font-bold text-white">HyperDial</span>
-        </div>
+        </button>
 
         <div className="flex items-center gap-2 text-sm text-[#B0BEC5]">
-          <span className="hover:text-white cursor-pointer transition-colors">Home</span>
+          <button
+            type="button"
+            onClick={() => onTabChange?.('dashboard')}
+            aria-label="Go to dashboard"
+            className="hover:text-white transition-colors rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-[#00D9FF]"
+          >
+            Home
+          </button>
           <span>/</span>
           <span className="text-white">
             {activeTab === 'dashboard' && role === 'agent' ? 'My stats' : TAB_LABELS[activeTab]}
