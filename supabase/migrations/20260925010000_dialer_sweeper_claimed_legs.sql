@@ -121,8 +121,17 @@ begin
     where al.state = 'ended'
       and ds.state in ('ready_pending', 'ready', 'dialing', 'connecting', 'on_call', 'wrap_up', 'paused')
   loop
-    select public.transition_session(v_row.id, array[v_row.state], 'paused_agent_lost', '{}'::jsonb)
-      into v_applied;
+    -- Review fix (MAJOR 2): the engine's own handleAgentLegLost (dialer-engine.ts) always
+    -- writes paused_agent_lost_from: session.state on this exact transition -- passing '{}'
+    -- here silently dropped it for every session this sweeper (rather than the real webhook)
+    -- reconciles, which is exactly the L1 M4 bug re-opened through this path: Reconnect
+    -- would resume dialing instead of returning to a manually 'paused' session. Requires
+    -- 20260925005200 (which makes transition_session actually persist this field) applied
+    -- first -- already the stated deploy order for this migration.
+    select public.transition_session(
+      v_row.id, array[v_row.state], 'paused_agent_lost',
+      jsonb_build_object('paused_agent_lost_from', v_row.state)
+    ) into v_applied;
     if v_applied then
       v_result.paused_agent_sessions := v_result.paused_agent_sessions + 1;
     end if;
@@ -195,8 +204,17 @@ begin
     return false; -- already resolved by a real webhook (or not actually a claimed leg) -- no-op
   end if;
 
+  -- Review fix (MAJOR 1): a claimed leg's outcome is normally set to 'connected' by a SEPARATE
+  -- transition_leg call right after claim_leg's own win (processContactLegEvent, dialer-
+  -- engine.ts:1023-1028) -- if that second HTTP round-trip never lands (crash/timeout between
+  -- the two RPC calls), a leg can reach here already 'claimed' but with outcome still NULL.
+  -- The real call.hangup path always computes 'connected' for a claimed leg regardless
+  -- (hangupOutcome, dialer-core.ts) -- coalesce so this primitive matches that outcome exactly
+  -- instead of leaving outcome NULL, which made apply_leg_outcome no-op and left active_leg_id
+  -- pointed at a dead leg (the next sweep's own step 3b would then requeue a human-answered
+  -- lead at attempts+0).
   update public.call_legs
-  set state = 'ended', hangup_cause = p_hangup_cause, ended_at = now()
+  set state = 'ended', hangup_cause = p_hangup_cause, ended_at = now(), outcome = coalesce(outcome, 'connected')
   where id = p_leg and state = 'claimed'
   returning id into v_ended_id;
 
