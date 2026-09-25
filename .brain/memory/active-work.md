@@ -114,27 +114,29 @@ Phase 02 classification plan — a TODO list is memory, and two copies diverge.
 
 | # | Item | Status |
 |---|---|---|
-| 1 | On loading the next page of contacts, scroll to the top of the list instead of leaving the user at the bottom. | unverified |
-| 2 | The CSV import column-mapping step is overlapped by the menu and does not fit on screen. Reduce the container's vertical extent. | unverified |
-| 3 | Import field dropdown: cap at ~5 visible options and make it scrollable. | unverified |
+| 1 | On loading the next page of contacts, scroll to the top of the list instead of leaving the user at the bottom. | **fixed** (TASK-B1, `00cd17b`) |
+| 2 | The CSV import column-mapping step is overlapped by the menu and does not fit on screen. Reduce the container's vertical extent. | **no longer reproduces** (verified live, TASK-B1) |
+| 3 | Import field dropdown: cap at ~5 visible options and make it scrollable. | **no longer reproduces** (verified live, TASK-B1) |
 
-**Item 3 was partially resolved already.** The original note also asked to grey
-out already-mapped fields. That half **is implemented** —
-`isFieldMappedElsewhere` in `apps/web/src/components/contacts/ImportContactsModal.tsx`
-drives both the `disabled` prop and a muted style on each affected option
-(verified 2026-09-21, `ImportContactsModal.tsx:374-386`). Only the height cap and
-scrolling remain.
+**Items 2 and 3 are both already fixed in the code** — `ImportContactsModal.tsx`'s outer dialog
+caps its own height (`style={{ maxHeight: 'calc(100vh - 16px)' }}`, `overflow-y-auto` on the
+body) and the field `Select`'s own dropdown is height-capped and scrollable
+(`max-h-[14rem]`/`[&_.select-viewport]:!max-h-[14rem]`). Re-verified live 2026-09-25 with a real
+CSV import and the dropdown open — no overlap, no clipping. **Item 3's "grey out already-mapped
+fields" half was already implemented** (`isFieldMappedElsewhere`, verified 2026-09-21,
+`ImportContactsModal.tsx:374-386`) — both halves of item 3 are done.
 
 ### Campaigns
 
 | # | Item | Status |
 |---|---|---|
-| 4 | Widen the "create new campaign" naming dialog. | unverified |
-| 5 | Fix the status dropdown and give it a solid background — it renders transparent. | unverified |
+| 4 | Widen the "create new campaign" naming dialog. | **no longer reproduces** (verified live, TASK-B1 — 300px at desktop widths, text/buttons fit cleanly) |
+| 5 | Fix the status dropdown and give it a solid background — it renders transparent. | **no longer reproduces** — `CampaignManageModal.tsx`'s status `Select` already has explicit `bg-[#1E2A3A]` on both the trigger and the dropdown content (code-verified + a closed-state screenshot; the open-state click kept hitting Playwright locator ambiguity across duplicate QA test campaigns, not pursued further — low risk given the explicit background classes already present) |
 | 6 | Bring the campaigns screen to parity with contacts: CSV import, single-contact creation, and adding existing contacts. | unverified |
 
 Item 6 is the only substantial one — it is a feature, not a fix, and it is
-plausibly the largest open item in the product.
+plausibly the largest open item in the product. (TASK-B1's deep bug hunt did not build it —
+feature work is explicitly out of scope for that task.)
 
 ## Recommended next steps
 
