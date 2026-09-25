@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { X, Upload, Loader2, CheckCircle } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -18,6 +18,8 @@ import {
   type ParseCsvColumn,
   type ImportContactsResult,
 } from '@/lib/api';
+import { Button } from '@/components/ui/button';
+import { useFocusTrap } from '@/hooks/useFocusTrap';
 
 const SKIP_OPTION = 'Skip this column';
 const FIELD_OPTIONS = [SKIP_OPTION, ...CONTACT_CANONICAL_FIELDS];
@@ -48,6 +50,8 @@ export function ImportContactsModal({
   const [error, setError] = useState<string | null>(null);
   const [importResult, setImportResult] = useState<ImportContactsResult | null>(null);
   const [importCategory, setImportCategory] = useState<string>('Cold');
+  const modalRef = useRef<HTMLDivElement>(null);
+  useFocusTrap(modalRef, open);
 
   const assignedCount = columns.filter(
     (c) => c.mapped_field && c.mapped_field !== SKIP_OPTION
@@ -195,23 +199,25 @@ export function ImportContactsModal({
     >
       <div className="absolute inset-0 bg-black/60" onClick={handleClose} aria-hidden="true" />
       <motion.div
+        ref={modalRef}
+        tabIndex={-1}
         initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
-        className="relative z-[1] w-full max-w-4xl flex flex-col rounded-2xl border border-white/10 bg-[#1A2332] shadow-xl"
+        className="relative z-[1] w-full max-w-4xl flex flex-col rounded-app-lg border border-border-subtle bg-surface-1 shadow-app-md outline-none"
         style={{ maxHeight: 'calc(100vh - 16px)', minHeight: 0 }}
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between border-b border-white/10 p-4 flex-shrink-0">
-          <h2 className="text-xl font-bold text-white">
-            {step === 1 && 'Import Contacts'}
-            {step === 2 && 'Map Your Columns'}
-            {step === 3 && 'Import Complete'}
+        <div className="flex items-center justify-between border-b border-border-subtle p-4 flex-shrink-0">
+          <h2 className="text-page-title text-text-primary">
+            {step === 1 && 'Import contacts'}
+            {step === 2 && 'Map your columns'}
+            {step === 3 && 'Import complete'}
           </h2>
           <button
             type="button"
             onClick={handleClose}
             disabled={loading}
-            className="rounded-lg p-2 text-[#B0BEC5] hover:bg-white/10 hover:text-white disabled:opacity-50"
+            className="rounded-app-md p-2 text-text-secondary hover:bg-white/10 hover:text-text-primary disabled:opacity-50"
           >
             <X className="w-5 h-5" />
           </button>
@@ -227,11 +233,11 @@ export function ImportContactsModal({
                 exit={{ opacity: 0 }}
                 className="space-y-4"
               >
-                <p className="text-[#B0BEC5]">
+                <p className="text-body text-text-secondary">
                   Upload a .csv file. We'll parse it and help you map columns.
                 </p>
                 {error && (
-                  <div className="rounded-lg bg-red-500/10 border border-red-500/30 text-red-400 text-sm p-3">
+                  <div className="rounded-app-md bg-danger-soft border border-danger/30 text-danger text-body p-3">
                     {error}
                   </div>
                 )}
@@ -242,22 +248,22 @@ export function ImportContactsModal({
                   }}
                   onDragLeave={() => setDragOver(false)}
                   onDrop={handleDrop}
-                  className={`border-2 border-dashed rounded-2xl p-12 text-center transition-colors ${
+                  className={`border-2 border-dashed rounded-app-lg p-12 text-center transition-colors ${
                     dragOver
-                      ? 'border-[#00D9FF] bg-[#00D9FF]/5'
-                      : 'border-white/20 hover:border-white/30'
+                      ? 'border-accent-to bg-accent-to/5'
+                      : 'border-border-strong hover:border-text-muted'
                   }`}
                 >
                   {loading ? (
-                    <Loader2 className="w-12 h-12 text-[#00D9FF] animate-spin mx-auto mb-2" />
+                    <Loader2 className="w-12 h-12 text-accent-to animate-spin mx-auto mb-2" />
                   ) : (
-                    <Upload className="w-12 h-12 text-[#B0BEC5] mx-auto mb-2" />
+                    <Upload className="w-12 h-12 text-text-secondary mx-auto mb-2" />
                   )}
-                  <p className="text-white font-medium mb-1">
+                  <p className="text-text-primary font-medium mb-1">
                     {loading ? 'Parsing CSV...' : 'Drag and drop your CSV here'}
                   </p>
-                  <p className="text-sm text-[#B0BEC5] mb-4">or</p>
-                  <label className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-[#0066FF]/20 text-[#00D9FF] font-medium cursor-pointer hover:bg-[#0066FF]/30">
+                  <p className="text-body text-text-secondary mb-4">or</p>
+                  <label className="inline-flex items-center gap-2 px-4 py-2 rounded-app-md bg-accent-from/20 text-accent-to font-medium cursor-pointer hover:bg-accent-from/30">
                     <Upload className="w-4 h-4" />
                     Choose file
                     <input
@@ -280,34 +286,34 @@ export function ImportContactsModal({
                 exit={{ opacity: 0 }}
                 className="space-y-4"
               >
-                <p className="text-[#B0BEC5]">
+                <p className="text-body text-text-secondary">
                   {mappedCount} columns mapped automatically · {pendingCount} need your attention
                 </p>
-                <p className="text-sm text-[#B0BEC5]">
+                <p className="text-meta text-text-secondary">
                   {assignedCount + skippedCount} of {columns.length} columns assigned
                 </p>
                 {parseResult.invalid_phone_count > 0 && (
-                  <div className="rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-400 text-sm p-3">
+                  <div className="rounded-app-md bg-warning-soft border border-warning/30 text-warning text-body p-3">
                     {parseResult.invalid_phone_count} row
                     {parseResult.invalid_phone_count === 1 ? '' : 's'} have a phone number that
                     isn't valid and will be skipped on import.
                   </div>
                 )}
                 <div className="flex items-center gap-3">
-                  <span className="text-sm text-[#B0BEC5]">Category for this import:</span>
+                  <span className="text-body text-text-secondary">Category for this import:</span>
                   <Select value={importCategory} onValueChange={setImportCategory}>
-                    <SelectTrigger className="w-[180px] min-w-[180px] cursor-pointer bg-[#1E2A3A] border-white/10 text-white">
+                    <SelectTrigger className="w-[180px] min-w-[180px] cursor-pointer bg-surface-2 border-border-subtle text-text-primary">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent
-                      className="bg-[#1E2A3A] border-white/10 max-h-[14rem] [&_[data-radix-select-viewport]]:!max-h-[12.5rem]"
+                      className="bg-surface-2 border-border-subtle max-h-[14rem] [&_[data-radix-select-viewport]]:!max-h-[12.5rem]"
                       style={{ zIndex: 10001 }}
                     >
                       {IMPORT_CATEGORIES.map((cat) => (
                         <SelectItem
                           key={cat}
                           value={cat}
-                          className="bg-[#1E2A3A] hover:bg-white/10 focus:bg-white/10 text-white focus:text-white cursor-pointer"
+                          className="bg-surface-2 hover:bg-white/10 focus:bg-white/10 text-text-primary focus:text-text-primary cursor-pointer"
                         >
                           {cat}
                         </SelectItem>
@@ -316,31 +322,33 @@ export function ImportContactsModal({
                   </Select>
                 </div>
                 {error && (
-                  <div className="rounded-lg bg-red-500/10 border border-red-500/30 text-red-400 text-sm p-3">
+                  <div className="rounded-app-md bg-danger-soft border border-danger/30 text-danger text-body p-3">
                     {error}
                   </div>
                 )}
-                <div className="border border-white/10 rounded-xl overflow-hidden">
+                <div className="border border-border-subtle rounded-app-lg overflow-hidden">
                   <table className="w-full text-left">
                     <thead>
-                      <tr className="bg-[#1E2A3A] border-b border-white/10">
-                        <th className="p-3 text-sm font-medium text-[#B0BEC5]">
+                      <tr className="bg-surface-2 border-b border-border-subtle">
+                        <th className="p-3 text-meta font-medium text-text-secondary">
                           Column header in file
                         </th>
-                        <th className="p-3 text-sm font-medium text-[#B0BEC5]">Preview</th>
-                        <th className="p-3 text-sm font-medium text-[#B0BEC5]">Status</th>
-                        <th className="p-3 text-sm font-medium text-[#B0BEC5]">Object</th>
-                        <th className="p-3 text-sm font-medium text-[#B0BEC5]">Fields</th>
+                        <th className="p-3 text-meta font-medium text-text-secondary">Preview</th>
+                        <th className="p-3 text-meta font-medium text-text-secondary">Status</th>
+                        <th className="p-3 text-meta font-medium text-text-secondary">Object</th>
+                        <th className="p-3 text-meta font-medium text-text-secondary">Fields</th>
                       </tr>
                     </thead>
                     <tbody>
                       {columns.map((col, index) => (
                         <tr
                           key={col.original_header}
-                          className="border-b border-white/5 hover:bg-white/5"
+                          className="border-b border-border-subtle hover:bg-white/5"
                         >
-                          <td className="p-3 text-white font-medium">{col.original_header}</td>
-                          <td className="p-3 text-sm text-[#B0BEC5] max-w-[200px]">
+                          <td className="p-3 text-text-primary font-medium">
+                            {col.original_header}
+                          </td>
+                          <td className="p-3 text-meta text-text-secondary max-w-[200px]">
                             <div className="flex flex-col gap-0.5">
                               {col.preview_data.slice(0, 3).map((v, i) => (
                                 <span key={i} className="truncate" title={v}>
@@ -351,26 +359,26 @@ export function ImportContactsModal({
                           </td>
                           <td className="p-3">
                             {col.mapped_field && col.mapped_field !== SKIP_OPTION ? (
-                              <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium bg-[#00E676]/20 text-[#00E676]">
+                              <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium bg-success-soft text-success">
                                 <CheckCircle className="w-3 h-3" /> Mapped
                               </span>
                             ) : (
-                              <span className="inline-flex px-2 py-1 rounded-full text-xs font-medium bg-white/10 text-[#B0BEC5]">
+                              <span className="inline-flex px-2 py-1 rounded-full text-xs font-medium bg-surface-3 text-text-secondary">
                                 Pending
                               </span>
                             )}
                           </td>
-                          <td className="p-3 text-[#B0BEC5] text-sm">Contact</td>
+                          <td className="p-3 text-text-secondary text-meta">Contact</td>
                           <td className="p-3 w-[220px]">
                             <Select
                               value={col.mapped_field ?? ''}
                               onValueChange={(v) => setMappedField(index, v)}
                             >
-                              <SelectTrigger className="w-full min-w-[200px] cursor-pointer bg-[#1E2A3A] border-white/10 text-white h-10 rounded-xl transition-all duration-200 hover:border-[#00D9FF]/30 focus:ring-2 focus:ring-[#00D9FF]/20">
+                              <SelectTrigger className="w-full min-w-[200px] cursor-pointer bg-surface-2 border-border-subtle text-text-primary h-10 rounded-app-md transition-all duration-200 hover:border-accent-to/30 focus:ring-2 focus:ring-accent-to/20">
                                 <SelectValue placeholder="Please Select" />
                               </SelectTrigger>
                               <SelectContent
-                                className="bg-[#1E2A3A] border border-white/10 rounded-xl shadow-xl overflow-y-auto [&_.select-viewport]:!max-h-[14rem] [&_.select-viewport]:!h-auto p-1.5 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 duration-200 data-[side=bottom]:slide-in-from-top-1"
+                                className="bg-surface-2 border border-border-subtle rounded-app-md shadow-app-md overflow-y-auto [&_.select-viewport]:!max-h-[14rem] [&_.select-viewport]:!h-auto p-1.5 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 duration-200 data-[side=bottom]:slide-in-from-top-1"
                                 style={{ zIndex: 10001, maxHeight: '14rem' }}
                               >
                                 {FIELD_OPTIONS.map((opt) => {
@@ -382,11 +390,11 @@ export function ImportContactsModal({
                                       value={opt}
                                       disabled={isMappedElsewhere}
                                       className={cn(
-                                        'rounded-lg py-2.5 pl-3 pr-3 text-sm transition-colors duration-150 cursor-pointer [&>span:first-of-type]:!hidden',
-                                        'bg-transparent hover:bg-white/10 focus:bg-white/10 focus:text-white focus:outline-none',
-                                        isCurrentSelection && 'text-[#00D9FF] bg-[#00D9FF]/5',
+                                        'rounded-app-sm py-2.5 pl-3 pr-3 text-sm transition-colors duration-150 cursor-pointer [&>span:first-of-type]:!hidden',
+                                        'bg-transparent hover:bg-white/10 focus:bg-white/10 focus:text-text-primary focus:outline-none',
+                                        isCurrentSelection && 'text-accent-to bg-accent-to/5',
                                         isMappedElsewhere &&
-                                          'text-[#78909C] opacity-70 cursor-not-allowed'
+                                          'text-text-muted opacity-70 cursor-not-allowed'
                                       )}
                                     >
                                       {opt}
@@ -402,22 +410,17 @@ export function ImportContactsModal({
                   </table>
                 </div>
                 <div className="flex justify-end gap-2 pt-4">
-                  <button
-                    type="button"
-                    onClick={handleClose}
-                    className="px-4 py-2 rounded-xl border border-white/10 text-[#B0BEC5] hover:bg-white/5"
-                  >
+                  <Button variant="fe-ghost" onClick={handleClose}>
                     Cancel
-                  </button>
-                  <button
-                    type="button"
+                  </Button>
+                  <Button
+                    variant="primary"
                     onClick={handleFinishImport}
                     disabled={!allAssigned || loading}
-                    className="px-4 py-2 rounded-xl bg-gradient-to-r from-[#00D9FF] to-[#0066FF] text-white font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                    loading={loading}
                   >
-                    {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
-                    Finish Import
-                  </button>
+                    Finish import
+                  </Button>
                 </div>
               </motion.div>
             )}
@@ -430,11 +433,11 @@ export function ImportContactsModal({
                 exit={{ opacity: 0 }}
                 className="text-center py-8"
               >
-                <CheckCircle className="w-16 h-16 text-[#00E676] mx-auto mb-4" />
-                <h3 className="text-2xl font-bold text-white mb-2">
+                <CheckCircle className="w-16 h-16 text-success mx-auto mb-4" />
+                <h3 className="text-page-title text-text-primary mb-2">
                   {importResult.imported} contacts imported successfully
                 </h3>
-                <p className="text-[#B0BEC5] mb-6">
+                <p className="text-body text-text-secondary mb-6">
                   {importResult.skipped > 0 &&
                     `${importResult.skipped} row${importResult.skipped === 1 ? '' : 's'} skipped (missing or invalid phone number${importResult.invalid > 0 ? `, ${importResult.invalid} invalid` : ''}). `}
                   {importResult.duplicates > 0 && `${importResult.duplicates} duplicates skipped. `}
@@ -443,13 +446,9 @@ export function ImportContactsModal({
                   {importResult.skippedActiveCampaign > 0 &&
                     `${importResult.skippedActiveCampaign} not added to the campaign (already active in another campaign).`}
                 </p>
-                <button
-                  type="button"
-                  onClick={handleViewContacts}
-                  className="px-6 py-3 rounded-xl bg-gradient-to-r from-[#00D9FF] to-[#0066FF] text-white font-semibold"
-                >
-                  View Contacts
-                </button>
+                <Button variant="primary" onClick={handleViewContacts}>
+                  View contacts
+                </Button>
               </motion.div>
             )}
           </AnimatePresence>

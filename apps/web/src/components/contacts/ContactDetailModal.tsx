@@ -79,7 +79,7 @@ function toFormState(c: Contact): EditFormState {
 }
 
 const inputClass =
-  'w-full bg-[#1E2A3A] border border-white/10 rounded-xl px-4 py-3 text-white placeholder-[#B0BEC5]/50 focus:outline-none focus:border-[#00D9FF]';
+  'w-full bg-surface-2 border border-white/10 rounded-xl px-4 py-3 text-white placeholder-text-muted focus:outline-none focus:border-accent-to';
 
 interface ContactDetailModalProps {
   contact: Contact | null;
@@ -186,7 +186,7 @@ export function ContactDetailModal({ contact, open, onClose, onUpdated }: Contac
       <motion.div
         initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
-        className="relative z-[101] w-full max-w-lg rounded-2xl border border-white/10 bg-[#1A2332] shadow-xl overflow-hidden"
+        className="relative z-[101] w-full max-w-lg rounded-2xl border border-white/10 bg-surface-1 shadow-xl overflow-hidden"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between border-b border-white/10 p-4">
@@ -198,7 +198,7 @@ export function ContactDetailModal({ contact, open, onClose, onUpdated }: Contac
               <button
                 type="button"
                 onClick={startEdit}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm text-[#00D9FF] hover:bg-[#00D9FF]/10"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm text-accent-to hover:bg-accent-to/10"
               >
                 <Pencil className="w-4 h-4" />
                 Edit
@@ -207,7 +207,7 @@ export function ContactDetailModal({ contact, open, onClose, onUpdated }: Contac
             <button
               type="button"
               onClick={handleClose}
-              className="rounded-lg p-2 text-[#B0BEC5] hover:bg-white/10 hover:text-white"
+              className="rounded-lg p-2 text-text-secondary hover:bg-white/10 hover:text-white"
             >
               <X className="w-5 h-5" />
             </button>
@@ -216,7 +216,7 @@ export function ContactDetailModal({ contact, open, onClose, onUpdated }: Contac
 
         <div className="p-6 space-y-4 max-h-[70vh] overflow-y-auto">
           {error && (
-            <div className="rounded-lg bg-red-500/10 border border-red-500/30 text-red-400 text-sm p-3">
+            <div className="rounded-lg bg-danger/10 border border-danger/30 text-danger text-sm p-3">
               {error}
             </div>
           )}
@@ -228,8 +228,8 @@ export function ContactDetailModal({ contact, open, onClose, onUpdated }: Contac
             disabled={dncSaving}
             className={`w-full flex items-center justify-between gap-2 rounded-xl border p-3 text-sm font-medium transition-colors disabled:opacity-50 ${
               c.dnc
-                ? 'bg-red-500/10 border-red-500/30 text-red-400'
-                : 'bg-white/5 border-white/10 text-[#B0BEC5] hover:bg-white/10'
+                ? 'bg-danger/10 border-danger/30 text-danger'
+                : 'bg-white/5 border-white/10 text-text-secondary hover:bg-white/10'
             }`}
           >
             <span className="flex items-center gap-2">
@@ -242,7 +242,7 @@ export function ContactDetailModal({ contact, open, onClose, onUpdated }: Contac
           {!editing ? (
             <>
               <div className="flex items-center gap-4">
-                <div className="w-14 h-14 rounded-full bg-gradient-to-br from-[#00D9FF] to-[#0066FF] flex items-center justify-center text-white text-lg font-bold flex-shrink-0">
+                <div className="w-14 h-14 rounded-full bg-gradient-to-br from-accent-from to-accent-to flex items-center justify-center text-white text-lg font-bold flex-shrink-0">
                   {name
                     .replace('—', '')
                     .split(' ')
@@ -254,10 +254,10 @@ export function ContactDetailModal({ contact, open, onClose, onUpdated }: Contac
                 <div className="min-w-0 flex-1">
                   <div className="font-bold text-white text-lg line-clamp-2">{name}</div>
                   <div className="flex gap-2 mt-1 flex-wrap">
-                    <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-white/10 text-[#B0BEC5]">
+                    <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-white/10 text-text-secondary">
                       {category}
                     </span>
-                    <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-white/10 text-[#B0BEC5]">
+                    <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-white/10 text-text-secondary">
                       {contactStatus}
                     </span>
                   </div>
@@ -267,16 +267,16 @@ export function ContactDetailModal({ contact, open, onClose, onUpdated }: Contac
               <div className="grid gap-3 text-sm">
                 {c.business_type && (
                   <div className="flex gap-2">
-                    <Building2 className="w-4 h-4 text-[#00D9FF] flex-shrink-0 mt-0.5" />
-                    <div className="min-w-0 text-[#B0BEC5]">{c.business_type}</div>
+                    <Building2 className="w-4 h-4 text-accent-to flex-shrink-0 mt-0.5" />
+                    <div className="min-w-0 text-text-secondary">{c.business_type}</div>
                   </div>
                 )}
                 {c.phone_number && (
                   <div className="flex gap-2 items-center">
-                    <Phone className="w-4 h-4 text-[#00D9FF] flex-shrink-0" />
+                    <Phone className="w-4 h-4 text-accent-to flex-shrink-0" />
                     <a
                       href={`tel:${c.phone_number}`}
-                      className="text-[#00D9FF] hover:underline truncate block"
+                      className="text-accent-to hover:underline truncate block"
                     >
                       {c.phone_number}
                     </a>
@@ -284,18 +284,18 @@ export function ContactDetailModal({ contact, open, onClose, onUpdated }: Contac
                 )}
                 {c.timezone && (
                   <div className="flex gap-2 items-center">
-                    <FileText className="w-4 h-4 text-[#00D9FF] flex-shrink-0" />
-                    <div className="text-[#B0BEC5]">
+                    <FileText className="w-4 h-4 text-accent-to flex-shrink-0" />
+                    <div className="text-text-secondary">
                       {TIMEZONE_OPTIONS.find((t) => t.value === c.timezone)?.label ?? c.timezone}
                     </div>
                   </div>
                 )}
                 {c.owner_contact?.includes('@') && (
                   <div className="flex gap-2 items-center">
-                    <Mail className="w-4 h-4 text-[#00D9FF] flex-shrink-0 mt-0.5" />
+                    <Mail className="w-4 h-4 text-accent-to flex-shrink-0 mt-0.5" />
                     <a
                       href={`mailto:${c.owner_contact}`}
-                      className="text-[#00D9FF] hover:underline truncate block"
+                      className="text-accent-to hover:underline truncate block"
                       title={c.owner_contact}
                     >
                       {truncateUrl(c.owner_contact, 50)}
@@ -304,12 +304,12 @@ export function ContactDetailModal({ contact, open, onClose, onUpdated }: Contac
                 )}
                 {c.website && (
                   <div className="flex gap-2 items-center">
-                    <Globe className="w-4 h-4 text-[#00D9FF] flex-shrink-0 mt-0.5" />
+                    <Globe className="w-4 h-4 text-accent-to flex-shrink-0 mt-0.5" />
                     <a
                       href={c.website.startsWith('http') ? c.website : `https://${c.website}`}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="text-[#00D9FF] hover:underline truncate block"
+                      className="text-accent-to hover:underline truncate block"
                       title={c.website}
                     >
                       {truncateUrl(c.website, 50)}
@@ -318,13 +318,13 @@ export function ContactDetailModal({ contact, open, onClose, onUpdated }: Contac
                 )}
                 {c.address && (
                   <div className="flex gap-2">
-                    <MapPin className="w-4 h-4 text-[#00D9FF] flex-shrink-0 mt-0.5" />
-                    <div className="text-[#B0BEC5] line-clamp-2">{c.address}</div>
+                    <MapPin className="w-4 h-4 text-accent-to flex-shrink-0 mt-0.5" />
+                    <div className="text-text-secondary line-clamp-2">{c.address}</div>
                   </div>
                 )}
                 {c.business_link && (
                   <div className="flex gap-2">
-                    <Globe className="w-4 h-4 text-[#00D9FF] flex-shrink-0 mt-0.5" />
+                    <Globe className="w-4 h-4 text-accent-to flex-shrink-0 mt-0.5" />
                     <a
                       href={
                         c.business_link.startsWith('http')
@@ -333,7 +333,7 @@ export function ContactDetailModal({ contact, open, onClose, onUpdated }: Contac
                       }
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="text-[#00D9FF] hover:underline truncate block"
+                      className="text-accent-to hover:underline truncate block"
                       title={c.business_link}
                     >
                       {truncateUrl(c.business_link, 50)}
@@ -343,15 +343,15 @@ export function ContactDetailModal({ contact, open, onClose, onUpdated }: Contac
                 {(c.first_name || c.last_name) &&
                   (c.first_name || c.last_name) !== (c.business_name ?? '') && (
                     <div className="flex gap-2">
-                      <User className="w-4 h-4 text-[#00D9FF] flex-shrink-0 mt-0.5" />
-                      <div className="text-[#B0BEC5]">
+                      <User className="w-4 h-4 text-accent-to flex-shrink-0 mt-0.5" />
+                      <div className="text-text-secondary">
                         {[c.first_name, c.last_name].filter(Boolean).join(' ')}
                       </div>
                     </div>
                   )}
                 {(c.rating != null || c.review_count != null) && (
-                  <div className="flex gap-2 text-[#B0BEC5]">
-                    <FileText className="w-4 h-4 text-[#00D9FF] flex-shrink-0 mt-0.5" />
+                  <div className="flex gap-2 text-text-secondary">
+                    <FileText className="w-4 h-4 text-accent-to flex-shrink-0 mt-0.5" />
                     <span>
                       {c.rating != null && `Rating: ${c.rating}`}
                       {c.rating != null && c.review_count != null && ' · '}
@@ -361,19 +361,19 @@ export function ContactDetailModal({ contact, open, onClose, onUpdated }: Contac
                 )}
                 {c.open_hours && (
                   <div className="flex gap-2">
-                    <FileText className="w-4 h-4 text-[#00D9FF] flex-shrink-0 mt-0.5" />
-                    <div className="text-[#B0BEC5] line-clamp-2">{c.open_hours}</div>
+                    <FileText className="w-4 h-4 text-accent-to flex-shrink-0 mt-0.5" />
+                    <div className="text-text-secondary line-clamp-2">{c.open_hours}</div>
                   </div>
                 )}
                 {c.notes && (
                   <div className="flex gap-2">
-                    <FileText className="w-4 h-4 text-[#00D9FF] flex-shrink-0 mt-0.5" />
-                    <div className="text-[#B0BEC5] line-clamp-3">{c.notes}</div>
+                    <FileText className="w-4 h-4 text-accent-to flex-shrink-0 mt-0.5" />
+                    <div className="text-text-secondary line-clamp-3">{c.notes}</div>
                   </div>
                 )}
               </div>
 
-              <div className="text-xs text-[#B0BEC5] pt-2 border-t border-white/5">
+              <div className="text-xs text-text-secondary pt-2 border-t border-white/5">
                 Added {new Date(c.created_at).toLocaleDateString()}
                 {c.updated_at !== c.created_at &&
                   ` · Updated ${new Date(c.updated_at).toLocaleDateString()}`}
@@ -384,7 +384,7 @@ export function ContactDetailModal({ contact, open, onClose, onUpdated }: Contac
               <div className="space-y-3">
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="block text-sm text-[#B0BEC5] mb-1">First name</label>
+                    <label className="block text-sm text-text-secondary mb-1">First name</label>
                     <input
                       className={inputClass}
                       value={form.first_name}
@@ -392,7 +392,7 @@ export function ContactDetailModal({ contact, open, onClose, onUpdated }: Contac
                     />
                   </div>
                   <div>
-                    <label className="block text-sm text-[#B0BEC5] mb-1">Last name</label>
+                    <label className="block text-sm text-text-secondary mb-1">Last name</label>
                     <input
                       className={inputClass}
                       value={form.last_name}
@@ -401,7 +401,7 @@ export function ContactDetailModal({ contact, open, onClose, onUpdated }: Contac
                   </div>
                 </div>
                 <div>
-                  <label className="block text-sm text-[#B0BEC5] mb-1">Business name</label>
+                  <label className="block text-sm text-text-secondary mb-1">Business name</label>
                   <input
                     className={inputClass}
                     value={form.business_name}
@@ -409,7 +409,7 @@ export function ContactDetailModal({ contact, open, onClose, onUpdated }: Contac
                   />
                 </div>
                 <div>
-                  <label className="block text-sm text-[#B0BEC5] mb-1">Business type</label>
+                  <label className="block text-sm text-text-secondary mb-1">Business type</label>
                   <input
                     className={inputClass}
                     value={form.business_type}
@@ -417,7 +417,7 @@ export function ContactDetailModal({ contact, open, onClose, onUpdated }: Contac
                   />
                 </div>
                 <div>
-                  <label className="block text-sm text-[#B0BEC5] mb-1">Phone number</label>
+                  <label className="block text-sm text-text-secondary mb-1">Phone number</label>
                   <input
                     type="tel"
                     className={inputClass}
@@ -426,7 +426,7 @@ export function ContactDetailModal({ contact, open, onClose, onUpdated }: Contac
                   />
                 </div>
                 <div>
-                  <label className="block text-sm text-[#B0BEC5] mb-1">Timezone</label>
+                  <label className="block text-sm text-text-secondary mb-1">Timezone</label>
                   <select
                     className={inputClass}
                     value={form.timezone}
@@ -441,7 +441,7 @@ export function ContactDetailModal({ contact, open, onClose, onUpdated }: Contac
                   </select>
                 </div>
                 <div>
-                  <label className="block text-sm text-[#B0BEC5] mb-1">Website</label>
+                  <label className="block text-sm text-text-secondary mb-1">Website</label>
                   <input
                     type="url"
                     className={inputClass}
@@ -451,7 +451,7 @@ export function ContactDetailModal({ contact, open, onClose, onUpdated }: Contac
                   />
                 </div>
                 <div>
-                  <label className="block text-sm text-[#B0BEC5] mb-1">Owner / email</label>
+                  <label className="block text-sm text-text-secondary mb-1">Owner / email</label>
                   <input
                     className={inputClass}
                     value={form.owner_contact}
@@ -459,7 +459,7 @@ export function ContactDetailModal({ contact, open, onClose, onUpdated }: Contac
                   />
                 </div>
                 <div>
-                  <label className="block text-sm text-[#B0BEC5] mb-1">Address</label>
+                  <label className="block text-sm text-text-secondary mb-1">Address</label>
                   <input
                     className={inputClass}
                     value={form.address}
@@ -467,7 +467,7 @@ export function ContactDetailModal({ contact, open, onClose, onUpdated }: Contac
                   />
                 </div>
                 <div>
-                  <label className="block text-sm text-[#B0BEC5] mb-1">Notes</label>
+                  <label className="block text-sm text-text-secondary mb-1">Notes</label>
                   <textarea
                     className={inputClass}
                     rows={3}
@@ -486,7 +486,7 @@ export function ContactDetailModal({ contact, open, onClose, onUpdated }: Contac
                 type="button"
                 onClick={cancelEdit}
                 disabled={saving}
-                className="px-4 py-2 rounded-xl border border-white/10 text-[#B0BEC5] hover:bg-white/5 disabled:opacity-50"
+                className="px-4 py-2 rounded-xl border border-white/10 text-text-secondary hover:bg-white/5 disabled:opacity-50"
               >
                 Cancel
               </button>
@@ -494,7 +494,7 @@ export function ContactDetailModal({ contact, open, onClose, onUpdated }: Contac
                 type="button"
                 onClick={handleSave}
                 disabled={saving}
-                className="px-4 py-2 rounded-xl bg-gradient-to-r from-[#00D9FF] to-[#0066FF] text-white font-semibold text-sm disabled:opacity-50"
+                className="px-4 py-2 rounded-xl bg-gradient-to-r from-accent-from to-accent-to text-white font-semibold text-sm disabled:opacity-50"
               >
                 {saving ? 'Saving...' : 'Save'}
               </button>
@@ -504,7 +504,7 @@ export function ContactDetailModal({ contact, open, onClose, onUpdated }: Contac
               {c.phone_number && (
                 <a
                   href={`tel:${c.phone_number}`}
-                  className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-[#00D9FF] to-[#0066FF] text-white font-semibold text-sm"
+                  className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-accent-from to-accent-to text-white font-semibold text-sm"
                 >
                   <Phone className="w-4 h-4" />
                   Call
@@ -513,7 +513,7 @@ export function ContactDetailModal({ contact, open, onClose, onUpdated }: Contac
               <button
                 type="button"
                 onClick={handleClose}
-                className="px-4 py-2 rounded-xl border border-white/10 text-[#B0BEC5] hover:bg-white/5"
+                className="px-4 py-2 rounded-xl border border-white/10 text-text-secondary hover:bg-white/5"
               >
                 Close
               </button>

@@ -53,46 +53,48 @@ const buttonVariants = cva(
   },
 );
 
-function Button({
-  className,
-  variant,
-  size,
-  asChild = false,
-  loading = false,
-  disabled,
-  children,
-  ...props
-}: React.ComponentProps<"button"> &
+type ButtonProps = React.ComponentProps<"button"> &
   VariantProps<typeof buttonVariants> & {
     asChild?: boolean;
     /** Shows a spinner in place of the leading icon and disables the button -- for an in-flight
      *  action (save/connect/delete), not a screen's first-load state (that's a Skeleton). */
     loading?: boolean;
-  }) {
-  const Comp = asChild ? Slot : "button";
-  // Slot (asChild) requires exactly one child element (React.Children.only) -- never inject the
-  // spinner alongside children in that branch, only for a real <button>.
-  const content =
-    !asChild && loading ? (
-      <>
-        <Loader2 className="animate-spin" />
-        {children}
-      </>
-    ) : (
-      children
-    );
+  };
 
-  return (
-    <Comp
-      data-slot="button"
-      aria-busy={loading || undefined}
-      disabled={disabled || loading}
-      className={cn(buttonVariants({ variant, size, className }))}
-      {...props}
-    >
-      {content}
-    </Comp>
-  );
-}
+// FE-B: forwardRef, unlike this file's original plain-function-component shape -- the first real
+// `asChild` usage inside a Radix trigger (a DropdownMenuTrigger wrapping a Button) hit "Function
+// components cannot be given refs": Slot clones its child and attaches a ref so the Radix
+// primitive it wraps can be measured/positioned, same underlying cause as ui/sheet.tsx's FE-A
+// fix. Latent since Button was created; every plain (non-asChild) call site is unaffected.
+const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
+  ({ className, variant, size, asChild = false, loading = false, disabled, children, ...props }, ref) => {
+    const Comp = asChild ? Slot : "button";
+    // Slot (asChild) requires exactly one child element (React.Children.only) -- never inject the
+    // spinner alongside children in that branch, only for a real <button>.
+    const content =
+      !asChild && loading ? (
+        <>
+          <Loader2 className="animate-spin" />
+          {children}
+        </>
+      ) : (
+        children
+      );
+
+    return (
+      <Comp
+        ref={ref}
+        data-slot="button"
+        aria-busy={loading || undefined}
+        disabled={disabled || loading}
+        className={cn(buttonVariants({ variant, size, className }))}
+        {...props}
+      >
+        {content}
+      </Comp>
+    );
+  },
+);
+Button.displayName = "Button";
 
 export { Button, buttonVariants };

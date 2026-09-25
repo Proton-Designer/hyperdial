@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { X, Plus, ChevronDown } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -9,6 +9,8 @@ import {
   type CreateContactInput,
 } from '@/lib/api';
 import { normalizePhoneStrict } from '@/lib/phone-normalize';
+import { Button } from '@/components/ui/button';
+import { useFocusTrap } from '@/hooks/useFocusTrap';
 
 const DEFAULT_FIELDS = ['Business Name', 'Business Type', 'Phone Number', 'Website'] as const;
 const ADDITIONAL_OPTIONS = CONTACT_CANONICAL_FIELDS.filter(
@@ -44,6 +46,8 @@ export function AddContactModal({ open, onClose, onSuccess }: AddContactModalPro
   const [values, setValues] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const modalRef = useRef<HTMLDivElement>(null);
+  useFocusTrap(modalRef, open);
 
   const allShownFields = [...DEFAULT_FIELDS, ...additionalFields];
   const availableToAdd = ADDITIONAL_OPTIONS.filter((f) => !additionalFields.includes(f));
@@ -137,36 +141,38 @@ export function AddContactModal({ open, onClose, onSuccess }: AddContactModalPro
     >
       <div className="absolute inset-0 bg-black/60" onClick={handleClose} aria-hidden="true" />
       <motion.div
+        ref={modalRef}
+        tabIndex={-1}
         initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
-        className="relative z-[1] w-full max-w-lg rounded-2xl border border-white/10 bg-[#1A2332] shadow-xl"
+        className="relative z-[1] w-full max-w-lg rounded-app-lg border border-border-subtle bg-surface-1 shadow-app-md outline-none"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between border-b border-white/10 p-4">
-          <h2 className="text-xl font-bold text-white">Add Contact</h2>
+        <div className="flex items-center justify-between border-b border-border-subtle p-4">
+          <h2 className="text-page-title text-text-primary">Add contact</h2>
           <button
             type="button"
             onClick={handleClose}
-            className="rounded-lg p-2 text-[#B0BEC5] hover:bg-white/10 hover:text-white"
+            className="rounded-app-md p-2 text-text-secondary hover:bg-white/10 hover:text-text-primary"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
         <div className="p-4 space-y-4 max-h-[70vh] overflow-y-auto">
           {error && (
-            <div className="rounded-lg bg-red-500/10 border border-red-500/30 text-red-400 text-sm p-3">
+            <div className="rounded-app-md bg-danger-soft border border-danger/30 text-danger text-body p-3">
               {error}
             </div>
           )}
           {DEFAULT_FIELDS.map((field) => (
             <div key={field}>
-              <label className="block text-sm text-[#B0BEC5] mb-1">{field}</label>
+              <label className="block text-meta text-text-secondary mb-1">{field}</label>
               <input
                 type={field === 'Phone Number' ? 'tel' : field === 'Website' ? 'url' : 'text'}
                 value={getValue(field)}
                 onChange={(e) => setValue(field, e.target.value)}
                 placeholder={field === 'Website' ? 'https://...' : ''}
-                className="w-full bg-[#1E2A3A] border border-white/10 rounded-xl px-4 py-3 text-white placeholder-[#B0BEC5]/50 focus:outline-none focus:border-[#00D9FF]"
+                className="w-full bg-surface-2 border border-border-subtle rounded-app-md px-4 py-3 text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent-to"
               />
             </div>
           ))}
@@ -174,10 +180,10 @@ export function AddContactModal({ open, onClose, onSuccess }: AddContactModalPro
             <button
               type="button"
               onClick={() => setExpandAdditional(!expandAdditional)}
-              className="flex items-center gap-2 text-sm text-[#00D9FF] hover:underline"
+              className="flex items-center gap-2 text-body text-accent-to hover:underline"
             >
               <Plus className="w-4 h-4" />
-              Add Field
+              Add field
               <ChevronDown
                 className={`w-4 h-4 transition-transform ${expandAdditional ? 'rotate-180' : ''}`}
               />
@@ -196,13 +202,13 @@ export function AddContactModal({ open, onClose, onSuccess }: AddContactModalPro
                         key={f}
                         type="button"
                         onClick={() => handleAddField(f)}
-                        className="px-3 py-1.5 rounded-lg bg-[#1E2A3A] border border-white/10 text-white text-sm hover:border-[#00D9FF]/50"
+                        className="px-3 py-1.5 rounded-app-md bg-surface-2 border border-border-subtle text-text-primary text-body hover:border-accent-to/50"
                       >
                         {f}
                       </button>
                     ))}
                     {availableToAdd.length === 0 && (
-                      <span className="text-sm text-[#B0BEC5]">All fields added</span>
+                      <span className="text-body text-text-secondary">All fields added</span>
                     )}
                   </div>
                 </motion.div>
@@ -212,18 +218,18 @@ export function AddContactModal({ open, onClose, onSuccess }: AddContactModalPro
           {additionalFields.map((field) => (
             <div key={field} className="flex items-center gap-2">
               <div className="flex-1">
-                <label className="block text-sm text-[#B0BEC5] mb-1">{field}</label>
+                <label className="block text-meta text-text-secondary mb-1">{field}</label>
                 <input
                   type="text"
                   value={getValue(field)}
                   onChange={(e) => setValue(field, e.target.value)}
-                  className="w-full bg-[#1E2A3A] border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-[#00D9FF]"
+                  className="w-full bg-surface-2 border border-border-subtle rounded-app-md px-4 py-3 text-text-primary focus:outline-none focus:border-accent-to"
                 />
               </div>
               <button
                 type="button"
                 onClick={() => handleRemoveAdditional(field)}
-                className="mt-6 p-2 text-[#B0BEC5] hover:text-red-400"
+                className="mt-6 p-2 text-text-secondary hover:text-danger"
                 aria-label={`Remove ${field}`}
               >
                 <X className="w-4 h-4" />
@@ -231,22 +237,18 @@ export function AddContactModal({ open, onClose, onSuccess }: AddContactModalPro
             </div>
           ))}
         </div>
-        <div className="flex justify-end gap-2 border-t border-white/10 p-4">
-          <button
-            type="button"
-            onClick={handleClose}
-            className="px-4 py-2 rounded-xl border border-white/10 text-[#B0BEC5] hover:bg-white/5"
-          >
+        <div className="flex justify-end gap-2 border-t border-border-subtle p-4">
+          <Button variant="fe-ghost" onClick={handleClose}>
             Cancel
-          </button>
-          <button
-            type="button"
+          </Button>
+          <Button
+            variant="primary"
             onClick={handleSubmit}
             disabled={!valid || saving}
-            className="px-4 py-2 rounded-xl bg-gradient-to-r from-[#00D9FF] to-[#0066FF] text-white font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+            loading={saving}
           >
-            {saving ? 'Saving...' : 'Save'}
-          </button>
+            Save
+          </Button>
         </div>
       </motion.div>
     </div>,

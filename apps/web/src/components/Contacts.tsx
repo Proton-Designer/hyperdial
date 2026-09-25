@@ -1,20 +1,16 @@
 import { useState, useEffect } from 'react';
-import { motion } from 'motion/react';
 import {
   Search,
   Upload,
   Plus,
   MoreVertical,
   Phone,
-  Mail,
-  Building2,
-  MapPin,
   Trash2,
   ChevronLeft,
   ChevronRight,
-  Globe,
   Download,
   RefreshCw,
+  Users,
 } from 'lucide-react';
 import {
   listContacts,
@@ -33,8 +29,21 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { ListSkeleton } from '@/components/app/skeletons';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
+import { Button } from '@/components/ui/button';
+import { PageHeader } from '@/components/app/PageHeader';
+import { EmptyState } from '@/components/app/EmptyState';
+import { ListSkeleton, TableSkeleton } from '@/components/app/skeletons';
 import { useOrg } from '@/contexts/OrgContext';
+import { useBreakpoint } from '@/hooks/useBreakpoint';
+import { cn } from '@/components/ui/utils';
 
 const CATEGORIES = ['All', 'Cold', 'Warm', 'Follow Up', 'Voicemail', 'Booked'] as const;
 const CONTACT_STATUSES = ['All', 'No Contact', 'Contacted'] as const;
@@ -45,8 +54,29 @@ function contactDisplayName(c: Contact): string {
   return name || c.business_name || '—';
 }
 
+function Pill({
+  children,
+  tone = 'neutral',
+}: {
+  children: React.ReactNode;
+  tone?: 'neutral' | 'danger';
+}) {
+  return (
+    <span
+      className={cn(
+        'inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium truncate max-w-full',
+        tone === 'danger' ? 'bg-danger-soft text-danger' : 'bg-surface-3 text-text-secondary'
+      )}
+    >
+      {children}
+    </span>
+  );
+}
+
 export function Contacts() {
   const { role } = useOrg();
+  const breakpoint = useBreakpoint();
+  const isDesktop = breakpoint === 'desktop';
   // TASK-L4 / UI-4: agents get a read-only contacts UI -- import/add/edit/delete/bulk actions are
   // owner/admin only. Row-level RLS already scopes which contacts an agent sees; this only hides
   // the management affordances for whichever contacts they can see.
@@ -166,110 +196,129 @@ export function Contacts() {
     }
   };
 
-  return (
-    <div className="p-8 max-w-[1440px] mx-auto">
-      {/* Header */}
-      <div className="flex items-center justify-between mb-8">
-        <div>
-          <h1 className="text-3xl font-bold text-white mb-2">Contacts</h1>
-          <p className="text-[#B0BEC5]">Manage your contact database</p>
-        </div>
+  const allOnPageSelected =
+    paginatedContacts.length > 0 && paginatedContacts.every((c) => selectedIds.has(c.id));
 
-        {canManage && (
-          <div className="flex gap-3">
-            {lastGhlImport && (
-              <motion.button
-                whileHover={{ scale: 1.05 }}
-                whileTap={{ scale: 0.95 }}
-                onClick={() => {
-                  setGhlModalAutoSubmit(true);
-                  setGhlModalOpen(true);
-                }}
-                title={`Re-sync "${lastGhlImport.value}" (${lastGhlImport.mode === 'tag' ? 'by tag' : 'by search'})`}
-                className="flex items-center gap-2 px-5 py-3 bg-transparent border-2 border-white/10 rounded-xl text-[#B0BEC5] font-semibold hover:bg-white/5 transition-all"
-              >
-                <RefreshCw className="w-5 h-5" />
-                Re-sync
-              </motion.button>
-            )}
+  const importActions = canManage && (
+    <>
+      {lastGhlImport && (
+        <Button
+          variant="fe-secondary"
+          size="sm"
+          onClick={() => {
+            setGhlModalAutoSubmit(true);
+            setGhlModalOpen(true);
+          }}
+          title={`Re-sync "${lastGhlImport.value}" (${lastGhlImport.mode === 'tag' ? 'by tag' : 'by search'})`}
+        >
+          <RefreshCw className="w-4 h-4" />
+          Re-sync
+        </Button>
+      )}
+      <Button
+        variant="fe-secondary"
+        size="sm"
+        onClick={() => {
+          setGhlModalAutoSubmit(false);
+          setGhlModalOpen(true);
+        }}
+      >
+        <Download className="w-4 h-4" />
+        Import from GHL
+      </Button>
+      <Button variant="fe-secondary" size="sm" onClick={() => setImportModalOpen(true)}>
+        <Upload className="w-4 h-4" />
+        Import
+      </Button>
+      <Button variant="primary" size="sm" onClick={() => setAddModalOpen(true)}>
+        <Plus className="w-4 h-4" />
+        Add contact
+      </Button>
+    </>
+  );
 
-            <motion.button
-              whileHover={{ scale: 1.05 }}
-              whileTap={{ scale: 0.95 }}
-              onClick={() => {
-                setGhlModalAutoSubmit(false);
-                setGhlModalOpen(true);
-              }}
-              className="flex items-center gap-2 px-5 py-3 bg-transparent border-2 border-[#00D9FF] rounded-xl text-[#00D9FF] font-semibold hover:bg-[#00D9FF]/10 transition-all"
-            >
-              <Download className="w-5 h-5" />
-              Import from GHL
-            </motion.button>
-
-            <motion.button
-              whileHover={{ scale: 1.05 }}
-              whileTap={{ scale: 0.95 }}
-              onClick={() => setImportModalOpen(true)}
-              className="flex items-center gap-2 px-5 py-3 bg-transparent border-2 border-[#00D9FF] rounded-xl text-[#00D9FF] font-semibold hover:bg-[#00D9FF]/10 transition-all"
-            >
-              <Upload className="w-5 h-5" />
-              Import
-            </motion.button>
-
-            <motion.button
-              whileHover={{ scale: 1.05 }}
-              whileTap={{ scale: 0.95 }}
-              onClick={() => setAddModalOpen(true)}
-              className="flex items-center gap-2 px-5 py-3 bg-gradient-to-r from-[#00D9FF] to-[#0066FF] rounded-xl text-white font-semibold shadow-[0_4px_24px_rgba(0,217,255,0.3)] hover:shadow-[0_6px_32px_rgba(0,217,255,0.4)] transition-all"
-            >
-              <Plus className="w-5 h-5" />
-              Add Contact
-            </motion.button>
-          </div>
+  // Mobile: the 4 management actions collapse into one "Add" menu (task spec).
+  const mobileActions = canManage && (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="primary" size="sm">
+          <Plus className="w-4 h-4" />
+          Add
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        <DropdownMenuItem onClick={() => setAddModalOpen(true)}>Add contact</DropdownMenuItem>
+        <DropdownMenuItem onClick={() => setImportModalOpen(true)}>Import CSV</DropdownMenuItem>
+        <DropdownMenuItem
+          onClick={() => {
+            setGhlModalAutoSubmit(false);
+            setGhlModalOpen(true);
+          }}
+        >
+          Import from GHL
+        </DropdownMenuItem>
+        {lastGhlImport && (
+          <DropdownMenuItem
+            onClick={() => {
+              setGhlModalAutoSubmit(true);
+              setGhlModalOpen(true);
+            }}
+          >
+            Re-sync GHL import
+          </DropdownMenuItem>
         )}
-      </div>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
 
-      {/* Filters */}
-      <div className="bg-[#1A2332]/60 backdrop-blur-xl rounded-2xl p-6 border border-white/5 shadow-[0_4px_24px_rgba(0,102,255,0.15)] mb-6">
-        <div className="flex flex-wrap gap-4">
-          <div className="flex-1 min-w-[300px]">
-            <div className="relative">
-              <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-[#B0BEC5]" />
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search contacts..."
-                className="w-full bg-[#1E2A3A] border border-white/10 rounded-xl pl-12 pr-4 py-3 text-white placeholder-[#B0BEC5]/50 focus:outline-none focus:border-[#00D9FF] transition-colors"
-              />
-            </div>
+  return (
+    <div className="p-4 sm:p-8 max-w-[1440px] mx-auto">
+      <PageHeader
+        title="Contacts"
+        description="Manage your contact database"
+        actions={isDesktop ? importActions : mobileActions}
+      />
+
+      {/* Toolbar: search + filter chips in one row. */}
+      <div className="rounded-app-lg border border-border-subtle bg-surface-1 p-4 mb-6">
+        <div className="flex flex-wrap gap-3 items-center">
+          <div className="flex-1 min-w-[240px] relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-secondary" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search contacts..."
+              className="w-full bg-surface-2 border border-border-subtle rounded-app-md pl-9 pr-3 py-2 text-body text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent-to transition-colors"
+            />
           </div>
-
-          <div className="flex flex-wrap gap-2 items-center">
-            <span className="text-sm text-[#B0BEC5] mr-1">Category:</span>
+          <div className="flex flex-wrap gap-1.5 items-center">
             {CATEGORIES.map((cat) => (
               <button
                 key={cat}
                 onClick={() => setCategoryFilter(cat)}
-                className={`px-3 py-2 rounded-xl text-sm font-medium transition-all ${
+                className={cn(
+                  'px-2.5 py-1.5 rounded-app-sm text-meta font-medium transition-colors',
                   categoryFilter === cat
-                    ? 'bg-[#0066FF] text-white'
-                    : 'bg-[#1E2A3A] text-[#B0BEC5] hover:bg-[#252F3E]'
-                }`}
+                    ? 'bg-accent-from/20 text-accent-to'
+                    : 'bg-surface-2 text-text-secondary hover:bg-surface-3'
+                )}
               >
                 {cat}
               </button>
             ))}
-            <span className="text-sm text-[#B0BEC5] ml-2 mr-1">Status:</span>
+          </div>
+          <div className="flex flex-wrap gap-1.5 items-center">
             {CONTACT_STATUSES.map((status) => (
               <button
                 key={status}
                 onClick={() => setContactStatusFilter(status)}
-                className={`px-3 py-2 rounded-xl text-sm font-medium transition-all ${
+                className={cn(
+                  'px-2.5 py-1.5 rounded-app-sm text-meta font-medium transition-colors',
                   contactStatusFilter === status
-                    ? 'bg-[#0066FF] text-white'
-                    : 'bg-[#1E2A3A] text-[#B0BEC5] hover:bg-[#252F3E]'
-                }`}
+                    ? 'bg-accent-from/20 text-accent-to'
+                    : 'bg-surface-2 text-text-secondary hover:bg-surface-3'
+                )}
               >
                 {status}
               </button>
@@ -279,249 +328,224 @@ export function Contacts() {
       </div>
 
       {canManage && selectedIds.size > 0 && (
-        <div className="flex items-center gap-4 mb-4 px-2 py-2 rounded-xl bg-[#1E2A3A]/80 border border-white/10">
-          <span className="text-[#B0BEC5] text-sm">{selectedIds.size} selected</span>
-          <button
-            type="button"
-            onClick={handleBulkDelete}
-            disabled={deleting}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-red-500/20 text-red-400 hover:bg-red-500/30 font-medium text-sm disabled:opacity-50"
-          >
+        <div className="flex items-center gap-3 mb-4 px-3 py-2 rounded-app-md bg-surface-2 border border-border-subtle">
+          <span className="text-body text-text-secondary">{selectedIds.size} selected</span>
+          <Button variant="danger-ghost" size="sm" onClick={handleBulkDelete} disabled={deleting}>
             <Trash2 className="w-4 h-4" />
             Delete selected
-          </button>
-          <button
-            type="button"
-            onClick={() => setSelectedIds(new Set())}
-            className="px-4 py-2 rounded-lg border border-white/10 text-[#B0BEC5] hover:bg-white/5 text-sm"
-          >
+          </Button>
+          <Button variant="fe-ghost" size="sm" onClick={() => setSelectedIds(new Set())}>
             Clear selection
-          </button>
+          </Button>
         </div>
       )}
 
-      {/* Contact List */}
       {loading ? (
-        <ListSkeleton rows={8} />
+        isDesktop ? (
+          <TableSkeleton rows={8} columns={5} />
+        ) : (
+          <ListSkeleton rows={8} />
+        )
+      ) : filteredContacts.length === 0 ? (
+        <EmptyState
+          icon={Users}
+          title="No contacts found"
+          body="Try adjusting your search or import contacts from a CSV."
+        />
+      ) : isDesktop ? (
+        <div className="rounded-app-lg border border-border-subtle bg-surface-1 overflow-hidden">
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader className="sticky top-0 z-10 bg-surface-1">
+                <TableRow className="border-border-subtle hover:bg-transparent">
+                  {canManage && (
+                    <TableHead className="w-10">
+                      <input
+                        type="checkbox"
+                        checked={allOnPageSelected}
+                        onChange={toggleSelectAllOnPage}
+                        className="rounded border-border-strong bg-surface-2 accent-[var(--accent-to)]"
+                        aria-label="Select all on page"
+                      />
+                    </TableHead>
+                  )}
+                  <TableHead className="text-text-secondary">Name</TableHead>
+                  <TableHead className="text-text-secondary">Phone</TableHead>
+                  <TableHead className="text-text-secondary">Status</TableHead>
+                  <TableHead className="text-text-secondary">Added</TableHead>
+                  <TableHead className="text-right text-text-secondary">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {paginatedContacts.map((contact) => {
+                  const name = contactDisplayName(contact);
+                  const businessType = contact.business_type ?? '—';
+                  const phone = contact.phone_number ?? '—';
+                  const category = contact.category ?? 'Cold';
+                  const contactStatus = contact.contact_status ?? 'No Contact';
+                  const isDnc = contact.dnc;
+                  const isSelected = selectedIds.has(contact.id);
+                  return (
+                    <TableRow
+                      key={contact.id}
+                      onClick={() => setDetailContact(contact)}
+                      className="border-border-subtle hover:bg-surface-2 cursor-pointer group"
+                    >
+                      {canManage && (
+                        <TableCell onClick={(e) => e.stopPropagation()}>
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={() => toggleSelect(contact.id)}
+                            className="rounded border-border-strong bg-surface-2 accent-[var(--accent-to)]"
+                          />
+                        </TableCell>
+                      )}
+                      <TableCell className="max-w-[260px]">
+                        <div className="font-medium text-text-primary truncate" title={name}>
+                          {name}
+                        </div>
+                        <div
+                          className="text-meta text-text-secondary truncate"
+                          title={businessType}
+                        >
+                          {businessType}
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-body text-text-secondary">{phone}</TableCell>
+                      <TableCell>
+                        <div className="flex flex-wrap gap-1">
+                          <Pill>{category}</Pill>
+                          <Pill>{contactStatus}</Pill>
+                          {isDnc && <Pill tone="danger">Do not call</Pill>}
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-meta text-text-secondary whitespace-nowrap">
+                        {new Date(contact.created_at).toLocaleDateString()}
+                      </TableCell>
+                      <TableCell onClick={(e) => e.stopPropagation()}>
+                        <div className="flex items-center justify-end gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <Button variant="fe-secondary" size="sm">
+                            <Phone className="w-3.5 h-3.5" />
+                            Call
+                          </Button>
+                          {canManage && (
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <button className="w-8 h-8 rounded-app-sm bg-surface-2 hover:bg-surface-3 flex items-center justify-center text-text-secondary hover:text-text-primary transition-colors">
+                                  <MoreVertical className="w-4 h-4" />
+                                </button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end">
+                                <DropdownMenuItem
+                                  variant="destructive"
+                                  onClick={(e) =>
+                                    handleDeleteOne(e as unknown as React.MouseEvent, contact.id)
+                                  }
+                                  disabled={deleting}
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                  Delete
+                                </DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          )}
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </div>
+        </div>
       ) : (
-        <div className="space-y-3">
-          {canManage && paginatedContacts.length > 0 && (
-            <div className="flex items-center gap-3 px-2 pb-1">
-              <label className="flex items-center gap-2 cursor-pointer text-sm text-[#B0BEC5]">
-                <input
-                  type="checkbox"
-                  checked={
-                    paginatedContacts.length > 0 &&
-                    paginatedContacts.every((c) => selectedIds.has(c.id))
-                  }
-                  onChange={toggleSelectAllOnPage}
-                  className="rounded border-white/20 bg-[#1E2A3A] text-[#00D9FF] focus:ring-[#00D9FF]"
-                />
-                Select all on page
-              </label>
-            </div>
+        <div className="space-y-2">
+          {canManage && (
+            <label className="flex items-center gap-2 cursor-pointer text-meta text-text-secondary px-1 pb-1">
+              <input
+                type="checkbox"
+                checked={allOnPageSelected}
+                onChange={toggleSelectAllOnPage}
+                className="rounded border-border-strong bg-surface-2 accent-[var(--accent-to)]"
+              />
+              Select all on page
+            </label>
           )}
-          {paginatedContacts.map((contact, index) => {
+          {paginatedContacts.map((contact) => {
             const name = contactDisplayName(contact);
-            const initials =
-              name
-                .replace('—', '')
-                .split(' ')
-                .map((n) => n[0])
-                .filter(Boolean)
-                .join('')
-                .slice(0, 2) || '?';
-            const businessType = contact.business_type ?? '—';
-            const email = contact.owner_contact?.includes('@') ? contact.owner_contact : null;
-            const website = contact.website ?? null;
             const phone = contact.phone_number ?? '—';
             const category = contact.category ?? 'Cold';
             const contactStatus = contact.contact_status ?? 'No Contact';
             const isDnc = contact.dnc;
             const isSelected = selectedIds.has(contact.id);
             return (
-              <motion.div
+              <div
                 key={contact.id}
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: index * 0.05 }}
                 onClick={() => setDetailContact(contact)}
-                className="bg-[#1A2332]/60 backdrop-blur-xl rounded-2xl p-6 border border-white/5 hover:border-[#00D9FF]/30 shadow-[0_4px_24px_rgba(0,102,255,0.15)] hover:shadow-[0_8px_32px_rgba(0,102,255,0.25)] transition-all group cursor-pointer"
+                className="flex items-center gap-3 rounded-app-lg border border-border-subtle bg-surface-1 p-3 cursor-pointer"
               >
-                <div className="flex items-center gap-4">
-                  {canManage && (
-                    <input
-                      type="checkbox"
-                      checked={isSelected}
-                      onChange={() => toggleSelect(contact.id)}
-                      onClick={(e) => e.stopPropagation()}
-                      className="rounded border-white/20 bg-[#1E2A3A] text-[#00D9FF] focus:ring-[#00D9FF] flex-shrink-0"
-                    />
-                  )}
-                  <div className="relative flex-shrink-0">
-                    <div className="w-16 h-16 rounded-full bg-gradient-to-br from-[#00D9FF] to-[#0066FF] flex items-center justify-center text-white text-xl font-bold">
-                      {initials}
-                    </div>
-                    <div className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full border-2 border-[#1A2332] bg-[#B0BEC5]" />
-                  </div>
-
-                  <div className="flex-1 grid grid-cols-1 md:grid-cols-4 gap-4 min-w-0 md:min-w-0 md:[grid-template-columns:repeat(4,minmax(0,1fr))]">
-                    <div className="min-w-0 overflow-hidden">
-                      <div
-                        className="font-bold text-white text-lg mb-1 line-clamp-2 min-w-0 break-words"
-                        title={name}
-                      >
-                        {name}
-                      </div>
-                      <div className="flex items-center gap-2 text-sm text-[#B0BEC5] min-w-0 overflow-hidden">
-                        <Building2 className="w-4 h-4 flex-shrink-0" />
-                        <span className="line-clamp-2 min-w-0 break-words" title={businessType}>
-                          {businessType}
-                        </span>
-                      </div>
-                      <div className="text-sm text-[#B0BEC5] flex items-center gap-1 mt-0.5 flex-wrap overflow-hidden">
-                        <span className="px-2 py-0.5 rounded-full text-xs bg-white/10 truncate max-w-full">
-                          {category}
-                        </span>
-                        <span className="px-2 py-0.5 rounded-full text-xs bg-white/10 truncate max-w-full">
-                          {contactStatus}
-                        </span>
-                        {isDnc && (
-                          <span className="px-2 py-0.5 rounded-full text-xs bg-red-500/20 text-red-400 truncate max-w-full">
-                            Do not call
-                          </span>
-                        )}
-                      </div>
-                    </div>
-
-                    <div className="space-y-2 min-w-0 overflow-hidden">
-                      {email && (
-                        <div className="flex items-center gap-2 text-sm text-[#B0BEC5] min-w-0 overflow-hidden">
-                          <Mail className="w-4 h-4 text-[#00D9FF] flex-shrink-0" />
-                          <span className="truncate min-w-0 block" title={email}>
-                            {email}
-                          </span>
-                        </div>
-                      )}
-                      {website && (
-                        <div className="flex items-center gap-2 text-sm text-[#B0BEC5] min-w-0 overflow-hidden">
-                          <Globe className="w-4 h-4 text-[#00D9FF] flex-shrink-0" />
-                          <span className="truncate min-w-0 block" title={website}>
-                            {website}
-                          </span>
-                        </div>
-                      )}
-                      <div className="flex items-center gap-2 text-sm text-[#B0BEC5] min-w-0 overflow-hidden">
-                        <Phone className="w-4 h-4 text-[#00D9FF] flex-shrink-0" />
-                        <span className="truncate min-w-0 block" title={phone}>
-                          {phone}
-                        </span>
-                      </div>
-                    </div>
-
-                    <div className="min-w-0 overflow-hidden">
-                      <div className="flex items-center gap-2 text-sm text-[#B0BEC5] mb-2 min-w-0 overflow-hidden">
-                        <MapPin className="w-4 h-4 text-[#00D9FF] flex-shrink-0" />
-                        <span
-                          className="truncate min-w-0 block"
-                          title={contact.address ?? undefined}
-                        >
-                          {contact.address ?? '—'}
-                        </span>
-                      </div>
-                      <div
-                        className="text-xs text-[#B0BEC5] truncate min-w-0 block"
-                        title={`Added ${new Date(contact.created_at).toLocaleDateString()}`}
-                      >
-                        Added {new Date(contact.created_at).toLocaleDateString()}
-                      </div>
-                    </div>
-
-                    <div className="flex items-center justify-end gap-2 min-w-0 overflow-hidden flex-shrink-0">
-                      <motion.button
-                        whileHover={{ scale: 1.05 }}
-                        whileTap={{ scale: 0.95 }}
-                        onClick={(e) => e.stopPropagation()}
-                        className="px-4 py-2 bg-gradient-to-r from-[#00D9FF] to-[#0066FF] rounded-lg text-white text-sm font-semibold flex items-center gap-2 shadow-[0_2px_12px_rgba(0,217,255,0.3)] opacity-0 group-hover:opacity-100 transition-opacity"
-                      >
-                        <Phone className="w-4 h-4" />
-                        Call
-                      </motion.button>
-                      {canManage && (
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <button
-                              onClick={(e) => e.stopPropagation()}
-                              className="w-10 h-10 rounded-lg bg-[#1E2A3A] hover:bg-[#252F3E] flex items-center justify-center text-[#B0BEC5] hover:text-white transition-all"
-                            >
-                              <MoreVertical className="w-5 h-5" />
-                            </button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent
-                            align="end"
-                            className="bg-[#1E2A3A] border-white/10 text-white"
-                          >
-                            <DropdownMenuItem
-                              variant="destructive"
-                              onClick={(e) =>
-                                handleDeleteOne(e as unknown as React.MouseEvent, contact.id)
-                              }
-                              disabled={deleting}
-                              className="focus:bg-red-500/20 focus:text-red-400"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                              Delete
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      )}
-                    </div>
+                {canManage && (
+                  <input
+                    type="checkbox"
+                    checked={isSelected}
+                    onChange={() => toggleSelect(contact.id)}
+                    onClick={(e) => e.stopPropagation()}
+                    className="rounded border-border-strong bg-surface-2 accent-[var(--accent-to)] flex-shrink-0"
+                  />
+                )}
+                <div className="flex-1 min-w-0">
+                  <div className="font-medium text-text-primary truncate">{name}</div>
+                  <div className="text-meta text-text-secondary truncate">{phone}</div>
+                  <div className="flex flex-wrap gap-1 mt-1">
+                    <Pill>{category}</Pill>
+                    <Pill>{contactStatus}</Pill>
+                    {isDnc && <Pill tone="danger">Do not call</Pill>}
                   </div>
                 </div>
-              </motion.div>
+                <button
+                  onClick={(e) => e.stopPropagation()}
+                  className="w-9 h-9 rounded-full bg-accent-to/15 text-accent-to flex items-center justify-center flex-shrink-0"
+                  aria-label="Call"
+                >
+                  <Phone className="w-4 h-4" />
+                </button>
+              </div>
             );
           })}
         </div>
       )}
 
       {!loading && filteredContacts.length > CONTACTS_PER_PAGE && (
-        <div className="flex items-center justify-between gap-4 mt-6 py-4 px-2 border-t border-white/5">
-          <span className="text-sm text-[#B0BEC5]">
+        <div className="flex items-center justify-between gap-4 mt-6 py-4 px-2 border-t border-border-subtle">
+          <span className="text-meta text-text-secondary">
             Showing {pageStart + 1}–
             {Math.min(pageStart + CONTACTS_PER_PAGE, filteredContacts.length)} of{' '}
             {filteredContacts.length}
           </span>
           <div className="flex items-center gap-2">
-            <button
-              type="button"
+            <Button
+              variant="fe-secondary"
+              size="sm"
               onClick={() => setCurrentPage((p) => Math.max(0, p - 1))}
               disabled={currentPage === 0}
-              className="flex items-center gap-1 px-3 py-2 rounded-xl border border-white/10 text-[#B0BEC5] hover:bg-white/5 disabled:opacity-50 disabled:cursor-not-allowed text-sm font-medium"
             >
               <ChevronLeft className="w-4 h-4" />
               Previous
-            </button>
-            <span className="text-sm text-[#B0BEC5] px-2">
+            </Button>
+            <span className="text-meta text-text-secondary px-2">
               Page {currentPage + 1} of {totalPages}
             </span>
-            <button
-              type="button"
+            <Button
+              variant="fe-secondary"
+              size="sm"
               onClick={() => setCurrentPage((p) => Math.min(totalPages - 1, p + 1))}
               disabled={currentPage >= totalPages - 1}
-              className="flex items-center gap-1 px-3 py-2 rounded-xl border border-white/10 text-[#B0BEC5] hover:bg-white/5 disabled:opacity-50 disabled:cursor-not-allowed text-sm font-medium"
             >
               Next
               <ChevronRight className="w-4 h-4" />
-            </button>
+            </Button>
           </div>
-        </div>
-      )}
-
-      {!loading && filteredContacts.length === 0 && (
-        <div className="text-center py-20">
-          <div className="text-6xl mb-4">🔍</div>
-          <h3 className="text-xl font-semibold text-white mb-2">No contacts found</h3>
-          <p className="text-[#B0BEC5]">Try adjusting your search or import contacts from CSV</p>
         </div>
       )}
 
