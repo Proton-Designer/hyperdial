@@ -170,8 +170,8 @@ Deno.serve(async (req) => {
     // every refill would add an external HTTP round trip to the hot dialing loop and risk
     // rate-limiting Telnyx's billing endpoint under real load; a session already running is
     // never killed mid-call for this (see spend-gate.ts's own header + decisions.md). Fails
-    // OPEN (never blocks) when the balance can't be read at all -- only a CONFIRMED low balance
-    // or CONFIRMED over-cap spend blocks Go Ready.
+    // OPEN (never blocks) when the balance can't be read at all -- only a CONFIRMED over-cap
+    // spend blocks Go Ready (TASK-SP2: a low balance never blocks, see spend-gate.ts).
     const spendGate = await checkSpendGate(supabase, orgId);
     if (spendGate.blocked) {
       return jsonResponse(400, { error: spendGate.message, code: spendGate.code });
@@ -185,7 +185,9 @@ Deno.serve(async (req) => {
       amdMode: amdModeOverride ?? (campaign.amd_mode as AmdModeOverride),
     });
 
-    return jsonResponse(200, { sessionId });
+    // TASK-SP2: the session still starts even on a low balance -- this rides along on the same
+    // snapshot checkSpendGate already fetched, no extra Telnyx round trip.
+    return jsonResponse(200, { sessionId, warning: spendGate.warning });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     // dial_sessions_require_active_campaign (20260924001500): the proactive checks above

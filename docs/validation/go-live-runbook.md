@@ -16,12 +16,16 @@ worth re-running yourself and in what order.
 
 ## 1. Fund Telnyx
 
-Your Telnyx account balance is currently **$5** — too low to dial with. Go to
-your Telnyx portal (`portal.telnyx.com`) → Billing → add funds. There's no
-fixed "right" amount; a rough rule of thumb is a few weeks of expected spend
-so you're not topping up every few days. You'll set a spend cap and
-low-balance alert inside HyperDial itself in step 6 below, so a top-up
-mistake here isn't the only safety net.
+Your Telnyx account balance is currently **$5**. A low balance never blocks
+dialing by itself — you'll only see a warning once it drops below your
+low-balance alert threshold ($2 by default, step 7 below). Fund it anyway
+before your team's first real day: Telnyx itself will decline calls once the
+balance actually hits zero, and you don't want that discovered mid-campaign.
+Go to your Telnyx portal (`portal.telnyx.com`) → Billing → add funds. There's
+no fixed "right" amount; a rough rule of thumb is a few weeks of expected
+spend so you're not topping up every few days. You'll set a spend cap and
+low-balance alert inside HyperDial itself in step 7 below — the spend cap is
+the only thing that actually blocks dialing.
 
 **Expect:** Telnyx's own dashboard shows the new balance immediately.
 
@@ -120,15 +124,14 @@ specific intern needs a dedicated line (e.g. for callback consistency).
 Settings → Telephony → scroll to "Spend & Billing" (only appears once step 3
 is done). Set:
 
-- **Minimum balance to dial** — below this, Go Ready is refused org-wide
-  until you top up. A safety floor, not your working balance.
-- **Low-balance alert** — an in-app notification to every owner/admin once
-  the balance drops below this (checked hourly). Set it comfortably above
-  the minimum-to-dial value so you get warned before anyone's actually
-  blocked.
-- **Monthly spend cap** (optional) — once this month's estimated spend hits
-  it, Go Ready and buying new numbers are both refused. Leave blank for no
-  cap.
+- **Low-balance alert** ($2 by default) — a low balance never blocks
+  dialing by itself. Once the balance drops below this, everyone gets
+  warned three ways: a toast when an intern hits Go Ready, an in-app
+  notification to every owner/admin (checked hourly), and a banner on the
+  Dashboard. Set it to whatever balance means "go top up soon" for you.
+- **Monthly spend cap** (optional) — the only thing that actually blocks.
+  Once this month's estimated spend hits it, Go Ready and buying new
+  numbers are both refused. Leave blank for no cap.
 
 **Expect:** the current balance and this month's estimated spend both show
 real numbers (not errors); your saved values persist on reload.

@@ -830,10 +830,11 @@ bridge places two real, separately-billed Telnyx calls per connected contact) ×
 labelled "estimated" in the UI (`SpendSettingsCard`, `Team.tsx`-adjacent, not the same component).
 
 **Decision 2 -- fail OPEN when the balance can't be read, fail CLOSED (block) only on a CONFIRMED
-low balance/over-cap spend.** Telnyx not connected, the stored key missing, or the `/balance` call
-itself erroring all return "allowed" from `checkSpendGate`, with a `console.warn` only -- per the
-task's own suggested default ("blocking a whole team on a Telnyx API blip is worse"). Every one of
-these branches is deno-tested (`spend-gate.test.ts`).
+~~low balance/~~over-cap spend** (struck-through half reversed by TASK-SP2 below, 2026-09-25).
+Telnyx not connected, the stored key missing, or the `/balance` call itself erroring all return
+"allowed" from `checkSpendGate`, with a `console.warn` only -- per the task's own suggested
+default ("blocking a whole team on a Telnyx API blip is worse"). Every one of these branches is
+deno-tested (`spend-gate.test.ts`).
 
 **Decision 3 -- the spend gate runs at Go Ready and at number purchase, NOT at every refill
 boundary.** `refillSession` (dialer-engine.ts) can run many times per minute during active
@@ -886,6 +887,23 @@ Dashboard/Settings banners are the only alert surfaces built.
 re-verifying `/usage_reports` has graduated out of BETA and confirming the `product` value for
 voice via a real `/usage_reports/options` response -- guessing it risks a 400 on every cron tick
 across every connected org, not just a wrong number.
+
+**TASK-SP2 fix (2026-09-25, user order verbatim): "why is dialing blocked below $5 -- it
+shouldn't be blocked at all, only warn below $2."** `checkSpendGate`'s `LOW_BALANCE` block is
+removed entirely -- a low balance never blocks Go Ready or a number purchase anymore, only the
+org's own opt-in `monthly_spend_cap_usd` (null by default, `SPEND_CAP_REACHED`) still does.
+`min_balance_to_dial_usd` is no longer read by any code path; the column stays in
+`org_spend_settings` (migrations are append-only) with a `deprecated` comment added in migration
+`20260925080202`. The low-balance alert (`low_balance_alert_usd`) becomes the only balance-based
+signal left: its default dropped from $20 to $2 (same migration, plus an `update ... where
+low_balance_alert_usd = 20` for every org still on the old default -- a customized value is left
+alone), and it now does double duty -- the pre-existing hourly cron/Dashboard banner (unchanged,
+both already read `low_balance_alert_usd`, never `min_balance_to_dial_usd`) PLUS a new
+non-blocking `warning` field `checkSpendGate` returns off the same snapshot it already fetches for
+the cap check (no extra Telnyx round trip), surfaced by `dialer-session-start`'s 200 response and
+shown as a `toast.warning` in `Dialer.tsx`. A balance-read failure (Telnyx not connected, key
+missing, API error) produces no warning either -- same fail-open silence as the block used to
+have, just with nothing left that can block.
 
 ## TASK-I1 -- Inbound callback routing (INB-1..4, CID-6), 2026-09-25
 

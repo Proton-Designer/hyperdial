@@ -1559,13 +1559,21 @@ export class LiveCallInProgressError extends Error {
   }
 }
 
+/** TASK-SP2: a low balance never blocks Go Ready anymore -- when the org's balance is below its
+ *  own `low_balance_alert_usd` threshold, the session still starts and this non-blocking warning
+ *  rides along in the same 200 response instead. */
+export interface SpendWarning {
+  code: 'LOW_BALANCE';
+  message: string;
+}
+
 export async function startDialerSession(args: {
   campaignId: string;
   /** Overrides the campaign's own default `lines` (1-7) for this session only. */
   lines?: 1 | 2 | 3 | 4 | 5 | 6 | 7;
   /** Overrides the campaign's own default `amd_mode` for this session only. */
   amdMode?: 'off' | 'detect' | 'detect_words' | 'premium';
-}): Promise<{ sessionId: string }> {
+}): Promise<{ sessionId: string; warning?: SpendWarning }> {
   const res = await fetch(`${getFunctionsUrl()}/dialer-session-start`, {
     method: 'POST',
     headers: await getEdgeFunctionHeaders(),
@@ -1576,6 +1584,7 @@ export async function startDialerSession(args: {
     code?: string;
     existingSessionId?: string;
     sessionId?: string;
+    warning?: SpendWarning;
   };
   if (!res.ok) {
     if (res.status === 409 && data.code === 'ACTIVE_SESSION_EXISTS' && data.existingSessionId) {
@@ -1586,7 +1595,7 @@ export async function startDialerSession(args: {
     }
     throw new Error(data.error || `Failed to start dialer session (${res.status})`);
   }
-  return data as { sessionId: string };
+  return data as { sessionId: string; warning?: SpendWarning };
 }
 
 /** `force` (BUG-11): pass true only once the confirm dialog has been shown and accepted (or

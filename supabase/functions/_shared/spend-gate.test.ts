@@ -92,6 +92,8 @@ Deno.test('checkSpendGate: fails OPEN when Telnyx is not connected for the org',
   });
   const result = await checkSpendGate(supabase as any, 'org-1');
   assertEquals(result.blocked, false);
+  // A balance-read failure has nothing to warn about -- silent, not a fabricated warning.
+  assertEquals(result.warning, undefined);
 });
 
 Deno.test(
@@ -127,21 +129,70 @@ Deno.test('checkSpendGate: fails OPEN when the Telnyx balance API itself errors'
 });
 
 Deno.test(
-  'checkSpendGate: blocks with LOW_BALANCE when available credit is below the org minimum',
+  'checkSpendGate: TASK-SP2 -- a low balance never blocks, it returns a non-blocking warning instead',
   async () => {
-    const restore = stubFetch(() => balanceResponse('4.00', '4.00'));
+    const restore = stubFetch(() => balanceResponse('1.50', '1.50'));
     try {
       const supabase = makeFakeSupabase({
         telephony: CONNECTED_TELEPHONY,
         apiKey: 'key-1',
-        spendSettings: { min_balance_to_dial_usd: 5, monthly_spend_cap_usd: null },
+        spendSettings: { low_balance_alert_usd: 2, monthly_spend_cap_usd: null },
         mtdBilledSeconds: 0,
         numberCount: 0,
       });
       const result = await checkSpendGate(supabase as any, 'org-1');
+      assertEquals(result.blocked, false);
+      assertEquals(result.code, undefined);
+      assertExists(result.warning);
+      assertEquals(result.warning?.code, 'LOW_BALANCE');
+      assertExists(result.warning?.message);
+    } finally {
+      restore();
+    }
+  }
+);
+
+Deno.test(
+  'checkSpendGate: no warning when the balance is at or above the alert threshold',
+  async () => {
+    const restore = stubFetch(() => balanceResponse('50.00', '50.00'));
+    try {
+      const supabase = makeFakeSupabase({
+        telephony: CONNECTED_TELEPHONY,
+        apiKey: 'key-1',
+        spendSettings: { low_balance_alert_usd: 2, monthly_spend_cap_usd: null },
+        mtdBilledSeconds: 0,
+        numberCount: 0,
+      });
+      const result = await checkSpendGate(supabase as any, 'org-1');
+      assertEquals(result.blocked, false);
+      assertEquals(result.warning, undefined);
+    } finally {
+      restore();
+    }
+  }
+);
+
+Deno.test(
+  'checkSpendGate: SPEND_CAP_REACHED still blocks even when the balance is also below the alert threshold',
+  async () => {
+    const restore = stubFetch(() => balanceResponse('1.00', '1.00'));
+    try {
+      const supabase = makeFakeSupabase({
+        telephony: CONNECTED_TELEPHONY,
+        apiKey: 'key-1',
+        spendSettings: {
+          low_balance_alert_usd: 2,
+          monthly_spend_cap_usd: 10,
+          estimated_per_minute_rate_usd: 1,
+          estimated_monthly_number_price_usd: 0,
+        },
+        mtdBilledSeconds: 600, // 10 minutes -> $10 exactly, at the cap
+        numberCount: 0,
+      });
+      const result = await checkSpendGate(supabase as any, 'org-1');
       assertEquals(result.blocked, true);
-      assertEquals(result.code, 'LOW_BALANCE');
-      assertExists(result.message);
+      assertEquals(result.code, 'SPEND_CAP_REACHED');
     } finally {
       restore();
     }
@@ -260,7 +311,9 @@ Deno.test(
       const snapshot = await getOrgSpendSnapshot(supabase as any, 'org-1');
       assertEquals(snapshot.ok, true);
       if (snapshot.ok) {
-        assertEquals(snapshot.settings.low_balance_alert_usd, 20);
+        // TASK-SP2: the default alert threshold is $2 now (was $20) -- min_balance_to_dial_usd
+        // stays in the defaults object (the deprecated column's own default, unused everywhere).
+        assertEquals(snapshot.settings.low_balance_alert_usd, 2);
         assertEquals(snapshot.settings.min_balance_to_dial_usd, 5);
         assertEquals(snapshot.settings.monthly_spend_cap_usd, null);
       }

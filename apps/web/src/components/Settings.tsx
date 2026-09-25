@@ -2143,27 +2143,11 @@ function SpendSettingsCard() {
             className="w-36 bg-surface-2 border border-white/10 rounded-app-md px-3 py-2 text-white focus:outline-none focus:border-accent-to disabled:opacity-60"
           />
         </div>
-        <div>
-          <label className="block text-meta text-text-secondary mb-1">Minimum to dial ($)</label>
-          <input
-            type="number"
-            min={0}
-            step="0.01"
-            value={settings?.min_balance_to_dial_usd ?? ''}
-            disabled={!settings || saving || !isAdmin}
-            onChange={(e) =>
-              settings &&
-              void handleChange({
-                ...settings,
-                min_balance_to_dial_usd: Math.max(0, Number(e.target.value) || 0),
-              })
-            }
-            className="w-36 bg-surface-2 border border-white/10 rounded-app-md px-3 py-2 text-white focus:outline-none focus:border-accent-to disabled:opacity-60"
-          />
-        </div>
       </div>
       <p className="text-meta text-text-muted mt-2">
-        Monthly spend is estimated from call minutes and number count -- Telnyx has no reliable live
+        A low balance never blocks dialing -- it only shows a warning (at Go Ready, on the
+        Dashboard, and as an in-app alert) once the balance drops below the threshold above. Monthly
+        spend is estimated from call minutes and number count -- Telnyx has no reliable live
         month-to-date figure to read instead. Real-time balance above is exact.
       </p>
     </div>

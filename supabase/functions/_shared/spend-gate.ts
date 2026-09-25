@@ -26,7 +26,7 @@ export interface OrgSpendSettings {
  *  seed trigger backfills one for every org, but defense in depth costs nothing here). */
 export const DEFAULT_ORG_SPEND_SETTINGS: OrgSpendSettings = {
   monthly_spend_cap_usd: null,
-  low_balance_alert_usd: 20,
+  low_balance_alert_usd: 2,
   min_balance_to_dial_usd: 5,
   estimated_per_minute_rate_usd: 0.015,
   estimated_monthly_number_price_usd: 1.15,
@@ -137,18 +137,29 @@ export async function getOrgSpendSnapshot(
 
 export interface SpendGateResult {
   blocked: boolean;
-  code?: 'LOW_BALANCE' | 'SPEND_CAP_REACHED';
+  code?: 'SPEND_CAP_REACHED';
   message?: string;
+  /** Non-blocking. Set whenever the org's available balance is below its OWN
+   *  `low_balance_alert_usd` threshold, regardless of whether this result is `blocked` --
+   *  TASK-SP2 (user order, 2026-09-25): a low balance never blocks, it only warns. */
+  warning?: { code: 'LOW_BALANCE'; message: string };
 }
 
 /**
  * Fail OPEN: when the snapshot can't be fetched at all (Telnyx not connected, the key is
  * missing/invalid, or the balance API itself errors), dialing/purchasing is ALLOWED, with a
- * logged warning only -- design decision (task's own suggested default): a Telnyx API blip
+ * logged warning only, and no `warning` field either -- a balance-read failure has nothing to
+ * warn about, it's silent (design decision, task's own suggested default): a Telnyx API blip
  * blocking an entire team from dialing is worse than the residual risk, which the hourly
  * low-balance alert (spend-alert-check) and this same live check on every NEW Go Ready/purchase
  * already bound -- a real zero-balance org fails closed again the very next time this actually
- * succeeds in reaching Telnyx. Only a CONFIRMED low balance or CONFIRMED over-cap spend blocks.
+ * succeeds in reaching Telnyx.
+ *
+ * TASK-SP2 (user order, 2026-09-25): "why is dialing blocked below $5 -- it shouldn't be blocked
+ * at all, only warn below $2." A low balance NEVER blocks Go Ready or a number purchase anymore
+ * -- only a CONFIRMED over-cap spend does (the org's own opt-in `monthly_spend_cap_usd`, null by
+ * default). `min_balance_to_dial_usd` is no longer read here at all (see its column comment,
+ * migration 20260925080202).
  */
 export async function checkSpendGate(
   supabase: SupabaseClient,
@@ -160,19 +171,21 @@ export async function checkSpendGate(
     return { blocked: false };
   }
 
-  if (isBelowMinBalance(snapshot.availableCreditUsd, snapshot.settings.min_balance_to_dial_usd)) {
-    return {
-      blocked: true,
-      code: 'LOW_BALANCE',
-      message: `Your Telnyx balance ($${snapshot.availableCreditUsd.toFixed(2)}) is below the minimum required to dial ($${snapshot.settings.min_balance_to_dial_usd.toFixed(2)}). Add funds in your Telnyx account, or ask an owner/admin to lower the minimum in Settings.`,
-    };
-  }
-
   if (isOverSpendCap(snapshot.mtdSpendEstimateUsd, snapshot.settings.monthly_spend_cap_usd)) {
     return {
       blocked: true,
       code: 'SPEND_CAP_REACHED',
       message: `This org has reached its monthly spend cap ($${snapshot.settings.monthly_spend_cap_usd!.toFixed(2)}; estimated spend so far this month: $${snapshot.mtdSpendEstimateUsd.toFixed(2)}). Ask an owner/admin to raise the cap in Settings.`,
+    };
+  }
+
+  if (isBelowMinBalance(snapshot.availableCreditUsd, snapshot.settings.low_balance_alert_usd)) {
+    return {
+      blocked: false,
+      warning: {
+        code: 'LOW_BALANCE',
+        message: `Your Telnyx balance ($${snapshot.availableCreditUsd.toFixed(2)}) is below your low-balance alert threshold ($${snapshot.settings.low_balance_alert_usd.toFixed(2)}). Dialing continues -- add funds in your Telnyx account when you can.`,
+      },
     };
   }
 

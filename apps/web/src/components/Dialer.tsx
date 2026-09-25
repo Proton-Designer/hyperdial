@@ -476,7 +476,7 @@ function DialerBody({
         beginAgentLegExpectation();
         let started = false;
         try {
-          const { sessionId } = await startDialerSession({ campaignId: campaign.id });
+          const { sessionId, warning } = await startDialerSession({ campaignId: campaign.id });
           started = true;
           // Deliberately NOT clearing the expectation flag here: setting this state only
           // QUEUES a re-render, and the hook's `optionsRef` (which the exact-match path
@@ -486,6 +486,9 @@ function DialerBody({
           // to close, for the window between this line and that commit.
           setRestoredParallelContext({ sessionId, campaignId: campaign.id });
           toast.success('Parallel dialing session started');
+          // TASK-SP2: a low balance never blocks Go Ready anymore -- it only warns, non-blocking,
+          // alongside the success toast above.
+          if (warning) toast.warning(warning.message);
         } finally {
           if (!started) endAgentLegExpectation();
         }
