@@ -38,6 +38,16 @@ export interface DispositionPayload {
   duration_seconds: number;
   recording_url: string | null;
   transcript_excerpt: string | null;
+  /** TASK-F-P1 (DSP-1): carried now, F-P2 maps them to GHL custom fields later. */
+  license_number: string | null;
+  zips: string[] | null;
+  /** TASK-F-P1: whether THIS disposition's lead_effect is 'dnc', derived server-side in
+   *  submit_disposition -- never infer this from `disposition_key` here. An org's DNC
+   *  disposition can be keyed 'dnc' (a pre-F-P1 org) or 'do_not_call' (the new canonical key,
+   *  TASK-F-T1's own decisions.md), or any future custom key an org creates with lead_effect
+   *  'dnc' -- matching a literal key string would silently stop setting DND the moment an org's
+   *  key differs from whatever was hardcoded here. */
+  is_dnc: boolean;
 }
 
 /** `.brain/domains/crm.md`'s documented disposition-job note shape, condensed into GHL's
@@ -49,6 +59,8 @@ export function buildDispositionNote(p: DispositionPayload): string {
     `Duration: ${p.duration_seconds}s`,
   ];
   if (p.notes) lines.push(`Notes: ${p.notes}`);
+  if (p.license_number) lines.push(`License #: ${p.license_number}`);
+  if (p.zips && p.zips.length > 0) lines.push(`ZIPs served: ${p.zips.join(', ')}`);
   if (p.recording_url) lines.push(`Recording: ${p.recording_url}`);
   if (p.transcript_excerpt) lines.push(`Transcript: ${p.transcript_excerpt.slice(0, 1000)}`);
   return lines.join('\n');
@@ -142,7 +154,7 @@ export async function processDispositionJob(
     }
 
     if (!progress.dnd_set) {
-      if (args.payload.disposition_key === 'dnc') {
+      if (args.payload.is_dnc) {
         await args.client.setDnd(ghlContactId, true);
       }
       progress.dnd_set = true;
@@ -202,6 +214,64 @@ export async function processNurtureTagJob(
 
     if (!progress.tag_added) {
       await args.client.addTags(ghlContactId, ['nurture']);
+      progress.tag_added = true;
+    }
+
+    return { ok: true, progress, resolvedGhlContactId: ghlContactId };
+  } catch (err) {
+    return {
+      ok: false,
+      progress,
+      resolvedGhlContactId: ghlContactId,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+export interface ProcessTagJobArgs {
+  client: GhlClient;
+  locationId: string;
+  ghlContactId: string | null;
+  contactFields: ContactFields;
+  /** The literal tag to push -- computed at ENQUEUE time (SQL), e.g. `call:voicemail-2` or
+   *  `call:no-answer-1`. Unlike `processNurtureTagJob`'s hardcoded 'nurture', this job kind's
+   *  whole point (TASK-F-T3, VMD-3/GHL-9) is a per-contact COUNT baked into the tag string. */
+  tag: string;
+  progress: JobProgress;
+}
+
+/** TASK-F-T3 (VMD-3, GHL-9 overlap): "voicemail_tag"/"no_answer_tag" job kinds -- an automated
+ *  engine outcome (voicemail_left/no_answer on call_legs) pushing a counted GHL tag, distinct
+ *  from `processDispositionJob`'s agent-submitted disposition tags. Same shape as
+ *  `processNurtureTagJob` (upsert-then-tag, no note/task/dnd steps), just with the tag coming
+ *  from the payload instead of a hardcoded literal. */
+export async function processTagJob(args: ProcessTagJobArgs): Promise<ProcessJobResult> {
+  const progress: JobProgress = { ...args.progress };
+  let ghlContactId = args.ghlContactId;
+
+  try {
+    if (!progress.upserted) {
+      if (!ghlContactId) {
+        if (!args.contactFields.phone) {
+          throw new Error('cannot upsert to GHL: contact has no phone number');
+        }
+        const res = await args.client.upsertContact({
+          locationId: args.locationId,
+          firstName: args.contactFields.firstName ?? undefined,
+          lastName: args.contactFields.lastName ?? undefined,
+          phone: args.contactFields.phone,
+          email: args.contactFields.email ?? undefined,
+        });
+        ghlContactId = res.contactId;
+      }
+      progress.upserted = true;
+    }
+    if (!ghlContactId) {
+      throw new Error('no GHL contact id available after the upsert step');
+    }
+
+    if (!progress.tag_added) {
+      await args.client.addTags(ghlContactId, [args.tag]);
       progress.tag_added = true;
     }
 

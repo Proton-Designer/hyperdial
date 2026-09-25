@@ -1106,10 +1106,15 @@ class whenever it's combined in the SAME `cn()` call with a `text-text-*`/`text-
 - No router / no URLs for app state → `mem.decisions`
 - `dnc_numbers` and `contacts.dnc` are two independent DNC signals with no sync trigger between
   them → `mem.decisions`, `domain.contacts`
-- `campaign_retry_rules` has no seeded row for `gatekeeper`/`already_on_platform` (QUE-2's PDF
-  names) -- this build never seeded matching dispositions for either → `mem.decisions`
 - Call recording uses call-level `record_start` (channels: dual), not conference-level, and its
   webhook is mapped via `client_state` (never `call_control_id`, which doesn't exist on that
   payload) → `mem.decisions`
 - Recording retention deletes via the `recording-retention` Edge Function's Storage API call,
   never a raw SQL `DELETE FROM storage.objects` → `mem.decisions`
+- B1-009's own text says dispositions reorder "persisting `sort_order`" -- the live column has
+  always been named `sort` (TASK-P3-E1); reorder persists to `sort`, not a renamed column →
+  `mem.decisions`
+- An existing org that had a pre-F-P1 disposition (e.g. `interested`/`dnc`/`voicemail`) now also
+  has the new canonical key alongside it (e.g. `yes_build_profile`/`do_not_call`/`voicemail_left`)
+  -- deliberately ADD-only, per the task's own instruction; an admin deactivates whichever set
+  they don't want via the existing Settings editor → `mem.decisions`

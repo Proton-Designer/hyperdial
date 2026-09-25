@@ -36,13 +36,15 @@ const FIXTURE_DISPOSITIONS: Disposition[] = [
   {
     id: '1',
     org_id: 'dev',
-    key: 'interested',
-    label: 'Interested',
+    key: 'yes_build_profile',
+    label: 'Yes - Build Profile',
     lead_effect: 'completed',
     ghl_tag: 'Interested',
     creates_task: false,
     sort: 10,
     active: true,
+    is_win: true,
+    required_fields: ['license_number', 'zips'],
   },
   {
     id: '2',
@@ -54,6 +56,8 @@ const FIXTURE_DISPOSITIONS: Disposition[] = [
     creates_task: false,
     sort: 20,
     active: true,
+    is_win: false,
+    required_fields: null,
   },
 ];
 
@@ -90,6 +94,7 @@ export function DialerStatesHarness() {
   }, [selectedState]);
 
   const fixtureLoadDispositions = () => Promise.resolve(FIXTURE_DISPOSITIONS);
+  const fixtureLoadHistory = () => Promise.resolve([]);
   const fixtureSubmitDisposition = async (): Promise<SubmitDispositionResult> => {
     const result: SubmitDispositionResult = {
       sessionId: 'dev-session',
@@ -155,7 +160,7 @@ export function DialerStatesHarness() {
         <ParallelDialerUI
           sessionState={selectedState}
           lines={3}
-          amdMode="on"
+          amdMode="premium"
           callsMade={7}
           connected={2}
           voicemail={1}
@@ -180,7 +185,11 @@ export function DialerStatesHarness() {
           key={wrapUpKey}
           sessionId="dev-session"
           legId="dev-leg"
-          contact={{ name: FIXTURE_CONTACTS[0].name, phone: FIXTURE_CONTACTS[0].phone }}
+          contact={{
+            id: FIXTURE_CONTACTS[0].id,
+            name: FIXTURE_CONTACTS[0].name,
+            phone: FIXTURE_CONTACTS[0].phone,
+          }}
           callDurationSeconds={135}
           onSubmitted={(result) => {
             setWrapUpResult(result);
@@ -189,6 +198,7 @@ export function DialerStatesHarness() {
           }}
           loadDispositions={fixtureLoadDispositions}
           submitWrapUp={fixtureSubmitDisposition}
+          loadHistory={fixtureLoadHistory}
         />
       )}
     </div>

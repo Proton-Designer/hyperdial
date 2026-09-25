@@ -153,6 +153,8 @@ export interface DashboardStats {
   /** null (render "—") when dialingHoursToday < 0.1 -- avoids a nonsense spike on a trivial
    *  denominator right after Go Ready. */
   conversationsPerHour: number | null;
+  /** TASK-F-P1: today's own legs whose disposition has is_win=true (personal, not org-wide). */
+  winsToday: number;
 }
 
 export async function getDashboardStats(): Promise<DashboardStats> {
@@ -749,7 +751,9 @@ export interface Campaign {
   last_called_at: string | null;
   /** Simultaneous outbound lines (design §7, TASK-P2-E1/P2-P2). */
   lines: number;
-  amd_mode: 'off' | 'on';
+  amd_mode: 'off' | 'detect' | 'detect_words' | 'premium';
+  /** TASK-F-T3 (VMD-4). Default 'first_attempt'. */
+  voicemail_drop_mode: 'first_attempt' | 'every_attempt' | 'never';
   /** Must belong to this campaign's own org -- enforced by a DB trigger (20260924000700). */
   caller_id_number_id: string | null;
   max_attempts: number;
@@ -858,7 +862,9 @@ export async function updateCampaignStatus(
 
 export interface CampaignSettingsInput {
   lines?: number;
-  amd_mode?: 'off' | 'on';
+  amd_mode?: 'off' | 'detect' | 'detect_words' | 'premium';
+  /** TASK-F-T3 (VMD-4). */
+  voicemail_drop_mode?: 'first_attempt' | 'every_attempt' | 'never';
   caller_id_number_id?: string | null;
   max_attempts?: number;
   retry_interval_minutes?: number;
@@ -1124,10 +1130,18 @@ export type CallLegState =
   | 'dropped'
   | 'abandoned'
   | 'machine'
+  | 'voicemail_dropping'
   | 'ended';
 
 export type CallLegOutcome =
-  'no_answer' | 'busy' | 'machine' | 'dropped' | 'abandoned' | 'failed' | 'connected';
+  | 'no_answer'
+  | 'busy'
+  | 'machine'
+  | 'dropped'
+  | 'abandoned'
+  | 'failed'
+  | 'connected'
+  | 'voicemail_left';
 
 export interface DialSessionRecord {
   id: string;
@@ -1136,7 +1150,7 @@ export interface DialSessionRecord {
   agent_id: string;
   state: DialSessionState;
   lines: number;
-  amd_mode: 'off' | 'on';
+  amd_mode: 'off' | 'detect' | 'detect_words' | 'premium';
   agent_leg_id: string | null;
   active_leg_id: string | null;
   conference_id: string | null;
@@ -1198,7 +1212,7 @@ export async function startDialerSession(args: {
   /** Overrides the campaign's own default `lines` (1-7) for this session only. */
   lines?: 1 | 2 | 3 | 4 | 5 | 6 | 7;
   /** Overrides the campaign's own default `amd_mode` for this session only. */
-  amdMode?: 'off' | 'on';
+  amdMode?: 'off' | 'detect' | 'detect_words' | 'premium';
 }): Promise<{ sessionId: string }> {
   const res = await fetch(`${getFunctionsUrl()}/dialer-session-start`, {
     method: 'POST',
@@ -1461,16 +1475,26 @@ export interface Disposition {
   creates_task: boolean;
   sort: number;
   active: boolean;
+  /** TASK-F-P1 (Wins): default true only for the seeded 'yes_build_profile'; org-editable at
+   *  creation time (see CreateDispositionInput) -- feeds the Dashboard's "Wins today" StatCard. */
+  is_win: boolean;
+  /** TASK-F-P1 (DSP-4): field names WrapUpModal must collect before this disposition can be
+   *  submitted. Only 'license_number' and 'zips' are actually wired up today. Set once at
+   *  creation, matching `key`/`lead_effect`'s own "not editable after creation" precedent below --
+   *  changing it later would retroactively reinterpret already-submitted dispositions. */
+  required_fields: string[] | null;
 }
 
 /** Every org's dispositions (including inactive ones -- the Settings editor lists both; the
- *  wrap-up form, once E4 lands, filters to active=true itself). RLS scopes this to the caller's
- *  own org regardless of the explicit .eq below (belt and suspenders, same as listCrmSyncJobs). */
+ *  wrap-up form filters to active=true itself). RLS scopes this to the caller's own org
+ *  regardless of the explicit .eq below (belt and suspenders, same as listCrmSyncJobs). */
 export async function listDispositions(): Promise<Disposition[]> {
   const orgId = await getActiveOrgId();
   const { data, error } = await supabase
     .from('dispositions')
-    .select('id, org_id, key, label, lead_effect, ghl_tag, creates_task, sort, active')
+    .select(
+      'id, org_id, key, label, lead_effect, ghl_tag, creates_task, sort, active, is_win, required_fields'
+    )
     .eq('org_id', orgId)
     .order('sort', { ascending: true });
   if (error) throw new Error(error.message);
@@ -1484,6 +1508,8 @@ export interface CreateDispositionInput {
   ghl_tag?: string | null;
   creates_task?: boolean;
   sort?: number;
+  is_win?: boolean;
+  required_fields?: string[] | null;
 }
 
 /** admin+ only (RLS-enforced) -- a straight insert through the `dispositions` table, no edge
@@ -1500,8 +1526,12 @@ export async function createDisposition(input: CreateDispositionInput): Promise<
       ghl_tag: input.ghl_tag ?? null,
       creates_task: input.creates_task ?? false,
       sort: input.sort ?? 0,
+      is_win: input.is_win ?? false,
+      required_fields: input.required_fields ?? null,
     })
-    .select('id, org_id, key, label, lead_effect, ghl_tag, creates_task, sort, active')
+    .select(
+      'id, org_id, key, label, lead_effect, ghl_tag, creates_task, sort, active, is_win, required_fields'
+    )
     .single();
   if (error) throw new Error(error.message);
   return data as Disposition;
@@ -1513,6 +1543,7 @@ export interface UpdateDispositionInput {
   creates_task?: boolean;
   sort?: number;
   active?: boolean;
+  is_win?: boolean;
 }
 
 /** `key` and `lead_effect` are intentionally not editable here -- crm_sync_jobs payloads and any
@@ -1537,6 +1568,10 @@ export interface SubmitDispositionInput {
   /** ISO 8601. Required by the backend only when the chosen disposition's lead_effect is
    *  'callback'; ignored otherwise. */
   callbackAt?: string;
+  /** TASK-F-P1 (DSP-4): required by the backend only when the chosen disposition's
+   *  `required_fields` names them; ignored otherwise. */
+  licenseNumber?: string;
+  zips?: string[];
 }
 
 export interface SubmitDispositionResult {
@@ -1547,9 +1582,7 @@ export interface SubmitDispositionResult {
   dialed: number;
 }
 
-/** The mandatory wrap-up form (E4, components/dialer/**, not built yet as of this task) will
- *  call this once submitted. Not used anywhere in the UI yet -- exported now so that work has
- *  a typed contract to build against without touching this file again. */
+/** Called by WrapUpModal once the agent submits the mandatory wrap-up form. */
 export async function submitDisposition(
   input: SubmitDispositionInput
 ): Promise<SubmitDispositionResult> {
@@ -1561,11 +1594,37 @@ export async function submitDisposition(
       dispositionKey: input.dispositionKey,
       notes: input.notes,
       callbackAt: input.callbackAt,
+      licenseNumber: input.licenseNumber,
+      zips: input.zips,
     }),
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || 'Failed to submit disposition');
   return data as SubmitDispositionResult;
+}
+
+export interface ContactDispositionHistoryEntry {
+  leg_id: string;
+  dispositioned_at: string;
+  agent_name: string;
+  disposition_label: string | null;
+  notes: string | null;
+  has_recording: boolean;
+}
+
+/** TASK-F-P1 (DSP-9): the last 3 dispositions for a contact, across every agent who's called
+ *  them, not just the caller's own sessions -- call_legs' own RLS ("agent can view own
+ *  call_legs") wouldn't allow that directly, so this goes through the
+ *  `contact_disposition_history` SECURITY DEFINER function instead (org-membership-checked
+ *  itself), same "front door read" shape as team-performance. */
+export async function listContactDispositionHistory(
+  contactId: string
+): Promise<ContactDispositionHistoryEntry[]> {
+  const { data, error } = await supabase.rpc('contact_disposition_history', {
+    p_contact_id: contactId,
+  });
+  if (error) throw new Error(error.message);
+  return (data ?? []) as ContactDispositionHistoryEntry[];
 }
 
 // --- Org-wide DNC list (TASK-F-T1, QUE-7/DSP-6) ---
@@ -1710,4 +1769,55 @@ export async function getRecordingUrl(callLegId: string): Promise<RecordingUrlRe
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || 'Recording not available');
   return data as RecordingUrlResult;
+}
+
+// --- Voicemail drop (TASK-F-T3, VMD-1) ---
+
+export interface VoicemailDropInfo {
+  hasFile: boolean;
+  url: string | null;
+  expiresInSeconds: number | null;
+}
+
+async function fetchVoicemailDrop(scope: 'self' | 'org'): Promise<VoicemailDropInfo> {
+  const res = await fetch(`${getFunctionsUrl()}/voicemail-upload?scope=${scope}`, {
+    method: 'GET',
+    headers: await getEdgeFunctionHeaders(),
+  });
+  if (res.status === 404) return { hasFile: false, url: null, expiresInSeconds: null };
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Failed to load voicemail drop');
+  return { hasFile: true, url: data.url, expiresInSeconds: data.expiresInSeconds };
+}
+
+/** The signed-in member's own voicemail-drop file, or `hasFile: false` if they haven't set one. */
+export function getMyVoicemailDrop(): Promise<VoicemailDropInfo> {
+  return fetchVoicemailDrop('self');
+}
+
+/** The org's default voicemail-drop file (owner/admin-set), readable by any member. */
+export function getOrgDefaultVoicemailDrop(): Promise<VoicemailDropInfo> {
+  return fetchVoicemailDrop('org');
+}
+
+async function uploadVoicemailDrop(scope: 'self' | 'org', file: File): Promise<VoicemailDropInfo> {
+  const headers = (await getEdgeFunctionHeaders()) as Record<string, string>;
+  const res = await fetch(`${getFunctionsUrl()}/voicemail-upload?scope=${scope}`, {
+    method: 'POST',
+    headers: { ...headers, 'Content-Type': file.type },
+    body: file,
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Upload failed');
+  return { hasFile: true, url: data.url, expiresInSeconds: data.expiresInSeconds };
+}
+
+/** Uploads (mp3/wav, <=5MB) the signed-in member's own voicemail-drop file. */
+export function uploadMyVoicemailDrop(file: File): Promise<VoicemailDropInfo> {
+  return uploadVoicemailDrop('self', file);
+}
+
+/** Owner/admin only server-side -- uploads the org's default voicemail-drop file. */
+export function uploadOrgDefaultVoicemailDrop(file: File): Promise<VoicemailDropInfo> {
+  return uploadVoicemailDrop('org', file);
 }

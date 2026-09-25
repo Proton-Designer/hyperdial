@@ -596,3 +596,55 @@ just needs to select it. Tracked as NOT-done in the task log, not silently dropp
 
 **Do not undo without understanding:** don't build a separate "recording available" boolean column -- `recording_path is not null` is already the single source
 of truth; a redundant flag would just be another thing to keep in sync.
+
+### TASK-F-P1 disposition-key renaming: ADD-only for existing orgs, never rename/migrate in place
+
+**Status:** Active · **Decided by:** eng1 (TASK-F-P1, 2026-09-25)
+
+**Context:** DSP-2's canonical 9-key set (`yes_build_profile`/`callback`/`not_interested`/`already_on_platform`/`wrong_number`/`gatekeeper`/`do_not_call`/
+`voicemail_left`/`no_answer`) renames 3 of TASK-P3-E1's original 7 keys (`interested`→`yes_build_profile`, `dnc`→`do_not_call`, `voicemail`→`voicemail_left`)
+and adds 2 new ones, resolving the gap TASK-F-T1's own decision record flagged ("if gatekeeper/already_on_platform are ever added to the seeded set, they'll
+silently start participating in retry-rule lookups... this was already designed for that").
+
+**Decision:** `seed_default_dispositions`/`seed_default_campaign_retry_rules` were redefined to the new key names for NEW orgs/campaigns. For EXISTING orgs/
+campaigns, the migration re-runs the (redefined) seed function against every existing row -- `on conflict (org_id, key) do nothing` means only the missing new
+keys get inserted; an org's old `interested`/`dnc`/`voicemail` rows (possibly already relabeled by that org) are left completely untouched. Chosen over an
+UPDATE-based rename because an org may have already customized a seeded row's label/ghl_tag/active state, and renaming in place would silently discard that
+customization with no way to recover it.
+
+**Do not undo without understanding:** every pre-F-P1 org now has BOTH the old and new key for `interested`/`dnc`/`voicemail`-family dispositions active
+simultaneously (e.g. "Interested / Meeting booked" AND "Yes - Build Profile" both selectable in the wrap-up modal) unless an admin deactivates one via
+Settings. This is deliberate, not a bug -- see known-issues.md. `gatekeeper`'s lead_effect is `queued` (retry, same 4-day rotate-block cadence as
+`no_answer`/`voicemail_left`) and `already_on_platform`'s is `exhausted` (no retry) -- both are eng1's own judgment calls, not from any literal spec text beyond
+the two key names themselves.
+
+### `submit_disposition`'s GHL payload carries `is_dnc` (derived from `lead_effect`), never the raw `disposition_key` string
+
+**Status:** Active · **Decided by:** eng1 (TASK-F-P1, 2026-09-25)
+
+**Context:** `ghl-sync-worker.ts`'s `processDispositionJob` used to gate `setDnd(...)` on `payload.disposition_key === 'dnc'`. Renaming the canonical DNC key
+to `do_not_call` (see above) would have silently stopped DND from ever being set for any NEW org, since their disposition's key is never literally `'dnc'`.
+
+**Decision:** `submit_disposition` now computes `'is_dnc', v_disposition.lead_effect = 'dnc'` into the enqueued job payload, and `processDispositionJob` checks
+`payload.is_dnc` instead of the key string. Works for a legacy `'dnc'`-keyed org, a new `'do_not_call'`-keyed org, and any future org-custom-named disposition
+with `lead_effect='dnc'`, with no special-casing anywhere.
+
+**Do not undo without understanding:** never reintroduce a literal disposition-key string comparison for a semantic property that's really about `lead_effect`
+-- dispositions are org-editable, so any hardcoded key string is one relabel away from silently breaking.
+
+### DSP-9's per-contact disposition history is a narrower, wrap-up-modal-scoped surface -- not a replacement for TASK-F-P4's touch-history strip
+
+**Status:** Active · **Decided by:** eng1 (TASK-F-P1, 2026-09-25)
+
+**Context:** the entry above this one (REC-5 scope-cut) deferred a general contact-history UI to TASK-F-P4. DSP-9 asks for something narrower: the wrap-up
+modal itself shows the last 3 dispositions for the contact being called right now.
+
+**Decision:** built `public.contact_disposition_history(p_contact_id)`, a SECURITY DEFINER function callable directly by any authenticated org member --
+NOT a service-role-only RPC like the dial-engine writes, because this is a same-shape "front door read" as team-performance, called straight from the browser
+client. It bypasses `call_legs`' own per-session RLS on purpose (an agent can only SELECT their own sessions' legs directly; this function checks org
+membership instead, since DSP-9 explicitly wants cross-agent history). `WrapUpModal` renders at most 3 entries with a recording play button
+(`getRecordingUrl`, on click, same function REC-5 already built) when `has_recording` is true.
+
+**Do not undo without understanding:** TASK-F-P4's own future touch-history strip (a fuller, contact-detail-page view, not modal-scoped) can and should reuse
+`contact_disposition_history` (just drop the `limit 3`, or add a param) rather than building a second, parallel cross-agent-history query -- the RLS-bypass
+reasoning above applies identically there.

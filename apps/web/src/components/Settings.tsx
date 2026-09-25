@@ -21,6 +21,9 @@ import {
   X,
   PhoneOff,
   Construction,
+  ChevronUp,
+  ChevronDown,
+  Trophy,
 } from 'lucide-react';
 import { usePhoneNumbers } from '@/contexts/PhoneNumbersContext';
 import { useAuth } from '@/contexts/AuthContext';
@@ -65,6 +68,11 @@ import {
   removeDncNumber,
   getRecordingEnabled,
   setRecordingEnabled,
+  getMyVoicemailDrop,
+  getOrgDefaultVoicemailDrop,
+  uploadMyVoicemailDrop,
+  uploadOrgDefaultVoicemailDrop,
+  type VoicemailDropInfo,
   type OrgMember,
   type GhlIntegrationStatus,
   type CrmSyncJob,
@@ -835,10 +843,14 @@ function DispositionsTab() {
   const [newLeadEffect, setNewLeadEffect] = useState<DispositionLeadEffect>('completed');
   const [newGhlTag, setNewGhlTag] = useState('');
   const [newCreatesTask, setNewCreatesTask] = useState(false);
+  const [newIsWin, setNewIsWin] = useState(false);
+  const [newRequiresLicense, setNewRequiresLicense] = useState(false);
+  const [newRequiresZips, setNewRequiresZips] = useState(false);
 
   const [editLabel, setEditLabel] = useState('');
   const [editGhlTag, setEditGhlTag] = useState('');
   const [editCreatesTask, setEditCreatesTask] = useState(false);
+  const [movingId, setMovingId] = useState<string | null>(null);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -903,11 +915,40 @@ function DispositionsTab() {
     }
   };
 
+  // B1-009: reorder via up/down (not drag-to-reorder -- the task file offers either). Persists to
+  // the live `sort` column (the task's own text says "sort_order"; the real column has always
+  // been named `sort` since TASK-P3-E1 -- see known-issues.md). Swaps the two neighbors' `sort`
+  // values so the ordering is a plain total order, same as every row's own creation-time spacing
+  // (10, 20, 30...). WrapUpModal's 1-9 shortcuts already follow `sort` (listDispositions orders by
+  // it), so this reorder takes effect there immediately on next load.
+  const moveDisposition = async (index: number, direction: -1 | 1) => {
+    const neighborIndex = index + direction;
+    if (neighborIndex < 0 || neighborIndex >= dispositions.length) return;
+    const current = dispositions[index];
+    const neighbor = dispositions[neighborIndex];
+    setMovingId(current.id);
+    setError(null);
+    try {
+      await Promise.all([
+        updateDisposition(current.id, { sort: neighbor.sort }),
+        updateDisposition(neighbor.id, { sort: current.sort }),
+      ]);
+      load();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setMovingId(null);
+    }
+  };
+
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
     setCreating(true);
     setError(null);
     try {
+      const requiredFields: string[] = [];
+      if (newRequiresLicense) requiredFields.push('license_number');
+      if (newRequiresZips) requiredFields.push('zips');
       await createDisposition({
         key: newKey.trim(),
         label: newLabel.trim(),
@@ -915,12 +956,17 @@ function DispositionsTab() {
         ghl_tag: newGhlTag.trim() || null,
         creates_task: newCreatesTask,
         sort: dispositions.length * 10 + 10,
+        is_win: newIsWin,
+        required_fields: requiredFields.length > 0 ? requiredFields : null,
       });
       setNewKey('');
       setNewLabel('');
       setNewLeadEffect('completed');
       setNewGhlTag('');
       setNewCreatesTask(false);
+      setNewIsWin(false);
+      setNewRequiresLicense(false);
+      setNewRequiresZips(false);
       setShowCreate(false);
       load();
     } catch (e) {
@@ -952,7 +998,7 @@ function DispositionsTab() {
       ) : (
         <div className="bg-surface-1 rounded-app-lg p-6 border border-border-subtle max-w-2xl">
           <div className="space-y-2 mb-4">
-            {dispositions.map((d) => (
+            {dispositions.map((d, index) => (
               <div key={d.id} className="py-3 border-b border-border-subtle last:border-0">
                 {editingId === d.id ? (
                   <div className="space-y-3">
@@ -1001,17 +1047,44 @@ function DispositionsTab() {
                   <div className="flex items-center justify-between gap-3">
                     <div className="min-w-0">
                       <div
-                        className={`text-sm font-medium ${d.active ? 'text-white' : 'text-text-secondary line-through'}`}
+                        className={`text-sm font-medium flex items-center gap-1.5 ${d.active ? 'text-white' : 'text-text-secondary line-through'}`}
                       >
                         {d.label}
+                        {d.is_win && (
+                          <Trophy
+                            className="w-3.5 h-3.5 text-warning flex-shrink-0"
+                            aria-label="Counts as a win"
+                          />
+                        )}
                       </div>
                       <div className="text-xs text-text-secondary mt-0.5">
                         {LEAD_EFFECT_LABEL[d.lead_effect]}
                         {d.ghl_tag ? ` · GHL tag "${d.ghl_tag}"` : ' · no GHL tag'}
                         {d.creates_task ? ' · creates task' : ''}
+                        {d.required_fields && d.required_fields.length > 0
+                          ? ` · requires ${d.required_fields.join(', ')}`
+                          : ''}
                       </div>
                     </div>
-                    <div className="flex items-center gap-2 flex-shrink-0">
+                    <div className="flex items-center gap-1 flex-shrink-0">
+                      <div className="flex flex-col">
+                        <button
+                          onClick={() => moveDisposition(index, -1)}
+                          disabled={index === 0 || movingId !== null}
+                          className="p-0.5 text-text-secondary hover:text-white disabled:opacity-30"
+                          title="Move up"
+                        >
+                          <ChevronUp className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          onClick={() => moveDisposition(index, 1)}
+                          disabled={index === dispositions.length - 1 || movingId !== null}
+                          className="p-0.5 text-text-secondary hover:text-white disabled:opacity-30"
+                          title="Move down"
+                        >
+                          <ChevronDown className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
                       <button
                         onClick={() => toggleActive(d)}
                         disabled={savingId === d.id}
@@ -1095,6 +1168,32 @@ function DispositionsTab() {
                 />
                 Creates a GHL task (only meaningful for a "Callback"-style effect)
               </label>
+              <label className="flex items-center gap-2 text-sm text-text-secondary">
+                <input
+                  type="checkbox"
+                  checked={newIsWin}
+                  onChange={(e) => setNewIsWin(e.target.checked)}
+                />
+                Counts as a win (Dashboard's "Wins today")
+              </label>
+              <div className="flex gap-4">
+                <label className="flex items-center gap-2 text-sm text-text-secondary">
+                  <input
+                    type="checkbox"
+                    checked={newRequiresLicense}
+                    onChange={(e) => setNewRequiresLicense(e.target.checked)}
+                  />
+                  Requires license number
+                </label>
+                <label className="flex items-center gap-2 text-sm text-text-secondary">
+                  <input
+                    type="checkbox"
+                    checked={newRequiresZips}
+                    onChange={(e) => setNewRequiresZips(e.target.checked)}
+                  />
+                  Requires ZIP codes
+                </label>
+              </div>
               <div className="flex gap-2">
                 <button
                   type="submit"
@@ -1194,6 +1293,108 @@ function RecordingSettingsCard() {
           />
           Record calls
         </label>
+      )}
+    </div>
+  );
+}
+
+/** TASK-F-T3 (VMD-1): one sub-card per scope ('self' -- every member; 'org' -- owner/admin
+ *  only). Both share the same upload/preview shape; only the loader/uploader functions differ. */
+function VoicemailDropSubCard({
+  title,
+  description,
+  load,
+  upload,
+}: {
+  title: string;
+  description: string;
+  load: () => Promise<VoicemailDropInfo>;
+  upload: (file: File) => Promise<VoicemailDropInfo>;
+}) {
+  const [info, setInfo] = useState<VoicemailDropInfo | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    load()
+      .then(setInfo)
+      .catch((e) => setError(String(e)))
+      .finally(() => setLoading(false));
+    // Only re-run if the loader identity itself changes (self vs org) -- not on every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleFile = async (file: File | undefined) => {
+    if (!file) return;
+    setError(null);
+    setUploading(true);
+    try {
+      const result = await upload(file);
+      setInfo(result);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  return (
+    <div className="border-t border-border-subtle pt-4 mt-4 first:border-0 first:pt-0 first:mt-0">
+      <h4 className="text-sm font-semibold text-white mb-1">{title}</h4>
+      <p className="text-xs text-text-secondary mb-3">{description}</p>
+      {error && <p className="text-sm text-danger mb-2">{error}</p>}
+      {loading ? (
+        <Skeleton className="h-9 w-full max-w-sm" />
+      ) : (
+        <div className="flex flex-col gap-2">
+          {info?.hasFile && info.url && (
+            <audio controls src={info.url} className="w-full max-w-sm h-9" />
+          )}
+          <label className="inline-flex items-center gap-2 px-3 py-2 bg-surface-2 border border-white/10 rounded-lg text-sm text-white cursor-pointer w-fit hover:bg-white/10">
+            {uploading ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+            {info?.hasFile ? 'Replace file (mp3/wav, max 5MB)' : 'Upload a file (mp3/wav, max 5MB)'}
+            <input
+              type="file"
+              accept="audio/mpeg,audio/mp3,audio/wav,audio/wave,audio/x-wav"
+              disabled={uploading}
+              className="hidden"
+              onChange={(e) => void handleFile(e.target.files?.[0])}
+            />
+          </label>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** TASK-F-T3 (VMD-1): "record-or-upload a file, playback preview, and the org default for
+ *  owner/admin." Every member manages their own drop; only owner/admin also sees the org
+ *  default sub-card. */
+function VoicemailDropCard() {
+  const { role } = useOrg();
+  const isAdmin = role === 'owner' || role === 'admin';
+
+  return (
+    <div className="bg-surface-1 rounded-app-lg p-6 border border-border-subtle max-w-2xl mt-6">
+      <h3 className="text-section-title text-text-primary mb-1">Voicemail drop</h3>
+      <p className="text-sm text-text-secondary mb-4">
+        Played automatically when the dialer detects an answering machine (campaign-dependent -- see
+        the campaign's own Dialer Settings for the voicemail mode and AMD mode).
+      </p>
+      <VoicemailDropSubCard
+        title="Your voicemail drop"
+        description="Used when you're the agent on the session, before falling back to the org default."
+        load={getMyVoicemailDrop}
+        upload={uploadMyVoicemailDrop}
+      />
+      {isAdmin && (
+        <VoicemailDropSubCard
+          title="Org default"
+          description="Used for any agent who hasn't set their own voicemail drop."
+          load={getOrgDefaultVoicemailDrop}
+          upload={uploadOrgDefaultVoicemailDrop}
+        />
       )}
     </div>
   );
@@ -1786,6 +1987,7 @@ export function Settings() {
                   )}
 
                   <RecordingSettingsCard />
+                  <VoicemailDropCard />
                 </motion.div>
               )}
 

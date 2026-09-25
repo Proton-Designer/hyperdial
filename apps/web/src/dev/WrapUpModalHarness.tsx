@@ -15,13 +15,15 @@ const FIXTURE_DISPOSITIONS: Disposition[] = [
   {
     id: '1',
     org_id: 'dev',
-    key: 'interested',
-    label: 'Interested',
+    key: 'yes_build_profile',
+    label: 'Yes - Build Profile',
     lead_effect: 'completed',
     ghl_tag: 'Interested',
     creates_task: false,
     sort: 10,
     active: true,
+    is_win: true,
+    required_fields: ['license_number', 'zips'],
   },
   {
     id: '2',
@@ -33,6 +35,8 @@ const FIXTURE_DISPOSITIONS: Disposition[] = [
     creates_task: true,
     sort: 20,
     active: true,
+    is_win: false,
+    required_fields: null,
   },
   {
     id: '3',
@@ -44,6 +48,8 @@ const FIXTURE_DISPOSITIONS: Disposition[] = [
     creates_task: false,
     sort: 30,
     active: true,
+    is_win: false,
+    required_fields: null,
   },
   {
     id: '4',
@@ -55,28 +61,34 @@ const FIXTURE_DISPOSITIONS: Disposition[] = [
     creates_task: false,
     sort: 40,
     active: true,
+    is_win: false,
+    required_fields: null,
   },
   {
     id: '5',
     org_id: 'dev',
-    key: 'dnc',
+    key: 'do_not_call',
     label: 'Do not call',
     lead_effect: 'dnc',
     ghl_tag: 'DNC',
     creates_task: false,
     sort: 50,
     active: true,
+    is_win: false,
+    required_fields: null,
   },
   {
     id: '6',
     org_id: 'dev',
-    key: 'voicemail',
+    key: 'voicemail_left',
     label: 'Left voicemail',
     lead_effect: 'queued',
     ghl_tag: null,
     creates_task: false,
     sort: 60,
     active: true,
+    is_win: false,
+    required_fields: null,
   },
   {
     id: '7',
@@ -88,6 +100,8 @@ const FIXTURE_DISPOSITIONS: Disposition[] = [
     creates_task: false,
     sort: 70,
     active: true,
+    is_win: false,
+    required_fields: null,
   },
   // Inactive on purpose: fixture proof that WrapUpModal filters to active=true itself.
   {
@@ -100,6 +114,8 @@ const FIXTURE_DISPOSITIONS: Disposition[] = [
     creates_task: false,
     sort: 80,
     active: false,
+    is_win: false,
+    required_fields: null,
   },
 ];
 
@@ -111,6 +127,26 @@ export function WrapUpModalHarness() {
   const [instanceKey, setInstanceKey] = useState(0);
 
   const fixtureLoad = () => Promise.resolve(FIXTURE_DISPOSITIONS);
+
+  const fixtureHistory = () =>
+    Promise.resolve([
+      {
+        leg_id: 'dev-leg-prev-1',
+        dispositioned_at: new Date(Date.now() - 2 * 86_400_000).toISOString(),
+        agent_name: 'Sam Rivera',
+        disposition_label: 'Left voicemail',
+        notes: 'No pickup, left a quick message.',
+        has_recording: false,
+      },
+      {
+        leg_id: 'dev-leg-prev-2',
+        dispositioned_at: new Date(Date.now() - 86_400_000).toISOString(),
+        agent_name: 'Jordan Ramirez',
+        disposition_label: 'Callback',
+        notes: 'Asked to call back this week.',
+        has_recording: true,
+      },
+    ]);
 
   const fixtureSubmit = async (): Promise<SubmitDispositionResult> => {
     if (failFirstAttempt && !hasFailedOnce) {
@@ -148,11 +184,12 @@ export function WrapUpModalHarness() {
         key={instanceKey}
         sessionId="dev-session"
         legId="dev-leg"
-        contact={{ name: 'Jordan Ramirez', phone: '+15125550100' }}
+        contact={{ id: 'dev-contact', name: 'Jordan Ramirez', phone: '+15125550100' }}
         callDurationSeconds={154}
         onSubmitted={setResult}
         loadDispositions={fixtureLoad}
         submitWrapUp={fixtureSubmit}
+        loadHistory={fixtureHistory}
       />
     </div>
   );

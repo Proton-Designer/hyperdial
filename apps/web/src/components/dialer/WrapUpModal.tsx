@@ -1,11 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { Play } from 'lucide-react';
 import {
   listDispositions,
   submitDisposition,
   getRecordingUrl,
+  listContactDispositionHistory,
   type Disposition,
   type SubmitDispositionResult,
+  type ContactDispositionHistoryEntry,
 } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 
@@ -73,7 +76,7 @@ const FOCUSABLE_SELECTOR =
 export interface WrapUpModalProps {
   sessionId: string;
   legId: string;
-  contact: { name: string; phone: string };
+  contact: { id: string | null; name: string; phone: string };
   callDurationSeconds?: number;
   onSubmitted: (result: SubmitDispositionResult) => void;
   /** Test/dev-only overrides (default to the real api.ts calls) -- lets the dev fixture harness
@@ -82,6 +85,95 @@ export interface WrapUpModalProps {
    * integration never passes these. */
   loadDispositions?: typeof listDispositions;
   submitWrapUp?: typeof submitDisposition;
+  loadHistory?: typeof listContactDispositionHistory;
+}
+
+/** DSP-9: the last 3 dispositions for this contact, across every agent. Recording playback is
+ * on-click, not auto-polled like the CURRENT call's RecordingButton -- a historical leg's
+ * recording either already exists or it doesn't (no "still processing" window to wait out). */
+function DispositionHistory({
+  contactId,
+  loadHistory = listContactDispositionHistory,
+}: {
+  contactId: string;
+  loadHistory?: typeof listContactDispositionHistory;
+}) {
+  const [entries, setEntries] = useState<ContactDispositionHistoryEntry[] | null>(null);
+  const [playingLegId, setPlayingLegId] = useState<string | null>(null);
+  const [playError, setPlayError] = useState<string | null>(null);
+  const [recordingUrl, setRecordingUrl] = useState<{ legId: string; url: string } | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    loadHistory(contactId)
+      .then((rows) => {
+        if (!cancelled) setEntries(rows);
+      })
+      .catch(() => {
+        if (!cancelled) setEntries([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [contactId, loadHistory]);
+
+  if (!entries || entries.length === 0) return null;
+
+  const handlePlay = async (legId: string) => {
+    setPlayError(null);
+    setPlayingLegId(legId);
+    try {
+      const result = await getRecordingUrl(legId);
+      setRecordingUrl({ legId, url: result.url });
+    } catch (e) {
+      setPlayError(e instanceof Error ? e.message : 'Recording not available');
+    } finally {
+      setPlayingLegId(null);
+    }
+  };
+
+  return (
+    <div>
+      <div className="block text-meta text-text-secondary mb-2">Previous calls</div>
+      <div className="space-y-2">
+        {entries.map((entry) => (
+          <div
+            key={entry.leg_id}
+            className="rounded-app-md border border-border-subtle bg-surface-2 px-3 py-2 text-body"
+          >
+            <div className="flex items-center justify-between gap-2 text-text-primary">
+              <span className="font-medium">{entry.disposition_label ?? 'No disposition'}</span>
+              <span className="text-meta text-text-muted whitespace-nowrap">
+                {new Date(entry.dispositioned_at).toLocaleDateString()} ·{' '}
+                {entry.agent_name || 'Agent'}
+              </span>
+            </div>
+            {entry.notes && <p className="text-meta text-text-secondary mt-1">{entry.notes}</p>}
+            {entry.has_recording && (
+              <div className="mt-1.5">
+                {recordingUrl?.legId === entry.leg_id ? (
+                  <audio controls src={recordingUrl.url} className="w-full h-8">
+                    <track kind="captions" />
+                  </audio>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => void handlePlay(entry.leg_id)}
+                    disabled={playingLegId === entry.leg_id}
+                    className="flex items-center gap-1 text-meta text-accent-to hover:underline disabled:opacity-50"
+                  >
+                    <Play className="w-3 h-3" />
+                    {playingLegId === entry.leg_id ? 'Loading…' : 'Play recording'}
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+      {playError && <p className="text-xs text-danger mt-1">{playError}</p>}
+    </div>
+  );
 }
 
 function formatDuration(totalSeconds: number): string {
@@ -141,12 +233,15 @@ export function WrapUpModal({
   onSubmitted,
   loadDispositions = listDispositions,
   submitWrapUp = submitDisposition,
+  loadHistory = listContactDispositionHistory,
 }: WrapUpModalProps) {
   const [dispositions, setDispositions] = useState<Disposition[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [notes, setNotes] = useState('');
   const [callbackLocal, setCallbackLocal] = useState('');
+  const [licenseNumber, setLicenseNumber] = useState('');
+  const [zipsRaw, setZipsRaw] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
@@ -190,7 +285,21 @@ export function WrapUpModal({
   const callbackIso = needsCallback ? localDateTimeToIso(callbackLocal) : null;
   const callbackValid =
     !needsCallback || (callbackIso !== null && new Date(callbackIso) > new Date());
-  const canSubmit = selected !== null && callbackValid && !submitting;
+
+  // DSP-4: a generic per-disposition required_fields check, client-side (the RPC re-checks this
+  // server-side regardless -- see the migration's own comment on why). Only two field names are
+  // actually wired up to a real input below: 'license_number' and 'zips'.
+  const requiredFields = selected?.required_fields ?? null;
+  const needsLicenseNumber = requiredFields?.includes('license_number') ?? false;
+  const needsZips = requiredFields?.includes('zips') ?? false;
+  const zipsList = zipsRaw
+    .split(',')
+    .map((z) => z.trim())
+    .filter(Boolean);
+  const requiredFieldsValid =
+    (!needsLicenseNumber || licenseNumber.trim().length > 0) && (!needsZips || zipsList.length > 0);
+
+  const canSubmit = selected !== null && callbackValid && requiredFieldsValid && !submitting;
 
   const handleSubmit = async () => {
     if (!selected || submitting) return;
@@ -206,6 +315,14 @@ export function WrapUpModal({
       }
       freshCallbackIso = iso;
     }
+    if (needsLicenseNumber && !licenseNumber.trim()) {
+      setSubmitError('License number is required for this disposition.');
+      return;
+    }
+    if (needsZips && zipsList.length === 0) {
+      setSubmitError('At least one ZIP code is required for this disposition.');
+      return;
+    }
     setSubmitting(true);
     setSubmitError(null);
     try {
@@ -214,6 +331,8 @@ export function WrapUpModal({
         dispositionKey: selected.key,
         notes: notes.trim() || undefined,
         callbackAt: freshCallbackIso,
+        licenseNumber: needsLicenseNumber ? licenseNumber.trim() : undefined,
+        zips: needsZips ? zipsList : undefined,
       });
       onSubmitted(result);
       // Deliberately do not reset local state here: the parent unmounts this component once
@@ -284,7 +403,17 @@ export function WrapUpModal({
     return () => window.removeEventListener('keydown', handler);
     // handleSubmit itself is intentionally not a dep: it's redefined every render from the same
     // state already listed below, so listing it too would just be redundant, not more correct.
-  }, [dispositions, selected, notes, callbackLocal, submitting, needsCallback, callbackIso]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [
+    dispositions,
+    selected,
+    notes,
+    callbackLocal,
+    submitting,
+    needsCallback,
+    callbackIso,
+    licenseNumber,
+    zipsRaw,
+  ]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return createPortal(
     <div
@@ -328,6 +457,8 @@ export function WrapUpModal({
           )}
 
           <RecordingButton legId={legId} />
+
+          {contact.id && <DispositionHistory contactId={contact.id} loadHistory={loadHistory} />}
 
           {dispositions && (
             <div>
@@ -387,6 +518,39 @@ export function WrapUpModal({
               {callbackLocal && !callbackValid && (
                 <p className="text-xs text-danger mt-1">Callback time must be in the future.</p>
               )}
+            </div>
+          )}
+
+          {needsLicenseNumber && (
+            <div>
+              <label htmlFor="wrapup-license" className="block text-meta text-text-secondary mb-1">
+                License number (required)
+              </label>
+              <input
+                id="wrapup-license"
+                type="text"
+                value={licenseNumber}
+                onChange={(e) => setLicenseNumber(e.target.value)}
+                className="w-full bg-surface-2 border border-border-subtle rounded-app-md px-4 py-3 text-text-primary focus:outline-none focus:border-accent-to"
+                placeholder="e.g. TX-LIC-12345"
+              />
+            </div>
+          )}
+
+          {needsZips && (
+            <div>
+              <label htmlFor="wrapup-zips" className="block text-meta text-text-secondary mb-1">
+                ZIP codes served (required)
+              </label>
+              <input
+                id="wrapup-zips"
+                type="text"
+                value={zipsRaw}
+                onChange={(e) => setZipsRaw(e.target.value)}
+                className="w-full bg-surface-2 border border-border-subtle rounded-app-md px-4 py-3 text-text-primary focus:outline-none focus:border-accent-to"
+                placeholder="e.g. 78701, 78702"
+              />
+              <p className="text-xs text-text-muted mt-1">Comma-separated.</p>
             </div>
           )}
 

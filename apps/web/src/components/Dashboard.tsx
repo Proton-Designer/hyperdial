@@ -1,6 +1,15 @@
 import { useState, useEffect, useCallback } from 'react';
 import { motion, useReducedMotion } from 'motion/react';
-import { Phone, Target, Clock, MessagesSquare, Upload, Plus, PhoneCall } from 'lucide-react';
+import {
+  Phone,
+  Target,
+  Clock,
+  MessagesSquare,
+  Upload,
+  Plus,
+  PhoneCall,
+  Trophy,
+} from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
 import { PageHeader } from '@/components/app/PageHeader';
@@ -65,6 +74,7 @@ export function Dashboard({
     conversationsToday: number;
     dialingHoursToday: number;
     conversationsPerHour: number | null;
+    winsToday: number;
   } | null>(null);
   const [statsLoading, setStatsLoading] = useState(true);
   const [statsError, setStatsError] = useState<string | null>(null);
@@ -97,6 +107,7 @@ export function Dashboard({
           conversationsToday: data.conversationsToday,
           dialingHoursToday: data.dialingHoursToday,
           conversationsPerHour: data.conversationsPerHour,
+          winsToday: data.winsToday,
         })
       )
       .catch((e) => setStatsError(e instanceof Error ? e.message : String(e)))
@@ -175,6 +186,11 @@ export function Dashboard({
         'Contact calls bridged to you and talked for 30 seconds or more, divided by hours spent in an active dialing session today.',
     },
     {
+      icon: Trophy,
+      label: 'Wins today',
+      value: statsError ? '—' : String(stats?.winsToday ?? 0),
+    },
+    {
       icon: Clock,
       label: 'Talk time',
       value: statsError ? '—' : (stats?.talkTimeFormatted ?? '0m'),
@@ -220,7 +236,7 @@ export function Dashboard({
       {/* Compact stat row -- 2x2 on mobile, 4-across from md up. Shares one shape between the
           loading and loaded states (StatCard renders its own skeleton via `loading`), so nothing
           shifts once the real values land. */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3 mb-6">
         {metrics.map((metric, index) => (
           <motion.div
             key={metric.label}

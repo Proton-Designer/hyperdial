@@ -54,19 +54,20 @@ mock data, no empty-by-construction tables, as of TASK-P4-P1.
 | **Conversation** (TASK-M1) | A contact leg with `outcome = 'connected'` and `duration_seconds >= 30`. Losing/abandoned/machine legs never get a `duration_seconds` at all (not 0) — the connected gate is on `outcome`, not `state`. |
 | **Dialing hours (today)** (`dialing_hours_today(org_id, agent_id)` RPC) | `sum(coalesce(ended_at, now()) - started_at)`, clipped to `[start of today, now]`, over the agent's `dial_sessions` — **includes a still-RUNNING session** (unlike `dial_session_hours` below, which only counts ended ones), so the number is live during the day, not just after a session ends. "Today" is midnight **America/Chicago** — no org has a timezone column yet (checked every migration); this is a hardcoded default until one exists. |
 | **Conversations / hr** (TASK-M1, replaces the old "Revenue Pipeline" Dashboard card) | `conversations / dialing_hours_today`, rounded to 1 decimal, or `null` (UI renders "—") when `dialing_hours_today < 0.1` — avoids a nonsense spike right after Go Ready. Pure math lives in `_shared/analytics-core.ts` (`computeConversationsPerHour`/`isConversation`), unit-tested directly since `dashboard-stats/index.ts` itself has no test file (no Edge Function `index.ts` in this repo does). |
+| **Wins (today)** (TASK-F-P1) | Count of today's own `call_leg_analytics` rows where `is_win = true` — `dispositions.is_win` (new column, default false, true for the seeded `yes_build_profile`), joined into the view as `coalesce(d.is_win, false)`. Same today+own-agent scoping as every other `dashboard-stats` field; the Dashboard's 5th StatCard. |
 
 ## Where the code lives
 
 | What | Path | Notes |
 |---|---|---|
 | The two views | `supabase/migrations/20260924002400_analytics_real_data.sql` | `security_invoker=on` — RLS on `call_legs`/`dial_sessions` (already agent-vs-admin scoped) is what actually enforces visibility, not a filter re-implemented here |
-| Today's metrics | `supabase/functions/dashboard-stats/index.ts` | Single-user (every role sees only their own numbers — this is the personal daily widget, not team-performance's org-wide rollup), UTC day for the existing fields; TASK-M1 adds `conversationsToday`/`dialingHoursToday`/`conversationsPerHour` |
+| Today's metrics | `supabase/functions/dashboard-stats/index.ts` | Single-user (every role sees only their own numbers — this is the personal daily widget, not team-performance's org-wide rollup), UTC day for the existing fields; TASK-M1 adds `conversationsToday`/`dialingHoursToday`/`conversationsPerHour`, TASK-F-P1 adds `winsToday` |
 | Conversations/hr math | `supabase/functions/_shared/analytics-core.ts` | Pure, deno-tested (`analytics-core.test.ts`) — the 30s conversation gate and the 0.1h floor rule live here, not inline in the handler |
 | Duration write + dialing-hours RPC | `supabase/migrations/20260925020000_call_legs_duration_conversations.sql` | `bridged_at` column, `transition_leg`/`reap_dead_claimed_leg` updated to write `duration_seconds`, new `dialing_hours_today(org_id, agent_id)` function |
 | Trend chart | `supabase/functions/team-performance/index.ts` | Day buckets, 7d/30d/custom, same response shape as before |
 | **New**: full Analytics backend | `supabase/functions/analytics-summary/index.ts` | Totals + period-over-period deltas, call volume, disposition breakdown, agent leaderboard |
 | Weekly recap job | `supabase/functions/ensure-week-summary/index.ts` | Fridays only, unchanged shape |
-| **Real** Dashboard UI | `apps/web/src/components/Dashboard.tsx` | TASK-M1: the 4th hero card ("Revenue Pipeline", hardcoded "Coming soon") is now "Conversations / hr" with a subtext line and an info tooltip |
+| **Real** Dashboard UI | `apps/web/src/components/Dashboard.tsx` | TASK-M1: the 4th hero card ("Revenue Pipeline", hardcoded "Coming soon") is now "Conversations / hr" with a subtext line and an info tooltip. TASK-F-P1 adds a 5th card, "Wins today" (5-across at `xl:` 1280px+, wraps to 3-across below that, 2×2 on mobile) |
 | **Real** Analytics UI | `apps/web/src/components/Analytics.tsx` | Full rewrite — real data, loading + empty states, a 7d/30d toggle |
 | Client contract | `apps/web/src/lib/api.ts` | `DashboardStats`/`TeamPerformancePoint` unchanged; `AnalyticsSummary` new |
 | Notification bell | `apps/web/src/components/TopNavigation.tsx` | Unchanged |

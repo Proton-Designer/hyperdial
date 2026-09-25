@@ -26,6 +26,10 @@ interface SubmitDispositionBody {
   dispositionKey?: string;
   notes?: string;
   callbackAt?: string;
+  /** TASK-F-P1 (DSP-1/DSP-4): only actually required server-side when the chosen disposition's
+   *  `required_fields` names them -- submit_disposition itself validates that, not this layer. */
+  licenseNumber?: string;
+  zips?: string[];
 }
 
 function jsonResponse(status: number, payload: Record<string, unknown>): Response {
@@ -65,6 +69,11 @@ Deno.serve(async (req) => {
       }
       callbackAt = parsed.toISOString();
     }
+    const licenseNumber = body.licenseNumber?.trim() || null;
+    const zips =
+      Array.isArray(body.zips) && body.zips.length > 0
+        ? body.zips.map((z) => z.trim()).filter(Boolean)
+        : null;
 
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL')!,
@@ -100,6 +109,8 @@ Deno.serve(async (req) => {
         p_disposition: dispositionKey,
         p_notes: notes,
         p_callback_at: callbackAt,
+        p_license_number: licenseNumber,
+        p_zips: zips,
       })
       .single();
     if (rpcError) {

@@ -33,7 +33,7 @@ export interface BatchContactPreview {
  *  needs to render (it takes contact/duration as plain values, not a whole leg row). */
 export interface WrapUpLegInfo {
   legId: string;
-  contact: { name: string; phone: string };
+  contact: { id: string | null; name: string; phone: string };
   callDurationSeconds?: number;
 }
 
@@ -107,7 +107,7 @@ export function useDialerSession(initialSessionId: string | null = null) {
     async (args: {
       campaignId: string;
       lines?: 1 | 2 | 3 | 4 | 5 | 6 | 7;
-      amdMode?: 'off' | 'on';
+      amdMode?: 'off' | 'detect' | 'detect_words' | 'premium';
     }) => {
       setState((prev) => ({ ...prev, loading: true, error: null }));
       try {
@@ -233,6 +233,7 @@ export function useDialerSession(initialSessionId: string | null = null) {
       ? {
           legId: wrapUpLegRow.id,
           contact: {
+            id: wrapUpLegRow.contact_id,
             name: contactName(wrapUpLegRow),
             phone: wrapUpLegRow.contact?.phone_number ?? '',
           },

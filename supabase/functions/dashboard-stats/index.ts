@@ -38,7 +38,7 @@ Deno.serve(async (req) => {
 
     const { data: legsToday, error: legsError } = await supabase
       .from('call_leg_analytics')
-      .select('is_connected, duration_seconds')
+      .select('is_connected, duration_seconds, is_win')
       .eq('org_id', orgId)
       .eq('agent_id', userId)
       .gte('created_at', todayStartStr)
@@ -47,6 +47,9 @@ Deno.serve(async (req) => {
 
     const list = legsToday ?? [];
     const callsToday = list.length;
+    // TASK-F-P1 (Wins): a "win" (dispositions.is_win) among today's own legs -- same today+
+    // per-agent scoping as every other card on this personal daily widget, not an org-wide count.
+    const winsToday = list.filter((r: { is_win: boolean }) => r.is_win).length;
     const connectedCount = list.filter((r) => r.is_connected).length;
     const connectRate = callsToday > 0 ? Math.round((connectedCount / callsToday) * 1000) / 10 : 0;
     const talkTimeSeconds = list
@@ -82,6 +85,7 @@ Deno.serve(async (req) => {
       conversationsToday,
       dialingHoursToday: Math.round(dialingHoursToday * 10) / 10,
       conversationsPerHour,
+      winsToday,
     });
   } catch (err) {
     console.error('dashboard-stats error:', err);

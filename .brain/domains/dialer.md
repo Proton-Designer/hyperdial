@@ -220,6 +220,42 @@ logic has to live inside the exact same atomic writes those functions already do
   `dnc_numbers` for the org, in addition to (never merged with) the existing `not ct.dnc` check —
   see `.brain/domains/contacts.md` for why the two signals are deliberately independent.
 
+## Dispositions v2 (TASK-F-P1): canonical 9-key set, required fields, wins, history
+
+Migration `20260925060000_dispositions_v2.sql`. `submit_disposition`'s signature changed (two new
+trailing params), so the old 6-arg overload is explicitly `drop function`-ed first — see
+`mem.decisions` for why key renaming for EXISTING orgs is add-only, never an in-place rename.
+
+- **Canonical keys**: `yes_build_profile`/`callback`/`not_interested`/`already_on_platform`/
+  `wrong_number`/`gatekeeper`/`do_not_call`/`voicemail_left`/`no_answer` — `private
+  .seed_default_dispositions`/`private.seed_default_campaign_retry_rules` both seed this set now
+  (org-creation / campaign-creation triggers, same shape as before). `gatekeeper` is `queued`
+  (retry, same rotate-block cadence as `no_answer`/`voicemail_left`); `already_on_platform` is
+  `exhausted` (no retry) — both eng1 judgment calls, see `mem.decisions`.
+- **`dispositions.required_fields text[]`** (DSP-4): a generic "these extra fields must be filled
+  before this disposition can be submitted" list. Only two field names are actually wired up:
+  `license_number`, `zips` (both text on `call_legs`, `zips` a `text[]`). Enforced in
+  `submit_disposition` itself (raises if missing) AND client-side in `WrapUpModal` (the `canSubmit`
+  gate) — same "server is authoritative, client just improves UX" split as the pre-existing
+  `callback_at` requirement. `yes_build_profile` is seeded with both required; nothing else is.
+  On a successful submit, both are written to the leg AND merged (via `||`, never overwriting
+  other keys) into `contacts.custom_fields jsonb` — a new column, `'{}'::jsonb` default.
+- **`dispositions.is_win boolean`** (Wins): true only for the seeded `yes_build_profile` by
+  default, org-editable at creation time (Settings' create form; not editable after, same
+  "immutable after creation" precedent as `key`/`lead_effect`). `call_leg_analytics` (the
+  Dashboard/Analytics view) gained a trailing `is_win` column (`coalesce(d.is_win, false)`);
+  `dashboard-stats/index.ts` sums it into `winsToday`, the Dashboard's 5th StatCard.
+- **`contact_disposition_history(p_contact_id)`** (DSP-9): a SECURITY DEFINER function, callable
+  directly by any authenticated org member (not service-role-only) — see `mem.decisions` for why
+  it deliberately bypasses `call_legs`' own per-session agent RLS. Returns the last 3 dispositions
+  for a contact across every agent, each with `agent_name`/`disposition_label`/`notes`/
+  `has_recording`. `WrapUpModal` renders it above the disposition picker; a "Play recording"
+  button calls `getRecordingUrl` (REC-5's function) on click, not on mount.
+- **`submit_disposition`'s GHL payload gains `is_dnc` (derived from `lead_effect`, never the key
+  string)** — see `mem.decisions`; `ghl-sync-worker.ts`'s DND step checks `payload.is_dnc`, not
+  `disposition_key === 'dnc'`. Also gains `license_number`/`zips` (carried for F-P2 to map to GHL
+  custom fields; `buildDispositionNote` already appends them as extra note lines today).
+
 ## Integration points
 
 | Direction | With | Via |

@@ -5,6 +5,7 @@ import {
   processContactUpsertJob,
   processDispositionJob,
   processNurtureTagJob,
+  processTagJob,
   type DispositionPayload,
 } from './ghl-sync-worker.ts';
 
@@ -28,6 +29,9 @@ const PAYLOAD: DispositionPayload = {
   duration_seconds: 142,
   recording_url: 'https://example.com/rec/1',
   transcript_excerpt: 'Hello, this is Jane calling about...',
+  license_number: null,
+  zips: null,
+  is_dnc: false,
 };
 
 Deno.test('buildDispositionNote: includes every provided field', () => {
@@ -290,7 +294,9 @@ Deno.test(
 );
 
 Deno.test(
-  'processDispositionJob: disposition_key "dnc" sets DND; anything else never calls setDnd',
+  'processDispositionJob: is_dnc=true sets DND; is_dnc=false never calls setDnd, ' +
+    'regardless of disposition_key (TASK-F-P1: a legacy "dnc" org and a new "do_not_call" ' +
+    'org must both work -- the key string is never consulted)',
   async () => {
     const dndCalls: string[] = [];
     const restore = stubFetch((url, init) => {
@@ -305,27 +311,49 @@ Deno.test(
         locationId: 'loc-1',
         ghlContactId: null,
         contactFields: { firstName: null, lastName: null, phone: '+14155552671' },
-        payload: { ...PAYLOAD, disposition_key: 'interested' },
+        payload: { ...PAYLOAD, disposition_key: 'interested', is_dnc: false },
         progress: {},
       });
       assertEquals(nonDnc.ok, true);
       assertEquals(dndCalls.length, 0);
 
-      const dnc = await processDispositionJob({
+      const legacyDnc = await processDispositionJob({
         client,
         locationId: 'loc-1',
         ghlContactId: 'ghl-2',
         contactFields: { firstName: null, lastName: null, phone: '+14155552672' },
-        payload: { ...PAYLOAD, disposition_key: 'dnc' },
+        payload: { ...PAYLOAD, disposition_key: 'dnc', is_dnc: true },
         progress: {},
       });
-      assertEquals(dnc.ok, true);
+      assertEquals(legacyDnc.ok, true);
       assertEquals(dndCalls.length, 1);
+
+      const newDoNotCall = await processDispositionJob({
+        client,
+        locationId: 'loc-1',
+        ghlContactId: 'ghl-3',
+        contactFields: { firstName: null, lastName: null, phone: '+14155552673' },
+        payload: { ...PAYLOAD, disposition_key: 'do_not_call', is_dnc: true },
+        progress: {},
+      });
+      assertEquals(newDoNotCall.ok, true);
+      assertEquals(dndCalls.length, 2);
     } finally {
       restore();
     }
   }
 );
+
+Deno.test('buildDispositionNote: includes license_number and zips when present', () => {
+  const withFields: DispositionPayload = {
+    ...PAYLOAD,
+    license_number: 'TX-LIC-99182',
+    zips: ['78701', '78702'],
+  };
+  const note = buildDispositionNote(withFields);
+  assertEquals(note.includes('License #: TX-LIC-99182'), true);
+  assertEquals(note.includes('ZIPs served: 78701, 78702'), true);
+});
 
 Deno.test(
   'processDispositionJob: no phone and not yet linked fails cleanly before any GHL call',
@@ -485,6 +513,96 @@ Deno.test(
       assertEquals(result.ok, false);
       assertEquals(result.resolvedGhlContactId, null);
       assertEquals(result.progress.upserted, undefined);
+      assertEquals(tagCalls, 0);
+    } finally {
+      restore();
+    }
+  }
+);
+
+// ---------------------------------------------------------------------------
+// processTagJob (TASK-F-T3, VMD-3/GHL-9) -- same shape as processNurtureTagJob, tag from payload
+// ---------------------------------------------------------------------------
+
+Deno.test('processTagJob: already linked, already tagged is a full no-op', async () => {
+  let calls = 0;
+  const restore = stubFetch(() => {
+    calls++;
+    return Response.json({});
+  });
+  try {
+    const client: GhlClient = createGhlClient('tok');
+    const result = await processTagJob({
+      client,
+      locationId: 'loc-1',
+      ghlContactId: 'ghl-already',
+      contactFields: { firstName: null, lastName: null, phone: '+14155552671' },
+      tag: 'call:voicemail-1',
+      progress: { upserted: true, tag_added: true },
+    });
+    assertEquals(result.ok, true);
+    assertEquals(result.resolvedGhlContactId, 'ghl-already');
+    assertEquals(calls, 0);
+  } finally {
+    restore();
+  }
+});
+
+Deno.test(
+  'processTagJob: unlinked contact upserts first, then pushes the EXACT tag from the payload',
+  async () => {
+    let taggedWith: string[] | null = null;
+    const restore = stubFetch((url, init) => {
+      if (url.includes('/contacts/upsert'))
+        return Response.json({ new: true, contact: { id: 'ghl-fresh' } });
+      if (url.includes('/tags')) {
+        taggedWith = JSON.parse(String(init?.body)).tags;
+        return Response.json({});
+      }
+      return Response.json({});
+    });
+    try {
+      const client: GhlClient = createGhlClient('tok');
+      const result = await processTagJob({
+        client,
+        locationId: 'loc-1',
+        ghlContactId: null,
+        contactFields: { firstName: 'Bob', lastName: null, phone: '+14155552672' },
+        tag: 'call:no-answer-3',
+        progress: {},
+      });
+      assertEquals(result.ok, true);
+      assertEquals(result.resolvedGhlContactId, 'ghl-fresh');
+      assertEquals(taggedWith, ['call:no-answer-3']);
+    } finally {
+      restore();
+    }
+  }
+);
+
+Deno.test(
+  'processTagJob: upsert failure returns ok:false, never calls the tag endpoint',
+  async () => {
+    let tagCalls = 0;
+    const restore = stubFetch((url) => {
+      if (url.includes('/tags')) {
+        tagCalls++;
+        return Response.json({});
+      }
+      return new Response('server error', { status: 500 });
+    });
+    try {
+      const client: GhlClient = createGhlClient('tok');
+      const result = await processTagJob({
+        client,
+        locationId: 'loc-1',
+        ghlContactId: null,
+        contactFields: { firstName: 'Bob', lastName: null, phone: '+14155552673' },
+        tag: 'call:voicemail-1',
+        progress: {},
+      });
+      assertEquals(result.ok, false);
+      assertEquals(result.resolvedGhlContactId, null);
       assertEquals(tagCalls, 0);
     } finally {
       restore();
