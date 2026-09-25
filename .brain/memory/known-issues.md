@@ -1012,9 +1012,14 @@ genuinely separate browser processes/machines).
 - `supabase/functions/_shared/analytics-core.ts` (new): pure `isConversation`/
   `computeConversationsPerHour`, deno-tested directly, since Edge Function `index.ts` handlers
   have no test files of their own in this repo (`dashboard-stats/index.ts` just calls in).
-- Deferred, not wired: `Analytics.tsx`'s per-agent table is still fully mock data (CLAUDE.md's
-  own known-issue, unchanged) -- a real "Conv/hr" column there needs a per-agent breakdown
-  `team-performance`/`analytics-summary` don't return today.
+- ~~Deferred, not wired: `Analytics.tsx`'s per-agent table is still fully mock data~~ -- **stale,
+  checked 2026-09-25 (TASK-B1 Phase 4):** `analytics-summary/index.ts` already computes and
+  returns a real `agentPerformance` array (calls/connections/rate per agent, real `profiles`
+  names) and `Analytics.tsx` renders it with no mock data left in the file. What's still true: no
+  per-agent Conv/hr (agent-hours) breakdown exists, only calls/connections/rate -- that part of
+  this note was accurate, the "still fully mock data" framing was not (by the time this was
+  written or since, superseded either way). CLAUDE.md's own paragraph corrected in the same
+  commit.
 - Checks: `deno test` 240 -> 247 (0 failed); `npm run check`/`npm run build` clean.
   `supabase/tests/dialer_sweeper.sql` extended with `duration_seconds` assertions on the reap
   path (NEEDS-LIVE-VERIFY, same as the rest of that file -- local Docker is retired). The new
