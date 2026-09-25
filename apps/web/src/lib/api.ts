@@ -320,6 +320,113 @@ export async function getSpendStatus(): Promise<SpendStatus> {
   return data as SpendStatus;
 }
 
+// --- TASK-BF1: add funds + auto-recharge (owner AND admin) ---
+
+export type AutoRechargePreference = 'credit_paypal' | 'ach';
+
+export interface AutoRechargePrefs {
+  id: string | null;
+  enabled: boolean;
+  thresholdAmountUsd: number;
+  rechargeAmountUsd: number;
+  invoiceEnabled: boolean;
+  preference: AutoRechargePreference;
+}
+
+export type BillingInfo =
+  | {
+      available: true;
+      balanceUsd: number;
+      availableCreditUsd: number;
+      autoRecharge: AutoRechargePrefs;
+    }
+  | { available: false; reason: string };
+
+/** Owner/admin only. Live balance + auto-recharge prefs -- both need the org's own decrypted
+ *  Telnyx key, hence an Edge Function (same reason getSpendStatus needs one). `available: false`
+ *  is a normal, displayable state (Telnyx not connected, or a transient API error), not a thrown
+ *  error -- same convention as getSpendStatus. */
+export async function getBillingInfo(): Promise<BillingInfo> {
+  const res = await fetch(`${getFunctionsUrl()}/telnyx-billing`, {
+    method: 'POST',
+    headers: await getEdgeFunctionHeaders(),
+    body: JSON.stringify({ action: 'get' }),
+  });
+  const data = await res.json();
+  if (!res.ok) return { available: false, reason: data.error || 'Failed to load billing info' };
+  return { available: true, ...data };
+}
+
+export class BillingActionError extends Error {
+  code?: string;
+  constructor(message: string, code?: string) {
+    super(message);
+    this.name = 'BillingActionError';
+    this.code = code;
+  }
+}
+
+export async function updateAutoRecharge(
+  prefs: Omit<AutoRechargePrefs, 'id'>
+): Promise<AutoRechargePrefs> {
+  const res = await fetch(`${getFunctionsUrl()}/telnyx-billing`, {
+    method: 'POST',
+    headers: await getEdgeFunctionHeaders(),
+    body: JSON.stringify({ action: 'update_auto_recharge', ...prefs }),
+  });
+  const data = await res.json();
+  if (!res.ok)
+    throw new BillingActionError(data.error || 'Failed to update auto-recharge', data.code);
+  return data.autoRecharge as AutoRechargePrefs;
+}
+
+export interface AddFundsResult {
+  transactionId: string | null;
+  balanceUsd: number | null;
+  availableCreditUsd: number | null;
+}
+
+/** `idempotencyKey`: generate ONE `crypto.randomUUID()` when the confirm dialog opens and reuse
+ *  it for every attempt of that same charge (including a retry after a network error) -- the
+ *  server refuses a second charge under the same key (org-scoped unique constraint,
+ *  org_billing_events). Never generate a new key for a "try again" click on the SAME charge. */
+export async function addFunds(amountUsd: number, idempotencyKey: string): Promise<AddFundsResult> {
+  const res = await fetch(`${getFunctionsUrl()}/telnyx-billing`, {
+    method: 'POST',
+    headers: await getEdgeFunctionHeaders(),
+    body: JSON.stringify({ action: 'add_funds', amountUsd, idempotencyKey }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new BillingActionError(data.error || 'Failed to add funds', data.code);
+  return data as AddFundsResult;
+}
+
+export interface BillingEvent {
+  id: string;
+  user_id: string | null;
+  kind: 'add_funds' | 'auto_recharge_update';
+  amount_usd: number | null;
+  status: 'pending' | 'succeeded' | 'failed';
+  telnyx_transaction_id: string | null;
+  error: string | null;
+  created_at: string;
+}
+
+/** Direct RLS read (owner/admin SELECT-only policy, org_billing_events) -- no Edge Function
+ *  needed, same "member/admin read... no edge function" shape as getSpendSettings, since this
+ *  needs no live Telnyx call. */
+export async function listRecentBillingEvents(): Promise<BillingEvent[]> {
+  const orgId = await getActiveOrgId();
+  const { data, error } = await supabase
+    .from('org_billing_events')
+    .select('id, user_id, kind, amount_usd, status, telnyx_transaction_id, error, created_at')
+    .eq('org_id', orgId)
+    .order('created_at', { ascending: false })
+    .limit(10);
+  if (error) throw new Error(error.message);
+  return (data as BillingEvent[]) ?? [];
+}
+
 export async function searchPhoneNumbers(areaCode: string, countryCode = 'US') {
   const params = new URLSearchParams({ area_code: areaCode, country_code: countryCode });
   const res = await fetch(`${getFunctionsUrl()}/telnyx-search-numbers?${params}`, {

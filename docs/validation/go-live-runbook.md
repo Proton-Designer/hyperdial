@@ -21,11 +21,19 @@ dialing by itself — you'll only see a warning once it drops below your
 low-balance alert threshold ($2 by default, step 7 below). Fund it anyway
 before your team's first real day: Telnyx itself will decline calls once the
 balance actually hits zero, and you don't want that discovered mid-campaign.
-Go to your Telnyx portal (`portal.telnyx.com`) → Billing → add funds. There's
-no fixed "right" amount; a rough rule of thumb is a few weeks of expected
-spend so you're not topping up every few days. You'll set a spend cap and
-low-balance alert inside HyperDial itself in step 7 below — the spend cap is
-the only thing that actually blocks dialing.
+Go to your Telnyx portal (`portal.telnyx.com`) → Billing → add a payment
+method (card, PayPal, or bank account) and add funds. There's no fixed
+"right" amount; a rough rule of thumb is a few weeks of expected spend so
+you're not topping up every few days. You'll set a spend cap and low-balance
+alert inside HyperDial itself in step 7 below — the spend cap is the only
+thing that actually blocks dialing.
+
+This first top-up has to happen in the Telnyx portal directly — there's no
+API to add a payment method itself. Every top-up AFTER this one can be done
+without leaving HyperDial: once Telnyx is connected (step 3) and a payment
+method is on file, Settings → Telephony → Spend & Billing → **Add funds**
+charges that same saved payment method directly (owner or admin, either can
+do it) — see step 7 below.
 
 **Expect:** Telnyx's own dashboard shows the new balance immediately.
 
@@ -119,7 +127,7 @@ specific intern needs a dedicated line (e.g. for callback consistency).
 
 **Expect:** the row updates immediately; reload confirms it persisted.
 
-## 7. Set the spend cap and low-balance alert
+## 7. Set the spend cap and low-balance alert, and set up ongoing funding
 
 Settings → Telephony → scroll to "Spend & Billing" (only appears once step 3
 is done). Set:
@@ -133,8 +141,26 @@ is done). Set:
   Once this month's estimated spend hits it, Go Ready and buying new
   numbers are both refused. Leave blank for no cap.
 
+For ongoing funding, the same card (owner OR admin, either can do this) has:
+
+- **Add funds** — presets ($10/$25/$50/$100) or a custom amount ($5-$1,000
+  per charge), charged to the payment method you already added in step 1.
+  A confirm step shows the exact amount before anything is charged. At most
+  one successful charge every 60 seconds and $2,000 total per rolling 24
+  hours, so a mis-click can't run away.
+- **Auto-recharge** — turn it on to skip manual top-ups entirely: set "When
+  my balance drops below $X, add $Y" and a payment source (card/PayPal or
+  bank/ACH). Telnyx tops up automatically once the balance crosses your
+  threshold — the actual amount added is whatever it takes to reach the
+  threshold, PLUS the "add" amount (that's Telnyx's own math, not a flat
+  top-up).
+- **Recent billing activity** — the last 10 add-funds charges and
+  auto-recharge changes, who did each one and when.
+
 **Expect:** the current balance and this month's estimated spend both show
-real numbers (not errors); your saved values persist on reload.
+real numbers (not errors); your saved values persist on reload; an Add Funds
+charge shows up in the Telnyx portal's own transaction history within a
+minute.
 
 ## 8. Connect GHL and set the tag lists (optional — skip if you don't use GHL)
 
@@ -208,6 +234,10 @@ behaviors that most affect what an intern actually experiences:
 6. **Section B16** — inbound callback routing, if your numbers are set up
    to receive calls back from prospects. Needs a real inbound call from a
    personal cell phone to the org's own number.
+7. **Section B18** — one real Add Funds charge at the smallest amount, and
+   turning auto-recharge on/off, confirmed against the Telnyx portal's own
+   balance and settings (this is the direct real-money version of step 7
+   above). Real money — do this once, not repeatedly.
 
 Do these as the actual org owner/admin and an actual intern, not the QA
 sandbox accounts — real Telnyx calls, real balance, real GHL contacts if

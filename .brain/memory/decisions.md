@@ -1006,3 +1006,77 @@ is the safe failure direction, but it also means "the field won't save" is the e
 to look for, not a mystery bug. And never add a second broad, role-unscoped self-row UPDATE
 policy to any table without re-deriving whether every column it exposes is meant to be
 self-writable -- that is exactly the mistake this entry fixes.
+
+## TASK-BF1 -- Add funds + auto-recharge from inside HyperDial (owner AND admin), 2026-09-25
+
+**User order (verbatim):** "go ahead and fully build out/integrate the add funds capbilty and the
+abilty to turn on auto-recharge and control its settings as well like when it should auto
+recharge, adn this capabilty should be avaiable for admins as well not just owner." HIGH risk
+(charges real money on the customer's own stored payment method) -- built with Telnyx entirely
+mocked in every test; the live dry-run (SQL only) and one real minimum-amount charge are the
+lead's/owner's own responsibility, never run from here.
+
+**Decision 1 -- verified live against spec3.json, 2026-09-25** (curled directly, not WebFetch,
+same reason as every other Telnyx-spec citation in this file -- large specs get silently
+truncated): `POST /v2/payment/stored_payment_transactions` (`StoredPaymentTransactionRequest`:
+`{amount: "120.00"}`, a decimal string) and `GET`/`PATCH /payment/auto_recharge_prefs`
+(`AutoRechargePref(Request)`: `threshold_amount`/`recharge_amount` decimal strings, `enabled`/
+`invoice_enabled` booleans, `preference` enum `credit_paypal | ach`). The servers block is
+`https://api.telnyx.com/v2` -- every OTHER path in the spec is relative to that (e.g.
+`/payment/auto_recharge_prefs`), but the charge endpoint's own path literal is
+`/v2/payment/stored_payment_transactions`, uniquely re-embedding the `/v2` the base URL already
+ends in. `_shared/telnyx-client.ts`'s `addFunds` passes the DE-PREFIXED path
+(`/payment/stored_payment_transactions`) to avoid a real `.../v2/v2/...` 404 -- proven by a
+client-level test asserting the exact resulting URL, not just that SOME request went out.
+Neither endpoint documents a min/max on the amount fields at all (plain decimal strings, no
+`minimum`/`maximum` keywords in the schema) -- the $5-$1,000 add-funds bounds and the
+$10-$5,000 auto-recharge-amount bounds are this task's own suggested defaults, not a Telnyx
+limit. (Preset UI buttons were later changed by the user mid-build to $10/$25/$50/$100 -- since
+$10 is still above the $5 server-side floor, no validation-bound change was needed, only the UI
+constant.)
+
+**Decision 2 -- idempotency + rate limiting live in a new audit table, `org_billing_events`
+(migration `20260925080300`), not in application memory.** Same "owner/admin SELECT-only, no
+client writes, service-role only" shape as `crm_sync_jobs` (`20260924000900`) -- RLS enabled with
+only a SELECT policy and zero INSERT/UPDATE/DELETE policies is sufficient for a base TABLE (unlike
+the `security_invoker=false` VIEW bug `20260925080000` fixed -- a view's owner-privilege bypass on
+write never applies here, this is a plain table, RLS enforcement applies directly to the caller).
+A `(org_id, idempotency_key)` unique partial index (`where idempotency_key is not null`) makes the
+uniqueness PER ORG, not global, and lets every `auto_recharge_update` row (no charge, so no key)
+coexist freely. The row is inserted `'pending'` BEFORE the Telnyx call and flipped to
+`'succeeded'`/`'failed'` after -- a crash mid-charge leaves a visible pending row, never a silent
+double charge; a client retry with the SAME idempotency key hits the unique constraint (23505) and
+is refused WITHOUT a second Telnyx call, proven in `billing-core.test.ts` by asserting the fake
+Telnyx client's call count stays 0.
+
+**Decision 3 -- the orchestration logic (validation, rate limits, idempotency, the pending->
+succeeded/failed transitions) was pulled out of `telnyx-billing/index.ts` into a new
+`_shared/billing-core.ts`, breaking this repo's own stated convention that no Edge Function
+`index.ts` has a test file (see `spend-estimate.ts`'s header).** `Deno.serve` runs as an
+import-time side effect, so `index.ts` itself can never be imported by a test -- same "pure/
+testable core, thin HTTP shell" split as `dialer-engine.ts`/`inbound-engine.ts`. This one earns
+the split (unlike `telnyx-purchase-number`/`telnyx-spend-status`, which stay thin with no core
+module) because the task's OWN verification list explicitly required deno tests for idempotency
+and the pending/succeeded/failed audit-row behavior -- orchestration-level behavior no pure-math
+module alone could prove.
+
+**Decision 4 -- rate limits are enforced by querying `org_billing_events` directly in the request
+path (two `SELECT`s per `add_funds` call: a 60s-window succeeded-row lookup, a 24h-window
+succeeded-sum), not a separate counter/cache table.** At this feature's expected call volume
+(a human clicking "Add funds," not a hot loop), the extra reads are cheap; a wrong/stale counter
+that silently drifts from the audit table's own ground truth would be worse than the read cost.
+
+**Decision 5 -- error mapping (`mapTelnyxBillingError`) is best-effort keyword matching on HTTP
+status + the error body's `detail` text, not a verified enum.** Telnyx's spec documents the SHAPE
+of `ErrorResponse` (`{errors: [{code, title, detail, ...}]}`) but not the exact wording for a
+declined card / missing payment method / forbidden key on THIS specific endpoint -- 401/403 maps
+to `FORBIDDEN_KEY`, a 422 containing "declin..." maps to `CARD_DECLINED`, a 422 mentioning
+"payment method" maps to `NO_PAYMENT_METHOD`, anything else surfaces the raw Telnyx detail text
+rather than guessing wrong. Verify this mapping against a REAL declined-card response the first
+time a live charge actually fails, and correct the keyword matching then if it under/over-matches.
+
+**Do not undo without understanding:** never call `client.addFunds`/`updateAutoRechargePrefs` with
+an unvalidated amount/threshold -- `runAddFundsAction`/`runUpdateAutoRechargeAction`
+(`_shared/billing-core.ts`) are the ONLY call sites that validate first; a new caller that
+imports `_shared/telnyx-client.ts` directly and skips `_shared/billing-validation.ts` would charge
+an arbitrary amount with no idempotency/rate-limit protection at all.

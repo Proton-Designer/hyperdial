@@ -38,6 +38,13 @@ if (devHarness?.has('dev_wrapup')) {
   import('./dev/WebrtcRetryHarness.tsx').then(({ WebrtcRetryHarness }) => {
     root.render(<WebrtcRetryHarness />);
   });
+} else if (devHarness?.has('dev_billing')) {
+  // TASK-BF1: AddFundsDialog/AutoRechargeSection/RecentBillingActivity against fixture data, no
+  // live Telnyx/DB. `?dev_billing=1` (`&dev_billing_error=card_declined|no_payment_method|
+  // forbidden_key|rate_limited` to exercise an add-funds error state).
+  import('./dev/BillingHarness.tsx').then(({ BillingHarness }) => {
+    root.render(<BillingHarness />);
+  });
 } else {
   root.render(<App />);
 }

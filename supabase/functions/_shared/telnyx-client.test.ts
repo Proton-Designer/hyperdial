@@ -1,7 +1,9 @@
 import { assertEquals } from 'jsr:@std/assert@1';
 import {
   amdModeToTelnyxValue,
+  buildAddFundsPayload,
   buildAnswerPayload,
+  buildAutoRechargePrefsPayload,
   buildDialPayload,
   buildPlaybackStartPayload,
   buildRecordStartPayload,
@@ -665,3 +667,193 @@ Deno.test('createTelnyxClient: a non-2xx response throws with the status and bod
     restore();
   }
 });
+
+// ---------------------------------------------------------------------------
+// TASK-BF1: add funds + auto-recharge
+// ---------------------------------------------------------------------------
+
+Deno.test(
+  'buildAutoRechargePrefsPayload: amounts as 2-decimal strings, fields pass through',
+  () => {
+    assertEquals(
+      buildAutoRechargePrefsPayload({
+        enabled: true,
+        thresholdAmountUsd: 20,
+        rechargeAmountUsd: 104.5,
+        invoiceEnabled: false,
+        preference: 'credit_paypal',
+      }),
+      {
+        enabled: true,
+        threshold_amount: '20.00',
+        recharge_amount: '104.50',
+        invoice_enabled: false,
+        preference: 'credit_paypal',
+      }
+    );
+  }
+);
+
+Deno.test('buildAddFundsPayload: formats the amount to exactly 2 decimals', () => {
+  assertEquals(buildAddFundsPayload(25), { amount: '25.00' });
+  assertEquals(buildAddFundsPayload(104.5), { amount: '104.50' });
+});
+
+Deno.test(
+  'createTelnyxClient.getAutoRechargePrefs: hits GET /payment/auto_recharge_prefs and parses the response',
+  async () => {
+    let seenUrl = '';
+    let seenMethod = '';
+    const restore = stubFetch((url, init) => {
+      seenUrl = url;
+      seenMethod = init?.method ?? 'GET';
+      return new Response(
+        JSON.stringify({
+          data: {
+            id: 'pref-1',
+            threshold_amount: '20.00',
+            recharge_amount: '100.00',
+            enabled: true,
+            invoice_enabled: false,
+            preference: 'ach',
+          },
+        }),
+        { status: 200 }
+      );
+    });
+    try {
+      const result = await createTelnyxClient('test-api-key').getAutoRechargePrefs();
+      assertEquals(seenUrl, 'https://api.telnyx.com/v2/payment/auto_recharge_prefs');
+      assertEquals(seenMethod, 'GET');
+      assertEquals(result, {
+        id: 'pref-1',
+        enabled: true,
+        thresholdAmountUsd: 20,
+        rechargeAmountUsd: 100,
+        invoiceEnabled: false,
+        preference: 'ach',
+      });
+    } finally {
+      restore();
+    }
+  }
+);
+
+Deno.test(
+  'createTelnyxClient.updateAutoRechargePrefs: PATCHes /payment/auto_recharge_prefs with the request payload',
+  async () => {
+    let seenUrl = '';
+    let seenMethod = '';
+    let seenBody = '';
+    const restore = stubFetch((url, init) => {
+      seenUrl = url;
+      seenMethod = init?.method ?? 'GET';
+      seenBody = String(init?.body ?? '');
+      return new Response(
+        JSON.stringify({
+          data: {
+            id: 'pref-1',
+            threshold_amount: '15.00',
+            recharge_amount: '50.00',
+            enabled: true,
+            invoice_enabled: true,
+            preference: 'credit_paypal',
+          },
+        }),
+        { status: 200 }
+      );
+    });
+    try {
+      const result = await createTelnyxClient('test-api-key').updateAutoRechargePrefs({
+        enabled: true,
+        thresholdAmountUsd: 15,
+        rechargeAmountUsd: 50,
+        invoiceEnabled: true,
+        preference: 'credit_paypal',
+      });
+      assertEquals(seenUrl, 'https://api.telnyx.com/v2/payment/auto_recharge_prefs');
+      assertEquals(seenMethod, 'PATCH');
+      assertEquals(JSON.parse(seenBody), {
+        enabled: true,
+        threshold_amount: '15.00',
+        recharge_amount: '50.00',
+        invoice_enabled: true,
+        preference: 'credit_paypal',
+      });
+      assertEquals(result.thresholdAmountUsd, 15);
+      assertEquals(result.rechargeAmountUsd, 50);
+    } finally {
+      restore();
+    }
+  }
+);
+
+Deno.test(
+  'createTelnyxClient.addFunds: hits /payment/stored_payment_transactions, NOT /v2/payment/... (no doubled /v2)',
+  async () => {
+    let seenUrl = '';
+    let seenMethod = '';
+    let seenBody = '';
+    const restore = stubFetch((url, init) => {
+      seenUrl = url;
+      seenMethod = init?.method ?? 'GET';
+      seenBody = String(init?.body ?? '');
+      return new Response(
+        JSON.stringify({
+          data: {
+            id: 'txn-1',
+            record_type: 'transaction',
+            amount_cents: 2500,
+            processor_status: 'succeeded',
+            amount_currency: 'USD',
+            auto_recharge: false,
+            transaction_processing_type: 'stored_payment',
+          },
+        }),
+        { status: 200 }
+      );
+    });
+    try {
+      const result = await createTelnyxClient('test-api-key').addFunds(25);
+      assertEquals(seenUrl, 'https://api.telnyx.com/v2/payment/stored_payment_transactions');
+      assertEquals(seenUrl.includes('v2/v2'), false);
+      assertEquals(seenMethod, 'POST');
+      assertEquals(JSON.parse(seenBody), { amount: '25.00' });
+      assertEquals(result, {
+        transactionId: 'txn-1',
+        amountCents: 2500,
+        processorStatus: 'succeeded',
+      });
+    } finally {
+      restore();
+    }
+  }
+);
+
+Deno.test(
+  'createTelnyxClient.addFunds: a card-declined 422 throws with the status and detail intact',
+  async () => {
+    const restore = stubFetch(
+      () =>
+        new Response(
+          JSON.stringify({
+            errors: [{ code: '40010', title: 'Payment declined', detail: 'card declined' }],
+          }),
+          { status: 422 }
+        )
+    );
+    try {
+      const client = createTelnyxClient('test-api-key');
+      let message = '';
+      try {
+        await client.addFunds(25);
+      } catch (err) {
+        message = err instanceof Error ? err.message : String(err);
+      }
+      assertEquals(message.includes('422'), true);
+      assertEquals(message.includes('declined'), true);
+    } finally {
+      restore();
+    }
+  }
+);

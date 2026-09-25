@@ -1,5 +1,8 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { createPortal } from 'react-dom';
+import { toast } from 'sonner';
 import { motion } from 'motion/react';
+import { useFocusTrap } from '@/hooks/useFocusTrap';
 import {
   User,
   Phone,
@@ -83,9 +86,17 @@ import {
   updateInboundSettings,
   getMyForwardNumber,
   setMyForwardNumber,
+  getBillingInfo,
+  updateAutoRecharge,
+  addFunds,
+  listRecentBillingEvents,
+  BillingActionError,
   type NumberPoolSettings,
   type SpendSettings,
   type SpendStatus,
+  type AutoRechargePrefs,
+  type AutoRechargePreference,
+  type BillingEvent,
   type InboundSettings,
   type VoicemailDropInfo,
   type OrgMember,
@@ -2001,6 +2012,414 @@ function NumberPoolCard() {
   );
 }
 
+const ADD_FUNDS_PRESETS_USD = [10, 25, 50, 100];
+const MIN_ADD_FUNDS_USD = 5;
+const MAX_ADD_FUNDS_USD = 1000;
+
+/** TASK-BF1 (user order: "fully build out/integrate the add funds capbilty"): presets + custom
+ *  amount -> a confirm step -> the actual charge. Same hand-rolled portal/focus-trap/motion modal
+ *  shape as AddContactModal.tsx/ParallelDialerUI.tsx's StopConfirmDialog (this codebase's real
+ *  dialog convention -- the shadcn AlertDialog primitive under ui/ is unused scaffolding).
+ *  `idempotencyKey` is generated once, the moment the CONFIRM step is entered, and reused for
+ *  every attempt of that same charge (a retry after a network error must reuse it, never mint a
+ *  new one) -- the server refuses a second charge under the same key. */
+export function AddFundsDialog({
+  open,
+  onClose,
+  onSuccess,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onSuccess: () => void;
+}) {
+  const [step, setStep] = useState<'select' | 'confirm'>('select');
+  const [preset, setPreset] = useState<number>(ADD_FUNDS_PRESETS_USD[0]);
+  const [useCustom, setUseCustom] = useState(false);
+  const [customAmount, setCustomAmount] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const idempotencyKeyRef = useRef<string | null>(null);
+  const modalRef = useRef<HTMLDivElement>(null);
+  const cancelButtonRef = useRef<HTMLButtonElement>(null);
+  useFocusTrap(modalRef, open);
+
+  const resolvedAmount = useCustom ? Number(customAmount) : preset;
+  const validAmount =
+    Number.isFinite(resolvedAmount) &&
+    resolvedAmount >= MIN_ADD_FUNDS_USD &&
+    resolvedAmount <= MAX_ADD_FUNDS_USD;
+
+  // The confirm step's default focus must be Cancel, not the charge button -- useFocusTrap's own
+  // auto-focus only fires once, on the open:false->true transition (still on the select step at
+  // that point), so this re-focuses explicitly on every entry into the confirm step.
+  useEffect(() => {
+    if (step === 'confirm') cancelButtonRef.current?.focus();
+  }, [step]);
+
+  const reset = () => {
+    setStep('select');
+    setPreset(ADD_FUNDS_PRESETS_USD[0]);
+    setUseCustom(false);
+    setCustomAmount('');
+    setError(null);
+    idempotencyKeyRef.current = null;
+  };
+
+  const handleClose = () => {
+    if (submitting) return;
+    reset();
+    onClose();
+  };
+
+  const handleContinue = () => {
+    if (!validAmount) return;
+    idempotencyKeyRef.current = crypto.randomUUID();
+    setStep('confirm');
+  };
+
+  const handleConfirm = async () => {
+    if (!validAmount || submitting) return;
+    setSubmitting(true);
+    setError(null);
+    try {
+      // Reuse the SAME key across retries of this one charge -- never mint a new one here.
+      if (!idempotencyKeyRef.current) idempotencyKeyRef.current = crypto.randomUUID();
+      const result = await addFunds(resolvedAmount, idempotencyKeyRef.current);
+      toast.success(
+        `$${resolvedAmount.toFixed(2)} added` +
+          (result.balanceUsd !== null ? ` -- new balance $${result.balanceUsd.toFixed(2)}` : '')
+      );
+      onSuccess();
+      reset();
+      onClose();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to add funds');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  if (!open) return null;
+
+  return createPortal(
+    <div
+      className="fixed inset-0 flex items-center justify-center p-4"
+      style={{ zIndex: 10000 }}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="add-funds-title"
+    >
+      <div className="absolute inset-0 bg-black/60" onClick={handleClose} aria-hidden="true" />
+      <motion.div
+        ref={modalRef}
+        tabIndex={-1}
+        initial={{ opacity: 0, scale: 0.95 }}
+        animate={{ opacity: 1, scale: 1 }}
+        className="relative z-[1] w-full max-w-sm rounded-app-lg border border-border-subtle bg-surface-1 p-5 shadow-app-md outline-none"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h2 id="add-funds-title" className="text-page-title text-text-primary mb-4">
+          Add funds
+        </h2>
+
+        {error && (
+          <div className="mb-4 p-3 rounded-app-md bg-danger/10 border border-danger/30 text-danger text-sm">
+            {error}
+          </div>
+        )}
+
+        {step === 'select' ? (
+          <>
+            <div className="grid grid-cols-2 gap-2 mb-3">
+              {ADD_FUNDS_PRESETS_USD.map((p) => (
+                <button
+                  key={p}
+                  type="button"
+                  onClick={() => {
+                    setUseCustom(false);
+                    setPreset(p);
+                  }}
+                  className={cn(
+                    'rounded-app-md border px-4 py-3 text-body font-medium',
+                    !useCustom && preset === p
+                      ? 'border-accent-to bg-accent-to/10 text-white'
+                      : 'border-border-subtle bg-surface-2 text-text-secondary hover:border-accent-to/50'
+                  )}
+                >
+                  ${p}
+                </button>
+              ))}
+            </div>
+            <label className="flex items-center gap-2 text-meta text-text-secondary mb-1">
+              <input
+                type="checkbox"
+                checked={useCustom}
+                onChange={(e) => setUseCustom(e.target.checked)}
+              />
+              Custom amount
+            </label>
+            <input
+              type="number"
+              min={MIN_ADD_FUNDS_USD}
+              max={MAX_ADD_FUNDS_USD}
+              step="0.01"
+              disabled={!useCustom}
+              value={customAmount}
+              onChange={(e) => setCustomAmount(e.target.value)}
+              placeholder={`$${MIN_ADD_FUNDS_USD} - $${MAX_ADD_FUNDS_USD}`}
+              className="w-full mb-4 bg-surface-2 border border-border-subtle rounded-app-md px-3 py-2 text-white placeholder:text-text-muted focus:outline-none focus:border-accent-to disabled:opacity-50"
+            />
+            <div className="flex justify-end gap-2">
+              <Button variant="fe-ghost" onClick={handleClose}>
+                Cancel
+              </Button>
+              <Button variant="primary" onClick={handleContinue} disabled={!validAmount}>
+                Continue
+              </Button>
+            </div>
+          </>
+        ) : (
+          <>
+            <p className="text-body text-text-secondary mb-5">
+              Charge ${resolvedAmount.toFixed(2)} to the payment method saved in your Telnyx
+              account?
+            </p>
+            <div className="flex flex-col sm:flex-row sm:justify-end gap-2">
+              <Button
+                ref={cancelButtonRef}
+                variant="fe-ghost"
+                onClick={handleClose}
+                disabled={submitting}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                onClick={handleConfirm}
+                disabled={submitting}
+                loading={submitting}
+              >
+                Confirm charge
+              </Button>
+            </div>
+          </>
+        )}
+      </motion.div>
+    </div>,
+    document.body
+  );
+}
+
+const AUTO_RECHARGE_PREFERENCE_LABELS: Record<AutoRechargePreference, string> = {
+  credit_paypal: 'Card / PayPal on file',
+  ach: 'Bank account (ACH)',
+};
+
+/** TASK-BF1: Telnyx's own `auto_recharge_prefs` (account-level state, not an org_spend_settings
+ *  row) -- enable/disable + threshold/recharge-amount/payment-source. Saves on every change, same
+ *  convention as every other input in this file (SpendSettingsCard's own cap/alert fields
+ *  immediately above). Owner+admin both get a live, editable card -- disabled read-only for
+ *  neither, since this whole tab is already owner/admin-only at the route level. */
+export function AutoRechargeSection({ isAdmin }: { isAdmin: boolean }) {
+  const [prefs, setPrefs] = useState<AutoRechargePrefs | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    getBillingInfo()
+      .then((info) => {
+        if (info.available) {
+          setPrefs(info.autoRecharge);
+        } else {
+          setError(info.reason);
+        }
+      })
+      .catch((e) => setError(e instanceof Error ? e.message : String(e)))
+      .finally(() => setLoading(false));
+  }, []);
+
+  const handleSave = async (next: AutoRechargePrefs) => {
+    setPrefs(next);
+    setSaving(true);
+    setError(null);
+    try {
+      const saved = await updateAutoRecharge({
+        enabled: next.enabled,
+        thresholdAmountUsd: next.thresholdAmountUsd,
+        rechargeAmountUsd: next.rechargeAmountUsd,
+        invoiceEnabled: next.invoiceEnabled,
+        preference: next.preference,
+      });
+      setPrefs(saved);
+    } catch (e) {
+      setError(
+        e instanceof BillingActionError ? e.message : 'Failed to save auto-recharge settings'
+      );
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="bg-surface-1 rounded-app-lg p-6 border border-border-subtle mt-6">
+      <h3 className="text-body font-medium text-text-primary mb-4">Auto-recharge</h3>
+
+      {error && (
+        <div className="mb-4 p-3 rounded-app-md bg-danger/10 border border-danger/30 text-danger text-sm">
+          {error}
+        </div>
+      )}
+
+      {loading ? (
+        <ListSkeleton rows={1} />
+      ) : prefs ? (
+        <div className="space-y-4">
+          <label className="flex items-center gap-3">
+            <input
+              type="checkbox"
+              checked={prefs.enabled}
+              disabled={saving || !isAdmin}
+              onChange={(e) => void handleSave({ ...prefs, enabled: e.target.checked })}
+            />
+            <span className="text-body text-text-primary">Enabled</span>
+          </label>
+
+          <div className="flex flex-wrap gap-6 items-end">
+            <div>
+              <label className="block text-meta text-text-secondary mb-1">
+                When my balance drops below ($)
+              </label>
+              <input
+                type="number"
+                min={0}
+                step="0.01"
+                value={prefs.thresholdAmountUsd}
+                disabled={saving || !isAdmin}
+                onChange={(e) =>
+                  void handleSave({
+                    ...prefs,
+                    thresholdAmountUsd: Math.max(0, Number(e.target.value) || 0),
+                  })
+                }
+                className="w-40 bg-surface-2 border border-white/10 rounded-app-md px-3 py-2 text-white focus:outline-none focus:border-accent-to disabled:opacity-60"
+              />
+            </div>
+            <div>
+              <label className="block text-meta text-text-secondary mb-1">add ($)</label>
+              <input
+                type="number"
+                min={10}
+                max={5000}
+                step="0.01"
+                value={prefs.rechargeAmountUsd}
+                disabled={saving || !isAdmin}
+                onChange={(e) =>
+                  void handleSave({
+                    ...prefs,
+                    rechargeAmountUsd: Math.max(10, Number(e.target.value) || 10),
+                  })
+                }
+                className="w-40 bg-surface-2 border border-white/10 rounded-app-md px-3 py-2 text-white focus:outline-none focus:border-accent-to disabled:opacity-60"
+              />
+            </div>
+            <div>
+              <label className="block text-meta text-text-secondary mb-1">Payment source</label>
+              <select
+                value={prefs.preference}
+                disabled={saving || !isAdmin}
+                onChange={(e) =>
+                  void handleSave({
+                    ...prefs,
+                    preference: e.target.value as AutoRechargePreference,
+                  })
+                }
+                className="w-56 bg-surface-2 border border-white/10 rounded-app-md px-3 py-2 text-white focus:outline-none focus:border-accent-to disabled:opacity-60"
+              >
+                <option value="credit_paypal">
+                  {AUTO_RECHARGE_PREFERENCE_LABELS.credit_paypal}
+                </option>
+                <option value="ach">{AUTO_RECHARGE_PREFERENCE_LABELS.ach}</option>
+              </select>
+            </div>
+          </div>
+
+          <p className="text-meta text-text-muted">
+            When my balance drops below the threshold, Telnyx recharges automatically -- the actual
+            amount added is whatever it takes to reach that threshold, PLUS the "add" amount above
+            (Telnyx's own semantics, not a flat top-up).
+          </p>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+const BILLING_EVENT_KIND_LABEL: Record<BillingEvent['kind'], string> = {
+  add_funds: 'Add funds',
+  auto_recharge_update: 'Auto-recharge settings changed',
+};
+
+const BILLING_EVENT_STATUS_STYLE: Record<BillingEvent['status'], string> = {
+  pending: 'bg-surface-3 text-text-secondary',
+  succeeded: 'bg-success/10 text-success',
+  failed: 'bg-danger/10 text-danger',
+};
+
+/** TASK-BF1: the last 10 org_billing_events, read directly under RLS (owner/admin SELECT-only --
+ *  no edge function needed, same shape as getSpendSettings). `refreshKey` bumps to reload after a
+ *  successful add-funds or auto-recharge save elsewhere on this same page. */
+export function RecentBillingActivity({ refreshKey }: { refreshKey: number }) {
+  const [events, setEvents] = useState<BillingEvent[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    listRecentBillingEvents()
+      .then(setEvents)
+      .catch((e) => setError(e instanceof Error ? e.message : String(e)));
+  }, [refreshKey]);
+
+  return (
+    <div className="mt-6">
+      <h3 className="text-body font-medium text-text-primary mb-3">Recent billing activity</h3>
+      {error && (
+        <div className="p-3 rounded-app-md bg-danger/10 border border-danger/30 text-danger text-sm">
+          {error}
+        </div>
+      )}
+      {!error && events && events.length === 0 && (
+        <p className="text-meta text-text-muted">No billing activity yet.</p>
+      )}
+      {!error && events && events.length > 0 && (
+        <div className="bg-surface-1 rounded-app-lg border border-border-subtle divide-y divide-border-subtle">
+          {events.map((ev) => (
+            <div key={ev.id} className="flex items-center justify-between px-4 py-3 text-sm">
+              <div>
+                <div className="text-text-primary">
+                  {BILLING_EVENT_KIND_LABEL[ev.kind]}
+                  {ev.amount_usd !== null && ` -- $${Number(ev.amount_usd).toFixed(2)}`}
+                </div>
+                <div className="text-meta text-text-muted">
+                  {new Date(ev.created_at).toLocaleString()}
+                  {ev.error ? ` -- ${ev.error}` : ''}
+                </div>
+              </div>
+              <span
+                className={cn(
+                  'px-2 py-1 rounded-app-md text-meta capitalize',
+                  BILLING_EVENT_STATUS_STYLE[ev.status]
+                )}
+              >
+                {ev.status}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** TASK-SP: monthly spend cap + low-balance threshold + the current balance/MTD estimate
  *  display. Same card shape as NumberPoolCard right above it (role-gated inputs, owner/admin
  *  write via RLS, a shared card-level error banner) -- deliberately a separate card, not folded
@@ -2015,6 +2434,8 @@ function SpendSettingsCard() {
   const [statusLoading, setStatusLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [addFundsOpen, setAddFundsOpen] = useState(false);
+  const [billingRefreshKey, setBillingRefreshKey] = useState(0);
 
   const loadStatus = () => {
     setStatusLoading(true);
@@ -2068,14 +2489,21 @@ function SpendSettingsCard() {
       <div className="bg-surface-1 rounded-app-lg p-6 border border-border-subtle mb-6">
         <div className="flex items-center justify-between mb-4">
           <span className="text-meta text-text-secondary">Current balance</span>
-          <button
-            type="button"
-            onClick={loadStatus}
-            disabled={statusLoading}
-            className="text-meta text-accent-to hover:underline disabled:opacity-50"
-          >
-            {statusLoading ? 'Refreshing…' : 'Refresh'}
-          </button>
+          <div className="flex items-center gap-4">
+            <button
+              type="button"
+              onClick={loadStatus}
+              disabled={statusLoading}
+              className="text-meta text-accent-to hover:underline disabled:opacity-50"
+            >
+              {statusLoading ? 'Refreshing…' : 'Refresh'}
+            </button>
+            {isAdmin && (
+              <Button variant="primary" onClick={() => setAddFundsOpen(true)}>
+                Add funds
+              </Button>
+            )}
+          </div>
         </div>
         {statusLoading ? (
           <ListSkeleton rows={1} />
@@ -2150,6 +2578,19 @@ function SpendSettingsCard() {
         spend is estimated from call minutes and number count -- Telnyx has no reliable live
         month-to-date figure to read instead. Real-time balance above is exact.
       </p>
+
+      {isAdmin && <AutoRechargeSection isAdmin={isAdmin} />}
+
+      <RecentBillingActivity refreshKey={billingRefreshKey} />
+
+      <AddFundsDialog
+        open={addFundsOpen}
+        onClose={() => setAddFundsOpen(false)}
+        onSuccess={() => {
+          loadStatus();
+          setBillingRefreshKey((k) => k + 1);
+        }}
+      />
     </div>
   );
 }

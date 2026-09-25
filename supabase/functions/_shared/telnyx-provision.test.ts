@@ -24,6 +24,16 @@ function makeMockClient(overrides: Partial<TelnyxClient> = {}): {
       record('getBalance', []);
       return { balanceUsd: 10, availableCreditUsd: 10, creditLimitUsd: 0, currency: 'USD' };
     },
+    getAutoRechargePrefs: async () => ({
+      id: null,
+      enabled: false,
+      thresholdAmountUsd: 0,
+      rechargeAmountUsd: 0,
+      invoiceEnabled: false,
+      preference: 'credit_paypal',
+    }),
+    updateAutoRechargePrefs: async (args) => ({ id: null, ...args }),
+    addFunds: async () => ({ transactionId: null, amountCents: null, processorStatus: null }),
     dial: async () => {
       throw new Error('not used in this test');
     },

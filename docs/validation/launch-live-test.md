@@ -316,6 +316,35 @@ updating live.
 switch over at midnight Chicago time, not your own local midnight. Don't re-report this as a
 day-boundary bug.
 
+### B18 -- Add funds + auto-recharge (TASK-BF1) -- **needs a real Telnyx account with a stored payment method on file, real money**
+
+Owner or admin, connected Telnyx (Settings → Telephony → Spend & Billing). Use the QA sandbox
+org's own connection for B18.1-B18.4 (never buy/charge against the real MyHomeBase org except the
+one deliberate B18.5 real charge, at the smallest preset).
+
+| #     | Step                                                                                                                                                                   | Expected                                                                                                                                                                                                                                                                  | ☐   |
+| ----- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --- |
+| B18.1 | Owner/admin: Settings → Telephony → Spend & Billing → **Add funds**. Click a preset ($10/$25/$50/$100), then Continue.                                                 | A confirm step reads "Charge $X to the payment method saved in your Telnyx account?" with focus already on **Cancel**, not the charge button. Click Cancel.                                                                                                               | ☐   |
+| B18.2 | Same dialog: check the "Custom amount" box, try $2 (below the $5 minimum) and $1,500 (above the $1,000 max), then Continue.                                            | Continue stays disabled (or the amount is rejected) for both out-of-range values; a value between $5-$1,000 enables Continue normally.                                                                                                                                    | ☐   |
+| B18.3 | Auto-recharge section: toggle Enabled on, set a threshold and a recharge amount, pick a payment source (Card/PayPal vs. Bank/ACH), let it save.                        | Values persist on reload; the SAME values show up in the Telnyx portal's own auto-recharge settings for this account (not just in HyperDial).                                                                                                                             | ☐   |
+| B18.4 | As an agent, try to reach the Spend & Billing card (it's inside Settings → Telephony, already route-blocked for agents).                                               | Agent cannot reach Settings at all (pre-existing invariant, unaffected by this feature) -- confirmed via the route block, not by finding the card and it being empty.                                                                                                     | ☐   |
+| B18.5 | **Real charge, smallest amount:** click Add funds → $10 preset → Continue → Confirm charge, against a REAL connected Telnyx account with a real stored payment method. | A success toast shows the new balance; the balance shown in HyperDial matches the Telnyx portal's own balance within a minute; a new "Recent billing activity" row shows "Add funds -- $10.00, succeeded"; Telnyx's own transaction history shows the same $10.00 charge. | ☐   |
+| B18.6 | Immediately repeat B18.5 (click Add funds again right away, same or a different amount) within 60 seconds of the first charge succeeding.                              | The second attempt is refused with a rate-limit message ("wait a moment... at most once every 60s") -- no second Telnyx charge happens. Wait 60s and confirm a normal charge then succeeds.                                                                               | ☐   |
+
+The validation/rate-limit/idempotency/error-mapping logic itself (amount bounds, the 60s/$2,000-
+per-24h rate limits, a duplicate idempotency key refused without a second Telnyx call, the
+pending→succeeded/failed audit-row transitions, card-declined/no-payment-method/forbidden-key
+error mapping) is fully covered by deno tests (`billing-validation.test.ts`, `billing-core.test.ts`,
+`telnyx-client.test.ts`, all against a mocked Telnyx client -- never the real billing endpoints)
+and the SQL schema/RLS/idempotency-constraint by `audit/BF1/dryrun-tests.sql` -- B18 above only
+covers what a real Telnyx account, a real stored payment method, and one real minimum-amount
+charge can add on top of that. Don't repeat B18.5 more than once against a real account without a
+real reason -- it's a real charge every time.
+
+**Known open item (not a bug):** there is no Telnyx API to ADD a payment method -- the card/PayPal/
+bank account itself is added once in the Telnyx portal directly; HyperDial can only charge or
+auto-recharge whatever is already on file there.
+
 ---
 
 ## C. Evidence to capture

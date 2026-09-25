@@ -320,8 +320,82 @@ export interface TelnyxBalance {
   currency: string;
 }
 
+// ---------------------------------------------------------------------------
+// TASK-BF1: add funds + auto-recharge (verified against spec3.json, 2026-09-25 --
+// StoredPaymentTransactionRequest/Response, AutoRechargePref/AutoRechargePrefRequest). Every
+// amount on the wire is a decimal STRING, same convention as getBalance's own fields above.
+//
+// NOTE the spec's own path literal for the charge endpoint is
+// "/v2/payment/stored_payment_transactions" -- unlike every other path in the spec, it already
+// embeds the /v2 this client's DEFAULT_TELNYX_API_BASE also ends in. `addFunds` below passes the
+// DE-PREFIXED path to `req()`; passing the literal spec path straight through would double it
+// (".../v2/v2/payment/..."), which the client-level test below asserts against.
+// ---------------------------------------------------------------------------
+
+export type AutoRechargePreference = 'credit_paypal' | 'ach';
+
+export interface AutoRechargePrefs {
+  id: string | null;
+  enabled: boolean;
+  thresholdAmountUsd: number;
+  rechargeAmountUsd: number;
+  invoiceEnabled: boolean;
+  preference: AutoRechargePreference;
+}
+
+export interface UpdateAutoRechargePrefsArgs {
+  enabled: boolean;
+  thresholdAmountUsd: number;
+  rechargeAmountUsd: number;
+  invoiceEnabled: boolean;
+  preference: AutoRechargePreference;
+}
+
+export interface AutoRechargePrefsPayload {
+  enabled: boolean;
+  threshold_amount: string;
+  recharge_amount: string;
+  invoice_enabled: boolean;
+  preference: AutoRechargePreference;
+}
+
+export function buildAutoRechargePrefsPayload(
+  args: UpdateAutoRechargePrefsArgs
+): AutoRechargePrefsPayload {
+  return {
+    enabled: args.enabled,
+    threshold_amount: args.thresholdAmountUsd.toFixed(2),
+    recharge_amount: args.rechargeAmountUsd.toFixed(2),
+    invoice_enabled: args.invoiceEnabled,
+    preference: args.preference,
+  };
+}
+
+export interface AddFundsResult {
+  transactionId: string | null;
+  amountCents: number | null;
+  processorStatus: string | null;
+}
+
+/** StoredPaymentTransactionRequest's wire shape: `{amount: "120.00"}`. */
+export function buildAddFundsPayload(amountUsd: number): { amount: string } {
+  return { amount: amountUsd.toFixed(2) };
+}
+
 export interface TelnyxClient {
   getBalance(): Promise<TelnyxBalance>;
+
+  /** TASK-BF1: `GET /payment/auto_recharge_prefs`. */
+  getAutoRechargePrefs(): Promise<AutoRechargePrefs>;
+  /** TASK-BF1: `PATCH /payment/auto_recharge_prefs`. */
+  updateAutoRechargePrefs(args: UpdateAutoRechargePrefsArgs): Promise<AutoRechargePrefs>;
+  /** TASK-BF1: `POST /payment/stored_payment_transactions` -- charges the org's own stored
+   *  payment method on file. There is no Telnyx API to ADD a card; it's added once in the
+   *  Telnyx portal, or this call 422s (see `mapTelnyxBillingError` in
+   *  `_shared/billing-validation.ts`). Real money -- callers must validate the amount
+   *  server-side and enforce idempotency/rate-limiting BEFORE calling this (see
+   *  `telnyx-billing/index.ts`); this method itself never retries on failure. */
+  addFunds(amountUsd: number): Promise<AddFundsResult>;
 
   dial(args: DialArgs): Promise<{ callControlId: string }>;
   hangup(callControlId: string): Promise<void>;
@@ -689,6 +763,72 @@ export function createTelnyxClient(
         { method: 'POST' }
       );
       return { token: typeof response.raw === 'string' ? response.raw.trim() : null };
+    },
+
+    async getAutoRechargePrefs() {
+      const response = await req<
+        TelnyxEnvelope<{
+          id?: string;
+          threshold_amount?: string;
+          recharge_amount?: string;
+          enabled?: boolean;
+          invoice_enabled?: boolean;
+          preference?: AutoRechargePreference;
+        }>
+      >('/payment/auto_recharge_prefs');
+      const d = response.data ?? {};
+      return {
+        id: d.id ?? null,
+        enabled: d.enabled ?? false,
+        thresholdAmountUsd: Number(d.threshold_amount ?? 0),
+        rechargeAmountUsd: Number(d.recharge_amount ?? 0),
+        invoiceEnabled: d.invoice_enabled ?? false,
+        preference: d.preference ?? 'credit_paypal',
+      };
+    },
+
+    async updateAutoRechargePrefs(args) {
+      const payload = buildAutoRechargePrefsPayload(args);
+      const response = await req<
+        TelnyxEnvelope<{
+          id?: string;
+          threshold_amount?: string;
+          recharge_amount?: string;
+          enabled?: boolean;
+          invoice_enabled?: boolean;
+          preference?: AutoRechargePreference;
+        }>
+      >('/payment/auto_recharge_prefs', {
+        method: 'PATCH',
+        body: JSON.stringify(payload),
+      });
+      const d = response.data ?? {};
+      return {
+        id: d.id ?? null,
+        enabled: d.enabled ?? args.enabled,
+        thresholdAmountUsd: Number(d.threshold_amount ?? args.thresholdAmountUsd),
+        rechargeAmountUsd: Number(d.recharge_amount ?? args.rechargeAmountUsd),
+        invoiceEnabled: d.invoice_enabled ?? args.invoiceEnabled,
+        preference: d.preference ?? args.preference,
+      };
+    },
+
+    async addFunds(amountUsd) {
+      const payload = buildAddFundsPayload(amountUsd);
+      // De-prefixed path -- see this file's TASK-BF1 header comment above (the spec's own path
+      // literal already includes /v2, which apiBase also ends in).
+      const response = await req<
+        TelnyxEnvelope<{ id?: string; amount_cents?: number; processor_status?: string }>
+      >('/payment/stored_payment_transactions', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      });
+      const d = response.data ?? {};
+      return {
+        transactionId: d.id ?? null,
+        amountCents: d.amount_cents ?? null,
+        processorStatus: d.processor_status ?? null,
+      };
     },
   };
 }
