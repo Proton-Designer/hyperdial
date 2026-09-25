@@ -177,6 +177,22 @@ export function ImportFromGhlModal({
                     <div className="text-xs text-[#B0BEC5]">Invalid phone</div>
                   </div>
                 </div>
+                {(result.skippedDnc > 0 ||
+                  result.skippedPaused > 0 ||
+                  result.skippedActiveCampaign > 0) && (
+                  <p className="text-sm text-[#B0BEC5]">
+                    Not added to the campaign:{' '}
+                    {[
+                      result.skippedDnc > 0 && `${result.skippedDnc} do-not-call`,
+                      result.skippedPaused > 0 && `${result.skippedPaused} paused`,
+                      result.skippedActiveCampaign > 0 &&
+                        `${result.skippedActiveCampaign} already active in another campaign`,
+                    ]
+                      .filter(Boolean)
+                      .join(', ')}
+                    .
+                  </p>
+                )}
                 {result.truncated && (
                   <p className="text-sm text-yellow-400">
                     This org has more matching GHL contacts than one run fetches. Run "Re-sync"

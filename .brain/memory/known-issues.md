@@ -357,6 +357,38 @@ recording and transcription are not wired into the dial flow yet.
 
 ---
 
+## 13. ~~`contacts`' unique-phone index was permanently skipped, and DNC/paused/one-active-campaign were never enforced on import~~ — FIXED by TASK-L3 (2026-09-25)
+
+**BUG-12 / DSP-6 / QUE-7 / QUE-8 / GHL-7, audit/final.json.** Three related gaps, all closed in
+the same task:
+1. `20260924001300_contacts_e164_tz_dnc.sql`'s unique index on `contacts(org_id, phone_number)`
+   only ran if the org had zero existing duplicate groups **at that migration's own apply time**
+   — a one-time check, not a retry. On live, duplicates existed then, so the index was skipped
+   permanently: no later cleanup could ever trigger it, since the migration never runs again.
+   Live-verified at TASK-A1 (findings-eng1.md): the index genuinely did not exist. Fixed by
+   `20260925000100_contacts_dedupe_dnc.sql`, which merges any real duplicate groups (oldest row
+   survives, `dnc` OR'd across the group so a DNC flag is never lost, FKs repointed, verified
+   live: 0 duplicate groups existed as of this fix, so it ran as a no-op in practice) and then
+   creates the index unconditionally.
+2. Neither import path checked DNC (or, for GHL, the `dialer:paused` tag) before queueing a
+   contact onto a campaign — a DNC'd contact re-imported into a campaign would get dialed again.
+   Fixed: both paths now go through `_shared/campaign-queue.ts`'s shared `planCampaignQueue`
+   before queueing, which skips (and counts) `dnc`/`paused` contacts.
+3. Nothing enforced "one active campaign per contact at a time" (QUE-8) — a contact could be
+   `queued` in two campaigns simultaneously via two separate imports. Fixed: a partial unique
+   index (`20260925000200_campaign_leads_one_active.sql`) on
+   `campaign_leads(contact_id) where status in ('queued','in_flight','callback')`, plus the same
+   shared planner checking for an existing active-elsewhere row before queueing (so an import
+   skips and counts the conflict instead of erroring on the constraint).
+
+See `.brain/domains/contacts.md`'s De-duplication and Campaign queueing sections for the
+mechanics. Not done (explicitly out of TASK-L3's scope): a separate E.164-keyed global DNC table
+(DNC still lives on the `contacts` row itself, so a *new* contact row for an already-DNC'd phone
+number, from a future import that somehow bypasses the org-scoped unique index, would not
+automatically inherit it), SMS STOP handling, and GHL push of DNC (already existed).
+
+---
+
 ## Not issues — deliberate, documented elsewhere
 
 - Redis alongside Postgres → `mem.decisions`

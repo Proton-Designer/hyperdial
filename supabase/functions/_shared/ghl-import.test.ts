@@ -201,7 +201,7 @@ Deno.test(
   'planGhlImport: dedupes on ghl_contact_id first, even if the phone changed in GHL',
   () => {
     const existing: ExistingContactRow[] = [
-      { id: 'db-1', phone_number: '+14155550000', ghl_contact_id: 'g1' },
+      { id: 'db-1', phone_number: '+14155550000', ghl_contact_id: 'g1', dnc: false },
     ];
     const contacts: GhlContact[] = [ghlContact('g1', '2026-01-01', { phone: '+14155559999' })];
     const plan = planGhlImport({ mode: 'search', value: '', ghlContacts: contacts, existing });
@@ -216,7 +216,7 @@ Deno.test(
   'planGhlImport: falls back to phone match and stamps ghl_contact_id onto an unlinked contact',
   () => {
     const existing: ExistingContactRow[] = [
-      { id: 'db-1', phone_number: '+14155552671', ghl_contact_id: null },
+      { id: 'db-1', phone_number: '+14155552671', ghl_contact_id: null, dnc: false },
     ];
     const contacts: GhlContact[] = [ghlContact('g1', '2026-01-01', { phone: '+14155552671' })];
     const plan = planGhlImport({ mode: 'search', value: '', ghlContacts: contacts, existing });
@@ -240,7 +240,12 @@ Deno.test(
 
     // Simulate the DB after firstRun.toInsert actually landed.
     const existingAfterFirstRun: ExistingContactRow[] = [
-      { id: 'db-1', phone_number: firstRun.toInsert[0].phone_number, ghl_contact_id: 'g1' },
+      {
+        id: 'db-1',
+        phone_number: firstRun.toInsert[0].phone_number,
+        ghl_contact_id: 'g1',
+        dnc: false,
+      },
     ];
     const secondRun = planGhlImport({
       mode: 'search',
@@ -292,6 +297,48 @@ Deno.test(
     assertEquals(byGhlId.get('g1')?.dnc, true);
     assertEquals('dnc' in (byGhlId.get('g2') ?? {}), false);
     assertEquals('dnc' in (byGhlId.get('g3') ?? {}), false);
+  }
+);
+
+Deno.test(
+  'planGhlImport: a dialer:dnc tag sets dnc=true even when GHL dnd is false/absent (TASK-L3, GHL-7)',
+  () => {
+    const contacts: GhlContact[] = [
+      ghlContact('g1', '2026-01-01', {
+        phone: '+14155552671',
+        dnd: false,
+        tags: ['Dialer:DNC', 'other-tag'],
+      }),
+      ghlContact('g2', '2026-01-01', { phone: '+14155552672', tags: ['dialer:paused'] }),
+    ];
+    const plan = planGhlImport({ mode: 'search', value: '', ghlContacts: contacts, existing: [] });
+    const byGhlId = new Map(plan.toInsert.map((c) => [c.ghl_contact_id, c]));
+    assertEquals(byGhlId.get('g1')?.dnc, true);
+    assertEquals('dnc' in (byGhlId.get('g2') ?? {}), false);
+  }
+);
+
+Deno.test(
+  'planGhlImport: pausedGhlContactIds collects every dialer:paused-tagged contact, case-insensitively, and nothing else',
+  () => {
+    const contacts: GhlContact[] = [
+      ghlContact('g1', '2026-01-01', { phone: '+14155552671', tags: ['Dialer:Paused'] }),
+      ghlContact('g2', '2026-01-01', { phone: '+14155552672', tags: ['dialer:dnc'] }),
+      ghlContact('g3', '2026-01-01', { phone: '+14155552673' }),
+    ];
+    const plan = planGhlImport({ mode: 'search', value: '', ghlContacts: contacts, existing: [] });
+    assertEquals(plan.pausedGhlContactIds, new Set(['g1']));
+  }
+);
+
+Deno.test(
+  'positive control: pausedGhlContactIds would be empty for an untagged contact, proving the tag match is doing real work',
+  () => {
+    const contacts: GhlContact[] = [ghlContact('g1', '2026-01-01', { phone: '+14155552671' })];
+    const plan = planGhlImport({ mode: 'search', value: '', ghlContacts: contacts, existing: [] });
+    if (plan.pausedGhlContactIds.size !== 0) {
+      throw new Error('positive control failed: an untagged contact was marked paused');
+    }
   }
 );
 

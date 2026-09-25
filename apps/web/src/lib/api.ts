@@ -546,12 +546,25 @@ export async function parseContactsCsv(csvText: string): Promise<ParseCsvRespons
   return data as ParseCsvResponse;
 }
 
+export interface ImportContactsResult {
+  imported: number;
+  skipped: number;
+  invalid: number;
+  duplicates: number;
+  /** Only meaningful when campaignId was passed -- contacts (new or already-existing) that were
+   *  not queued onto it because they're DNC (TASK-L3). */
+  skippedDnc: number;
+  /** Same, for contacts already active in a different campaign (QUE-8: one active campaign per
+   *  contact at a time). */
+  skippedActiveCampaign: number;
+}
+
 export async function importContacts(
   csvText: string,
   columnMappings: { original_header: string; mapped_field: string | null }[],
   category: string = 'Cold',
   campaignId?: string
-): Promise<{ imported: number; skipped: number; invalid: number; duplicates: number }> {
+): Promise<ImportContactsResult> {
   const body: Record<string, unknown> = {
     csv_text: csvText,
     column_mappings: columnMappings,
@@ -565,7 +578,7 @@ export async function importContacts(
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || 'Failed to import contacts');
-  return data as { imported: number; skipped: number; invalid: number; duplicates: number };
+  return data as ImportContactsResult;
 }
 
 export async function listContacts(): Promise<Contact[]> {
@@ -1136,6 +1149,21 @@ export async function pauseDialerSession(sessionId: string): Promise<{ status: '
   return data as { status: 'paused' };
 }
 
+/** TASK-L1: re-dials a fresh agent leg into the session's existing conference after an
+ *  agent-leg-lost (`paused_agent_lost`) -- the "Reconnect" button. */
+export async function reconnectDialerSession(
+  sessionId: string
+): Promise<{ status: 'reconnecting' }> {
+  const res = await fetch(`${getFunctionsUrl()}/dialer-session-reconnect`, {
+    method: 'POST',
+    headers: await getEdgeFunctionHeaders(),
+    body: JSON.stringify({ sessionId }),
+  });
+  const data = (await res.json()) as { error?: string; code?: string; status?: string };
+  if (!res.ok) throw new Error(data.error || 'Failed to reconnect dialer session');
+  return data as { status: 'reconnecting' };
+}
+
 /** End the current live (claimed/on_call) contact leg in a session; the resulting webhook
  *  drives the normal ended -> wrap_up flow. */
 export async function hangupLiveCall(sessionId: string): Promise<void> {
@@ -1247,6 +1275,13 @@ export interface ImportFromGhlResult {
   updated: number;
   skipped: number;
   invalid: number;
+  /** Only meaningful when campaignId was passed -- contacts (new or updated) not queued onto it
+   *  because GHL marked them dnd or tagged them dialer:dnc (TASK-L3, GHL-7). */
+  skippedDnc: number;
+  /** Same, for contacts tagged dialer:paused. */
+  skippedPaused: number;
+  /** Same, for contacts already active in a different campaign (QUE-8). */
+  skippedActiveCampaign: number;
   /** true when the org has more matching GHL contacts than this run fetched (a 2,000-contact
    *  per-run cap -- see ghl-import.ts) -- re-running the same import continues from where the
    *  last one left off, since matched contacts are skipped as already up to date. */

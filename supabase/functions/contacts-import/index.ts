@@ -4,6 +4,11 @@ import { corsHeaders, corsPreflightResponse } from '../_shared/cors.ts';
 import { requireOrgRole } from '../_shared/auth.ts';
 import { normalizePhoneStrict } from '../_shared/phone-normalize.ts';
 import { timezoneForAreaCode } from '../_shared/area-code-tz.ts';
+import {
+  planCampaignQueue,
+  ACTIVE_CAMPAIGN_LEAD_STATUSES,
+  type CampaignQueueCandidate,
+} from '../_shared/campaign-queue.ts';
 
 const CANONICAL_TO_DB: Record<string, string> = {
   'Business Name': 'business_name',
@@ -70,19 +75,28 @@ Deno.serve(async (req) => {
 
     const { data: existingPhones } = await supabase
       .from('contacts')
-      .select('phone_number')
+      .select('id, phone_number, dnc')
       .eq('org_id', orgId);
-    const existingSet = new Set(
-      (existingPhones ?? []).map((r: { phone_number: string | null }) =>
-        (r.phone_number ?? '').replace(/\D/g, '')
-      )
-    );
+    const existingByPhoneDigits = new Map<string, { id: string; dnc: boolean }>();
+    for (const r of (existingPhones ?? []) as {
+      id: string;
+      phone_number: string | null;
+      dnc: boolean;
+    }[]) {
+      if (r.phone_number) existingByPhoneDigits.set(r.phone_number.replace(/\D/g, ''), r);
+    }
+    const existingSet = new Set(existingByPhoneDigits.keys());
 
     let imported = 0;
     let skipped = 0;
     let invalid = 0;
     let duplicates = 0;
     const toInsert: Record<string, unknown>[] = [];
+    // Every existing contact this run matched by phone (a "duplicate" row in the CSV) is still a
+    // campaign-queue candidate below if campaignId is set -- re-importing the same list into a
+    // different campaign should attach it, not silently do nothing, as long as it isn't DNC or
+    // already active elsewhere.
+    const duplicateContactCandidates: CampaignQueueCandidate[] = [];
 
     for (const row of rows) {
       const contact: Record<string, unknown> = {
@@ -123,6 +137,13 @@ Deno.serve(async (req) => {
       const phoneDigits = (contact.phone_number as string).replace(/\D/g, '');
       if (existingSet.has(phoneDigits)) {
         duplicates++;
+        // A match against a real DB contact (not just another row earlier in this same CSV
+        // batch, which has no contact id yet -- its first occurrence already goes through the
+        // insert+queue path below) is still a campaign-queue candidate.
+        const existingMatch = existingByPhoneDigits.get(phoneDigits);
+        if (existingMatch) {
+          duplicateContactCandidates.push({ contactId: existingMatch.id, dnc: existingMatch.dnc });
+        }
         continue;
       }
       existingSet.add(phoneDigits);
@@ -149,7 +170,16 @@ Deno.serve(async (req) => {
       insertedContactIds = (inserted ?? []).map((r: { id: string }) => r.id);
     }
 
-    if (campaignId && insertedContactIds.length > 0) {
+    let skippedDnc = 0;
+    let skippedActiveCampaign = 0;
+    // Every freshly-inserted contact is dnc=false by construction (CSV import never sets it) --
+    // only the duplicate-matched existing contacts can already be DNC.
+    const queueCandidates: CampaignQueueCandidate[] = [
+      ...insertedContactIds.map((contactId) => ({ contactId, dnc: false })),
+      ...duplicateContactCandidates,
+    ];
+
+    if (campaignId && queueCandidates.length > 0) {
       const { data: campaign } = await supabase
         .from('campaigns')
         .select('id')
@@ -157,25 +187,47 @@ Deno.serve(async (req) => {
         .eq('org_id', orgId)
         .maybeSingle();
       if (campaign) {
-        const leadRows = insertedContactIds.map((contact_id: string) => ({
-          campaign_id: campaignId,
-          contact_id,
-          org_id: orgId,
-          status: 'queued',
-        }));
-        await supabase.from('campaign_leads').upsert(leadRows, {
-          onConflict: 'campaign_id,contact_id',
-          ignoreDuplicates: true,
-        });
+        const { data: activeElsewhereRows } = await supabase
+          .from('campaign_leads')
+          .select('contact_id')
+          .neq('campaign_id', campaignId)
+          .in('status', ACTIVE_CAMPAIGN_LEAD_STATUSES)
+          .in(
+            'contact_id',
+            queueCandidates.map((c) => c.contactId)
+          );
+        const activeElsewhereContactIds = new Set(
+          (activeElsewhereRows ?? []).map((r: { contact_id: string }) => r.contact_id)
+        );
+
+        const plan = planCampaignQueue({ candidates: queueCandidates, activeElsewhereContactIds });
+        skippedDnc = plan.skippedDnc;
+        skippedActiveCampaign = plan.skippedActiveElsewhere;
+
+        if (plan.toQueue.length > 0) {
+          const leadRows = plan.toQueue.map((contact_id) => ({
+            campaign_id: campaignId,
+            contact_id,
+            org_id: orgId,
+            status: 'queued',
+          }));
+          await supabase.from('campaign_leads').upsert(leadRows, {
+            onConflict: 'campaign_id,contact_id',
+            ignoreDuplicates: true,
+          });
+        }
       }
     }
 
     // skipped counts every row with no usable phone_number (missing or invalid); invalid
     // is the subset of those where a value was actually provided but libphonenumber-js
-    // rejected it -- design §7's "invalid ones are rejected... with a count".
-    return new Response(JSON.stringify({ imported, skipped, invalid, duplicates }), {
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    });
+    // rejected it -- design §7's "invalid ones are rejected... with a count". skippedDnc/
+    // skippedActiveCampaign (TASK-L3) only apply when campaignId is set -- they count contacts
+    // that exist (new or matched-duplicate) but were not queued onto it.
+    return new Response(
+      JSON.stringify({ imported, skipped, invalid, duplicates, skippedDnc, skippedActiveCampaign }),
+      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    );
   } catch (err) {
     console.error('contacts-import error:', err);
     return new Response(JSON.stringify({ error: String(err) }), {

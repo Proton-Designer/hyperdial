@@ -81,6 +81,11 @@ export interface ExistingContactRow {
   id: string;
   phone_number: string | null;
   ghl_contact_id: string | null;
+  /** TASK-L3: needed so the caller knows an updated contact's CURRENT dnc status when this pull
+   *  didn't itself indicate dnc=true -- a patch here is only ever `{dnc: true}` or absent, never
+   *  an explicit false (see GhlImportContactFields.dnc's own doc), so "does this contact stay
+   *  DNC" for an update is `patch.dnc === true || existing.dnc`, not the patch alone. */
+  dnc: boolean;
 }
 
 export interface GhlImportContactFields {
@@ -113,6 +118,21 @@ export interface GhlImportPlan {
   /** Subset of `skipped` where a phone value was present but failed strict E.164
    *  validation -- same split as contacts-import's `invalid` vs `skipped`. */
   invalid: number;
+  /** `ghl_contact_id`s tagged `dialer:paused` (TASK-L3, GHL-7): the contact is still
+   *  inserted/updated normally (paused is a queueing decision, not a stored field --
+   *  there's no `contacts.paused` column), but the caller must exclude these ids from
+   *  whatever campaign_leads it queues after this plan runs. */
+  pausedGhlContactIds: Set<string>;
+}
+
+/** GHL-7 / audit/final.json: "dialer:dnc and dialer:paused tags never queued". Case-insensitive,
+ * same matching discipline as the tag-mode filter above. */
+const DIALER_DNC_TAG = 'dialer:dnc';
+const DIALER_PAUSED_TAG = 'dialer:paused';
+
+function hasTag(gc: GhlContact, tag: string): boolean {
+  const tags = Array.isArray(gc.tags) ? gc.tags : [];
+  return tags.some((t) => typeof t === 'string' && t.toLowerCase() === tag);
 }
 
 export interface PlanGhlImportArgs {
@@ -156,6 +176,7 @@ export function planGhlImport(args: PlanGhlImportArgs): GhlImportPlan {
   let updated = 0;
   let skipped = 0;
   let invalid = 0;
+  const pausedGhlContactIds = new Set<string>();
 
   for (const gc of ghlContacts) {
     if (wantedTag !== null) {
@@ -194,8 +215,13 @@ export function planGhlImport(args: PlanGhlImportArgs): GhlImportPlan {
       phone_raw: rawPhone,
       ghl_contact_id: gc.id,
       ...(timezone && { timezone }),
-      ...(gc.dnd === true && { dnc: true }),
+      // dnd is GHL's own do-not-disturb flag; dialer:dnc is our own tag convention -- either one
+      // is enough to mark the contact DNC (TASK-L3, GHL-7).
+      ...((gc.dnd === true || hasTag(gc, DIALER_DNC_TAG)) && { dnc: true }),
     };
+    if (hasTag(gc, DIALER_PAUSED_TAG)) {
+      pausedGhlContactIds.add(gc.id);
+    }
 
     const match = existingByGhlId.get(gc.id) ?? existingByPhone.get(digits);
     if (match) {
@@ -207,5 +233,5 @@ export function planGhlImport(args: PlanGhlImportArgs): GhlImportPlan {
     }
   }
 
-  return { toInsert, toUpdate, created, updated, skipped, invalid };
+  return { toInsert, toUpdate, created, updated, skipped, invalid, pausedGhlContactIds };
 }

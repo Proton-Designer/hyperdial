@@ -16,6 +16,7 @@ import {
   CONTACT_CANONICAL_FIELDS,
   type ParseCsvResponse,
   type ParseCsvColumn,
+  type ImportContactsResult,
 } from '@/lib/api';
 
 const SKIP_OPTION = 'Skip this column';
@@ -45,12 +46,7 @@ export function ImportContactsModal({
   const [columns, setColumns] = useState<ParseCsvColumn[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [importResult, setImportResult] = useState<{
-    imported: number;
-    skipped: number;
-    invalid: number;
-    duplicates: number;
-  } | null>(null);
+  const [importResult, setImportResult] = useState<ImportContactsResult | null>(null);
   const [importCategory, setImportCategory] = useState<string>('Cold');
 
   const assignedCount = columns.filter(
@@ -441,7 +437,11 @@ export function ImportContactsModal({
                 <p className="text-[#B0BEC5] mb-6">
                   {importResult.skipped > 0 &&
                     `${importResult.skipped} row${importResult.skipped === 1 ? '' : 's'} skipped (missing or invalid phone number${importResult.invalid > 0 ? `, ${importResult.invalid} invalid` : ''}). `}
-                  {importResult.duplicates > 0 && `${importResult.duplicates} duplicates skipped.`}
+                  {importResult.duplicates > 0 && `${importResult.duplicates} duplicates skipped. `}
+                  {importResult.skippedDnc > 0 &&
+                    `${importResult.skippedDnc} not added to the campaign (do-not-call). `}
+                  {importResult.skippedActiveCampaign > 0 &&
+                    `${importResult.skippedActiveCampaign} not added to the campaign (already active in another campaign).`}
                 </p>
                 <button
                   type="button"

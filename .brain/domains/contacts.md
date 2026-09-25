@@ -92,7 +92,10 @@ E.164 validation (TASK-P2-P1, design §7).
 2. **Review** — the user corrects the mapping and picks one `category`. Import stays disabled until every column has a value ("Skip" counts).
 3. **Import** — the browser POSTs the **original `csv_text` again** with the final mappings to `contacts-import`, which re-parses, normalizes each phone to strict
    E.164 (rejecting invalid ones into `skipped`, with `invalid` broken out separately), preserves the original text in `phone_raw`, derives `timezone` from the area
-   code, de-duplicates, and does one bulk insert. Returns `{ imported, skipped, invalid, duplicates }`.
+   code, de-duplicates, and does one bulk insert. Returns `{ imported, skipped, invalid, duplicates, skippedDnc, skippedActiveCampaign }` — the last two (TASK-L3)
+   are only ever nonzero when `campaignId` was passed; see Campaign queueing below. A duplicate match against a real existing contact (not just another row earlier
+   in the same CSV) is *also* a campaign-queue candidate now, not a pure no-op — re-importing an existing contact into a different campaign used to silently do
+   nothing.
 4. **Edit** — `ContactDetailModal` now supports real editing via `updateContact` (a direct client `.update()`, not an Edge Function): owner/admin can change any field,
    including a curated timezone dropdown that overrides the area-code guess; every role that can see the contact gets a DNC toggle. Both RLS and the
    `contacts_agent_update_scope` trigger (not just this UI) enforce that an agent's request may only touch `dnc` — see Constraints.
@@ -102,10 +105,33 @@ E.164 validation (TASK-P2-P1, design §7).
 ## De-duplication
 
 The key is **digits-only phone, scoped to the org** (TASK-P1-02). `contacts-import` still catches this at request time (including duplicates *within* the same CSV).
-A DB-level `unique index on contacts(org_id, phone_number) where phone_number is not null` backs this up **only when the org's existing data has no conflicting
-duplicates already** — `20260924001300` checks first and falls back to a plain (non-unique) index if it finds any, logging the count via `RAISE NOTICE` rather than
-failing the migration or deleting data. **GHL pull import** (TASK-P3-P2) dedupes on `ghl_contact_id` first, then normalized phone — a `unique index on
-contacts(org_id, ghl_contact_id) where ghl_contact_id is not null` (`20260924001600`) backs the id half; see `.brain/domains/crm.md` for the pull mechanics.
+A DB-level `unique index on contacts(org_id, phone_number) where phone_number is not null` backs this up unconditionally as of TASK-L3
+(`20260925000100_contacts_dedupe_dnc.sql`): the original migration (`20260924001300`) checked first and fell back to a plain (non-unique) index whenever the org's
+existing data already had conflicting duplicates, and that fallback was permanent — the check only ever ran once, at that migration's own apply time, so the index
+stayed missing on live regardless of later data changes (BUG-12 / audit/final.json). `20260925000100` finishes the job for real: for each surviving `(org_id,
+phone_number)` duplicate group, the oldest row survives, `dnc` becomes `bool_or` across the group (a DNC row's flag is never lost to a merge), every null survivor
+field is filled from the group's earliest non-null value, `call_count` is summed, every FK that references `contacts.id` (`campaign_leads`, `call_logs`,
+`call_legs`, `crm_sync_jobs`) is repointed from the losers to the survivor, and only then is the unique index created — verified live: 0 duplicate groups existed on
+live as of that migration, so it was a correctness-general no-op in practice, not exercised against real duplicate data.
+
+**GHL pull import** (TASK-P3-P2) dedupes on `ghl_contact_id` first, then normalized phone — a `unique index on contacts(org_id, ghl_contact_id) where ghl_contact_id
+is not null` (`20260924001600`) backs the id half; see `.brain/domains/crm.md` for the pull mechanics.
+
+## Campaign queueing (DNC / paused / one-active-campaign, TASK-L3)
+
+Both import paths can queue the contacts they touch onto a campaign (`campaignId` in the request). `_shared/campaign-queue.ts`'s `planCampaignQueue` is the single
+shared gate both paths call before that upsert, so the same rules apply everywhere a contact might get queued:
+- **`dnc=true` is never queued** (audit DSP-6/QUE-7's import-side half). For GHL pull, `dnc` is set from GHL's own `dnd` flag *or* a `dialer:dnc` tag — either is
+  sufficient (`_shared/ghl-import.ts`).
+- **A `dialer:paused` GHL tag is never queued either**, though the contact is still inserted/updated normally — "paused" is a queueing decision only, not a stored
+  column; there's no `contacts.paused` field to persist it to (GHL-7).
+- **One active campaign per contact at a time** (QUE-8): a contact already `queued`/`in_flight`/`callback` in a *different* campaign is skipped, not queued a
+  second time — enforced at the DB level too, by a partial unique index on `campaign_leads(contact_id) where status in ('queued','in_flight','callback')`
+  (`20260925000200_campaign_leads_one_active.sql`). Re-queuing within the *same* campaign (a callback coming due, a retry) is always an `UPDATE` of the existing
+  row by the dial engine, never a second `INSERT`, so it can't hit this constraint — only a genuine cross-campaign double-queue (an import path) can, and both
+  import paths check and skip that case before attempting the insert rather than relying on the constraint to reject it.
+- Every skip is counted and returned to the caller (`skippedDnc`, `skippedPaused` (GHL only), `skippedActiveCampaign`) so the UI can report what happened, not just
+  silently drop contacts from the campaign.
 
 ## Enums
 

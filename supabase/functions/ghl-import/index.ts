@@ -16,6 +16,11 @@ import {
   planGhlImport,
   type ExistingContactRow,
 } from '../_shared/ghl-import.ts';
+import {
+  planCampaignQueue,
+  ACTIVE_CAMPAIGN_LEAD_STATUSES,
+  type CampaignQueueCandidate,
+} from '../_shared/campaign-queue.ts';
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -110,7 +115,7 @@ Deno.serve(async (req: Request) => {
 
   const { data: existingRows, error: existingError } = await supabase
     .from('contacts')
-    .select('id, phone_number, ghl_contact_id')
+    .select('id, phone_number, ghl_contact_id, dnc')
     .eq('org_id', orgId);
   if (existingError) {
     console.error('[ghl-import] existing contacts lookup failed', existingError.message);
@@ -125,7 +130,10 @@ Deno.serve(async (req: Request) => {
   });
 
   const now = new Date().toISOString();
-  const touchedContactIds: string[] = [];
+  const existingById = new Map(
+    ((existingRows ?? []) as ExistingContactRow[]).map((r) => [r.id, r])
+  );
+  const queueCandidates: CampaignQueueCandidate[] = [];
 
   if (plan.toInsert.length > 0) {
     const { data: inserted, error: insertError } = await supabase
@@ -145,7 +153,16 @@ Deno.serve(async (req: Request) => {
       console.error('[ghl-import] insert failed', insertError.message);
       return jsonResponse({ error: insertError.message }, 500);
     }
-    touchedContactIds.push(...(inserted ?? []).map((r: { id: string }) => r.id));
+    // .insert() of an array preserves input order in its response, so zipping by index recovers
+    // each new row's ghl_contact_id/dnc without a second round trip.
+    (inserted ?? []).forEach((row: { id: string }, i) => {
+      const fields = plan.toInsert[i];
+      queueCandidates.push({
+        contactId: row.id,
+        dnc: fields.dnc === true,
+        paused: plan.pausedGhlContactIds.has(fields.ghl_contact_id),
+      });
+    });
   }
 
   if (plan.toUpdate.length > 0) {
@@ -165,20 +182,50 @@ Deno.serve(async (req: Request) => {
         console.error('[ghl-import] update failed', updateError.message);
         return jsonResponse({ error: updateError.message }, 500);
       }
+      queueCandidates.push({
+        contactId: u.id,
+        // patch.dnc is only ever `true` or absent (never an explicit false) -- an update that
+        // didn't set it keeps whatever the contact already had.
+        dnc: u.patch.dnc === true || existingById.get(u.id)?.dnc === true,
+        paused: plan.pausedGhlContactIds.has(u.patch.ghl_contact_id),
+      });
     }
-    touchedContactIds.push(...plan.toUpdate.map((u) => u.id));
   }
 
-  if (campaignId && touchedContactIds.length > 0) {
-    const leadRows = touchedContactIds.map((contact_id) => ({
-      campaign_id: campaignId,
-      contact_id,
-      org_id: orgId,
-      status: 'queued',
-    }));
-    await supabase
+  let skippedDnc = 0;
+  let skippedPaused = 0;
+  let skippedActiveCampaign = 0;
+
+  if (campaignId && queueCandidates.length > 0) {
+    const { data: activeElsewhereRows } = await supabase
       .from('campaign_leads')
-      .upsert(leadRows, { onConflict: 'campaign_id,contact_id', ignoreDuplicates: true });
+      .select('contact_id')
+      .neq('campaign_id', campaignId)
+      .in('status', ACTIVE_CAMPAIGN_LEAD_STATUSES)
+      .in(
+        'contact_id',
+        queueCandidates.map((c) => c.contactId)
+      );
+    const activeElsewhereContactIds = new Set(
+      (activeElsewhereRows ?? []).map((r: { contact_id: string }) => r.contact_id)
+    );
+
+    const queuePlan = planCampaignQueue({ candidates: queueCandidates, activeElsewhereContactIds });
+    skippedDnc = queuePlan.skippedDnc;
+    skippedPaused = queuePlan.skippedPaused;
+    skippedActiveCampaign = queuePlan.skippedActiveElsewhere;
+
+    if (queuePlan.toQueue.length > 0) {
+      const leadRows = queuePlan.toQueue.map((contact_id) => ({
+        campaign_id: campaignId,
+        contact_id,
+        org_id: orgId,
+        status: 'queued',
+      }));
+      await supabase
+        .from('campaign_leads')
+        .upsert(leadRows, { onConflict: 'campaign_id,contact_id', ignoreDuplicates: true });
+    }
   }
 
   return jsonResponse({
@@ -186,6 +233,9 @@ Deno.serve(async (req: Request) => {
     updated: plan.updated,
     skipped: plan.skipped,
     invalid: plan.invalid,
+    skippedDnc,
+    skippedPaused,
+    skippedActiveCampaign,
     truncated: fetched.truncated,
   });
 });
