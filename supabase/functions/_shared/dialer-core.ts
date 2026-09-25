@@ -22,6 +22,27 @@
  *   Standard (non-premium) detection's result enum is only `human | machine |
  *   not_sure` -- `human_residence`/`human_business`/`silence`/`fax_detected` are
  *   premium-only, consistent with design §4.5 ("on" mode always uses premium).
+ *
+ * TASK-F-T3 (VMD-1..5, BUG-7), voicemail drop + real AMD modes -- re-verified against
+ * spec3.json/webhook-events.json 2026-09-25:
+ * - `AmdMode` widens from the old boolean-ish 'off'|'on' ('on' always meant premium) to the 4
+ *   real Telnyx values this build now offers a campaign: 'off'|'detect'|'detect_words'|
+ *   'premium'. `amdDecision`'s own claim/reject logic needed NO change -- it already only
+ *   branches on `mode === 'off'` vs. not, never on which non-off mode.
+ * - Critical vendor constraint, not a design choice: plain `detect` NEVER emits
+ *   `call.machine.greeting.ended` (spec3.json's own field description: only `greeting_end`,
+ *   `detect_words` and `detect_beep` do, for standard detection; premium's greeting-ended is
+ *   separately beep-gated). A voicemail drop has no reliable "safe to play now" signal under
+ *   plain `detect` -- dialer-engine.ts's drop-decision helper (voicemail-core.ts) returns "no
+ *   drop" for `detect` regardless of the campaign's own voicemail_drop_mode. See decisions.md.
+ * - New leg state `voicemail_dropping` (between 'machine' and 'ended') and outcome
+ *   'voicemail_left', added the same way TASK-F-T2 added `call.recording.*` handling --
+ *   except this one DOES drive the leg state machine (recording is metadata-only; a voicemail
+ *   drop controls real leg lifecycle/timing), so it lives in `legTransition` itself, not a
+ *   side-channel intercept in dialer-engine.ts.
+ * - `call.machine.greeting.ended` here is a NORMALIZED core event: dialer-engine.ts's
+ *   mapToDialerEvent maps BOTH the standard and premium raw greeting-ended webhooks to it --
+ *   the leg-level decision is identical either way, only the raw event_type differs.
  */
 
 // ---------------------------------------------------------------------------
@@ -52,6 +73,7 @@ export const LEG_STATES = [
   'dropped',
   'abandoned',
   'machine',
+  'voicemail_dropping',
   'ended',
 ] as const;
 export type LegState = (typeof LEG_STATES)[number];
@@ -64,10 +86,18 @@ export const LEG_OUTCOMES = [
   'abandoned',
   'failed',
   'connected',
+  'voicemail_left',
 ] as const;
 export type LegOutcome = (typeof LEG_OUTCOMES)[number];
 
-export const AMD_MODES = ['off', 'on'] as const;
+/** TASK-F-T3/BUG-7: widened from the old boolean-ish 'off'|'on' ('on' always meant premium) to
+ *  the 4 real Telnyx `answering_machine_detection` values this build actually offers a campaign
+ *  ('disabled' is never surfaced -- 'off' means "don't send AMD at all", a distinct dial-time
+ *  choice, not a 5th detection tier). Verified against spec3.json's CallRequest schema
+ *  (2026-09-25): the full enum is `premium | detect | detect_beep | detect_words | greeting_end |
+ *  disabled` -- `detect_beep`/`greeting_end` are not exposed here (no task requirement asked for
+ *  them, and both are narrower special cases of `detect_words` for this build's purposes). */
+export const AMD_MODES = ['off', 'detect', 'detect_words', 'premium'] as const;
 export type AmdMode = (typeof AMD_MODES)[number];
 
 /** call.machine.detection.ended (standard AMD) result enum, per spec3.json. */
@@ -100,7 +130,19 @@ export type TelnyxDialerEvent =
   | { eventType: 'call.machine.detection.ended'; result: AmdStandardResult }
   | { eventType: 'call.machine.premium.detection.ended'; result: AmdPremiumResult }
   | { eventType: 'call.hangup'; hangupCause: HangupCause }
-  | { eventType: 'call.speak.ended' };
+  | { eventType: 'call.speak.ended' }
+  /** TASK-F-T3 (VMD-2): the engine normalizes BOTH `call.machine.greeting.ended` (standard --
+   *  only ever emitted for `detect_words`/`detect_beep`/`greeting_end` modes, per spec3.json's
+   *  own `answering_machine_detection` description) and `call.machine.premium.greeting.ended`
+   *  (premium -- only emitted when a beep is actually detected) into this ONE core event before
+   *  calling legTransition -- the leg-level decision ("greeting's over, safe to play the drop
+   *  now") is identical either way; only dialer-engine.ts's mapToDialerEvent needs to know which
+   *  raw webhook it came from. */
+  | { eventType: 'call.machine.greeting.ended' }
+  /** VMD-2/VMD-5: confirms the voicemail drop audio finished playing on a machine leg -- same
+   *  "no state change, the engine issues the actual hangup command next" shape as
+   *  call.speak.ended's own abandoned-message confirmation. */
+  | { eventType: 'call.playback.ended' };
 
 export interface LegTransitionCtx {
   amdMode: AmdMode;
@@ -120,6 +162,18 @@ export interface LegTransitionCtx {
    * Telnyx-side hangup. Defaults to false (a natural hangup) when omitted.
    */
   hungUpByEngine?: boolean;
+  /**
+   * TASK-F-T3 (VMD-2): call.machine.greeting.ended only. Decided by the caller BEFORE calling
+   * legTransition -- exactly the same "caller decides, legTransition just applies it" shape as
+   * `claim` -- from whether this leg already has a voicemail-drop file armed (dialer-engine.ts
+   * persists that decision onto the leg row the moment call.machine.detection(.premium).ended
+   * resolves to 'machine', so this ctx flag is a fresh re-read of that same row, not a second
+   * independent decision that could drift from the first one). true -> move to
+   * 'voicemail_dropping' (about to play the drop). Not set/false -> this event is a no-op here;
+   * the leg was either already hung up immediately at machine-detection time (the common case),
+   * or is in some other state this event doesn't apply to.
+   */
+  voicemailDrop?: boolean;
 }
 
 export type LegTransitionResult = { next: LegState; outcome?: LegOutcome } | null;
@@ -180,7 +234,7 @@ export function legTransition(
       // leg's own call.answered was processed still means the call was in fact
       // answered -- accept it from 'ringing'/'initiated' too, not just the normal
       // 'amd_pending' (reached after call.answered already ran).
-      if (ctx.amdMode !== 'on') return null;
+      if (ctx.amdMode === 'off') return null;
       if (current !== 'amd_pending' && current !== 'ringing' && current !== 'initiated') {
         return null;
       }
@@ -193,6 +247,21 @@ export function legTransition(
       // an abandoned answered loser. No state change -- the engine issues the actual
       // hangup command next, and call.hangup (below) closes the leg out.
       return current === 'abandoned' ? { next: 'abandoned' } : null;
+
+    case 'call.machine.greeting.ended':
+      // Only ever reachable from 'machine' (this leg's own AMD already rejected it as a
+      // machine). ctx.voicemailDrop === false/undefined means the not-dropping case --
+      // dialer-engine.ts already issued the hangup immediately at machine-detection time for
+      // that case, so a genuinely LATE arrival of this event here almost always finds the leg
+      // no longer 'machine' at all (returns null below); this branch is defensive, not the
+      // normal path for "not dropping".
+      if (current !== 'machine' || !ctx.voicemailDrop) return null;
+      return { next: 'voicemail_dropping' };
+
+    case 'call.playback.ended':
+      // Same no-op-confirmation shape as call.speak.ended above: the engine issues the actual
+      // hangup command next (see dialer-engine.ts's processContactLegEvent).
+      return current === 'voicemail_dropping' ? { next: 'voicemail_dropping' } : null;
 
     case 'call.hangup': {
       if (current === 'ended') return null;
@@ -304,6 +373,7 @@ export function hangupOutcome(leg: HangupLegHistory): LegOutcome {
   if (leg.state === 'machine') return 'machine';
   if (leg.state === 'dropped') return 'dropped';
   if (leg.state === 'abandoned') return 'abandoned';
+  if (leg.state === 'voicemail_dropping') return 'voicemail_left';
 
   if (leg.hungUpByEngine) {
     return leg.state === 'ringing' || leg.state === 'initiated' ? 'dropped' : 'abandoned';
@@ -437,6 +507,7 @@ export function leadOutcomeUpdate(
     case 'no_answer':
     case 'busy':
     case 'machine':
+    case 'voicemail_left':
       return queuedOrExhausted(lead.attempts + 1, retryIntervalMs);
     case 'dropped':
       return queuedOrExhausted(lead.attempts, DROPPED_OR_ABANDONED_RETRY_INTERVAL_MS);

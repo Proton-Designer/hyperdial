@@ -243,6 +243,7 @@ export function CampaignManageModal({
         setSettingsForm({
           lines: c.lines,
           amd_mode: c.amd_mode,
+          voicemail_drop_mode: c.voicemail_drop_mode,
           caller_id_number_id: c.caller_id_number_id,
           max_attempts: c.max_attempts,
           retry_interval_minutes: c.retry_interval_minutes,
@@ -673,7 +674,14 @@ export function CampaignManageModal({
                       <Select
                         value={settingsForm.amd_mode ?? 'off'}
                         onValueChange={(v) =>
-                          setSettingsForm((f) => (f ? { ...f, amd_mode: v as 'off' | 'on' } : f))
+                          setSettingsForm((f) =>
+                            f
+                              ? {
+                                  ...f,
+                                  amd_mode: v as 'off' | 'detect' | 'detect_words' | 'premium',
+                                }
+                              : f
+                          )
                         }
                       >
                         <SelectTrigger className="w-full bg-surface-1 border-white/10 text-white">
@@ -690,15 +698,80 @@ export function CampaignManageModal({
                             Off
                           </SelectItem>
                           <SelectItem
-                            value="on"
+                            value="detect"
                             className="bg-surface-2 hover:bg-white/10 focus:bg-white/10 text-white focus:text-white"
                           >
-                            On
+                            Detect (standard, ~$0.002/call)
+                          </SelectItem>
+                          <SelectItem
+                            value="detect_words"
+                            className="bg-surface-2 hover:bg-white/10 focus:bg-white/10 text-white focus:text-white"
+                          >
+                            Detect + words (standard, ~$0.002/call -- required for voicemail drop)
+                          </SelectItem>
+                          <SelectItem
+                            value="premium"
+                            className="bg-surface-2 hover:bg-white/10 focus:bg-white/10 text-white focus:text-white"
+                          >
+                            Premium (~$0.0065/call, ~3.25x -- also supports voicemail drop)
                           </SelectItem>
                         </SelectContent>
                       </Select>
                       <p className="text-xs text-text-secondary/70 mt-1">
-                        AMD adds ~2–4s after answer; some humans hang up in that gap.
+                        AMD adds ~2–4s after answer; some humans hang up in that gap. Plain "Detect"
+                        never signals when a machine's greeting ends, so voicemail drop (below)
+                        silently never fires under it -- use "Detect + words" or "Premium" if you
+                        want drops to actually play.
+                      </p>
+                    </div>
+                    <div>
+                      <label className="text-sm text-text-secondary block mb-1">
+                        Voicemail Drop
+                      </label>
+                      <Select
+                        value={settingsForm.voicemail_drop_mode ?? 'first_attempt'}
+                        onValueChange={(v) =>
+                          setSettingsForm((f) =>
+                            f
+                              ? {
+                                  ...f,
+                                  voicemail_drop_mode: v as
+                                    'first_attempt' | 'every_attempt' | 'never',
+                                }
+                              : f
+                          )
+                        }
+                      >
+                        <SelectTrigger className="w-full bg-surface-1 border-white/10 text-white">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent
+                          className="bg-surface-2 border-white/10"
+                          style={{ zIndex: 10001 }}
+                        >
+                          <SelectItem
+                            value="first_attempt"
+                            className="bg-surface-2 hover:bg-white/10 focus:bg-white/10 text-white focus:text-white"
+                          >
+                            First attempt only
+                          </SelectItem>
+                          <SelectItem
+                            value="every_attempt"
+                            className="bg-surface-2 hover:bg-white/10 focus:bg-white/10 text-white focus:text-white"
+                          >
+                            Every attempt
+                          </SelectItem>
+                          <SelectItem
+                            value="never"
+                            className="bg-surface-2 hover:bg-white/10 focus:bg-white/10 text-white focus:text-white"
+                          >
+                            Never
+                          </SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <p className="text-xs text-text-secondary/70 mt-1">
+                        Plays each agent's own drop file (Settings), or the org default, when a
+                        machine is detected. Set up the file in Settings first.
                       </p>
                     </div>
                     <div>

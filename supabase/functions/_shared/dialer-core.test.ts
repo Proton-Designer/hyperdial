@@ -25,8 +25,8 @@ Deno.test('amdDecision: off always claims, regardless of result', () => {
 });
 
 Deno.test('amdDecision: on, no result yet, waits', () => {
-  assertEquals(amdDecision('on'), 'wait');
-  assertEquals(amdDecision('on', undefined), 'wait');
+  assertEquals(amdDecision('premium'), 'wait');
+  assertEquals(amdDecision('premium', undefined), 'wait');
 });
 
 const AMD_CLAIM_RESULTS = ['human', 'human_residence', 'human_business', 'not_sure'];
@@ -34,20 +34,31 @@ const AMD_REJECT_RESULTS = ['machine', 'fax_detected', 'silence'];
 
 for (const result of AMD_CLAIM_RESULTS) {
   Deno.test(`amdDecision: on, result "${result}" claims`, () => {
-    assertEquals(amdDecision('on', result), 'claim');
+    assertEquals(amdDecision('premium', result), 'claim');
   });
 }
 
 for (const result of AMD_REJECT_RESULTS) {
   Deno.test(`amdDecision: on, result "${result}" rejects`, () => {
-    assertEquals(amdDecision('on', result), 'reject');
+    assertEquals(amdDecision('premium', result), 'reject');
   });
 }
 
 Deno.test(
   'amdDecision: on, unrecognized result claims (false "machine" drops a real prospect)',
   () => {
-    assertEquals(amdDecision('on', 'something_new_telnyx_added'), 'claim');
+    assertEquals(amdDecision('premium', 'something_new_telnyx_added'), 'claim');
+  }
+);
+
+Deno.test(
+  'amdDecision: detect/detect_words behave identically to premium -- only "off" is special-cased',
+  () => {
+    for (const mode of ['detect', 'detect_words'] as const) {
+      assertEquals(amdDecision(mode), 'wait');
+      assertEquals(amdDecision(mode, 'human'), 'claim');
+      assertEquals(amdDecision(mode, 'machine'), 'reject');
+    }
   }
 );
 
@@ -71,6 +82,17 @@ Deno.test('hangupOutcome: a decision already reached is preserved, hangup_cause 
   assertEquals(
     hangupOutcome({ state: 'abandoned', hangupCause: 'normal_clearing', hungUpByEngine: false }),
     'abandoned'
+  );
+  // TASK-F-T3: the leg's own hangup (issued by dialer-engine.ts right after
+  // call.playback.ended) must preserve 'voicemail_left', not fall through to the natural-cause
+  // branch below -- same preserve shape as 'machine'/'dropped'/'abandoned' above.
+  assertEquals(
+    hangupOutcome({
+      state: 'voicemail_dropping',
+      hangupCause: 'normal_clearing',
+      hungUpByEngine: true,
+    }),
+    'voicemail_left'
   );
 });
 
@@ -161,7 +183,7 @@ Deno.test(
 );
 
 Deno.test('legTransition: call.answered, amd on -> amd_pending, no outcome yet', () => {
-  assertEquals(legTransition('ringing', { eventType: 'call.answered' }, { amdMode: 'on' }), {
+  assertEquals(legTransition('ringing', { eventType: 'call.answered' }, { amdMode: 'premium' }), {
     next: 'amd_pending',
   });
 });
@@ -199,7 +221,7 @@ Deno.test(
       legTransition(
         'amd_pending',
         { eventType: 'call.machine.detection.ended', result: 'human' },
-        { amdMode: 'on', claim: 'won' }
+        { amdMode: 'premium', claim: 'won' }
       ),
       { next: 'claimed', outcome: 'connected' }
     );
@@ -213,7 +235,7 @@ Deno.test(
       legTransition(
         'amd_pending',
         { eventType: 'call.machine.detection.ended', result: 'human' },
-        { amdMode: 'on', claim: 'lost' }
+        { amdMode: 'premium', claim: 'lost' }
       ),
       { next: 'abandoned', outcome: 'abandoned' }
     );
@@ -227,7 +249,7 @@ Deno.test(
       legTransition(
         'amd_pending',
         { eventType: 'call.machine.detection.ended', result: 'machine' },
-        { amdMode: 'on' }
+        { amdMode: 'premium' }
       ),
       { next: 'machine', outcome: 'machine' }
     );
@@ -241,7 +263,7 @@ Deno.test(
       legTransition(
         'amd_pending',
         { eventType: 'call.machine.premium.detection.ended', result: 'human_residence' },
-        { amdMode: 'on', claim: 'won' }
+        { amdMode: 'premium', claim: 'won' }
       ),
       { next: 'claimed', outcome: 'connected' }
     );
@@ -253,7 +275,7 @@ Deno.test('legTransition: premium detection-ended, fax_detected, amd on -> machi
     legTransition(
       'amd_pending',
       { eventType: 'call.machine.premium.detection.ended', result: 'fax_detected' },
-      { amdMode: 'on' }
+      { amdMode: 'premium' }
     ),
     { next: 'machine', outcome: 'machine' }
   );
@@ -280,7 +302,7 @@ Deno.test(
       legTransition(
         'claimed',
         { eventType: 'call.machine.detection.ended', result: 'human' },
-        { amdMode: 'on', claim: 'won' }
+        { amdMode: 'premium', claim: 'won' }
       ),
       null
     );
@@ -298,7 +320,7 @@ Deno.test(
       legTransition(
         'ringing',
         { eventType: 'call.machine.detection.ended', result: 'human' },
-        { amdMode: 'on', claim: 'won' }
+        { amdMode: 'premium', claim: 'won' }
       ),
       { next: 'claimed', outcome: 'connected' }
     );
@@ -312,7 +334,7 @@ Deno.test(
       legTransition(
         'initiated',
         { eventType: 'call.machine.premium.detection.ended', result: 'human_residence' },
-        { amdMode: 'on', claim: 'won' }
+        { amdMode: 'premium', claim: 'won' }
       ),
       { next: 'claimed', outcome: 'connected' }
     );
@@ -332,6 +354,90 @@ Deno.test('legTransition: call.speak.ended in any other state is ignored -> null
   );
   assertEquals(
     legTransition('claimed', { eventType: 'call.speak.ended' }, { amdMode: 'off' }),
+    null
+  );
+});
+
+// ---------------------------------------------------------------------------
+// legTransition: call.machine.greeting.ended / call.playback.ended (TASK-F-T3, VMD-2)
+// ---------------------------------------------------------------------------
+
+Deno.test(
+  'legTransition: greeting.ended on a machine leg, voicemail drop armed -> voicemail_dropping',
+  () => {
+    assertEquals(
+      legTransition(
+        'machine',
+        { eventType: 'call.machine.greeting.ended' },
+        { amdMode: 'detect_words', voicemailDrop: true }
+      ),
+      { next: 'voicemail_dropping' }
+    );
+  }
+);
+
+Deno.test(
+  'legTransition: greeting.ended on a machine leg, voicemail drop NOT armed -> null (already handled at detection time)',
+  () => {
+    assertEquals(
+      legTransition(
+        'machine',
+        { eventType: 'call.machine.greeting.ended' },
+        { amdMode: 'detect_words' }
+      ),
+      null
+    );
+    assertEquals(
+      legTransition(
+        'machine',
+        { eventType: 'call.machine.greeting.ended' },
+        { amdMode: 'detect_words', voicemailDrop: false }
+      ),
+      null
+    );
+  }
+);
+
+Deno.test('legTransition: greeting.ended in any other state is ignored -> null', () => {
+  assertEquals(
+    legTransition(
+      'ringing',
+      { eventType: 'call.machine.greeting.ended' },
+      { amdMode: 'premium', voicemailDrop: true }
+    ),
+    null
+  );
+  assertEquals(
+    legTransition(
+      'ended',
+      { eventType: 'call.machine.greeting.ended' },
+      { amdMode: 'premium', voicemailDrop: true }
+    ),
+    null
+  );
+});
+
+Deno.test(
+  'legTransition: playback.ended while voicemail_dropping is a no-op self-transition',
+  () => {
+    assertEquals(
+      legTransition(
+        'voicemail_dropping',
+        { eventType: 'call.playback.ended' },
+        { amdMode: 'premium' }
+      ),
+      { next: 'voicemail_dropping' }
+    );
+  }
+);
+
+Deno.test('legTransition: playback.ended in any other state is ignored -> null', () => {
+  assertEquals(
+    legTransition('machine', { eventType: 'call.playback.ended' }, { amdMode: 'premium' }),
+    null
+  );
+  assertEquals(
+    legTransition('ended', { eventType: 'call.playback.ended' }, { amdMode: 'premium' }),
     null
   );
 });
@@ -678,9 +784,9 @@ Deno.test(
   () => {
     const seen = new Set<AmdDecision>();
     seen.add(amdDecision('off'));
-    seen.add(amdDecision('on'));
-    seen.add(amdDecision('on', 'human'));
-    seen.add(amdDecision('on', 'machine'));
+    seen.add(amdDecision('premium'));
+    seen.add(amdDecision('premium', 'human'));
+    seen.add(amdDecision('premium', 'machine'));
     assertEquals(seen.has('claim'), true);
     assertEquals(seen.has('wait'), true);
     assertEquals(seen.has('reject'), true);

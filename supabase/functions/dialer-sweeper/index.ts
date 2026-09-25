@@ -29,6 +29,7 @@ import {
   type StaleClaimedLegCandidate,
 } from '../_shared/dialer-sweeper-core.ts';
 import type { TelnyxClient } from '../_shared/telnyx-client.ts';
+import { VOICEMAIL_DROP_SWEEP_TIMEOUT_SECONDS } from '../_shared/voicemail-core.ts';
 
 const STUCK_AFTER_SECONDS = 60;
 // TASK-L6: how long a claimed (bridged) contact leg must be silent before this even asks
@@ -87,6 +88,9 @@ Deno.serve(async (req: Request) => {
   const { data, error } = await supabase.rpc('run_dialer_sweep', {
     p_stuck_after_seconds: STUCK_AFTER_SECONDS,
     p_claimed_check_after_seconds: CLAIMED_CHECK_AFTER_SECONDS,
+    // TASK-F-T3 (VMD-2 safety timeout): reaps a leg stuck in 'voicemail_dropping' -- see
+    // run_dialer_sweep's own SQL comment (block 1c) and voicemail-core.ts's header.
+    p_voicemail_drop_after_seconds: VOICEMAIL_DROP_SWEEP_TIMEOUT_SECONDS,
   });
   if (error) {
     console.error('[dialer-sweeper] run_dialer_sweep failed', error.message);

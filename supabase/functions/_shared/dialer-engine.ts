@@ -88,6 +88,20 @@
  *   confirmation (leg already 'abandoned', "no state change, the engine issues the hangup
  *   next") also has `next: 'abandoned'` but no `outcome` -- gating on `next` fired
  *   `sendAbandonMessage` a second time on that confirmation event.
+ *
+ * TASK-F-T3 (VMD-1..5, BUG-7), voicemail drop + real AMD modes:
+ * - The 'machine' dispatch branch (processContactLegEvent) now DECIDES, once, whether to drop a
+ *   voicemail (`resolveVoicemailDropPath`) instead of hanging up unconditionally. Dropping means
+ *   NOT hanging up -- the leg stays 'machine' (armed) until its own call.machine.greeting.ended
+ *   arrives and actually starts playback (`startVoicemailPlayback`, 'voicemail_dropping'
+ *   branch). Not dropping is unchanged from before this task.
+ * - `refillSession`'s active-line count now excludes 'voicemail_dropping' legs (VMD-5) -- a
+ *   deliberate, bounded exception to "never dial more than `lines` at once", not an oversight.
+ *   See decisions.md.
+ * - `amd_mode` widened from the old 'off'|'on' to the 4 real Telnyx values (BUG-7); see
+ *   dialer-core.ts's own header for the exact vendor-verified mapping and the (important)
+ *   constraint that plain 'detect' never gets a greeting-ended signal at all, so voicemail drop
+ *   is a no-op under that mode regardless of the campaign's own voicemail_drop_mode.
  */
 import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2';
 import {
@@ -116,6 +130,12 @@ import {
   parseRecordingErrorPayload,
   recordingStoragePath,
 } from './recording-core.ts';
+import {
+  amdModeSupportsVoicemailDrop,
+  shouldAttemptVoicemailDrop,
+  VOICEMAIL_DROP_SIGNED_URL_TTL_SECONDS,
+  type VoicemailDropMode,
+} from './voicemail-core.ts';
 
 function dialerLog(step: string, meta: Record<string, unknown> = {}): void {
   console.log('[dialer-engine]', step, meta);
@@ -173,6 +193,8 @@ interface CampaignRow {
   name: string;
   abandon_message_enabled: boolean;
   caller_id_number_id: string | null;
+  /** TASK-F-T3 (VMD-4). */
+  voicemail_drop_mode: VoicemailDropMode;
 }
 
 interface CallLegRow {
@@ -198,12 +220,20 @@ interface CallLegRow {
    *  `answered_at`/`claimed_at`) exactly when the leg genuinely never got bridged into live
    *  audio. */
   bridged_at: string | null;
+  /** TASK-F-T3 (VMD-2): set once, at machine-detection-ended time, by
+   *  `resolveVoicemailDropPath` -- the STORAGE path of the drop file this leg will play once its
+   *  greeting-ended webhook arrives, or null if this leg is not dropping a voicemail (the common
+   *  case: mode/attempt gating said no, or no drop file exists). `applyLegTransition` re-reads
+   *  this fresh (via a normal reload of the leg row on each webhook delivery) to build
+   *  `ctx.voicemailDrop` -- a single decision, made once, never re-derived a second time from
+   *  campaign/attempt/file lookups that could drift from the first answer. */
+  voicemail_drop_path: string | null;
 }
 
 const SESSION_COLUMNS =
   'id, org_id, campaign_id, agent_id, state, lines, amd_mode, agent_leg_id, active_leg_id, conference_id, paused_agent_lost_from';
 const LEG_COLUMNS =
-  'id, org_id, session_id, campaign_id, contact_id, lead_id, kind, call_control_id, state, answered_at, claimed_at, bridged_at';
+  'id, org_id, session_id, campaign_id, contact_id, lead_id, kind, call_control_id, state, answered_at, claimed_at, bridged_at, voicemail_drop_path';
 
 async function loadSession(
   supabase: SupabaseClient,
@@ -224,7 +254,7 @@ async function loadCampaign(
 ): Promise<CampaignRow | null> {
   const { data, error } = await supabase
     .from('campaigns')
-    .select('id, org_id, name, abandon_message_enabled, caller_id_number_id')
+    .select('id, org_id, name, abandon_message_enabled, caller_id_number_id, voicemail_drop_mode')
     .eq('id', campaignId)
     .maybeSingle();
   if (error) throw new Error(`loadCampaign: ${error.message}`);
@@ -300,10 +330,6 @@ async function agentLegStateFor(
     .eq('id', session.agent_leg_id)
     .maybeSingle();
   return (data?.state as LegState | undefined) ?? 'initiated';
-}
-
-function toTelnyxAmdMode(mode: CoreAmdMode): 'off' | 'premium' {
-  return mode === 'on' ? 'premium' : 'off';
 }
 
 /** TASK-L1: the agent's own WebRTC credential SIP URI, per design's own text ("dial the
@@ -629,7 +655,15 @@ export async function refillSession(
   // would skip forever without ever calling claim_next_leads at all, so a single-line session
   // could never dial a single contact. Found by this task's own review-fix regression test
   // (B2's scenario), not by inspection.
-  const activeContactLegs = activeLegs.filter((l) => l.kind === 'contact').length;
+  // TASK-F-T3 (VMD-5): a leg playing a voicemail drop must never hold up the next batch -- it
+  // is excluded from the active-line count the same way an 'ended' leg already is (loadActiveLegs
+  // itself only filters out 'ended'). This can transiently push real Telnyx call concurrency
+  // above `lines` by however many drops are in flight at once, bounded by the sweeper's own
+  // ~90s safety timeout on that state -- a deliberate, documented tradeoff (decisions.md), not
+  // an oversight.
+  const activeContactLegs = activeLegs.filter(
+    (l) => l.kind === 'contact' && l.state !== 'voicemail_dropping'
+  ).length;
   const n = refillCount(session.state, agentLegState, session.lines, activeContactLegs);
   if (n <= 0) {
     dialerLog('refill_skip_zero', {
@@ -746,7 +780,10 @@ async function dialLead(
       clientState,
       timeoutSecs: 25,
       timeLimitSecs: CONTACT_DIAL_TIME_LIMIT_SECS,
-      amdMode: toTelnyxAmdMode(args.amdMode),
+      // TASK-F-T3/BUG-7: CoreAmdMode (dialer-core.ts) and telnyx-client.ts's own AmdMode are now
+      // the identical 4-member union ('off'|'detect'|'detect_words'|'premium') -- no mapping
+      // function needed, unlike the old 'off'|'on' -> 'disabled'|'premium' translation.
+      amdMode: args.amdMode,
     });
     const { error: updateError } = await supabase
       .from('call_legs')
@@ -822,14 +859,22 @@ function mapToDialerEvent(raw: RawTelnyxEvent): TelnyxDialerEvent | null {
       };
     case 'call.speak.ended':
       return { eventType: 'call.speak.ended' };
+    // TASK-F-T3 (VMD-2): both the standard and premium greeting-ended webhooks normalize to
+    // the SAME core event -- see dialer-core.ts's header for why the leg-level decision is
+    // identical either way.
+    case 'call.machine.greeting.ended':
+    case 'call.machine.premium.greeting.ended':
+      return { eventType: 'call.machine.greeting.ended' };
+    case 'call.playback.ended':
+      return { eventType: 'call.playback.ended' };
     case 'call.hangup':
       return {
         eventType: 'call.hangup',
         hangupCause: String(raw.payload.hangup_cause ?? 'unspecified') as HangupCause,
       };
     default:
-      // call.bridged, call.machine.greeting.ended, etc. -- not part of this leg's state
-      // machine. Acked already by the caller; nothing more to do.
+      // call.bridged, call.playback.started, etc. -- not part of this leg's state machine.
+      // Acked already by the caller; nothing more to do.
       return null;
   }
 }
@@ -1050,6 +1095,10 @@ async function applyLegTransition(
       amdMode: session.amd_mode,
       claim,
       hungUpByEngine,
+      // TASK-F-T3: re-read fresh on every retry attempt from the SAME leg reload this loop
+      // already does on a race loss -- never a second independent decision (see this leg row
+      // field's own header comment on CallLegRow).
+      voicemailDrop: currentLeg.voicemail_drop_path != null,
     });
     if (!result) {
       dialerLog('leg_transition_noop', {
@@ -1200,7 +1249,33 @@ async function processContactLegEvent(
     // here first -- so this is the other half of that race, issuing the abandon message.
     await sendAbandonMessage(supabase, session, currentLeg);
   } else if (result.next === 'machine') {
-    await hangupLeg(supabase, session.org_id, currentLeg.call_control_id, 'machine_hangup_failed');
+    // TASK-F-T3 (VMD-2/VMD-4): decide ONCE whether this leg should drop a voicemail. Dropping
+    // means NOT hanging up here -- the leg stays 'machine' (armed, `voicemail_drop_path` set)
+    // until its own call.machine.greeting.ended arrives (below) actually starts the playback.
+    // Not dropping is exactly today's behavior, unchanged: hang up immediately.
+    const dropPath = await resolveVoicemailDropPath(supabase, session, currentLeg);
+    if (dropPath) {
+      await supabase
+        .from('call_legs')
+        .update({ voicemail_drop_path: dropPath })
+        .eq('id', currentLeg.id);
+      dialerLog('voicemail_drop_armed', { legId: currentLeg.id, dropPath });
+    } else {
+      await hangupLeg(
+        supabase,
+        session.org_id,
+        currentLeg.call_control_id,
+        'machine_hangup_failed'
+      );
+    }
+  } else if (result.next === 'voicemail_dropping') {
+    // VMD-5: this leg no longer counts as an active dialing line (refillSession's own active-
+    // count filter excludes 'voicemail_dropping') -- backfill its slot right away rather than
+    // waiting for some OTHER leg to end and trigger the next refill incidentally.
+    if (session.state === 'dialing') {
+      await refillSession(supabase, session.org_id, session.id);
+    }
+    await startVoicemailPlayback(supabase, session, currentLeg);
   } else if (result.next === 'ended') {
     await supabase.rpc('apply_leg_outcome', { p_leg: currentLeg.id });
     if (currentLeg.id === session.active_leg_id) {
@@ -1226,6 +1301,18 @@ async function processContactLegEvent(
       session.org_id,
       currentLeg.call_control_id,
       'speak_ended_hangup_failed'
+    );
+  }
+
+  if (event.eventType === 'call.playback.ended' && result.next === 'voicemail_dropping') {
+    // VMD-2: the voicemail drop finished playing -- same "confirmation event issues the actual
+    // hangup next" shape as call.speak.ended above. The resulting call.hangup preserves
+    // 'voicemail_left' via hangupOutcome's own preserve-branch (dialer-core.ts).
+    await hangupLeg(
+      supabase,
+      session.org_id,
+      currentLeg.call_control_id,
+      'voicemail_playback_ended_hangup_failed'
     );
   }
 }
@@ -1675,6 +1762,111 @@ async function sendAbandonMessage(
     }
   } else {
     await hangupLeg(supabase, session.org_id, leg.call_control_id, 'abandon_hangup_failed');
+  }
+}
+
+/** TASK-F-T3 (VMD-4): the drop-file lookup half of `resolveVoicemailDropPath` -- user-specific
+ *  file for the dialing agent, else the org default (`user_id is null`), else null (no file at
+ *  all, regardless of what the mode/attempt gating decided). */
+async function loadVoicemailDropPath(
+  supabase: SupabaseClient,
+  orgId: string,
+  agentId: string
+): Promise<string | null> {
+  const { data: userRow } = await supabase
+    .from('voicemail_drop_settings')
+    .select('storage_path')
+    .eq('org_id', orgId)
+    .eq('user_id', agentId)
+    .maybeSingle();
+  if (userRow?.storage_path) return userRow.storage_path as string;
+  const { data: orgRow } = await supabase
+    .from('voicemail_drop_settings')
+    .select('storage_path')
+    .eq('org_id', orgId)
+    .is('user_id', null)
+    .maybeSingle();
+  return (orgRow?.storage_path as string | undefined) ?? null;
+}
+
+/** TASK-F-T3 (VMD-2/VMD-4): decides, ONCE, at machine-detection-ended time, whether this leg
+ *  should drop a voicemail -- and if so, which file. Never throws; any lookup failure here just
+ *  means "don't drop" (the caller falls back to today's plain hangup) -- same fail-safe bias as
+ *  `maybeStartRecording` below. `campaign.voicemail_drop_mode`/`amdModeSupportsVoicemailDrop`
+ *  are both checked BEFORE the `campaign_leads` lookup, so a campaign that never drops voicemails
+ *  (or an amd_mode that can't -- see voicemail-core.ts's own header) never pays for that extra
+ *  query at all. */
+async function resolveVoicemailDropPath(
+  supabase: SupabaseClient,
+  session: DialSessionRow,
+  leg: CallLegRow
+): Promise<string | null> {
+  try {
+    if (!amdModeSupportsVoicemailDrop(session.amd_mode)) return null;
+    const campaign = await loadCampaign(supabase, session.campaign_id);
+    if (!campaign || campaign.voicemail_drop_mode === 'never') return null;
+    if (!leg.lead_id) return null;
+    const { data: leadRow, error: leadError } = await supabase
+      .from('campaign_leads')
+      .select('attempts')
+      .eq('id', leg.lead_id)
+      .maybeSingle();
+    if (leadError) throw new Error(leadError.message);
+    // campaign_leads.attempts is only ever incremented by apply_leg_outcome, which runs at
+    // call.hangup -- still far in this leg's future at machine-detection-ended time, so this
+    // read genuinely reflects "attempts completed before THIS dial", never a stale snapshot.
+    const attemptsSoFar = (leadRow?.attempts as number | undefined) ?? 0;
+    if (!shouldAttemptVoicemailDrop(campaign.voicemail_drop_mode, attemptsSoFar)) return null;
+    return await loadVoicemailDropPath(supabase, session.org_id, session.agent_id);
+  } catch (err) {
+    dialerLog('voicemail_drop_resolve_failed', { legId: leg.id, error: String(err) });
+    return null;
+  }
+}
+
+/** VMD-2: mints a fresh, short-TTL signed URL for this leg's already-armed drop path
+ *  (`leg.voicemail_drop_path`, resolved once at machine-detection-ended time -- see
+ *  `resolveVoicemailDropPath`) and issues `playback_start`. Never blocks/throws past this
+ *  function -- a failure here just leaves the leg sitting in 'voicemail_dropping' until the
+ *  sweeper's own ~90s safety timeout reaps it (documented NOT-done: no retry here, matching
+ *  `maybeStartRecording`'s own fail-open bias for the exact same reason -- a voicemail drop
+ *  failing must never be allowed to strand the leg, and it's just one contact, not the live
+ *  call). `audio_type` is derived from the stored path's own extension, not assumed -- see
+ *  voicemail-core.ts's header for why a signed Storage URL can't be trusted to carry one. */
+async function startVoicemailPlayback(
+  supabase: SupabaseClient,
+  session: DialSessionRow,
+  leg: CallLegRow
+): Promise<void> {
+  const path = leg.voicemail_drop_path;
+  if (!path) return;
+  try {
+    const { client } = await getConnectedOrgTelnyxContext(supabase, session.org_id);
+    if (!client) return;
+    const { data: signed, error: signError } = await supabase.storage
+      .from('voicemail-drops')
+      .createSignedUrl(path, VOICEMAIL_DROP_SIGNED_URL_TTL_SECONDS);
+    if (signError || !signed?.signedUrl) {
+      throw new Error(signError?.message ?? 'createSignedUrl returned no signedUrl');
+    }
+    const clientState = encodeDialClientState({
+      org: session.org_id,
+      session: session.id,
+      leg: leg.id,
+      kind: 'contact',
+    });
+    await client.playbackStart(leg.call_control_id, {
+      audioUrl: signed.signedUrl,
+      audioType: path.endsWith('.wav') ? 'wav' : 'mp3',
+      clientState,
+    });
+    await supabase
+      .from('call_legs')
+      .update({ voicemail_drop_started_at: new Date().toISOString() })
+      .eq('id', leg.id);
+    dialerLog('voicemail_playback_started', { legId: leg.id, sessionId: session.id });
+  } catch (err) {
+    dialerLog('voicemail_playback_failed', { legId: leg.id, error: String(err) });
   }
 }
 

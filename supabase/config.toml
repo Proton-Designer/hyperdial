@@ -448,6 +448,11 @@ verify_jwt = false
 # Set from the start (TASK-F-T2), same lesson as dialer-sweeper/ghl-sync-worker above.
 verify_jwt = false
 
+[functions.voicemail-upload]
+# Custom auth (requireOrgRole), same pattern as recording-url above -- set from the start
+# (TASK-F-T3), not discovered the hard way this time.
+verify_jwt = false
+
 [edge_runtime]
 enabled = true
 # Supported request policies: `oneshot`, `per_worker`.

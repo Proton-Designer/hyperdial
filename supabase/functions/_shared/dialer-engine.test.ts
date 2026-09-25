@@ -208,8 +208,15 @@ function rpc(
       const sessionId = args.p_session as string;
       const session = db.table('dial_sessions').get(sessionId);
       if (!session) return { data: [], error: null };
+      // TASK-F-T3 (VMD-5): must track the real SQL's own capacity check exactly (see this
+      // migration's own comment on that line) -- a leg playing a voicemail drop never holds up
+      // a refill the way an 'ended' leg already doesn't.
       const activeContactLegs = [...db.table('call_legs').values()].filter(
-        (l) => l.session_id === sessionId && l.kind === 'contact' && l.state !== 'ended'
+        (l) =>
+          l.session_id === sessionId &&
+          l.kind === 'contact' &&
+          l.state !== 'ended' &&
+          l.state !== 'voicemail_dropping'
       ).length;
       const capacity = Math.max(0, (session.lines as number) - activeContactLegs);
       if (capacity === 0) return { data: [], error: null };
@@ -341,10 +348,19 @@ function createFakeSupabase(db: FakeDb) {
     // path's only Storage call. No error, no real bytes kept: the DB row update that follows
     // (recording_status/recording_path) is what the tests actually assert on.
     storage: {
-      from(_bucket: string) {
+      from(bucket: string) {
         return {
-          upload(_path: string, _body: unknown, _opts?: unknown) {
-            return Promise.resolve({ data: { path: _path }, error: null });
+          upload(path: string, _body: unknown, _opts?: unknown) {
+            return Promise.resolve({ data: { path }, error: null });
+          },
+          // TASK-F-T3: a minimal fake of `.storage.from(bucket).createSignedUrl()` -- the
+          // voicemail playback path's only Storage call. No real signing; the returned URL just
+          // encodes bucket/path/ttl so tests can assert the RIGHT file was signed.
+          createSignedUrl(path: string, expiresIn: number) {
+            return Promise.resolve({
+              data: { signedUrl: `https://fake-storage.test/${bucket}/${path}?ttl=${expiresIn}` },
+              error: null,
+            });
           },
         };
       },
@@ -396,6 +412,9 @@ class FakeTelnyxServer {
       return Response.json({ data: {} });
     }
     if (method === 'POST' && /\/v2\/calls\/[^/]+\/actions\/record_start$/.test(path)) {
+      return Response.json({ data: {} });
+    }
+    if (method === 'POST' && /\/v2\/calls\/[^/]+\/actions\/playback_start$/.test(path)) {
       return Response.json({ data: {} });
     }
     if (method === 'POST' && path === '/v2/conferences') {
@@ -507,7 +526,7 @@ function contactEvent(
   sessionId: string,
   legId: string,
   callControlId: string,
-  eventType: 'call.answered' | 'call.hangup',
+  eventType: string,
   extra: Record<string, unknown> = {}
 ): RawTelnyxEvent {
   return {
@@ -868,7 +887,7 @@ Deno.test(
         campaignId,
         agentId,
         lines: 3,
-        amdMode: 'on', // amd on: call.answered alone does NOT claim -- lands at amd_pending.
+        amdMode: 'premium', // amd on: call.answered alone does NOT claim -- lands at amd_pending.
       });
       const agentLeg = [...db.table('call_legs').values()].find((l) => l.kind === 'agent')!;
       await processTelnyxDialerEvent(
@@ -1749,6 +1768,414 @@ Deno.test(
       // must skip it before processRecordingEvent ever runs a second download.
       await processTelnyxDialerEvent(supabase, event);
       assertEquals(server.recordingDownloadCount, 1, 'a redelivered eventId must not re-download');
+    } finally {
+      restoreFetch();
+    }
+  }
+);
+
+// ---------------------------------------------------------------------------
+// TASK-F-T3 (VMD-1..5, BUG-7): voicemail drop + real AMD modes.
+// ---------------------------------------------------------------------------
+
+/** Bootstraps a session (given amdMode) through Go Ready -> dialing, and returns the FIRST
+ *  contact leg dialed (the machine-detection candidate every test below drives itself). Mirrors
+ *  the REC-1 tests' own bootstrap sequence exactly. */
+async function bootstrapToMachineCandidate(
+  db: FakeDb,
+  supabase: ReturnType<typeof createFakeSupabase>,
+  args: { orgId: string; campaignId: string; agentId: string; amdMode: string }
+): Promise<{ sessionId: string; legId: string; callControlId: string }> {
+  const { sessionId } = await startSession(supabase, {
+    orgId: args.orgId,
+    campaignId: args.campaignId,
+    agentId: args.agentId,
+    lines: 3,
+    // deno-lint-ignore no-explicit-any
+    amdMode: args.amdMode as any,
+  });
+  const agentLeg = [...db.table('call_legs').values()].find((l) => l.kind === 'agent')!;
+  await processTelnyxDialerEvent(
+    supabase,
+    agentEvent(
+      args.orgId,
+      sessionId,
+      agentLeg.id as string,
+      agentLeg.call_control_id as string,
+      'call.answered'
+    )
+  );
+  const leg = [...db.table('call_legs').values()].find((l) => l.kind === 'contact')!;
+  return { sessionId, legId: leg.id as string, callControlId: leg.call_control_id as string };
+}
+
+Deno.test(
+  'VMD-2/VMD-3: machine detected under detect_words -> armed, greeting-ended plays the drop, playback-ended hangs up -> voicemail_left',
+  async () => {
+    const db = new FakeDb();
+    const server = new FakeTelnyxServer();
+    const restoreFetch = stubTelnyxFetch(server);
+    const supabase = createFakeSupabase(db);
+    const { orgId, campaignId, agentId } = seedFixtures(db);
+    db.table('campaigns').get(campaignId)!.voicemail_drop_mode = 'first_attempt';
+    db.insert('voicemail_drop_settings', {
+      id: 'vd-org-default',
+      org_id: orgId,
+      user_id: null,
+      storage_path: `${orgId}/org-default.mp3`,
+    });
+    try {
+      const { sessionId, legId, callControlId } = await bootstrapToMachineCandidate(db, supabase, {
+        orgId,
+        campaignId,
+        agentId,
+        amdMode: 'detect_words',
+      });
+
+      await processTelnyxDialerEvent(
+        supabase,
+        contactEvent(orgId, sessionId, legId, callControlId, 'call.answered')
+      );
+      await processTelnyxDialerEvent(
+        supabase,
+        contactEvent(orgId, sessionId, legId, callControlId, 'call.machine.detection.ended', {
+          result: 'machine',
+        })
+      );
+
+      let legRow = db.table('call_legs').get(legId)!;
+      assertEquals(legRow.state, 'machine');
+      assertEquals(legRow.voicemail_drop_path, `${orgId}/org-default.mp3`);
+      assertEquals(
+        server.requests.some((r) => r.path === `/v2/calls/${callControlId}/actions/hangup`),
+        false,
+        'must NOT hang up yet -- waiting for the greeting to end'
+      );
+
+      // Real call.machine.greeting.ended carries no call_control_id -- route through the
+      // client_state.leg fallback, same technique as recordingEvent.
+      await processTelnyxDialerEvent(
+        supabase,
+        contactEvent(orgId, sessionId, legId, '', 'call.machine.greeting.ended')
+      );
+
+      legRow = db.table('call_legs').get(legId)!;
+      assertEquals(legRow.state, 'voicemail_dropping');
+      const playbackReq = server.requests.find(
+        (r) => r.method === 'POST' && r.path === `/v2/calls/${callControlId}/actions/playback_start`
+      );
+      assertExists(playbackReq, 'playback_start must be called once the greeting ends');
+      const playbackBody = playbackReq!.body as Record<string, unknown>;
+      assertEquals(
+        playbackBody.audio_url,
+        `https://fake-storage.test/voicemail-drops/${orgId}/org-default.mp3?ttl=900`
+      );
+      assertEquals(playbackBody.audio_type, 'mp3');
+      const decoded = JSON.parse(atob(String(playbackBody.client_state)));
+      assertEquals(decoded, { org: orgId, session: sessionId, leg: legId, kind: 'contact' });
+
+      // call.playback.ended's real payload DOES carry call_control_id -- no fallback needed.
+      await processTelnyxDialerEvent(
+        supabase,
+        contactEvent(orgId, sessionId, legId, callControlId, 'call.playback.ended')
+      );
+      const hangupReq = server.requests.find(
+        (r) => r.method === 'POST' && r.path === `/v2/calls/${callControlId}/actions/hangup`
+      );
+      assertExists(hangupReq, 'the drop finished -- the engine must hang up now');
+
+      await processTelnyxDialerEvent(
+        supabase,
+        contactEvent(orgId, sessionId, legId, callControlId, 'call.hangup', {
+          hangup_cause: 'normal_clearing',
+        })
+      );
+      legRow = db.table('call_legs').get(legId)!;
+      assertEquals(legRow.state, 'ended');
+      assertEquals(legRow.outcome, 'voicemail_left');
+    } finally {
+      restoreFetch();
+    }
+  }
+);
+
+Deno.test('VMD-4: voicemail_drop_mode=never -> plain hangup, no drop armed', async () => {
+  const db = new FakeDb();
+  const server = new FakeTelnyxServer();
+  const restoreFetch = stubTelnyxFetch(server);
+  const supabase = createFakeSupabase(db);
+  const { orgId, campaignId, agentId } = seedFixtures(db);
+  db.table('campaigns').get(campaignId)!.voicemail_drop_mode = 'never';
+  db.insert('voicemail_drop_settings', {
+    id: 'vd-org-default',
+    org_id: orgId,
+    user_id: null,
+    storage_path: `${orgId}/org-default.mp3`,
+  });
+  try {
+    const { sessionId, legId, callControlId } = await bootstrapToMachineCandidate(db, supabase, {
+      orgId,
+      campaignId,
+      agentId,
+      amdMode: 'premium',
+    });
+    await processTelnyxDialerEvent(
+      supabase,
+      contactEvent(orgId, sessionId, legId, callControlId, 'call.answered')
+    );
+    await processTelnyxDialerEvent(
+      supabase,
+      contactEvent(orgId, sessionId, legId, callControlId, 'call.machine.premium.detection.ended', {
+        result: 'machine',
+      })
+    );
+
+    const legRow = db.table('call_legs').get(legId)!;
+    assertEquals(legRow.voicemail_drop_path ?? null, null, 'never mode must never arm a drop');
+    const hangupReq = server.requests.find(
+      (r) => r.method === 'POST' && r.path === `/v2/calls/${callControlId}/actions/hangup`
+    );
+    assertExists(hangupReq, 'must hang up immediately, exactly like before this task');
+  } finally {
+    restoreFetch();
+  }
+});
+
+Deno.test('VMD-4: first_attempt mode does not drop on a second attempt (attempts=1)', async () => {
+  const db = new FakeDb();
+  const server = new FakeTelnyxServer();
+  const restoreFetch = stubTelnyxFetch(server);
+  const supabase = createFakeSupabase(db);
+  const { orgId, campaignId, agentId } = seedFixtures(db);
+  db.table('campaigns').get(campaignId)!.voicemail_drop_mode = 'first_attempt';
+  db.insert('voicemail_drop_settings', {
+    id: 'vd-org-default',
+    org_id: orgId,
+    user_id: null,
+    storage_path: `${orgId}/org-default.mp3`,
+  });
+  try {
+    const { sessionId, legId, callControlId } = await bootstrapToMachineCandidate(db, supabase, {
+      orgId,
+      campaignId,
+      agentId,
+      amdMode: 'detect_words',
+    });
+    const leg = db.table('call_legs').get(legId)!;
+    db.table('campaign_leads').get(leg.lead_id as string)!.attempts = 1;
+
+    await processTelnyxDialerEvent(
+      supabase,
+      contactEvent(orgId, sessionId, legId, callControlId, 'call.answered')
+    );
+    await processTelnyxDialerEvent(
+      supabase,
+      contactEvent(orgId, sessionId, legId, callControlId, 'call.machine.detection.ended', {
+        result: 'machine',
+      })
+    );
+
+    const legRow = db.table('call_legs').get(legId)!;
+    assertEquals(legRow.voicemail_drop_path ?? null, null);
+    const hangupReq = server.requests.find(
+      (r) => r.method === 'POST' && r.path === `/v2/calls/${callControlId}/actions/hangup`
+    );
+    assertExists(hangupReq);
+  } finally {
+    restoreFetch();
+  }
+});
+
+Deno.test('VMD-4: no drop file configured anywhere -> plain hangup', async () => {
+  const db = new FakeDb();
+  const server = new FakeTelnyxServer();
+  const restoreFetch = stubTelnyxFetch(server);
+  const supabase = createFakeSupabase(db);
+  const { orgId, campaignId, agentId } = seedFixtures(db);
+  db.table('campaigns').get(campaignId)!.voicemail_drop_mode = 'every_attempt';
+  // Deliberately no voicemail_drop_settings row at all.
+  try {
+    const { sessionId, legId, callControlId } = await bootstrapToMachineCandidate(db, supabase, {
+      orgId,
+      campaignId,
+      agentId,
+      amdMode: 'detect_words',
+    });
+    await processTelnyxDialerEvent(
+      supabase,
+      contactEvent(orgId, sessionId, legId, callControlId, 'call.answered')
+    );
+    await processTelnyxDialerEvent(
+      supabase,
+      contactEvent(orgId, sessionId, legId, callControlId, 'call.machine.detection.ended', {
+        result: 'machine',
+      })
+    );
+
+    const legRow = db.table('call_legs').get(legId)!;
+    assertEquals(legRow.voicemail_drop_path ?? null, null);
+    const hangupReq = server.requests.find(
+      (r) => r.method === 'POST' && r.path === `/v2/calls/${callControlId}/actions/hangup`
+    );
+    assertExists(hangupReq);
+  } finally {
+    restoreFetch();
+  }
+});
+
+Deno.test('VMD-4: a per-user drop file takes priority over the org default', async () => {
+  const db = new FakeDb();
+  const server = new FakeTelnyxServer();
+  const restoreFetch = stubTelnyxFetch(server);
+  const supabase = createFakeSupabase(db);
+  const { orgId, campaignId, agentId } = seedFixtures(db);
+  db.table('campaigns').get(campaignId)!.voicemail_drop_mode = 'every_attempt';
+  db.insert('voicemail_drop_settings', {
+    id: 'vd-org-default',
+    org_id: orgId,
+    user_id: null,
+    storage_path: `${orgId}/org-default.mp3`,
+  });
+  db.insert('voicemail_drop_settings', {
+    id: 'vd-agent',
+    org_id: orgId,
+    user_id: agentId,
+    storage_path: `${orgId}/${agentId}.wav`,
+  });
+  try {
+    const { sessionId, legId, callControlId } = await bootstrapToMachineCandidate(db, supabase, {
+      orgId,
+      campaignId,
+      agentId,
+      amdMode: 'detect_words',
+    });
+    await processTelnyxDialerEvent(
+      supabase,
+      contactEvent(orgId, sessionId, legId, callControlId, 'call.answered')
+    );
+    await processTelnyxDialerEvent(
+      supabase,
+      contactEvent(orgId, sessionId, legId, callControlId, 'call.machine.detection.ended', {
+        result: 'machine',
+      })
+    );
+    const legRow = db.table('call_legs').get(legId)!;
+    assertEquals(legRow.voicemail_drop_path, `${orgId}/${agentId}.wav`);
+  } finally {
+    restoreFetch();
+  }
+});
+
+Deno.test(
+  "BUG-7 vendor constraint: plain 'detect' mode never gets a greeting signal -- machine leg hangs up immediately even when a drop file exists",
+  async () => {
+    const db = new FakeDb();
+    const server = new FakeTelnyxServer();
+    const restoreFetch = stubTelnyxFetch(server);
+    const supabase = createFakeSupabase(db);
+    const { orgId, campaignId, agentId } = seedFixtures(db);
+    db.table('campaigns').get(campaignId)!.voicemail_drop_mode = 'every_attempt';
+    db.insert('voicemail_drop_settings', {
+      id: 'vd-org-default',
+      org_id: orgId,
+      user_id: null,
+      storage_path: `${orgId}/org-default.mp3`,
+    });
+    try {
+      const { sessionId, legId, callControlId } = await bootstrapToMachineCandidate(db, supabase, {
+        orgId,
+        campaignId,
+        agentId,
+        amdMode: 'detect',
+      });
+      await processTelnyxDialerEvent(
+        supabase,
+        contactEvent(orgId, sessionId, legId, callControlId, 'call.answered')
+      );
+      await processTelnyxDialerEvent(
+        supabase,
+        contactEvent(orgId, sessionId, legId, callControlId, 'call.machine.detection.ended', {
+          result: 'machine',
+        })
+      );
+
+      const legRow = db.table('call_legs').get(legId)!;
+      assertEquals(
+        legRow.voicemail_drop_path ?? null,
+        null,
+        'detect mode can never safely arm a drop -- no greeting-ended signal will ever arrive'
+      );
+      const hangupReq = server.requests.find(
+        (r) => r.method === 'POST' && r.path === `/v2/calls/${callControlId}/actions/hangup`
+      );
+      assertExists(hangupReq);
+    } finally {
+      restoreFetch();
+    }
+  }
+);
+
+Deno.test(
+  'VMD-5: a voicemail-dropping leg is excluded from the active-line count -- refill dials past `lines` while it plays',
+  async () => {
+    const db = new FakeDb();
+    const server = new FakeTelnyxServer();
+    const restoreFetch = stubTelnyxFetch(server);
+    const supabase = createFakeSupabase(db);
+    const { orgId, campaignId, agentId } = seedFixtures(db);
+    db.table('campaigns').get(campaignId)!.voicemail_drop_mode = 'every_attempt';
+    db.insert('voicemail_drop_settings', {
+      id: 'vd-org-default',
+      org_id: orgId,
+      user_id: null,
+      storage_path: `${orgId}/org-default.mp3`,
+    });
+    // A 4th queued lead beyond the 3 seedFixtures already inserts -- there must be room for a
+    // NEW dial once the machine leg stops counting as active, even though `lines` (3) contact
+    // legs already exist.
+    db.insert('contacts', { id: 'contact-4', phone_number: '+15550001004' });
+    db.insert('campaign_leads', {
+      id: 'lead-4',
+      campaign_id: campaignId,
+      contact_id: 'contact-4',
+      status: 'queued',
+      position: 4,
+    });
+    try {
+      const { sessionId, legId, callControlId } = await bootstrapToMachineCandidate(db, supabase, {
+        orgId,
+        campaignId,
+        agentId,
+        amdMode: 'detect_words',
+      });
+      assertEquals(
+        [...db.table('call_legs').values()].filter((l) => l.kind === 'contact').length,
+        3,
+        'lines=3 -- exactly 3 contact legs dialed initially'
+      );
+
+      await processTelnyxDialerEvent(
+        supabase,
+        contactEvent(orgId, sessionId, legId, callControlId, 'call.answered')
+      );
+      await processTelnyxDialerEvent(
+        supabase,
+        contactEvent(orgId, sessionId, legId, callControlId, 'call.machine.detection.ended', {
+          result: 'machine',
+        })
+      );
+      await processTelnyxDialerEvent(
+        supabase,
+        contactEvent(orgId, sessionId, legId, '', 'call.machine.greeting.ended')
+      );
+
+      const legRow = db.table('call_legs').get(legId)!;
+      assertEquals(legRow.state, 'voicemail_dropping');
+      assertEquals(
+        [...db.table('call_legs').values()].filter((l) => l.kind === 'contact').length,
+        4,
+        'the 4th lead must be dialed immediately -- the voicemail-dropping leg does not hold the slot'
+      );
     } finally {
       restoreFetch();
     }

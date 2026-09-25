@@ -35,6 +35,7 @@ function makeMockClient(overrides: Partial<TelnyxClient> = {}): {
     leaveConference: async () => {},
     recordStart: async () => {},
     transcriptionStart: async () => {},
+    playbackStart: async () => {},
     searchNumbers: async () => ({}),
     orderNumber: async () => ({}),
     updateNumber: async () => ({}),

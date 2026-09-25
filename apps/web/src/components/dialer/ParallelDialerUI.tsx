@@ -9,7 +9,7 @@ import type { DialSessionState } from '@/lib/api';
 interface ParallelDialerUIProps {
   sessionState: DialSessionState;
   lines: number;
-  amdMode: 'off' | 'on';
+  amdMode: 'off' | 'detect' | 'detect_words' | 'premium';
   callsMade: number;
   connected: number;
   voicemail: number;
@@ -114,7 +114,7 @@ export function ParallelDialerUI({
               </span>
             )}
             <span className="text-meta text-text-muted">
-              {lines} line{lines === 1 ? '' : 's'} · AMD {amdMode === 'on' ? 'on' : 'off'}
+              {lines} line{lines === 1 ? '' : 's'} · AMD {amdMode}
             </span>
           </div>
           <div className="flex items-center gap-2">

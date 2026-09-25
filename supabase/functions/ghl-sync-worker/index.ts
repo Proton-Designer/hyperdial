@@ -18,6 +18,7 @@ import {
   processContactUpsertJob,
   processDispositionJob,
   processNurtureTagJob,
+  processTagJob,
   type ContactFields,
   type DispositionPayload,
   type JobProgress,
@@ -52,7 +53,7 @@ interface CrmSyncJobRow {
   id: string;
   org_id: string;
   provider: string;
-  kind: 'disposition' | 'contact_upsert' | 'nurture_tag';
+  kind: 'disposition' | 'contact_upsert' | 'nurture_tag' | 'voicemail_tag' | 'no_answer_tag';
   contact_id: string | null;
   call_leg_id: string | null;
   payload: Record<string, unknown>;
@@ -155,6 +156,25 @@ async function processJob(
       locationId: ctx.locationId,
       ghlContactId: contact.ghlContactId,
       contactFields: contact.fields,
+      progress: job.progress ?? {},
+    });
+  } else if (job.kind === 'voicemail_tag' || job.kind === 'no_answer_tag') {
+    // TASK-F-T3 (VMD-3, GHL-9 overlap): the counted tag itself was computed at enqueue time
+    // (SQL) -- this function only ever pushes whatever payload.ghl_tag says.
+    const tag = (job.payload as { ghl_tag?: string }).ghl_tag;
+    if (!tag) {
+      await supabase.rpc('fail_crm_sync_job', {
+        p_job: job.id,
+        p_error: `${job.kind} job is missing payload.ghl_tag`,
+      });
+      return;
+    }
+    result = await processTagJob({
+      client: ctx.client,
+      locationId: ctx.locationId,
+      ghlContactId: contact.ghlContactId,
+      contactFields: contact.fields,
+      tag,
       progress: job.progress ?? {},
     });
   } else {

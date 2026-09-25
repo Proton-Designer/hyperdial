@@ -50,7 +50,11 @@
  * var, so every real caller gets the default.
  */
 
-export type AmdMode = 'off' | 'premium';
+/** TASK-F-T3/BUG-7: widened from 'off'|'premium' -- the campaign-level modes this build now
+ *  offers map 1:1 onto real CallRequest.answering_machine_detection enum members (verified
+ *  against spec3.json, 2026-09-25: full enum is `premium|detect|detect_beep|detect_words|
+ *  greeting_end|disabled`). See amdModeToTelnyxValue below for the exact mapping. */
+export type AmdMode = 'off' | 'detect' | 'detect_words' | 'premium';
 
 interface TelnyxEnvelope<T> {
   data?: T;
@@ -149,12 +153,15 @@ export interface TelnyxDialPayload {
   timeout_secs: number;
   time_limit_secs?: number;
   custom_headers?: { name: string; value: string }[];
-  answering_machine_detection: 'disabled' | 'premium';
+  answering_machine_detection: 'disabled' | 'detect' | 'detect_words' | 'premium';
 }
 
-/** off -> 'disabled', premium -> 'premium' — both verified members of CallRequest.answering_machine_detection's enum. */
-export function amdModeToTelnyxValue(mode: AmdMode): 'disabled' | 'premium' {
-  return mode === 'premium' ? 'premium' : 'disabled';
+/** off -> 'disabled', every other value passes straight through -- all 4 are verified members
+ *  of CallRequest.answering_machine_detection's enum (spec3.json). */
+export function amdModeToTelnyxValue(
+  mode: AmdMode
+): 'disabled' | 'detect' | 'detect_words' | 'premium' {
+  return mode === 'off' ? 'disabled' : mode;
 }
 
 export function buildDialPayload(args: DialArgs): TelnyxDialPayload {
@@ -196,6 +203,36 @@ export function buildRecordStartPayload(args: RecordStartArgs): {
     format: args.format ?? 'mp3',
     channels: args.channels,
   };
+  if (args.clientState) payload.client_state = args.clientState;
+  return payload;
+}
+
+export interface PlaybackStartArgs {
+  /** The signed URL Telnyx fetches the audio from (WAV or MP3) -- PlayAudioUrlRequest.audio_url,
+   *  verified against spec3.json (TASK-F-T3/VMD-2). */
+  audioUrl: string;
+  /** PlayAudioUrlRequest.audio_type (default 'mp3' if omitted) -- declares the REAL format of
+   *  the file at audioUrl regardless of any extension in the URL itself. Storage's signed URLs
+   *  carry no reliable extension, and a stored .wav upload played back without this would let
+   *  Telnyx default-assume mp3 and fail to decode it. */
+  audioType?: 'mp3' | 'wav';
+  /** Same per-command client_state shape as RecordStartArgs.clientState -- echoed back verbatim
+   *  on this command's own call.playback.started/call.playback.ended webhooks. Not strictly
+   *  needed for correlation (unlike recording's webhooks, call.playback.ended's real payload DOES
+   *  carry call_control_id, verified against webhook-events.json) but kept for consistency with
+   *  every other command this engine issues. */
+  clientState?: string;
+}
+
+export function buildPlaybackStartPayload(args: PlaybackStartArgs): {
+  audio_url: string;
+  audio_type?: 'mp3' | 'wav';
+  client_state?: string;
+} {
+  const payload: { audio_url: string; audio_type?: 'mp3' | 'wav'; client_state?: string } = {
+    audio_url: args.audioUrl,
+  };
+  if (args.audioType) payload.audio_type = args.audioType;
   if (args.clientState) payload.client_state = args.clientState;
   return payload;
 }
@@ -252,6 +289,7 @@ export interface TelnyxClient {
 
   recordStart(callControlId: string, args: RecordStartArgs): Promise<void>;
   transcriptionStart(callControlId: string, args?: TranscriptionStartArgs): Promise<void>;
+  playbackStart(callControlId: string, args: PlaybackStartArgs): Promise<void>;
 
   searchNumbers(params: Record<string, string>): Promise<unknown>;
   orderNumber(args: { phoneNumbers: string[]; connectionId?: string }): Promise<TelnyxIdData>;
@@ -399,6 +437,13 @@ export function createTelnyxClient(
       await req(`/calls/${encodeURIComponent(callControlId)}/actions/transcription_start`, {
         method: 'POST',
         body: JSON.stringify(buildTranscriptionStartPayload(args)),
+      });
+    },
+
+    async playbackStart(callControlId, args) {
+      await req(`/calls/${encodeURIComponent(callControlId)}/actions/playback_start`, {
+        method: 'POST',
+        body: JSON.stringify(buildPlaybackStartPayload(args)),
       });
     },
 

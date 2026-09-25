@@ -2,6 +2,7 @@ import { assertEquals } from 'jsr:@std/assert@1';
 import {
   amdModeToTelnyxValue,
   buildDialPayload,
+  buildPlaybackStartPayload,
   buildRecordStartPayload,
   buildTranscriptionStartPayload,
   createTelnyxClient,
@@ -11,8 +12,10 @@ import {
 // Pure builder tests — no network involved.
 // ---------------------------------------------------------------------------
 
-Deno.test('amdModeToTelnyxValue: off maps to disabled, premium maps to premium', () => {
+Deno.test('amdModeToTelnyxValue: off maps to disabled, every other mode passes through', () => {
   assertEquals(amdModeToTelnyxValue('off'), 'disabled');
+  assertEquals(amdModeToTelnyxValue('detect'), 'detect');
+  assertEquals(amdModeToTelnyxValue('detect_words'), 'detect_words');
   assertEquals(amdModeToTelnyxValue('premium'), 'premium');
 });
 
@@ -102,6 +105,16 @@ Deno.test('buildRecordStartPayload: includes client_state only when provided', (
     client_state: 'abc123',
   });
   assertEquals(Object.hasOwn(buildRecordStartPayload({ channels: 'dual' }), 'client_state'), false);
+});
+
+Deno.test('buildPlaybackStartPayload: audio_url required, client_state only when provided', () => {
+  assertEquals(buildPlaybackStartPayload({ audioUrl: 'https://example.com/vm.mp3' }), {
+    audio_url: 'https://example.com/vm.mp3',
+  });
+  assertEquals(
+    buildPlaybackStartPayload({ audioUrl: 'https://example.com/vm.mp3', clientState: 'abc123' }),
+    { audio_url: 'https://example.com/vm.mp3', client_state: 'abc123' }
+  );
 });
 
 Deno.test('buildTranscriptionStartPayload: defaults to Deepgram + both tracks', () => {
@@ -307,6 +320,30 @@ Deno.test(
       await client.joinConference('conf-1', { callControlId: 'call-1' });
       assertEquals(seenUrl, 'https://api.telnyx.com/v2/conferences/conf-1/actions/join');
       assertEquals((seenBody as { call_control_id: string }).call_control_id, 'call-1');
+    } finally {
+      restore();
+    }
+  }
+);
+
+Deno.test(
+  'createTelnyxClient.playbackStart: hits /calls/{id}/actions/playback_start with audio_url',
+  async () => {
+    let seenUrl = '';
+    let seenBody: unknown = null;
+    const restore = stubFetch((url, init) => {
+      seenUrl = url;
+      seenBody = JSON.parse(String(init?.body ?? '{}'));
+      return new Response(JSON.stringify({ data: {} }), { status: 200 });
+    });
+    try {
+      const client = createTelnyxClient('test-api-key');
+      await client.playbackStart('call-1', {
+        audioUrl: 'https://example.com/vm.mp3',
+        clientState: 'abc123',
+      });
+      assertEquals(seenUrl, 'https://api.telnyx.com/v2/calls/call-1/actions/playback_start');
+      assertEquals(seenBody, { audio_url: 'https://example.com/vm.mp3', client_state: 'abc123' });
     } finally {
       restore();
     }

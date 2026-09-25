@@ -25,12 +25,15 @@ import { readJsonBody } from '../_shared/http-json.ts';
  * proactive check, closing the check-then-insert race.
  */
 
+const VALID_AMD_MODES = ['off', 'detect', 'detect_words', 'premium'] as const;
+type AmdModeOverride = (typeof VALID_AMD_MODES)[number];
+
 interface StartBody {
   campaignId?: string;
   /** Overrides the campaign's own default `lines` (1-7) for this session only. */
   lines?: number;
-  /** Overrides the campaign's own default `amd_mode` for this session only. */
-  amdMode?: 'off' | 'on';
+  /** Overrides the campaign's own default `amd_mode` for this session only (BUG-7). */
+  amdMode?: AmdModeOverride;
 }
 
 function jsonResponse(status: number, payload: Record<string, unknown>): Response {
@@ -61,8 +64,9 @@ Deno.serve(async (req) => {
 
     const linesOverride =
       body.lines !== undefined ? Math.max(1, Math.min(7, Math.trunc(body.lines))) : undefined;
-    const amdModeOverride =
-      body.amdMode === 'on' || body.amdMode === 'off' ? body.amdMode : undefined;
+    const amdModeOverride = VALID_AMD_MODES.includes(body.amdMode as AmdModeOverride)
+      ? body.amdMode
+      : undefined;
 
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL')!,
@@ -155,7 +159,7 @@ Deno.serve(async (req) => {
       campaignId,
       agentId: user.id,
       lines: linesOverride ?? (campaign.lines as number),
-      amdMode: amdModeOverride ?? (campaign.amd_mode as 'off' | 'on'),
+      amdMode: amdModeOverride ?? (campaign.amd_mode as AmdModeOverride),
     });
 
     return jsonResponse(200, { sessionId });
