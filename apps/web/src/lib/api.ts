@@ -751,9 +751,7 @@ export interface Campaign {
   last_called_at: string | null;
   /** Simultaneous outbound lines (design §7, TASK-P2-E1/P2-P2). */
   lines: number;
-  amd_mode: 'off' | 'detect' | 'detect_words' | 'premium';
-  /** TASK-F-T3 (VMD-4). Default 'first_attempt'. */
-  voicemail_drop_mode: 'first_attempt' | 'every_attempt' | 'never';
+  amd_mode: 'off' | 'on';
   /** Must belong to this campaign's own org -- enforced by a DB trigger (20260924000700). */
   caller_id_number_id: string | null;
   max_attempts: number;
@@ -862,9 +860,7 @@ export async function updateCampaignStatus(
 
 export interface CampaignSettingsInput {
   lines?: number;
-  amd_mode?: 'off' | 'detect' | 'detect_words' | 'premium';
-  /** TASK-F-T3 (VMD-4). */
-  voicemail_drop_mode?: 'first_attempt' | 'every_attempt' | 'never';
+  amd_mode?: 'off' | 'on';
   caller_id_number_id?: string | null;
   max_attempts?: number;
   retry_interval_minutes?: number;
@@ -1130,18 +1126,10 @@ export type CallLegState =
   | 'dropped'
   | 'abandoned'
   | 'machine'
-  | 'voicemail_dropping'
   | 'ended';
 
 export type CallLegOutcome =
-  | 'no_answer'
-  | 'busy'
-  | 'machine'
-  | 'dropped'
-  | 'abandoned'
-  | 'failed'
-  | 'connected'
-  | 'voicemail_left';
+  'no_answer' | 'busy' | 'machine' | 'dropped' | 'abandoned' | 'failed' | 'connected';
 
 export interface DialSessionRecord {
   id: string;
@@ -1150,7 +1138,7 @@ export interface DialSessionRecord {
   agent_id: string;
   state: DialSessionState;
   lines: number;
-  amd_mode: 'off' | 'detect' | 'detect_words' | 'premium';
+  amd_mode: 'off' | 'on';
   agent_leg_id: string | null;
   active_leg_id: string | null;
   conference_id: string | null;
@@ -1212,7 +1200,7 @@ export async function startDialerSession(args: {
   /** Overrides the campaign's own default `lines` (1-7) for this session only. */
   lines?: 1 | 2 | 3 | 4 | 5 | 6 | 7;
   /** Overrides the campaign's own default `amd_mode` for this session only. */
-  amdMode?: 'off' | 'detect' | 'detect_words' | 'premium';
+  amdMode?: 'off' | 'on';
 }): Promise<{ sessionId: string }> {
   const res = await fetch(`${getFunctionsUrl()}/dialer-session-start`, {
     method: 'POST',
@@ -1769,55 +1757,4 @@ export async function getRecordingUrl(callLegId: string): Promise<RecordingUrlRe
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || 'Recording not available');
   return data as RecordingUrlResult;
-}
-
-// --- Voicemail drop (TASK-F-T3, VMD-1) ---
-
-export interface VoicemailDropInfo {
-  hasFile: boolean;
-  url: string | null;
-  expiresInSeconds: number | null;
-}
-
-async function fetchVoicemailDrop(scope: 'self' | 'org'): Promise<VoicemailDropInfo> {
-  const res = await fetch(`${getFunctionsUrl()}/voicemail-upload?scope=${scope}`, {
-    method: 'GET',
-    headers: await getEdgeFunctionHeaders(),
-  });
-  if (res.status === 404) return { hasFile: false, url: null, expiresInSeconds: null };
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error || 'Failed to load voicemail drop');
-  return { hasFile: true, url: data.url, expiresInSeconds: data.expiresInSeconds };
-}
-
-/** The signed-in member's own voicemail-drop file, or `hasFile: false` if they haven't set one. */
-export function getMyVoicemailDrop(): Promise<VoicemailDropInfo> {
-  return fetchVoicemailDrop('self');
-}
-
-/** The org's default voicemail-drop file (owner/admin-set), readable by any member. */
-export function getOrgDefaultVoicemailDrop(): Promise<VoicemailDropInfo> {
-  return fetchVoicemailDrop('org');
-}
-
-async function uploadVoicemailDrop(scope: 'self' | 'org', file: File): Promise<VoicemailDropInfo> {
-  const headers = (await getEdgeFunctionHeaders()) as Record<string, string>;
-  const res = await fetch(`${getFunctionsUrl()}/voicemail-upload?scope=${scope}`, {
-    method: 'POST',
-    headers: { ...headers, 'Content-Type': file.type },
-    body: file,
-  });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error || 'Upload failed');
-  return { hasFile: true, url: data.url, expiresInSeconds: data.expiresInSeconds };
-}
-
-/** Uploads (mp3/wav, <=5MB) the signed-in member's own voicemail-drop file. */
-export function uploadMyVoicemailDrop(file: File): Promise<VoicemailDropInfo> {
-  return uploadVoicemailDrop('self', file);
-}
-
-/** Owner/admin only server-side -- uploads the org's default voicemail-drop file. */
-export function uploadOrgDefaultVoicemailDrop(file: File): Promise<VoicemailDropInfo> {
-  return uploadVoicemailDrop('org', file);
 }

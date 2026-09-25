@@ -107,7 +107,7 @@ export function useDialerSession(initialSessionId: string | null = null) {
     async (args: {
       campaignId: string;
       lines?: 1 | 2 | 3 | 4 | 5 | 6 | 7;
-      amdMode?: 'off' | 'detect' | 'detect_words' | 'premium';
+      amdMode?: 'off' | 'on';
     }) => {
       setState((prev) => ({ ...prev, loading: true, error: null }));
       try {

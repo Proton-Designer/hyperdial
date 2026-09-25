@@ -68,11 +68,6 @@ import {
   removeDncNumber,
   getRecordingEnabled,
   setRecordingEnabled,
-  getMyVoicemailDrop,
-  getOrgDefaultVoicemailDrop,
-  uploadMyVoicemailDrop,
-  uploadOrgDefaultVoicemailDrop,
-  type VoicemailDropInfo,
   type OrgMember,
   type GhlIntegrationStatus,
   type CrmSyncJob,
@@ -1298,108 +1293,6 @@ function RecordingSettingsCard() {
   );
 }
 
-/** TASK-F-T3 (VMD-1): one sub-card per scope ('self' -- every member; 'org' -- owner/admin
- *  only). Both share the same upload/preview shape; only the loader/uploader functions differ. */
-function VoicemailDropSubCard({
-  title,
-  description,
-  load,
-  upload,
-}: {
-  title: string;
-  description: string;
-  load: () => Promise<VoicemailDropInfo>;
-  upload: (file: File) => Promise<VoicemailDropInfo>;
-}) {
-  const [info, setInfo] = useState<VoicemailDropInfo | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [uploading, setUploading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    load()
-      .then(setInfo)
-      .catch((e) => setError(String(e)))
-      .finally(() => setLoading(false));
-    // Only re-run if the loader identity itself changes (self vs org) -- not on every render.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const handleFile = async (file: File | undefined) => {
-    if (!file) return;
-    setError(null);
-    setUploading(true);
-    try {
-      const result = await upload(file);
-      setInfo(result);
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setUploading(false);
-    }
-  };
-
-  return (
-    <div className="border-t border-border-subtle pt-4 mt-4 first:border-0 first:pt-0 first:mt-0">
-      <h4 className="text-sm font-semibold text-white mb-1">{title}</h4>
-      <p className="text-xs text-text-secondary mb-3">{description}</p>
-      {error && <p className="text-sm text-danger mb-2">{error}</p>}
-      {loading ? (
-        <Skeleton className="h-9 w-full max-w-sm" />
-      ) : (
-        <div className="flex flex-col gap-2">
-          {info?.hasFile && info.url && (
-            <audio controls src={info.url} className="w-full max-w-sm h-9" />
-          )}
-          <label className="inline-flex items-center gap-2 px-3 py-2 bg-surface-2 border border-white/10 rounded-lg text-sm text-white cursor-pointer w-fit hover:bg-white/10">
-            {uploading ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
-            {info?.hasFile ? 'Replace file (mp3/wav, max 5MB)' : 'Upload a file (mp3/wav, max 5MB)'}
-            <input
-              type="file"
-              accept="audio/mpeg,audio/mp3,audio/wav,audio/wave,audio/x-wav"
-              disabled={uploading}
-              className="hidden"
-              onChange={(e) => void handleFile(e.target.files?.[0])}
-            />
-          </label>
-        </div>
-      )}
-    </div>
-  );
-}
-
-/** TASK-F-T3 (VMD-1): "record-or-upload a file, playback preview, and the org default for
- *  owner/admin." Every member manages their own drop; only owner/admin also sees the org
- *  default sub-card. */
-function VoicemailDropCard() {
-  const { role } = useOrg();
-  const isAdmin = role === 'owner' || role === 'admin';
-
-  return (
-    <div className="bg-surface-1 rounded-app-lg p-6 border border-border-subtle max-w-2xl mt-6">
-      <h3 className="text-section-title text-text-primary mb-1">Voicemail drop</h3>
-      <p className="text-sm text-text-secondary mb-4">
-        Played automatically when the dialer detects an answering machine (campaign-dependent -- see
-        the campaign's own Dialer Settings for the voicemail mode and AMD mode).
-      </p>
-      <VoicemailDropSubCard
-        title="Your voicemail drop"
-        description="Used when you're the agent on the session, before falling back to the org default."
-        load={getMyVoicemailDrop}
-        upload={uploadMyVoicemailDrop}
-      />
-      {isAdmin && (
-        <VoicemailDropSubCard
-          title="Org default"
-          description="Used for any agent who hasn't set their own voicemail drop."
-          load={getOrgDefaultVoicemailDrop}
-          upload={uploadOrgDefaultVoicemailDrop}
-        />
-      )}
-    </div>
-  );
-}
-
 function DncTab() {
   const { role } = useOrg();
   const isAdmin = role === 'owner' || role === 'admin';
@@ -1987,7 +1880,6 @@ export function Settings() {
                   )}
 
                   <RecordingSettingsCard />
-                  <VoicemailDropCard />
                 </motion.div>
               )}
 

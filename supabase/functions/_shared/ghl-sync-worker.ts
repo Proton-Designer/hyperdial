@@ -228,64 +228,6 @@ export async function processNurtureTagJob(
   }
 }
 
-export interface ProcessTagJobArgs {
-  client: GhlClient;
-  locationId: string;
-  ghlContactId: string | null;
-  contactFields: ContactFields;
-  /** The literal tag to push -- computed at ENQUEUE time (SQL), e.g. `call:voicemail-2` or
-   *  `call:no-answer-1`. Unlike `processNurtureTagJob`'s hardcoded 'nurture', this job kind's
-   *  whole point (TASK-F-T3, VMD-3/GHL-9) is a per-contact COUNT baked into the tag string. */
-  tag: string;
-  progress: JobProgress;
-}
-
-/** TASK-F-T3 (VMD-3, GHL-9 overlap): "voicemail_tag"/"no_answer_tag" job kinds -- an automated
- *  engine outcome (voicemail_left/no_answer on call_legs) pushing a counted GHL tag, distinct
- *  from `processDispositionJob`'s agent-submitted disposition tags. Same shape as
- *  `processNurtureTagJob` (upsert-then-tag, no note/task/dnd steps), just with the tag coming
- *  from the payload instead of a hardcoded literal. */
-export async function processTagJob(args: ProcessTagJobArgs): Promise<ProcessJobResult> {
-  const progress: JobProgress = { ...args.progress };
-  let ghlContactId = args.ghlContactId;
-
-  try {
-    if (!progress.upserted) {
-      if (!ghlContactId) {
-        if (!args.contactFields.phone) {
-          throw new Error('cannot upsert to GHL: contact has no phone number');
-        }
-        const res = await args.client.upsertContact({
-          locationId: args.locationId,
-          firstName: args.contactFields.firstName ?? undefined,
-          lastName: args.contactFields.lastName ?? undefined,
-          phone: args.contactFields.phone,
-          email: args.contactFields.email ?? undefined,
-        });
-        ghlContactId = res.contactId;
-      }
-      progress.upserted = true;
-    }
-    if (!ghlContactId) {
-      throw new Error('no GHL contact id available after the upsert step');
-    }
-
-    if (!progress.tag_added) {
-      await args.client.addTags(ghlContactId, [args.tag]);
-      progress.tag_added = true;
-    }
-
-    return { ok: true, progress, resolvedGhlContactId: ghlContactId };
-  } catch (err) {
-    return {
-      ok: false,
-      progress,
-      resolvedGhlContactId: ghlContactId,
-      error: err instanceof Error ? err.message : String(err),
-    };
-  }
-}
-
 export interface ProcessContactUpsertJobArgs {
   client: GhlClient;
   locationId: string;
