@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Mic, MicOff, PhoneOff } from 'lucide-react';
+import { Mic, MicOff, PhoneOff, User } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 
 interface LiveCallPanelProps {
   contactName: string;
@@ -40,43 +41,38 @@ export function LiveCallPanel({
   const secs = `${seconds % 60}`.padStart(2, '0');
 
   return (
-    <div className="rounded-2xl border border-[#00E676]/20 bg-[#00E676]/10 p-5">
-      <div className="flex items-center justify-between">
-        <div>
-          <h3 className="text-white text-lg font-bold">Live Call</h3>
-          <p className="text-[#B0BEC5] text-sm">
-            {contactName} · {phone}
-          </p>
+    <div className="rounded-app-lg border border-success/25 bg-surface-1 p-6 shadow-app-md">
+      <div className="flex flex-col items-center text-center">
+        <div className="w-16 h-16 rounded-full bg-success-soft flex items-center justify-center mb-4">
+          <User className="w-7 h-7 text-success" />
         </div>
-        <p className="text-white font-mono text-lg">
+        <h3 className="text-page-title text-text-primary">{contactName}</h3>
+        <p className="text-body text-text-secondary mt-0.5">{phone}</p>
+        <p className="text-metric text-4xl font-semibold text-text-primary mt-4 tabular-nums">
           {mins}:{secs}
         </p>
       </div>
-      <div className="mt-4 flex items-center gap-3">
-        <button
+      <div className="mt-6 flex items-center justify-center gap-3">
+        <Button
           type="button"
+          variant="fe-secondary"
           onClick={() => {
             const next = !muted;
             setMuted(next);
             onToggleMute(next);
           }}
-          className="px-4 py-2 rounded-lg border border-white/15 bg-[#1A2332] text-white flex items-center gap-2"
         >
           {muted ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
           {muted ? 'Unmute' : 'Mute'}
-        </button>
-        <button
-          type="button"
-          onClick={onEndCall}
-          className="px-4 py-2 rounded-lg border border-[#FF3D00]/30 bg-[#FF3D00]/20 text-[#FF3D00] flex items-center gap-2"
-        >
+        </Button>
+        <Button type="button" variant="danger" onClick={onEndCall}>
           <PhoneOff className="w-4 h-4" />
-          End Call & Continue
-        </button>
+          Hang up
+        </Button>
       </div>
       <textarea
         placeholder="Quick notes for this contact..."
-        className="mt-4 w-full min-h-[90px] rounded-lg bg-[#1A2332] border border-white/10 px-3 py-2 text-white placeholder:text-[#B0BEC5]/60 focus:outline-none focus:border-[#00D9FF]"
+        className="mt-6 w-full min-h-[90px] rounded-app-md bg-surface-2 border border-border-subtle px-3 py-2 text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent-to"
       />
     </div>
   );

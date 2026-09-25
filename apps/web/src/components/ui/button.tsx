@@ -31,6 +31,12 @@ const buttonVariants = cva(
         "fe-ghost": "text-text-secondary hover:bg-white/5 hover:text-text-primary",
         danger: "bg-danger text-white hover:bg-danger/90",
         warning: "bg-warning text-[#1a1200] hover:bg-warning/90",
+        /* FE-B additions: a tinted/soft fill for a secondary-weight action that still needs a
+           status colour (Pause) without the "muddy solid fill" look a full `warning`/`danger`
+           button has, and a ghost-weight destructive action (Stop/Hang up as a lower-emphasis
+           control next to a primary action) that only tints on hover. */
+        "warning-soft": "bg-warning-soft text-warning hover:bg-warning/20",
+        "danger-ghost": "text-danger hover:bg-danger-soft",
       },
       size: {
         default: "h-9 px-4 py-2 has-[>svg]:px-3",

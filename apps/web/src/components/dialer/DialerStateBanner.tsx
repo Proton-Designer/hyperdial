@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
 import { AlertTriangle, Mic, Pause, Phone, PhoneOff, Wifi } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 import type { DialSessionState } from '@/lib/api';
 
 /**
@@ -12,6 +12,11 @@ import type { DialSessionState } from '@/lib/api';
  * `paused_agent_lost` outranks the ordinary session-state strings (it's the one state where
  * something is actively wrong, not just "the next normal step"); then the ordinary UI-7
  * strings keyed on `dial_sessions.state`.
+ *
+ * FE-B: `on_call` now renders nothing here -- ParallelDialerUI's header strip already carries a
+ * status chip, and LiveCallPanel is the "prominent contact card" for that state, so a third
+ * "Connected — <name> <timer>" line would just repeat both. Every other state still gets its
+ * explanatory sentence here (the chip alone is a glance, not an explanation).
  */
 
 interface DialerStateBannerProps {
@@ -29,33 +34,9 @@ interface DialerStateBannerProps {
   resuming: boolean;
 }
 
-function useElapsedSeconds(answeredAt: string | null): number {
-  const [seconds, setSeconds] = useState(0);
-  useEffect(() => {
-    if (!answeredAt) {
-      setSeconds(0);
-      return;
-    }
-    const answeredAtMs = new Date(answeredAt).getTime();
-    const tick = () => setSeconds(Math.max(0, Math.floor((Date.now() - answeredAtMs) / 1000)));
-    tick();
-    const timer = setInterval(tick, 1000);
-    return () => clearInterval(timer);
-  }, [answeredAt]);
-  return seconds;
-}
-
-function formatElapsed(totalSeconds: number): string {
-  const m = Math.floor(totalSeconds / 60);
-  const s = totalSeconds % 60;
-  return `${m}:${String(s).padStart(2, '0')}`;
-}
-
 export function DialerStateBanner({
   sessionState,
   ringingCount,
-  connectedContact,
-  connectedAnsweredAt,
   webrtcReady,
   webrtcConnecting,
   webrtcError,
@@ -64,8 +45,6 @@ export function DialerStateBanner({
   onResume,
   resuming,
 }: DialerStateBannerProps) {
-  const connectedSeconds = useElapsedSeconds(connectedAnsweredAt);
-
   if (webrtcError) {
     return (
       <StatusBanner
@@ -85,14 +64,9 @@ export function DialerStateBanner({
         title="Agent audio lost — Reconnect"
         detail="The customer is still on the call. Reconnect to rejoin -- they have not been hung up on."
         action={
-          <button
-            type="button"
-            onClick={onReconnect}
-            disabled={reconnecting}
-            className="px-4 py-2 rounded-lg bg-[#00D9FF]/20 border border-[#00D9FF]/40 text-[#00D9FF] font-medium disabled:opacity-50"
-          >
+          <Button variant="primary" onClick={onReconnect} disabled={reconnecting}>
             {reconnecting ? 'Reconnecting…' : 'Reconnect'}
-          </button>
+          </Button>
         }
       />
     );
@@ -142,17 +116,6 @@ export function DialerStateBanner({
     );
   }
 
-  if (sessionState === 'on_call' && connectedContact) {
-    return (
-      <StatusBanner
-        tone="success"
-        icon={<Phone className="w-5 h-5" />}
-        title={`Connected — ${connectedContact.name} ${formatElapsed(connectedSeconds)}`}
-        detail={connectedContact.phone}
-      />
-    );
-  }
-
   if (sessionState === 'wrap_up') {
     return (
       <StatusBanner
@@ -172,14 +135,9 @@ export function DialerStateBanner({
         title="Paused"
         detail="No new lines will dial until you resume."
         action={
-          <button
-            type="button"
-            onClick={onResume}
-            disabled={resuming}
-            className="px-4 py-2 rounded-lg bg-[#00D9FF]/20 border border-[#00D9FF]/40 text-[#00D9FF] font-medium disabled:opacity-50"
-          >
+          <Button variant="primary" onClick={onResume} disabled={resuming}>
             {resuming ? 'Resuming…' : 'Resume'}
-          </button>
+          </Button>
         }
       />
     );
@@ -203,16 +161,16 @@ function StatusBanner({
 }) {
   const toneClasses =
     tone === 'error'
-      ? 'border-[#FF3D00]/30 bg-[#FF3D00]/10 text-[#FF3D00]'
+      ? 'border-danger/30 bg-danger-soft text-danger'
       : tone === 'success'
-        ? 'border-[#00E676]/30 bg-[#00E676]/10 text-[#00E676]'
-        : 'border-[#00D9FF]/30 bg-[#00D9FF]/10 text-[#00D9FF]';
+        ? 'border-success/30 bg-success-soft text-success'
+        : 'border-accent-to/30 bg-accent-to/10 text-accent-to';
   return (
-    <div className={`rounded-2xl border p-4 mb-4 flex items-start gap-3 ${toneClasses}`}>
+    <div className={`rounded-app-lg border p-4 mb-4 flex items-start gap-3 ${toneClasses}`}>
       <div className="mt-0.5">{icon}</div>
       <div className="flex-1">
-        <p className="font-medium text-white">{title}</p>
-        <p className="text-sm text-[#B0BEC5] mt-0.5">{detail}</p>
+        <p className="font-medium text-text-primary">{title}</p>
+        <p className="text-body text-text-secondary mt-0.5">{detail}</p>
       </div>
       {action}
     </div>

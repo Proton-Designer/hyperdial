@@ -1,7 +1,9 @@
 import { useState, useEffect, useRef } from 'react';
 import { motion } from 'motion/react';
-import { Phone, Delete, ChevronDown } from 'lucide-react';
+import { Phone, Delete, ChevronDown, PhoneOff } from 'lucide-react';
 import type { UserPhoneNumber } from '../Dialer';
+import { Button } from '@/components/ui/button';
+import { EmptyState } from '@/components/app/EmptyState';
 
 interface DialerIdleProps {
   userNumbers: UserPhoneNumber[];
@@ -10,6 +12,7 @@ interface DialerIdleProps {
   onDial: (phoneNumber: string) => void;
   isDialing: boolean;
   error: string | null;
+  onNavigateToSettings?: () => void;
 }
 
 const keypadButtons = [
@@ -34,6 +37,7 @@ export function DialerIdle({
   onDial,
   isDialing,
   error,
+  onNavigateToSettings,
 }: DialerIdleProps) {
   const [phoneNumber, setPhoneNumber] = useState('');
   const [countryCode] = useState('+1');
@@ -49,6 +53,23 @@ export function DialerIdle({
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
+
+  if (userNumbers.length === 0) {
+    return (
+      <EmptyState
+        icon={PhoneOff}
+        title="No phone number yet"
+        body="Purchase a number in Settings to start calling."
+        action={
+          onNavigateToSettings && (
+            <Button variant="fe-secondary" size="sm" onClick={onNavigateToSettings}>
+              Go to Settings
+            </Button>
+          )
+        }
+      />
+    );
+  }
 
   const handleKeyPress = (digit: string) => {
     if (phoneNumber.length < 15) {
@@ -80,69 +101,54 @@ export function DialerIdle({
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 20 }}
+      initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, y: -20 }}
-      className="flex flex-col items-center justify-center min-h-[600px] max-w-xs mx-auto"
+      exit={{ opacity: 0, y: -12 }}
+      className="flex flex-col items-center max-w-xs mx-auto"
     >
-      {userNumbers.length === 0 && (
-        <div className="mb-4 p-3 bg-[#FFB300]/10 border border-[#FFB300]/20 rounded-lg text-center">
-          <p className="text-sm text-[#FFB300]">
-            Purchase a phone number in Settings to start calling.
-          </p>
-        </div>
-      )}
-
       {/* Number selector dropdown */}
-      {userNumbers.length > 0 && (
-        <div className="mb-3 w-full" ref={pickerRef}>
-          <label className="text-xs text-[#B0BEC5] mb-1.5 block">Call from</label>
-          <div className="relative">
-            <button
-              onClick={() => setNumberPickerOpen(!numberPickerOpen)}
-              className="w-full flex items-center justify-between px-3 py-2.5 bg-[#1A2332]/60 backdrop-blur-xl border border-white/10 rounded-lg hover:border-[#00D9FF]/30 transition-all"
-            >
-              <span className="text-white font-medium truncate">
-                {selectedFromNumber || 'Select number'}
-              </span>
-              <ChevronDown
-                className={`w-4 h-4 text-[#B0BEC5] transition-transform ${numberPickerOpen ? 'rotate-180' : ''}`}
-              />
-            </button>
-            {numberPickerOpen && (
-              <div className="absolute top-full left-0 right-0 mt-1 bg-[#1A2332] border border-white/10 rounded-lg shadow-xl z-10 max-h-40 overflow-y-auto">
-                {userNumbers.map((num) => (
-                  <button
-                    key={num.id}
-                    onClick={() => {
-                      onSelectNumber(num.phone_number);
-                      setNumberPickerOpen(false);
-                    }}
-                    className="w-full px-3 py-2.5 text-left text-white hover:bg-[#1E2A3A] transition-colors"
-                  >
-                    {num.phone_number}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
+      <div className="mb-3 w-full" ref={pickerRef}>
+        <label className="text-meta text-text-secondary mb-1.5 block">Call from</label>
+        <div className="relative">
+          <button
+            onClick={() => setNumberPickerOpen(!numberPickerOpen)}
+            className="w-full flex items-center justify-between px-3 py-2.5 bg-surface-2 border border-border-subtle rounded-app-md hover:border-border-strong transition-colors"
+          >
+            <span className="text-body font-medium text-text-primary truncate">
+              {selectedFromNumber || 'Select number'}
+            </span>
+            <ChevronDown
+              className={`w-4 h-4 text-text-secondary transition-transform ${numberPickerOpen ? 'rotate-180' : ''}`}
+            />
+          </button>
+          {numberPickerOpen && (
+            <div className="absolute top-full left-0 right-0 mt-1 bg-surface-1 border border-border-subtle rounded-app-md shadow-app-md z-10 max-h-40 overflow-y-auto">
+              {userNumbers.map((num) => (
+                <button
+                  key={num.id}
+                  onClick={() => {
+                    onSelectNumber(num.phone_number);
+                    setNumberPickerOpen(false);
+                  }}
+                  className="w-full px-3 py-2.5 text-left text-body text-text-primary hover:bg-surface-2 transition-colors"
+                >
+                  {num.phone_number}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
-      )}
-
-      {/* Country Code (display only for now) */}
-      <div className="mb-2">
-        <span className="text-base font-bold text-white">{countryCode}</span>
       </div>
 
       {/* Phone Number Display */}
       <div className="w-full mb-3">
-        <div className="bg-[#1A2332]/60 backdrop-blur-xl border border-white/10 rounded-lg px-3 py-3 text-center min-h-[50px] flex items-center justify-center">
+        <div className="bg-surface-2 border border-border-subtle rounded-app-md px-3 py-3 text-center min-h-[50px] flex items-center justify-center">
           {phoneNumber ? (
-            <span className="text-xl font-semibold text-white tracking-wider">
-              {formatPhoneNumber(phoneNumber)}
+            <span className="text-xl font-semibold text-text-primary tracking-wider tabular-nums">
+              {countryCode} {formatPhoneNumber(phoneNumber)}
             </span>
           ) : (
-            <span className="text-base text-[#B0BEC5]/50">Enter phone number</span>
+            <span className="text-body text-text-muted">Enter phone number</span>
           )}
         </div>
       </div>
@@ -156,11 +162,11 @@ export function DialerIdle({
               whileHover={{ scale: 1.05 }}
               whileTap={{ scale: 0.95 }}
               onClick={() => handleKeyPress(button.digit)}
-              className="bg-[#1A2332]/60 backdrop-blur-xl border border-white/10 rounded-lg p-3 hover:bg-[#1E2A3A] hover:border-[#00D9FF]/30 transition-all group"
+              className="bg-surface-2 border border-border-subtle rounded-app-md p-3 hover:bg-surface-3 hover:border-border-strong transition-colors"
             >
-              <div className="text-xl font-semibold text-white mb-0.5">{button.digit}</div>
+              <div className="text-xl font-semibold text-text-primary mb-0.5">{button.digit}</div>
               {button.letters && (
-                <div className="text-[9px] text-[#B0BEC5] font-medium tracking-wider">
+                <div className="text-[9px] text-text-muted font-medium tracking-wider">
                   {button.letters}
                 </div>
               )}
@@ -174,10 +180,10 @@ export function DialerIdle({
             whileTap={{ scale: 0.95 }}
             onClick={handleDelete}
             disabled={!phoneNumber}
-            className={`p-2 rounded-lg transition-all ${
+            className={`p-2 rounded-app-md transition-colors ${
               phoneNumber
-                ? 'bg-[#1A2332]/60 hover:bg-[#FF3D00]/10 border border-white/10 hover:border-[#FF3D00]/30 text-white hover:text-[#FF3D00]'
-                : 'bg-[#1A2332]/30 border border-white/5 text-[#B0BEC5]/30 cursor-not-allowed'
+                ? 'bg-surface-2 hover:bg-danger-soft border border-border-subtle hover:border-danger/30 text-text-primary hover:text-danger'
+                : 'bg-surface-1 border border-border-subtle text-text-muted cursor-not-allowed'
             }`}
           >
             <Delete className="w-4 h-4" />
@@ -193,16 +199,16 @@ export function DialerIdle({
         whileTap={canDial ? { scale: 0.95 } : {}}
         className={`w-14 h-14 rounded-full flex items-center justify-center transition-all ${
           canDial
-            ? 'bg-gradient-to-br from-[#00E676] to-[#00D9FF] shadow-[0_6px_24px_rgba(0,230,118,0.4)] hover:shadow-[0_8px_32px_rgba(0,230,118,0.6)]'
-            : 'bg-[#1A2332]/60 border border-white/10 cursor-not-allowed'
+            ? 'bg-success shadow-app-md hover:shadow-[0_8px_24px_rgba(0,230,118,0.35)]'
+            : 'bg-surface-2 border border-border-subtle cursor-not-allowed'
         }`}
       >
-        <Phone className={`w-6 h-6 ${canDial ? 'text-white' : 'text-[#B0BEC5]/30'}`} />
+        <Phone className={`w-6 h-6 ${canDial ? 'text-white' : 'text-text-muted'}`} />
       </motion.button>
 
-      {error && <p className="mt-3 text-sm text-[#FF3D00] text-center">{error}</p>}
+      {error && <p className="mt-3 text-body text-danger text-center">{error}</p>}
 
-      {isDialing && <p className="mt-2 text-sm text-[#00D9FF]">Connecting...</p>}
+      {isDialing && <p className="mt-2 text-body text-accent-to">Connecting...</p>}
     </motion.div>
   );
 }

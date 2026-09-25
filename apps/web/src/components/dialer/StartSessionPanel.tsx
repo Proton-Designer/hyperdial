@@ -1,6 +1,9 @@
-import { Loader2, Phone, Play, Users } from 'lucide-react';
+import { Phone, Play, Users } from 'lucide-react';
 import type { CampaignWithStats } from '@/lib/api';
 import type { UserPhoneNumber } from '@/contexts/PhoneNumbersContext';
+import { Button } from '@/components/ui/button';
+import { EmptyState } from '@/components/app/EmptyState';
+import { ListSkeleton } from '@/components/app/skeletons';
 
 /**
  * TASK-L7: the only place a parallel dial session gets started now, for every role. Reuses
@@ -44,60 +47,48 @@ export function StartSessionPanel({
 }: StartSessionPanelProps) {
   return (
     <div className="max-w-3xl mx-auto mb-8">
-      <h2 className="text-xl font-bold text-white mb-1">Start a parallel dialing session</h2>
-      <p className="text-sm text-[#B0BEC5] mb-6">
+      <h2 className="text-page-title text-text-primary mb-1">Start a session</h2>
+      <p className="text-body text-text-secondary mb-6">
         Pick a campaign below. We'll register your phone line first, then start dialing.
       </p>
 
       {conflict && (
-        <div className="rounded-2xl border border-[#FFB300]/30 bg-[#FFB300]/10 p-4 mb-6 flex items-center justify-between gap-4">
-          <p className="text-sm text-[#FFB300]">
+        <div className="rounded-app-lg border border-warning/30 bg-warning-soft p-4 mb-6 flex items-center justify-between gap-4">
+          <p className="text-body text-warning">
             A session is already active for{' '}
             <span className="font-semibold">{conflict.campaignName}</span>.
           </p>
           <div className="flex items-center gap-2 flex-shrink-0">
-            <button
-              type="button"
-              onClick={onOpenConflict}
-              className="px-3 py-1.5 rounded-lg bg-[#FFB300]/20 border border-[#FFB300]/40 text-[#FFB300] text-sm font-medium"
-            >
+            <Button variant="warning-soft" size="sm" onClick={onOpenConflict}>
               Open it
-            </button>
-            <button
-              type="button"
-              onClick={onDismissConflict}
-              className="px-3 py-1.5 rounded-lg bg-white/5 text-[#B0BEC5] text-sm"
-            >
+            </Button>
+            <Button variant="fe-ghost" size="sm" onClick={onDismissConflict}>
               Dismiss
-            </button>
+            </Button>
           </div>
         </div>
       )}
 
       {startError && (
-        <div className="rounded-2xl border border-[#FF3D00]/30 bg-[#FF3D00]/10 p-4 mb-6">
-          <p className="text-sm text-[#FF3D00]">{startError}</p>
+        <div className="rounded-app-lg border border-danger/30 bg-danger-soft p-4 mb-6">
+          <p className="text-body text-danger">{startError}</p>
         </div>
       )}
 
       {campaignsError && (
-        <div className="rounded-2xl border border-[#FF3D00]/30 bg-[#FF3D00]/10 p-4 mb-6">
-          <p className="text-sm text-[#FF3D00]">{campaignsError}</p>
+        <div className="rounded-app-lg border border-danger/30 bg-danger-soft p-4 mb-6">
+          <p className="text-body text-danger">{campaignsError}</p>
         </div>
       )}
 
-      {campaigns === null && !campaignsError && (
-        <div className="flex items-center gap-2 text-[#B0BEC5] py-8 justify-center">
-          <Loader2 className="w-5 h-5 animate-spin" />
-          Loading campaigns…
-        </div>
-      )}
+      {campaigns === null && !campaignsError && <ListSkeleton rows={3} />}
 
       {campaigns !== null && campaigns.length === 0 && (
-        <div className="rounded-2xl border border-white/5 bg-[#1A2332]/60 p-8 text-center">
-          <Users className="w-8 h-8 text-[#B0BEC5]/50 mx-auto mb-3" />
-          <p className="text-[#B0BEC5]">No campaigns assigned yet — ask your manager.</p>
-        </div>
+        <EmptyState
+          icon={Users}
+          title="No campaigns assigned yet"
+          body="Ask your manager to assign you to a campaign."
+        />
       )}
 
       {campaigns !== null && campaigns.length > 0 && (
@@ -108,37 +99,41 @@ export function StartSessionPanel({
             return (
               <div
                 key={campaign.id}
-                className="rounded-2xl border border-white/5 bg-[#1A2332]/60 p-5 flex items-center justify-between gap-4"
+                className="rounded-app-lg border border-border-subtle bg-surface-1 p-5 flex items-center justify-between gap-4"
               >
                 <div className="min-w-0">
-                  <p className="text-white font-semibold truncate">{campaign.name}</p>
-                  <div className="flex flex-wrap items-center gap-3 mt-1 text-sm text-[#B0BEC5]">
+                  <p className="text-body font-semibold text-text-primary truncate">
+                    {campaign.name}
+                  </p>
+                  <div className="flex flex-wrap items-center gap-3 mt-1 text-meta text-text-secondary">
                     <span>{campaign.lines} lines</span>
                     <span className="flex items-center gap-1">
                       <Phone className="w-3.5 h-3.5" />
                       {callerIdLabel(campaign, userNumbers)}
                     </span>
-                    <span>{campaign.queued} queued</span>
+                    <span>{campaign.queued} leads remaining</span>
                   </div>
                 </div>
-                <button
-                  type="button"
+                <Button
+                  variant="primary"
                   onClick={() => onStart(campaign)}
                   disabled={isStartingOther || isStartingThis}
-                  className="flex-shrink-0 flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-[#00D9FF] to-[#0066FF] text-white font-semibold disabled:opacity-60"
+                  loading={isStartingThis}
+                  className="flex-shrink-0"
                 >
                   {isStartingThis ? (
-                    <>
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                      {micRegistering ? 'Registering your line…' : 'Starting…'}
-                    </>
+                    micRegistering ? (
+                      'Registering your line…'
+                    ) : (
+                      'Starting…'
+                    )
                   ) : (
                     <>
                       <Play className="w-4 h-4" />
                       Start
                     </>
                   )}
-                </button>
+                </Button>
               </div>
             );
           })}

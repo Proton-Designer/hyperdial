@@ -1,17 +1,14 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { motion, AnimatePresence } from 'motion/react';
 import { toast } from 'sonner';
 import { useTelnyxCall } from '../lib/useTelnyxCall';
 import { usePhoneNumbers } from '@/contexts/PhoneNumbersContext';
-import { PhoneOff } from 'lucide-react';
-import { DialerIdle } from './dialer/DialerIdle';
-import { ActiveCall } from './dialer/ActiveCall';
 import { CampaignStats } from './dialer/CampaignStats';
 import { useDialerSession } from '@/hooks/useDialerSession';
 import { ParallelDialerUI } from './dialer/ParallelDialerUI';
 import { DialerStateBanner } from './dialer/DialerStateBanner';
 import { WrapUpModal } from './dialer/WrapUpModal';
 import { StartSessionPanel } from './dialer/StartSessionPanel';
+import { ManualDialPanel } from './dialer/ManualDialPanel';
 import {
   getActiveDialerSession,
   getDialerSession,
@@ -35,6 +32,7 @@ interface DialerProps {
   parallelSessionId?: string | null;
   parallelCampaignId?: string | null;
   onClearParallelContext?: () => void;
+  onNavigateToSettings?: () => void;
 }
 
 /**
@@ -53,6 +51,7 @@ export function Dialer({
   parallelSessionId = null,
   parallelCampaignId = null,
   onClearParallelContext,
+  onNavigateToSettings,
 }: DialerProps) {
   const { isOwner: isAgentLineOwner, otherTabOpen } = useSingleTabLock();
 
@@ -63,9 +62,11 @@ export function Dialer({
   if (otherTabOpen && !isAgentLineOwner) {
     return (
       <div className="flex h-full items-center justify-center p-8">
-        <div className="max-w-md text-center rounded-2xl border border-[#FFB300]/30 bg-[#FFB300]/10 p-8">
-          <p className="text-white font-semibold text-lg mb-2">HyperDial is open in another tab</p>
-          <p className="text-[#B0BEC5] text-sm">
+        <div className="max-w-md text-center rounded-app-lg border border-warning/25 bg-warning-soft p-8">
+          <p className="text-text-primary font-semibold text-lg mb-2">
+            HyperDial is open in another tab
+          </p>
+          <p className="text-text-secondary text-body">
             Your phone line can only be registered in one browser tab at a time. Close this tab, or
             close the other one and refresh this page.
           </p>
@@ -79,6 +80,7 @@ export function Dialer({
       parallelSessionId={parallelSessionId}
       parallelCampaignId={parallelCampaignId}
       onClearParallelContext={onClearParallelContext}
+      onNavigateToSettings={onNavigateToSettings}
       isAgentLineOwner={isAgentLineOwner}
     />
   );
@@ -92,6 +94,7 @@ function DialerBody({
   parallelSessionId = null,
   parallelCampaignId = null,
   onClearParallelContext,
+  onNavigateToSettings,
   isAgentLineOwner,
 }: DialerBodyProps) {
   const { numbers: userNumbers } = usePhoneNumbers();
@@ -555,18 +558,20 @@ function DialerBody({
       {/* Remote audio is created in useEffect (outside React tree) to avoid circular ref in Telnyx SDK */}
 
       {/* Center Panel - Dialing Interface */}
-      <div className="flex-1 bg-[#0A1628] p-8 overflow-y-auto">
+      <div className="flex-1 bg-surface-0 p-4 sm:p-8 overflow-y-auto">
         {isParallelMode && parallelSession.error && (
-          <div className="max-w-2xl mx-auto rounded-2xl border border-[#FF3D00]/30 bg-[#1A2332]/80 p-6 mb-6">
-            <p className="text-[#FF3D00] font-medium mb-2">Could not load parallel session</p>
-            <p className="text-[#B0BEC5] text-sm mb-4">{parallelSession.error}</p>
-            <p className="text-[#B0BEC5] text-sm">Use manual dial below to place single calls.</p>
+          <div className="max-w-2xl mx-auto rounded-app-lg border border-danger/30 bg-surface-1 p-6 mb-6">
+            <p className="text-danger font-medium mb-2">Could not load parallel session</p>
+            <p className="text-text-secondary text-body mb-4">{parallelSession.error}</p>
+            <p className="text-text-secondary text-body">
+              Use manual dial below to place single calls.
+            </p>
           </div>
         )}
         {isParallelLoading && (
-          <div className="max-w-3xl mx-auto flex flex-col items-center justify-center py-20 text-[#B0BEC5]">
-            <div className="w-10 h-10 border-2 border-[#00D9FF] border-t-transparent rounded-full animate-spin mb-4" />
-            <p className="text-white font-medium">Loading parallel dialing session…</p>
+          <div className="max-w-3xl mx-auto flex flex-col items-center justify-center py-20 text-text-secondary">
+            <div className="w-10 h-10 border-2 border-accent-to border-t-transparent rounded-full animate-spin mb-4" />
+            <p className="text-text-primary font-medium">Loading parallel dialing session…</p>
           </div>
         )}
         {isParallelMode &&
@@ -644,56 +649,19 @@ function DialerBody({
         )}
 
         {(!isParallelMode || parallelSession.error) && (
-          <AnimatePresence mode="wait">
-            {dialerStatus === 'idle' && (
-              <DialerIdle
-                key="idle"
-                userNumbers={userNumbers}
-                selectedFromNumber={selectedFromNumber}
-                onSelectNumber={setSelectedFromNumber}
-                onDial={handleDial}
-                isDialing={callState === 'dialing'}
-                error={error}
-              />
-            )}
-
-            {dialerStatus === 'dialing' && (
-              <motion.div
-                key="dialing"
-                initial={{ opacity: 0, scale: 0.95 }}
-                animate={{ opacity: 1, scale: 1 }}
-                exit={{ opacity: 0, scale: 0.95 }}
-                className="max-w-3xl mx-auto"
-              >
-                <div className="text-center mb-8 p-8 rounded-3xl bg-[#1A2332]/60 border border-[#0066FF]/30 shadow-[0_0_32px_rgba(0,102,255,0.25)]">
-                  <h2 className="text-2xl font-bold text-white mb-2">
-                    Connecting to {outboundNumber}
-                    <span className="animate-pulse">...</span>
-                  </h2>
-                  <p className="text-[#B0BEC5] mb-6">Ringing</p>
-                  <button
-                    type="button"
-                    onClick={handleEndCall}
-                    className="inline-flex items-center gap-2 px-6 py-3 rounded-xl bg-red-500/20 hover:bg-red-500/30 border border-red-500/40 text-red-400 font-medium transition-colors"
-                  >
-                    <PhoneOff className="w-5 h-5" />
-                    End call
-                  </button>
-                </div>
-              </motion.div>
-            )}
-
-            {dialerStatus === 'connected' && (
-              <ActiveCall
-                key="connected"
-                outboundNumber={outboundNumber}
-                fromNumber={selectedFromNumber || ''}
-                duration={formatDuration(callDuration)}
-                onEndCall={handleEndCall}
-                onMuteChange={setMuted}
-              />
-            )}
-          </AnimatePresence>
+          <ManualDialPanel
+            userNumbers={userNumbers}
+            selectedFromNumber={selectedFromNumber}
+            onSelectNumber={setSelectedFromNumber}
+            onDial={handleDial}
+            dialerStatus={dialerStatus}
+            error={error}
+            outboundNumber={outboundNumber}
+            callDurationFormatted={formatDuration(callDuration)}
+            onEndCall={handleEndCall}
+            onMuteChange={setMuted}
+            onNavigateToSettings={onNavigateToSettings}
+          />
         )}
       </div>
 

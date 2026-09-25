@@ -227,6 +227,7 @@ export function MainApp() {
               parallelSessionId={parallelDialContext?.sessionId ?? null}
               parallelCampaignId={parallelDialContext?.campaignId ?? null}
               onClearParallelContext={() => setParallelDialContext(null)}
+              onNavigateToSettings={() => setActiveTab('settings')}
             />
           </div>
           {activeTab === 'contacts' && (

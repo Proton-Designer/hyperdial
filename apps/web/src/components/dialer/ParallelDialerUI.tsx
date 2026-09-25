@@ -1,5 +1,8 @@
+import { useEffect, useState } from 'react';
 import { ContactBatchCard } from './ContactBatchCard';
 import { LiveCallPanel } from './LiveCallPanel';
+import { Button } from '@/components/ui/button';
+import { cn } from '@/components/ui/utils';
 import type { BatchContactPreview } from '@/hooks/useDialerSession';
 import type { DialSessionState } from '@/lib/api';
 
@@ -29,6 +32,37 @@ interface ParallelDialerUIProps {
  *  everywhere else so it's never a confusing no-op click. */
 const PAUSABLE_STATES = new Set<DialSessionState>(['dialing', 'ready']);
 
+const STATUS_CHIP: Record<DialSessionState, { label: string; className: string }> = {
+  ready_pending: { label: 'Ready', className: 'bg-surface-3 text-text-secondary' },
+  ready: { label: 'Ready', className: 'bg-surface-3 text-text-secondary' },
+  dialing: { label: 'Dialing', className: 'bg-accent-to/15 text-accent-to' },
+  connecting: { label: 'Connecting', className: 'bg-warning-soft text-warning' },
+  on_call: { label: 'Connected', className: 'bg-success-soft text-success' },
+  wrap_up: { label: 'Wrap-up', className: 'bg-warning-soft text-warning' },
+  paused: { label: 'Paused', className: 'bg-surface-3 text-text-secondary' },
+  paused_agent_lost: { label: 'Line lost', className: 'bg-danger-soft text-danger' },
+  completed: { label: 'Completed', className: 'bg-success-soft text-success' },
+  stopped: { label: 'Stopped', className: 'bg-surface-3 text-text-secondary' },
+};
+
+function useElapsed(answeredAt: string | null): string {
+  const [seconds, setSeconds] = useState(0);
+  useEffect(() => {
+    if (!answeredAt) {
+      setSeconds(0);
+      return;
+    }
+    const answeredAtMs = new Date(answeredAt).getTime();
+    const tick = () => setSeconds(Math.max(0, Math.floor((Date.now() - answeredAtMs) / 1000)));
+    tick();
+    const timer = setInterval(tick, 1000);
+    return () => clearInterval(timer);
+  }, [answeredAt]);
+  const m = Math.floor(seconds / 60);
+  const s = String(seconds % 60).padStart(2, '0');
+  return `${m}:${s}`;
+}
+
 export function ParallelDialerUI({
   sessionState,
   lines,
@@ -51,6 +85,8 @@ export function ParallelDialerUI({
   onEndLiveCall,
 }: ParallelDialerUIProps) {
   const connectedContact = batchContacts.find((c) => c.id === connectedContactId) ?? null;
+  const elapsed = useElapsed(sessionState === 'on_call' ? connectedAnsweredAt : null);
+  const chip = STATUS_CHIP[sessionState];
 
   const getContactState = (contactId: string): 'dialing' | 'connecting' | 'connected' => {
     if (connectedContactId === contactId) return 'connected';
@@ -59,83 +95,81 @@ export function ParallelDialerUI({
   };
 
   return (
-    <div className="space-y-6">
-      <div className="rounded-2xl border border-white/10 bg-[#1A2332]/70 p-5">
+    <div className="space-y-4">
+      {/* Header strip: status chip + timer (on_call only) + the stat row + Pause/Stop. */}
+      <div className="rounded-app-lg border border-border-subtle bg-surface-1 p-4 sm:p-5">
         <div className="flex flex-wrap items-center gap-3 justify-between">
-          <div className="flex flex-wrap items-center gap-3 text-sm">
-            <span className="text-[#B0BEC5]">
-              Lines: <b className="text-white">{lines}</b> · AMD:{' '}
-              <b className="text-white">{amdMode === 'on' ? 'On' : 'Off'}</b>
+          <div className="flex items-center gap-3">
+            <span
+              className={cn(
+                'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-meta font-medium',
+                chip.className
+              )}
+            >
+              {chip.label}
             </span>
-            <span className="text-white">
-              Calls Made: <b>{callsMade}</b>
-            </span>
-            <span className="text-white">
-              Connected: <b>{connected}</b>
-            </span>
-            <span className="text-white">
-              Voicemail: <b>{voicemail}</b>
-            </span>
-            <span className="text-white">
-              No Answer: <b>{noAnswer}</b>
-            </span>
-            <span className="text-white">
-              Progress:{' '}
-              <b>
-                {resolvedCount}/{totalContacts}
-              </b>
+            {sessionState === 'on_call' && (
+              <span className="text-body text-text-primary tabular-nums font-medium">
+                {elapsed}
+              </span>
+            )}
+            <span className="text-meta text-text-muted">
+              {lines} line{lines === 1 ? '' : 's'} · AMD {amdMode === 'on' ? 'on' : 'off'}
             </span>
           </div>
           <div className="flex items-center gap-2">
             {sessionState === 'paused' ? (
-              <button
-                type="button"
-                onClick={onResume}
-                className="px-4 py-2 rounded-lg bg-[#00D9FF]/20 border border-[#00D9FF]/30 text-[#00D9FF]"
-              >
+              <Button variant="primary" size="sm" onClick={onResume}>
                 Resume
-              </button>
+              </Button>
             ) : (
-              <button
-                type="button"
+              <Button
+                variant="warning-soft"
+                size="sm"
                 onClick={onPause}
                 disabled={!PAUSABLE_STATES.has(sessionState)}
-                className="px-4 py-2 rounded-lg bg-[#FFB300]/20 border border-[#FFB300]/30 text-[#FFB300] disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 Pause
-              </button>
+              </Button>
             )}
             {/* Stop always works, in every state, per this task's own spec. */}
-            <button
-              type="button"
-              onClick={onStop}
-              className="px-4 py-2 rounded-lg bg-[#FF3D00]/20 border border-[#FF3D00]/30 text-[#FF3D00]"
-            >
-              Stop Session
-            </button>
+            <Button variant="danger-ghost" size="sm" onClick={onStop}>
+              Stop session
+            </Button>
           </div>
         </div>
-        <div className="mt-4 h-2 rounded bg-white/10 overflow-hidden">
+
+        <div className="mt-4 flex flex-wrap items-center gap-x-6 gap-y-2 text-meta text-text-secondary">
+          <Stat label="Dialed" value={callsMade} />
+          <Stat label="Connected" value={connected} />
+          <Stat label="VM" value={voicemail} />
+          <Stat label="No answer" value={noAnswer} />
+          <Stat label="Progress" value={`${resolvedCount}/${totalContacts}`} />
+        </div>
+        <div className="mt-3 h-1.5 rounded-full bg-surface-3 overflow-hidden">
           <div
-            className="h-full bg-gradient-to-r from-[#00D9FF] to-[#0066FF]"
+            className="h-full rounded-full bg-gradient-to-r from-accent-from to-accent-to transition-[width]"
             style={{ width: `${progress}%` }}
           />
         </div>
       </div>
 
-      <div className="rounded-2xl border border-white/10 bg-[#1A2332]/50 p-5">
-        <h3 className="text-white text-lg font-bold mb-4">Current Batch</h3>
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-          {batchContacts.map((contact) => (
-            <ContactBatchCard
-              key={contact.id}
-              name={contact.name}
-              phone={contact.phone}
-              state={getContactState(contact.id)}
-            />
-          ))}
+      {batchContacts.length > 0 && (
+        <div>
+          <h3 className="text-section-title text-text-primary mb-3">Current batch</h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+            {batchContacts.map((contact) => (
+              <ContactBatchCard
+                key={contact.id}
+                name={contact.name}
+                phone={contact.phone}
+                state={getContactState(contact.id)}
+                answeredAt={contact.id === connectedContactId ? connectedAnsweredAt : null}
+              />
+            ))}
+          </div>
         </div>
-      </div>
+      )}
 
       {connectedContact && (
         <LiveCallPanel
@@ -147,5 +181,13 @@ export function ParallelDialerUI({
         />
       )}
     </div>
+  );
+}
+
+function Stat({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <span>
+      {label}: <b className="text-text-primary font-semibold">{value}</b>
+    </span>
   );
 }
