@@ -1,16 +1,11 @@
 import { useState, useEffect, useCallback } from 'react';
-import { motion } from 'motion/react';
-import {
-  Phone,
-  Target,
-  Clock,
-  MessagesSquare,
-  Phone as PhoneIcon,
-  Upload,
-  Plus,
-  Info,
-} from 'lucide-react';
+import { motion, useReducedMotion } from 'motion/react';
+import { Phone, Target, Clock, MessagesSquare, Upload, Plus, PhoneCall } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Button } from '@/components/ui/button';
+import { PageHeader } from '@/components/app/PageHeader';
+import { StatCard } from '@/components/app/StatCard';
+import { EmptyState } from '@/components/app/EmptyState';
 import {
   AreaChart,
   Area,
@@ -40,13 +35,21 @@ type DashboardProps = {
   onNavigateToCampaigns?: () => void;
 };
 
+function greeting(): string {
+  const hour = new Date().getHours();
+  if (hour < 12) return 'Good morning';
+  if (hour < 18) return 'Good afternoon';
+  return 'Good evening';
+}
+
 export function Dashboard({
   onNavigateToDialer,
   onNavigateToContacts,
   onNavigateToCampaigns,
 }: DashboardProps = {}) {
   const { user } = useAuth();
-  const { role } = useOrg();
+  const { role, firstName } = useOrg();
+  const reduceMotion = useReducedMotion();
   // Fail CLOSED, matching MainApp.tsx/Sidebar.tsx: treat "role not yet confirmed owner/admin"
   // (null, e.g. right after an invite accept) the same as agent, not the same as manager. NOT
   // also gated on OrgContext's `loading` -- that flips true on every refetch, including one an
@@ -146,280 +149,218 @@ export function Dashboard({
     }
   };
 
-  const metricsFromBackend = [
+  const metrics = [
     {
       icon: Phone,
-      label: 'Calls Today',
-      value: statsLoading ? '—' : statsError ? '—' : String(stats?.callsToday ?? 0),
-      color: '#00D9FF',
-      bgColor: 'bg-[#00D9FF]/10',
-      borderColor: 'border-[#00D9FF]/20',
-      loading: statsLoading,
+      label: 'Calls today',
+      value: statsError ? '—' : String(stats?.callsToday ?? 0),
     },
     {
       icon: Target,
-      label: 'Connect Rate',
-      value: statsLoading ? '—' : statsError ? '—' : `${stats?.connectRate ?? 0}%`,
-      color: '#00E676',
-      bgColor: 'bg-[#00E676]/10',
-      borderColor: 'border-[#00E676]/20',
-      loading: statsLoading,
-    },
-    {
-      icon: Clock,
-      label: 'Talk Time',
-      value: statsLoading ? '—' : statsError ? '—' : (stats?.talkTimeFormatted ?? '0m'),
-      color: '#FFB300',
-      bgColor: 'bg-[#FFB300]/10',
-      borderColor: 'border-[#FFB300]/20',
-      loading: statsLoading,
+      label: 'Connect rate',
+      value: statsError ? '—' : `${stats?.connectRate ?? 0}%`,
     },
     {
       icon: MessagesSquare,
       label: 'Conversations / hr',
       value:
-        statsLoading || statsError
+        statsError || stats?.conversationsPerHour == null
           ? '—'
-          : stats?.conversationsPerHour == null
-            ? '—'
-            : String(stats.conversationsPerHour),
+          : String(stats.conversationsPerHour),
       subtext:
-        statsLoading || statsError || !stats
+        statsError || !stats
           ? undefined
           : `${stats.conversationsToday} conversation${stats.conversationsToday === 1 ? '' : 's'} · ${stats.dialingHoursToday.toFixed(1)}h dialing`,
       tooltip:
         'Contact calls bridged to you and talked for 30 seconds or more, divided by hours spent in an active dialing session today.',
-      color: '#0066FF',
-      bgColor: 'bg-[#0066FF]/10',
-      borderColor: 'border-[#0066FF]/20',
-      loading: statsLoading,
+    },
+    {
+      icon: Clock,
+      label: 'Talk time',
+      value: statsError ? '—' : (stats?.talkTimeFormatted ?? '0m'),
     },
   ];
 
+  const chartIsEmpty =
+    !chartLoading && chartData.every((d) => (d.calls ?? 0) === 0 && (d.connections ?? 0) === 0);
+
+  const today = new Date().toLocaleDateString(undefined, {
+    weekday: 'long',
+    month: 'long',
+    day: 'numeric',
+  });
+
   return (
-    <div className="p-8 max-w-[1440px] mx-auto">
-      {/* Hero Metrics -- a skeleton grid on first load (FE-A), not a spinner buried inside an
-          otherwise-empty card, so nothing shifts once the real values arrive. */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-        {statsLoading
-          ? Array.from({ length: 4 }).map((_, i) => (
-              <div
-                key={i}
-                className="bg-[#1A2332]/60 backdrop-blur-xl rounded-2xl p-6 border border-white/5"
-              >
-                <div className="flex items-start justify-between mb-4">
-                  <Skeleton className="w-12 h-12 rounded-xl" />
-                </div>
-                <Skeleton className="h-9 w-20 mb-2" />
-                <Skeleton className="h-4 w-28" />
-              </div>
-            ))
-          : metricsFromBackend.map((metric, index) => {
-              const Icon = metric.icon;
-              return (
-                <motion.div
-                  key={metric.label}
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: index * 0.1 }}
-                  className={`bg-[#1A2332]/60 backdrop-blur-xl rounded-2xl p-6 border ${metric.borderColor} shadow-[0_4px_24px_rgba(0,102,255,0.15)] hover:shadow-[0_8px_32px_rgba(0,102,255,0.25)] transition-all hover:-translate-y-1`}
-                >
-                  <div className="flex items-start justify-between mb-4">
-                    <div
-                      className={`w-12 h-12 rounded-xl ${metric.bgColor} flex items-center justify-center`}
-                      style={{ boxShadow: `0 4px 16px ${metric.color}40` }}
-                    >
-                      <Icon className="w-6 h-6" style={{ color: metric.color }} />
-                    </div>
-                  </div>
-                  <div className="text-4xl font-bold text-white mb-1">{metric.value}</div>
-                  <div className="text-sm text-[#B0BEC5] flex items-center gap-1.5">
-                    {metric.label}
-                    {'tooltip' in metric && metric.tooltip && (
-                      <span title={metric.tooltip}>
-                        <Info className="w-3.5 h-3.5 text-[#B0BEC5]/70 cursor-help" />
-                      </span>
-                    )}
-                  </div>
-                  {'subtext' in metric && metric.subtext && (
-                    <div className="text-xs text-[#B0BEC5]/70 mt-1">{metric.subtext}</div>
-                  )}
-                </motion.div>
-              );
-            })}
-      </div>
+    <div className="p-6 sm:p-8 max-w-[1440px] mx-auto">
+      <PageHeader
+        title={`${greeting()}${firstName ? `, ${firstName}` : ''}`}
+        description={today}
+        actions={
+          <>
+            <Button variant="primary" onClick={onNavigateToDialer}>
+              <PhoneCall className="w-4 h-4" />
+              Start dialing
+            </Button>
+            {!isAgent && (
+              <>
+                <Button variant="fe-secondary" onClick={onNavigateToContacts}>
+                  <Upload className="w-4 h-4" />
+                  Upload contacts
+                </Button>
+                <Button variant="fe-secondary" onClick={onNavigateToCampaigns}>
+                  <Plus className="w-4 h-4" />
+                  New campaign
+                </Button>
+              </>
+            )}
+          </>
+        }
+      />
 
-      <div className="grid grid-cols-1 lg:grid-cols-1 gap-8">
-        {/* Team Performance - chart placeholder; will be wired to API in next step */}
-        <motion.div
-          initial={{ opacity: 0, x: 20 }}
-          animate={{ opacity: 1, x: 0 }}
-          transition={{ delay: 0.3 }}
-          className="bg-[#1A2332]/60 backdrop-blur-xl rounded-2xl p-6 border border-white/5 shadow-[0_4px_24px_rgba(0,102,255,0.15)]"
-        >
-          <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
-            <h2 className="text-xl font-bold text-white">
-              {isAgent ? 'My Performance' : 'Team Performance'}
-            </h2>
-            <div className="flex items-center gap-2 flex-wrap">
-              <button
-                type="button"
-                onClick={() => handlePerfRange('7d')}
-                className={`px-3 py-1.5 text-sm rounded-lg border transition-colors ${perfRange === '7d' ? 'bg-[#0066FF]/10 text-[#00D9FF] border-[#0066FF]/20 font-medium' : 'text-[#B0BEC5] hover:bg-white/5 border-transparent'}`}
-              >
-                7D
-              </button>
-              <button
-                type="button"
-                onClick={() => handlePerfRange('30d')}
-                className={`px-3 py-1.5 text-sm rounded-lg border transition-colors ${perfRange === '30d' ? 'bg-[#0066FF]/10 text-[#00D9FF] border-[#0066FF]/20 font-medium' : 'text-[#B0BEC5] hover:bg-white/5 border-transparent'}`}
-              >
-                30D
-              </button>
-              <button
-                type="button"
-                onClick={() => setPerfRange('custom')}
-                className={`px-3 py-1.5 text-sm rounded-lg border transition-colors ${perfRange === 'custom' ? 'bg-[#0066FF]/10 text-[#00D9FF] border-[#0066FF]/20 font-medium' : 'text-[#B0BEC5] hover:bg-white/5 border-transparent'}`}
-              >
-                Custom
-              </button>
-              {perfRange === 'custom' && (
-                <>
-                  <input
-                    type="date"
-                    value={customStart}
-                    onChange={(e) => setCustomStart(e.target.value)}
-                    className="bg-[#1E2A3A] border border-white/10 rounded-lg px-2 py-1.5 text-sm text-white"
-                  />
-                  <span className="text-[#B0BEC5]">–</span>
-                  <input
-                    type="date"
-                    value={customEnd}
-                    onChange={(e) => setCustomEnd(e.target.value)}
-                    className="bg-[#1E2A3A] border border-white/10 rounded-lg px-2 py-1.5 text-sm text-white"
-                  />
-                  <button
-                    type="button"
-                    onClick={handleCustomApply}
-                    className="px-3 py-1.5 text-sm bg-[#00D9FF]/20 text-[#00D9FF] rounded-lg border border-[#00D9FF]/30 hover:bg-[#00D9FF]/30"
-                  >
-                    Apply
-                  </button>
-                </>
-              )}
-            </div>
-          </div>
-
-          {chartLoading ? (
-            <Skeleton className="h-[320px] w-full rounded-xl" />
-          ) : (
-            <ResponsiveContainer width="100%" height={320}>
-              <AreaChart data={chartData}>
-                <defs>
-                  <linearGradient id="colorCalls" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#0066FF" stopOpacity={0.3} />
-                    <stop offset="95%" stopColor="#0066FF" stopOpacity={0} />
-                  </linearGradient>
-                  <linearGradient id="colorConnections" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#00D9FF" stopOpacity={0.3} />
-                    <stop offset="95%" stopColor="#00D9FF" stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-                <XAxis
-                  dataKey="day"
-                  stroke="#B0BEC5"
-                  tick={{ fill: '#B0BEC5' }}
-                  axisLine={{ stroke: 'rgba(255,255,255,0.1)' }}
-                />
-                <YAxis
-                  stroke="#B0BEC5"
-                  tick={{ fill: '#B0BEC5' }}
-                  axisLine={{ stroke: 'rgba(255,255,255,0.1)' }}
-                />
-                <Tooltip
-                  contentStyle={{
-                    backgroundColor: '#1A2332',
-                    border: '1px solid rgba(255,255,255,0.1)',
-                    borderRadius: '12px',
-                    boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
-                  }}
-                  itemStyle={{ color: '#fff' }}
-                  labelStyle={{ color: '#B0BEC5' }}
-                />
-                <Legend wrapperStyle={{ paddingTop: '20px' }} iconType="circle" />
-                <Area
-                  type="monotone"
-                  dataKey="calls"
-                  stroke="#0066FF"
-                  strokeWidth={2}
-                  fillOpacity={1}
-                  fill="url(#colorCalls)"
-                  name="Total Calls"
-                />
-                <Area
-                  type="monotone"
-                  dataKey="connections"
-                  stroke="#00D9FF"
-                  strokeWidth={2}
-                  fillOpacity={1}
-                  fill="url(#colorConnections)"
-                  name="Connections"
-                />
-              </AreaChart>
-            </ResponsiveContainer>
-          )}
-        </motion.div>
-      </div>
-
-      {/* Quick Actions */}
-      <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.5 }}
-        className="mt-8 bg-gradient-to-r from-[#0066FF]/10 to-[#00D9FF]/10 backdrop-blur-xl rounded-2xl p-6 border border-[#0066FF]/20"
-      >
-        <div className="flex flex-wrap items-center justify-center gap-4">
-          <motion.button
-            whileHover={{ scale: 1.05 }}
-            whileTap={{ scale: 0.95 }}
-            type="button"
-            onClick={onNavigateToDialer}
-            className="flex items-center gap-3 px-8 py-4 bg-gradient-to-r from-[#00D9FF] to-[#0066FF] rounded-xl text-white font-semibold shadow-[0_4px_24px_rgba(0,217,255,0.3)] hover:shadow-[0_6px_32px_rgba(0,217,255,0.4)] transition-all"
+      {/* Compact stat row -- 2x2 on mobile, 4-across from md up. Shares one shape between the
+          loading and loaded states (StatCard renders its own skeleton via `loading`), so nothing
+          shifts once the real values land. */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+        {metrics.map((metric, index) => (
+          <motion.div
+            key={metric.label}
+            initial={statsLoading || reduceMotion ? false : { opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: index * 0.04, duration: 0.12, ease: [0.2, 0.8, 0.2, 1] }}
           >
-            <PhoneIcon className="w-5 h-5" />
-            Start Power Dialing
-          </motion.button>
+            <StatCard loading={statsLoading} {...metric} />
+          </motion.div>
+        ))}
+      </div>
 
-          {/* Agents get a read-only Contacts UI and no Campaigns tab (TASK-L4 / UI-4) -- these
-              two quick actions would just bounce them back to the dialer. */}
-          {!isAgent && (
-            <>
-              <motion.button
-                whileHover={{ scale: 1.05 }}
-                whileTap={{ scale: 0.95 }}
-                type="button"
-                onClick={onNavigateToContacts}
-                className="flex items-center gap-3 px-6 py-4 bg-transparent border-2 border-[#00D9FF] rounded-xl text-[#00D9FF] font-semibold hover:bg-[#00D9FF]/10 transition-all"
-              >
-                <Upload className="w-5 h-5" />
-                Upload Contacts
-              </motion.button>
-
-              <motion.button
-                whileHover={{ scale: 1.05 }}
-                whileTap={{ scale: 0.95 }}
-                type="button"
-                onClick={onNavigateToCampaigns}
-                className="flex items-center gap-3 px-6 py-4 bg-transparent border-2 border-[#00D9FF] rounded-xl text-[#00D9FF] font-semibold hover:bg-[#00D9FF]/10 transition-all"
-              >
-                <Plus className="w-5 h-5" />
-                Create Campaign
-              </motion.button>
-            </>
-          )}
+      <div className="rounded-app-lg border border-border-subtle bg-surface-1 p-4 sm:p-6 shadow-app-sm">
+        <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
+          <h2 className="text-section-title text-text-primary">
+            {isAgent ? 'My Performance' : 'Team Performance'}
+          </h2>
+          <div className="flex items-center gap-2 flex-wrap">
+            <Button
+              size="sm"
+              variant={perfRange === '7d' ? 'fe-secondary' : 'fe-ghost'}
+              onClick={() => handlePerfRange('7d')}
+            >
+              7D
+            </Button>
+            <Button
+              size="sm"
+              variant={perfRange === '30d' ? 'fe-secondary' : 'fe-ghost'}
+              onClick={() => handlePerfRange('30d')}
+            >
+              30D
+            </Button>
+            <Button
+              size="sm"
+              variant={perfRange === 'custom' ? 'fe-secondary' : 'fe-ghost'}
+              onClick={() => setPerfRange('custom')}
+            >
+              Custom
+            </Button>
+            {perfRange === 'custom' && (
+              <>
+                <input
+                  type="date"
+                  value={customStart}
+                  onChange={(e) => setCustomStart(e.target.value)}
+                  className="bg-surface-2 border border-border-subtle rounded-app-sm px-2 py-1.5 text-sm text-text-primary"
+                />
+                <span className="text-text-muted">–</span>
+                <input
+                  type="date"
+                  value={customEnd}
+                  onChange={(e) => setCustomEnd(e.target.value)}
+                  className="bg-surface-2 border border-border-subtle rounded-app-sm px-2 py-1.5 text-sm text-text-primary"
+                />
+                <Button size="sm" variant="primary" onClick={handleCustomApply}>
+                  Apply
+                </Button>
+              </>
+            )}
+          </div>
         </div>
-      </motion.div>
+
+        {chartLoading ? (
+          <Skeleton className="h-[320px] w-full rounded-app-lg" />
+        ) : chartIsEmpty ? (
+          <EmptyState
+            icon={MessagesSquare}
+            title="No calls yet this week"
+            body="Start a session to see your team's activity."
+            action={
+              <Button variant="primary" onClick={onNavigateToDialer}>
+                <PhoneCall className="w-4 h-4" />
+                Start dialing
+              </Button>
+            }
+          />
+        ) : (
+          <ResponsiveContainer width="100%" height={320}>
+            <AreaChart data={chartData}>
+              <defs>
+                <linearGradient id="colorCalls" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="#0066FF" stopOpacity={0.3} />
+                  <stop offset="95%" stopColor="#0066FF" stopOpacity={0} />
+                </linearGradient>
+                <linearGradient id="colorConnections" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="#00D9FF" stopOpacity={0.3} />
+                  <stop offset="95%" stopColor="#00D9FF" stopOpacity={0} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+              <XAxis
+                dataKey="day"
+                stroke="#B0BEC5"
+                tick={{ fill: '#B0BEC5' }}
+                axisLine={{ stroke: 'rgba(255,255,255,0.1)' }}
+              />
+              <YAxis
+                stroke="#B0BEC5"
+                tick={{ fill: '#B0BEC5' }}
+                axisLine={{ stroke: 'rgba(255,255,255,0.1)' }}
+              />
+              <Tooltip
+                contentStyle={{
+                  backgroundColor: '#1A2332',
+                  border: '1px solid rgba(255,255,255,0.1)',
+                  borderRadius: '12px',
+                  boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
+                }}
+                itemStyle={{ color: '#fff' }}
+                labelStyle={{ color: '#B0BEC5' }}
+              />
+              {/* FE-A: legend text is the muted body colour, not each series' own bright stroke
+                  colour -- only the dot keeps the series colour. */}
+              <Legend
+                wrapperStyle={{ paddingTop: '20px' }}
+                iconType="circle"
+                formatter={(value) => <span style={{ color: '#B0BEC5' }}>{value}</span>}
+              />
+              <Area
+                type="monotone"
+                dataKey="calls"
+                stroke="#0066FF"
+                strokeWidth={2}
+                fillOpacity={1}
+                fill="url(#colorCalls)"
+                name="Total Calls"
+              />
+              <Area
+                type="monotone"
+                dataKey="connections"
+                stroke="#00D9FF"
+                strokeWidth={2}
+                fillOpacity={1}
+                fill="url(#colorConnections)"
+                name="Connections"
+              />
+            </AreaChart>
+          </ResponsiveContainer>
+        )}
+      </div>
     </div>
   );
 }
