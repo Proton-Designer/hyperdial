@@ -772,3 +772,25 @@ surface for this requirement -- not a silent gap.
 **Do not undo without understanding:** don't "fix" decision 1 by capping the legacy fallback too --
 that would remove the org's only continuity path while migrating onto the pool model, which is the
 opposite of what an accepted, documented tradeoff should be casually reversed for.
+
+**Fix-forward (eng1 review, same day): `private.has_available_dial_number`/
+`private.pick_and_reserve_dial_number` were unreachable via `supabase.rpc(...)`.** PostgREST's
+`.rpc()` only resolves against `config.toml`'s `[api].schemas` (`public`, `graphql_public`) -- a
+`private.*` function is invisible to it no matter its grants, the exact bug class TASK-P1-05 already
+hit once for `org_telephony`. Neither the FakeDb-backed deno tests (which mock `.rpc()` regardless of
+schema) nor the dry-run (which calls `private.*` directly in raw SQL) could ever have caught this --
+only a real PostgREST call against the deployed schema would 404. Fixed with `public.*` SECURITY
+DEFINER wrapper functions of the identical name/signature, delegating straight to the `private.*`
+implementation, revoked from `public/anon/authenticated`, granted to `service_role` only
+(`20260925070001_number_pool_public_wrappers.sql`). A new deno guard test
+(`rpc-schema-guard.test.ts`) now scans every non-test `.ts` file under `supabase/functions` for a
+literal `rpc('<name>', ...)` call and fails if no migration defines a matching
+`public.<name>(...)` function, so this exact class can't recur silently for any RPC in this repo.
+
+Same review also found `dialLead`'s catch (a Telnyx dial rejected outright) never gave back the
+`number_daily_usage` reservation `pick_and_reserve_dial_number` had already made for it -- repeated
+rejections could rest a real number for a full rest period with zero actual calls placed. Fixed with
+`private.release_reserved_dial_number`/its `public.*` wrapper (same migration): decrements, never
+below 0, and reactivates a resting number only if THIS decrement is what drops it back under cap --
+safe without a race check because a resting number is never selected again by
+`pick_and_reserve_dial_number`, so its counter can't have moved for any other reason in the meantime.

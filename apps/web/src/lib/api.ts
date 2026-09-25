@@ -325,9 +325,12 @@ export async function getAnalyticsSummary(
 // See 20260925080100_team_view.sql's own header for why this repo's usual "edge function does
 // the role check, a service-role client trusts it" pattern isn't used here.
 
+export type TeamMemberRole = 'owner' | 'admin' | 'agent';
+
 export interface TeamDailyStatsRow {
   agent_id: string;
   name: string;
+  role: TeamMemberRole;
   dials: number;
   connects: number;
   connect_rate: number;
@@ -360,6 +363,7 @@ export type TeamLiveStatus = 'offline' | 'ready' | 'dialing' | 'on_call' | 'wrap
 export interface TeamLiveBoardRow {
   agent_id: string;
   name: string;
+  role: TeamMemberRole;
   status: TeamLiveStatus;
   /** Only meaningful (and non-null) while status is 'dialing'. */
   lines: number | null;

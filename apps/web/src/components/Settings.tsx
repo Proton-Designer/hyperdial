@@ -1760,6 +1760,8 @@ function DncTab() {
  *  tab's agent-exclusion to carve out a read-only sub-view would be a much bigger, unrelated
  *  change to an explicitly-documented existing boundary. */
 function NumberPoolCard() {
+  const { role } = useOrg();
+  const isAdmin = role === 'owner' || role === 'admin';
   const { numbers, loading: numbersLoading, error: numbersError, refetch } = usePhoneNumbers();
   const [members, setMembers] = useState<OrgMember[]>([]);
   const [settings, setSettings] = useState<NumberPoolSettings | null>(null);
@@ -1902,19 +1904,23 @@ function NumberPoolCard() {
                 <tr key={n.id} className="border-b border-border-subtle last:border-0">
                   <td className="p-3 text-white font-medium">{n.phone_number}</td>
                   <td className="p-3">
-                    <select
-                      value={n.assigned_user_id ?? ''}
-                      disabled={rowBusyId === n.id}
-                      onChange={(e) => void handleAssign(n.id, e.target.value || null)}
-                      className="bg-surface-2 border border-white/10 rounded-app-md px-2 py-1.5 text-white focus:outline-none focus:border-accent-to"
-                    >
-                      <option value="">Team pool</option>
-                      {members.map((m) => (
-                        <option key={m.user_id} value={m.user_id}>
-                          {memberLabel(m.user_id)}
-                        </option>
-                      ))}
-                    </select>
+                    {isAdmin ? (
+                      <select
+                        value={n.assigned_user_id ?? ''}
+                        disabled={rowBusyId === n.id}
+                        onChange={(e) => void handleAssign(n.id, e.target.value || null)}
+                        className="bg-surface-2 border border-white/10 rounded-app-md px-2 py-1.5 text-white focus:outline-none focus:border-accent-to"
+                      >
+                        <option value="">Team pool</option>
+                        {members.map((m) => (
+                          <option key={m.user_id} value={m.user_id}>
+                            {memberLabel(m.user_id)}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <span className="text-text-secondary">{memberLabel(n.assigned_user_id)}</span>
+                    )}
                   </td>
                   <td className="p-3">
                     <span
@@ -1936,14 +1942,16 @@ function NumberPoolCard() {
                     {n.resting_until ? new Date(n.resting_until).toLocaleString() : '—'}
                   </td>
                   <td className="p-3">
-                    <button
-                      type="button"
-                      disabled={rowBusyId === n.id}
-                      onClick={() => void handleRetireToggle(n.id, n.status)}
-                      className="text-meta text-text-secondary hover:text-text-primary disabled:opacity-50"
-                    >
-                      {n.status === 'retired' ? 'Reactivate' : 'Retire'}
-                    </button>
+                    {isAdmin && (
+                      <button
+                        type="button"
+                        disabled={rowBusyId === n.id}
+                        onClick={() => void handleRetireToggle(n.id, n.status)}
+                        className="text-meta text-text-secondary hover:text-text-primary disabled:opacity-50"
+                      >
+                        {n.status === 'retired' ? 'Reactivate' : 'Retire'}
+                      </button>
+                    )}
                   </td>
                 </tr>
               ))}

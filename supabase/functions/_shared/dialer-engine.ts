@@ -995,6 +995,24 @@ async function dialLead(
       },
     });
     await supabase.rpc('apply_leg_outcome', { p_leg: args.legId });
+    // TASK-N1 fix-forward (eng1 review, finding L): this dial never actually happened, so give
+    // back the number_daily_usage increment pick_and_reserve_dial_number already made for it --
+    // otherwise repeated Telnyx-side rejections can rest a real number with zero real calls.
+    // Legacy-tier dials (fromNumberId null) never went through the pool at all, nothing to undo.
+    if (args.fromNumberId) {
+      const { error: releaseError } = await supabase.rpc('release_reserved_dial_number', {
+        p_org_id: args.orgId,
+        p_number_id: args.fromNumberId,
+      });
+      if (releaseError) {
+        dialerLog('dial_lead_release_number_failed', {
+          sessionId: args.sessionId,
+          legId: args.legId,
+          fromNumberId: args.fromNumberId,
+          error: releaseError.message,
+        });
+      }
+    }
   }
 }
 

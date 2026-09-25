@@ -6,6 +6,7 @@ import {
   type TeamDailyStatsRow,
   type TeamLiveBoardRow,
   type TeamLiveStatus,
+  type TeamMemberRole,
 } from '@/lib/api';
 import { PageHeader } from '@/components/app/PageHeader';
 import { EmptyState } from '@/components/app/EmptyState';
@@ -130,6 +131,20 @@ function formatElapsed(iso: string | null): string {
   return `${hours}h ${mins % 60}m`;
 }
 
+const ROLE_LABEL: Record<TeamMemberRole, string> = {
+  owner: 'Owner',
+  admin: 'Admin',
+  agent: 'Agent',
+};
+
+function RoleChip({ role }: { role: TeamMemberRole }) {
+  return (
+    <span className="px-1.5 py-0.5 rounded-full text-[10px] font-medium uppercase tracking-wide bg-surface-3 text-text-muted border border-border-subtle flex-shrink-0">
+      {ROLE_LABEL[role]}
+    </span>
+  );
+}
+
 function statusLine(row: TeamLiveBoardRow): string {
   const meta = STATUS_META[row.status];
   if (row.status === 'dialing' && row.lines) return `${meta.label} (${row.lines} lines)`;
@@ -144,7 +159,10 @@ function LiveBoardCard({ row }: { row: TeamLiveBoardRow }) {
       <div className="flex items-center gap-2.5 min-w-[160px] flex-1">
         <span className={`w-2 h-2 rounded-full flex-shrink-0 ${meta.dot}`} />
         <div className="min-w-0">
-          <div className="font-medium text-text-primary truncate">{row.name}</div>
+          <div className="flex items-center gap-1.5">
+            <div className="font-medium text-text-primary truncate">{row.name}</div>
+            <RoleChip role={row.role} />
+          </div>
           <div className={`text-meta ${meta.text}`}>{statusLine(row)}</div>
         </div>
       </div>
@@ -420,7 +438,12 @@ export function Team() {
                 <tbody>
                   {sortedDaily.map((row) => (
                     <tr key={row.agent_id} className="border-b border-border-subtle last:border-0">
-                      <td className="p-3 text-white font-medium">{row.name}</td>
+                      <td className="p-3 text-white font-medium">
+                        <div className="flex items-center gap-1.5">
+                          {row.name}
+                          <RoleChip role={row.role} />
+                        </div>
+                      </td>
                       <td className="p-3 text-text-secondary">{row.dials}</td>
                       <td className="p-3 text-text-secondary">{row.connects}</td>
                       <td className="p-3 text-text-secondary">{row.connect_rate}%</td>
@@ -469,7 +492,10 @@ export function Team() {
                   key={row.agent_id}
                   className="rounded-app-md border border-border-subtle bg-surface-2 p-4"
                 >
-                  <div className="font-medium text-text-primary mb-2">{row.name}</div>
+                  <div className="flex items-center gap-1.5 mb-2">
+                    <div className="font-medium text-text-primary">{row.name}</div>
+                    <RoleChip role={row.role} />
+                  </div>
                   <div className="grid grid-cols-2 gap-2 text-meta text-text-secondary">
                     <div>
                       Dials: <span className="text-text-primary">{row.dials}</span>

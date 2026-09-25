@@ -23,7 +23,7 @@
     "check": "npm run format:check && npm run lint && npm run typecheck",
     "db:local:reset": "bash scripts/db-local-reset.sh",
     "db:push": "supabase db push",
-    "test:functions": "deno test --allow-env=TELNYX_API_BASE,SUPABASE_URL supabase/functions/_shared",
+    "test:functions": "deno test --allow-env=TELNYX_API_BASE,SUPABASE_URL --allow-read=supabase/functions,supabase/migrations supabase/functions/_shared",
     "functions:deploy": "supabase functions deploy",
     "functions:deploy:webhook": "supabase functions deploy telnyx-webhook --no-verify-jwt"
   },

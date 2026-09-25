@@ -438,6 +438,29 @@ function rpc(
       return { data: chosen.id, error: null };
     }
 
+    // TASK-N1 fix-forward (finding L): mirrors private.release_reserved_dial_number's SQL
+    // exactly -- decrement (never below 0), reactivate only if that decrement is what drops it
+    // back under cap.
+    case 'release_reserved_dial_number': {
+      const orgId = args.p_org_id as string;
+      const numberId = args.p_number_id as string;
+      const today = fakeToday();
+      const usage = db.table('number_daily_usage').get(`${numberId}|${today}`);
+      if (!usage) return { data: null, error: null };
+      usage.dials = Math.max((usage.dials as number) - 1, 0);
+      const number = db.table('user_phone_numbers').get(numberId);
+      if (
+        number &&
+        number.org_id === orgId &&
+        number.status === 'resting' &&
+        (usage.dials as number) < (number.daily_cap as number)
+      ) {
+        number.status = 'active';
+        number.resting_until = null;
+      }
+      return { data: null, error: null };
+    }
+
     default:
       throw new Error(`fake rpc: unhandled function ${name}`);
   }
@@ -494,6 +517,9 @@ class FakeTelnyxServer {
   /** B2 regression test hook: makes the NEXT conference join fail (simulating a dead/expired
    *  conference), then resets itself -- exactly one failure, not a permanent outage. */
   failNextConferenceJoin = false;
+  /** TASK-N1 fix-forward (finding L) regression test hook: makes the NEXT `POST /v2/calls`
+   *  (a real dial attempt) fail outright, simulating Telnyx rejecting it -- then resets itself. */
+  failNextDial = false;
   /** TASK-F-T2: fake "recording download" URLs (an entirely different host than the Telnyx API
    *  itself) -- checked before any path-based Telnyx routing below, since these aren't
    *  `/v2/...` paths at all. */
@@ -511,6 +537,10 @@ class FakeTelnyxServer {
     this.requests.push({ method, path, body });
 
     if (method === 'POST' && path === '/v2/calls') {
+      if (this.failNextDial) {
+        this.failNextDial = false;
+        return Response.json({ errors: [{ detail: 'invalid destination' }] }, { status: 422 });
+      }
       const callControlId = `call-${this.calls.size + 1}`;
       this.calls.set(callControlId, { callControlId, to: String(body.to), body });
       return Response.json({ data: { call_control_id: callControlId } });
@@ -2605,6 +2635,77 @@ Deno.test(
       const session = db.table('dial_sessions').get(sessionId)!;
       assertEquals(session.state, 'paused');
       assertEquals(session.pause_reason, 'no_numbers_available');
+    } finally {
+      restoreFetch();
+    }
+  }
+);
+
+Deno.test(
+  'TASK-N1 fix-forward (finding L): a dial Telnyx rejects outright gives back its number_daily_usage reservation and un-rests the number',
+  async () => {
+    const db = new FakeDb();
+    const server = new FakeTelnyxServer();
+    const restoreFetch = stubTelnyxFetch(server);
+    const supabase = createFakeSupabase(db);
+    const { orgId, campaignId, agentId } = seedFixturesNoNumbers(db);
+    db.insert('user_phone_numbers', {
+      id: 'pool-1',
+      org_id: orgId,
+      phone_number: '+15125550000',
+      status: 'active',
+      daily_cap: 1,
+      assigned_user_id: null,
+    });
+    try {
+      // lines: 1 (not 2, unlike the sibling test above) deliberately keeps this batch to a
+      // single claimed lead -- with 2 lines, the second lead's own resolveDialNumberForLeg call
+      // would immediately re-reserve (and legitimately re-rest) the same just-released number
+      // later in the SAME refillSession loop, which would defeat isolating this specific
+      // assertion (the release itself, not what happens to capacity afterward).
+      const { sessionId } = await startSession(supabase, {
+        orgId,
+        campaignId,
+        agentId,
+        lines: 1,
+        amdMode: 'off',
+      });
+      // Only make the CONTACT leg's dial fail -- startSession above already dialed (and
+      // consumed) the agent leg's own real /v2/calls POST.
+      server.failNextDial = true;
+      const agentLeg = [...db.table('call_legs').values()].find((l) => l.kind === 'agent')!;
+      await processTelnyxDialerEvent(
+        supabase,
+        agentEvent(
+          orgId,
+          sessionId,
+          agentLeg.id as string,
+          agentLeg.call_control_id as string,
+          'call.answered'
+        )
+      );
+
+      const contactLegs = [...db.table('call_legs').values()].filter((l) => l.kind === 'contact');
+      assertEquals(contactLegs.length, 1, 'the one lead that was claimed got a leg');
+      assertEquals(
+        contactLegs[0].outcome,
+        'no_answer',
+        'a dial Telnyx rejects outright terminates the leg as retryable, not permanently failed'
+      );
+
+      const today = fakeToday();
+      const usage = db.table('number_daily_usage').get(`pool-1|${today}`);
+      assertEquals(
+        (usage?.dials as number | undefined) ?? 0,
+        0,
+        'the reservation pick_and_reserve_dial_number made for the failed dial must be given back'
+      );
+      assertEquals(
+        db.table('user_phone_numbers').get('pool-1')!.status,
+        'active',
+        'a number rested only by the failed dial must be un-rested once that reservation is released'
+      );
+      assertEquals(db.table('user_phone_numbers').get('pool-1')!.resting_until, null);
     } finally {
       restoreFetch();
     }
