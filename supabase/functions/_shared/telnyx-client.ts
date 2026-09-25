@@ -308,8 +308,14 @@ export function createTelnyxClient(
     // status, losing the actual status code (needed to tell a definitive 404 apart from an
     // inconclusive 4xx/5xx). A raw fetch here keeps that distinction.
     async getCallStatus(callControlId) {
+      // Review fix (minor 4): no timeout meant one hung GET could stall every LATER candidate
+      // in the same sweeper invocation (cron ticks every 30s, so stalled invocations pile up).
+      // AbortSignal.timeout rejects `fetch` itself once it fires; the caller's own
+      // `.catch(() => null)` (dialer-sweeper-core.ts) already treats any rejection as
+      // inconclusive -- never a false "not alive" -- so no new catch is needed here.
       const res = await fetch(`${apiBase}/calls/${encodeURIComponent(callControlId)}`, {
         headers: { Authorization: `Bearer ${apiKey}` },
+        signal: AbortSignal.timeout(5000),
       });
       if (res.status === 404) return { isAlive: false };
       if (!res.ok) return null;

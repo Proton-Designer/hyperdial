@@ -840,6 +840,56 @@ SQL-level test in this run -- could not be executed; local Docker is retired) an
 Telnyx `GET /calls/{id}` response shape against a real call (only verified against spec3.json's
 schema, never a live request).
 
+**Fix-forward (independent reviewer, `audit/L6/review-notes.md`, CHANGES REQUESTED -- 2 major, 3
+minor; design confirmed sound) -- migration edited in place (not yet applied live):**
+
+- **MAJOR 1**: `reap_dead_claimed_leg`'s own UPDATE never wrote `outcome` -- if `claim_leg`'s win
+  committed but the SEPARATE `transition_leg(claimed->claimed, outcome:'connected')` patch
+  right after it (`processContactLegEvent`, dialer-engine.ts:1023-1028) never landed (a crash or
+  timeout between the two HTTP round-trips), the leg ended with `outcome` NULL. `apply_leg_outcome`
+  then no-ops on a null outcome, `active_leg_id` stays pointed at the now-dead leg, and the
+  NEXT sweep's own step 3b requeues that human-answered lead at attempts+0 (a real answered call
+  gets redialed). The reviewer's own live dry-run (real PG16, a stub schema) reproduced this.
+  Fixed: `outcome = coalesce(outcome, 'connected')`, matching what the real `call.hangup` path
+  always computes for a claimed leg (`hangupOutcome`, dialer-core.ts) regardless.
+- **MAJOR 2**: step 2's states-list fix (above) added `'paused'` to the list but still passed
+  `'{}'::jsonb` to `transition_session` -- silently dropping `paused_agent_lost_from` for every
+  session THIS sweeper (rather than a real webhook) reconciles, re-opening the L1 M4 bug
+  through this specific path: Reconnect would resume dialing instead of returning to the
+  intern's own remembered Pause. Also reproduced by the dry-run. Fixed:
+  `jsonb_build_object('paused_agent_lost_from', v_row.state)`.
+- **minor 3**: neither reap branch (`dialer-sweeper-core.ts`) sent a real Telnyx hangup after a
+  successful reap -- a false "dead" read (a stale/rotated key after a BYO-account swap, a wrong
+  `TELNYX_API_BASE`, or any other reason the read was wrong) would leave a live customer parked
+  in the conference while our own bookkeeping had already moved on to `wrap_up`/dialing, and the
+  NEXT winner would join the same (still-occupied) conference. Fixed: a best-effort
+  `client.hangup(call_control_id)` after every successful reap (swallowed on failure, same
+  non-fatal shape as `dialer-sweeper/index.ts`'s existing `reaped_legs` hangup loop). Also skips
+  any candidate whose `call_control_id` starts with `pending-` (a placeholder never actually
+  dialed) before asking Telnyx anything about it.
+- **minor 4**: `getCallStatus` had no request timeout -- one hung GET could stall every LATER
+  candidate in the same sweeper invocation, and the cron ticks every 30s, so stalled invocations
+  would pile up. Fixed: `signal: AbortSignal.timeout(5000)` -- the existing `.catch(() => null)`
+  at the call site already treats any rejection (including an abort) as inconclusive.
+- **minor 5**: `supabase/tests/dialer_sweeper.sql`'s new L6 fixtures put several MORE active
+  sessions on the single pre-existing agent `...0b`, violating `dial_sessions_one_active_per_agent`
+  -- fixed by giving each new session its own distinct agent (5 new synthetic agent users).
+  Also added the previously-missing assertions: `attempts`/`active_leg_id` explicitly checked
+  after each reap (not just session/lead status), a genuinely fresh ("negative control") claimed
+  leg that must be absent from `stale_claimed_legs` entirely, and a new claimed-leg-with-NULL-
+  outcome fixture exercising MAJOR 1's own fix end-to-end (including a second sweep proving the
+  lead is NOT requeued afterward).
+- `audit/L6/dryrun.sql`'s embedded pre-apply migration body kept byte-for-byte in sync with both
+  MAJOR fixes, per the reviewer's own instruction -- its 4 `findings` flags should now read
+  `false` (all four were `true`/reproduced pre-fix).
+
+Checks after the fix-forward: `npm run test:functions` 235 passed / 0 failed / 1 pre-existing
+ignored (up from 234 -- one new deno test, the `pending-*` skip); `npm run check && npm run
+build` clean. **NEEDS-LIVE-VERIFY unchanged**: the migration (still not applied anywhere) and
+the SQL test file could not be executed (local Docker retired); the reviewer's own live dry-run
+against a real PG16 stub schema is the closest this has come to real verification, and that ran
+against the PRE-fix migration (confirming the bugs existed), not the post-fix one.
+
 ## 23. TASK-L1r4 round 4 review (review-notes-r4.md): 1 major + 2 required minors -- fixed (2026-09-25, round 5, eng1)
 
 Round-4 review of `ca0e705` (#21) PASSed with nits: campaign-403, Open-it, and the always-mounted

@@ -51,7 +51,16 @@ insert into auth.users (
   confirmation_token, recovery_token, is_sso_user, is_anonymous
 ) values
   ('00000000-0000-0000-0000-000000000000', '9e5e0000-a000-4000-8000-00000000000a', 'authenticated', 'authenticated', 'p2e5-owner@example.com', crypt('x', gen_salt('bf')), now(), '{}', '{}', now(), now(), '', '', false, false),
-  ('00000000-0000-0000-0000-000000000000', '9e5e0000-a000-4000-8000-00000000000b', 'authenticated', 'authenticated', 'p2e5-agent@example.com', crypt('x', gen_salt('bf')), now(), '{}', '{}', now(), now(), '', '', false, false);
+  ('00000000-0000-0000-0000-000000000000', '9e5e0000-a000-4000-8000-00000000000b', 'authenticated', 'authenticated', 'p2e5-agent@example.com', crypt('x', gen_salt('bf')), now(), '{}', '{}', now(), now(), '', '', false, false),
+  -- TASK-L6 review fix (minor 5): 5 more distinct agents, one per new claimed-leg/states-list
+  -- fixture below -- dial_sessions_one_active_per_agent (20260925005000) allows only ONE
+  -- non-terminal session per agent_id, and the original fixtures already use agent ...0b for
+  -- session 1.
+  ('00000000-0000-0000-0000-000000000000', '9e5e0000-a000-4000-8000-00000000000c', 'authenticated', 'authenticated', 'p2e5-agent-l6-1@example.com', crypt('x', gen_salt('bf')), now(), '{}', '{}', now(), now(), '', '', false, false),
+  ('00000000-0000-0000-0000-000000000000', '9e5e0000-a000-4000-8000-00000000000d', 'authenticated', 'authenticated', 'p2e5-agent-l6-2@example.com', crypt('x', gen_salt('bf')), now(), '{}', '{}', now(), now(), '', '', false, false),
+  ('00000000-0000-0000-0000-000000000000', '9e5e0000-a000-4000-8000-00000000000e', 'authenticated', 'authenticated', 'p2e5-agent-l6-3@example.com', crypt('x', gen_salt('bf')), now(), '{}', '{}', now(), now(), '', '', false, false),
+  ('00000000-0000-0000-0000-000000000000', '9e5e0000-a000-4000-8000-00000000000f', 'authenticated', 'authenticated', 'p2e5-agent-l6-4@example.com', crypt('x', gen_salt('bf')), now(), '{}', '{}', now(), now(), '', '', false, false),
+  ('00000000-0000-0000-0000-000000000000', '9e5e0000-a000-4000-8000-000000000010', 'authenticated', 'authenticated', 'p2e5-agent-l6-5@example.com', crypt('x', gen_salt('bf')), now(), '{}', '{}', now(), now(), '', '', false, false);
 
 create or replace function public.handle_new_user()
 returns trigger
@@ -97,11 +106,21 @@ select '9e5e0000-a000-4000-8000-0000000000aa' as org_a \gset
 
 insert into public.profiles (user_id, active_org_id) values
   ('9e5e0000-a000-4000-8000-00000000000a', :'org_a'),
-  ('9e5e0000-a000-4000-8000-00000000000b', :'org_a');
+  ('9e5e0000-a000-4000-8000-00000000000b', :'org_a'),
+  ('9e5e0000-a000-4000-8000-00000000000c', :'org_a'),
+  ('9e5e0000-a000-4000-8000-00000000000d', :'org_a'),
+  ('9e5e0000-a000-4000-8000-00000000000e', :'org_a'),
+  ('9e5e0000-a000-4000-8000-00000000000f', :'org_a'),
+  ('9e5e0000-a000-4000-8000-000000000010', :'org_a');
 
 insert into public.org_members (org_id, user_id, role, status) values
   (:'org_a', '9e5e0000-a000-4000-8000-00000000000a', 'owner', 'active'),
-  (:'org_a', '9e5e0000-a000-4000-8000-00000000000b', 'agent', 'active');
+  (:'org_a', '9e5e0000-a000-4000-8000-00000000000b', 'agent', 'active'),
+  (:'org_a', '9e5e0000-a000-4000-8000-00000000000c', 'agent', 'active'),
+  (:'org_a', '9e5e0000-a000-4000-8000-00000000000d', 'agent', 'active'),
+  (:'org_a', '9e5e0000-a000-4000-8000-00000000000e', 'agent', 'active'),
+  (:'org_a', '9e5e0000-a000-4000-8000-00000000000f', 'agent', 'active'),
+  (:'org_a', '9e5e0000-a000-4000-8000-000000000010', 'agent', 'active');
 
 insert into public.campaigns (id, org_id, user_id, name, calling_window_start, calling_window_end, max_attempts, retry_interval_minutes)
   values ('9e5e0000-a010-4000-8000-00000000000a', :'org_a', '9e5e0000-a000-4000-8000-00000000000a', 'P2E5 Campaign', '00:00', '23:59', 3, 120);
@@ -241,27 +260,43 @@ select public._test_expect_count('pass 2: F/G/H leads still in_flight', 'select 
 
 insert into public.contacts (id, org_id, user_id, phone_number, timezone) values
   ('9e5e0000-a020-4000-8000-000000000020', :'org_a', '9e5e0000-a000-4000-8000-00000000000a', '+15590000020', 'America/Chicago'),
-  ('9e5e0000-a020-4000-8000-000000000021', :'org_a', '9e5e0000-a000-4000-8000-00000000000a', '+15590000021', 'America/Chicago');
+  ('9e5e0000-a020-4000-8000-000000000021', :'org_a', '9e5e0000-a000-4000-8000-00000000000a', '+15590000021', 'America/Chicago'),
+  ('9e5e0000-a020-4000-8000-000000000022', :'org_a', '9e5e0000-a000-4000-8000-00000000000a', '+15590000022', 'America/Chicago'),
+  ('9e5e0000-a020-4000-8000-000000000023', :'org_a', '9e5e0000-a000-4000-8000-00000000000a', '+15590000023', 'America/Chicago');
 
 insert into public.campaign_leads (id, campaign_id, contact_id, org_id, status, attempts, next_attempt_at) values
   ('9e5e0000-a030-4000-8000-000000000020', '9e5e0000-a010-4000-8000-00000000000a', '9e5e0000-a020-4000-8000-000000000020', :'org_a', 'in_flight', 0, now()),
-  ('9e5e0000-a030-4000-8000-000000000021', '9e5e0000-a010-4000-8000-00000000000a', '9e5e0000-a020-4000-8000-000000000021', :'org_a', 'in_flight', 0, now());
+  ('9e5e0000-a030-4000-8000-000000000021', '9e5e0000-a010-4000-8000-00000000000a', '9e5e0000-a020-4000-8000-000000000021', :'org_a', 'in_flight', 0, now()),
+  ('9e5e0000-a030-4000-8000-000000000022', '9e5e0000-a010-4000-8000-00000000000a', '9e5e0000-a020-4000-8000-000000000022', :'org_a', 'in_flight', 0, now()),
+  ('9e5e0000-a030-4000-8000-000000000023', '9e5e0000-a010-4000-8000-00000000000a', '9e5e0000-a020-4000-8000-000000000023', :'org_a', 'in_flight', 0, now());
 
 -- Session L6-1: claimed leg J is its active_leg_id, silent 10 min (> the 5 min check-after
 -- default, < time_limit_secs+grace) -- an ASK-Telnyx candidate, not a hard timeout.
 insert into public.dial_sessions (id, org_id, campaign_id, agent_id, state, lines, active_leg_id) values
-  ('9e5e0000-a040-4000-8000-000000000020', :'org_a', '9e5e0000-a010-4000-8000-00000000000a', '9e5e0000-a000-4000-8000-00000000000b', 'on_call', 1, '9e5e0000-a050-4000-8000-000000000020');
+  ('9e5e0000-a040-4000-8000-000000000020', :'org_a', '9e5e0000-a010-4000-8000-00000000000a', '9e5e0000-a000-4000-8000-00000000000c', 'on_call', 1, '9e5e0000-a050-4000-8000-000000000020');
 
 -- Session L6-2: claimed leg K is its active_leg_id, silent 40 min (> time_limit_secs (1800) +
 -- grace (300) = 2100s) -- Telnyx guarantees this call ended; reap_dead_claimed_leg is called
 -- directly below with 'timeout', same as the TS orchestration would after deciding this
 -- unconditionally without ever asking Telnyx.
 insert into public.dial_sessions (id, org_id, campaign_id, agent_id, state, lines, active_leg_id) values
-  ('9e5e0000-a040-4000-8000-000000000021', :'org_a', '9e5e0000-a010-4000-8000-00000000000a', '9e5e0000-a000-4000-8000-00000000000b', 'on_call', 1, '9e5e0000-a050-4000-8000-000000000021');
+  ('9e5e0000-a040-4000-8000-000000000021', :'org_a', '9e5e0000-a010-4000-8000-00000000000a', '9e5e0000-a000-4000-8000-00000000000d', 'on_call', 1, '9e5e0000-a050-4000-8000-000000000021');
 
 -- Session L6-3: state 'ready' (the states-list fix -- previously excluded) with a dead agent leg.
 insert into public.dial_sessions (id, org_id, campaign_id, agent_id, state, lines) values
-  ('9e5e0000-a040-4000-8000-000000000022', :'org_a', '9e5e0000-a010-4000-8000-00000000000a', '9e5e0000-a000-4000-8000-00000000000b', 'ready', 1);
+  ('9e5e0000-a040-4000-8000-000000000022', :'org_a', '9e5e0000-a010-4000-8000-00000000000a', '9e5e0000-a000-4000-8000-00000000000e', 'ready', 1);
+
+-- Session L6-4 (review fix, MAJOR 1): claimed leg L's win-outcome patch never landed (outcome
+-- NULL, unlike J/K above) -- exercises reap_dead_claimed_leg's outcome = coalesce(outcome,
+-- 'connected') fix; the real call.hangup path always computes 'connected' for a claimed leg
+-- (hangupOutcome, dialer-core.ts) regardless.
+insert into public.dial_sessions (id, org_id, campaign_id, agent_id, state, lines, active_leg_id) values
+  ('9e5e0000-a040-4000-8000-000000000023', :'org_a', '9e5e0000-a010-4000-8000-00000000000a', '9e5e0000-a000-4000-8000-00000000000f', 'on_call', 1, '9e5e0000-a050-4000-8000-000000000023');
+
+-- Session L6-5 (review fix, minor 5 "a negative candidate"): claimed leg M is only 1 minute
+-- old -- must NOT appear in stale_claimed_legs at all (too fresh even to ask about).
+insert into public.dial_sessions (id, org_id, campaign_id, agent_id, state, lines, active_leg_id) values
+  ('9e5e0000-a040-4000-8000-000000000024', :'org_a', '9e5e0000-a010-4000-8000-00000000000a', '9e5e0000-a000-4000-8000-000000000010', 'on_call', 1, '9e5e0000-a050-4000-8000-000000000024');
 
 insert into public.call_legs (id, org_id, session_id, campaign_id, contact_id, lead_id, kind, call_control_id, state, outcome, answered_at, claimed_at, ended_at, outcome_applied_at, created_at) values
   -- J: claimed 10 min ago, dialed (created_at) 10 min ago -- an ASK candidate, not a timeout one.
@@ -269,29 +304,49 @@ insert into public.call_legs (id, org_id, session_id, campaign_id, contact_id, l
   -- K: claimed AND dialed 40 min ago -- past the hard timeout regardless of check-after.
   ('9e5e0000-a050-4000-8000-000000000021', :'org_a', '9e5e0000-a040-4000-8000-000000000021', '9e5e0000-a010-4000-8000-00000000000a', '9e5e0000-a020-4000-8000-000000000021', '9e5e0000-a030-4000-8000-000000000021', 'contact', 'sweep-l6-k', 'claimed', 'connected', now() - interval '40 minutes', now() - interval '40 minutes', null, null, now() - interval '40 minutes'),
   -- L6-agent: dead agent leg for session L6-3 (the 'ready' state).
-  ('9e5e0000-a050-4000-8000-000000000022', :'org_a', '9e5e0000-a040-4000-8000-000000000022', '9e5e0000-a010-4000-8000-00000000000a', null, null, 'agent', 'sweep-l6-agent', 'ended', null, null, null, now() - interval '1 minute', null, now() - interval '2 minutes');
+  ('9e5e0000-a050-4000-8000-000000000022', :'org_a', '9e5e0000-a040-4000-8000-000000000022', '9e5e0000-a010-4000-8000-00000000000a', null, null, 'agent', 'sweep-l6-agent', 'ended', null, null, null, now() - interval '1 minute', null, now() - interval '2 minutes'),
+  -- L: claimed 10 min ago, outcome NULL (the win-outcome patch never landed).
+  ('9e5e0000-a050-4000-8000-000000000023', :'org_a', '9e5e0000-a040-4000-8000-000000000023', '9e5e0000-a010-4000-8000-00000000000a', '9e5e0000-a020-4000-8000-000000000022', '9e5e0000-a030-4000-8000-000000000022', 'contact', 'sweep-l6-l', 'claimed', null, now() - interval '10 minutes', now() - interval '10 minutes', null, null, now() - interval '10 minutes'),
+  -- M: claimed only 1 minute ago -- the negative/fresh control.
+  ('9e5e0000-a050-4000-8000-000000000024', :'org_a', '9e5e0000-a040-4000-8000-000000000024', '9e5e0000-a010-4000-8000-00000000000a', '9e5e0000-a020-4000-8000-000000000023', '9e5e0000-a030-4000-8000-000000000023', 'contact', 'sweep-l6-m', 'claimed', 'connected', now() - interval '1 minute', now() - interval '1 minute', null, null, now() - interval '1 minute');
 
 update public.dial_sessions set agent_leg_id = '9e5e0000-a050-4000-8000-000000000022' where id = '9e5e0000-a040-4000-8000-000000000022';
 
 select * from public.run_dialer_sweep() \gset sweep3_
 
--- run_dialer_sweep never mutates a claimed leg itself -- both J and K are still 'claimed' and
--- BOTH appear in stale_claimed_legs (it doesn't distinguish ask-vs-timeout; that decision is
+-- run_dialer_sweep never mutates a claimed leg itself -- J/K/L are still 'claimed' and all
+-- THREE appear in stale_claimed_legs (it doesn't distinguish ask-vs-timeout; that decision is
 -- TS's job, deno-tested separately -- see this section's own header).
 select public._test_expect_eq('leg J: still claimed (SQL never mutates a claimed leg)', (select state from public.call_legs where id = '9e5e0000-a050-4000-8000-000000000020'), 'claimed');
 select public._test_expect_eq('leg K: still claimed (SQL never mutates a claimed leg)', (select state from public.call_legs where id = '9e5e0000-a050-4000-8000-000000000021'), 'claimed');
+select public._test_expect_eq('leg L: still claimed (SQL never mutates a claimed leg)', (select state from public.call_legs where id = '9e5e0000-a050-4000-8000-000000000023'), 'claimed');
 select public._test_expect_count(
-  'stale_claimed_legs contains both J and K',
+  'stale_claimed_legs contains J, K and L',
   format(
-    'select count(*) from jsonb_array_elements(%L::jsonb) e where e ->> ''id'' in (%L, %L)',
-    :'sweep3_stale_claimed_legs', '9e5e0000-a050-4000-8000-000000000020', '9e5e0000-a050-4000-8000-000000000021'
+    'select count(*) from jsonb_array_elements(%L::jsonb) e where e ->> ''id'' in (%L, %L, %L)',
+    :'sweep3_stale_claimed_legs', '9e5e0000-a050-4000-8000-000000000020', '9e5e0000-a050-4000-8000-000000000021', '9e5e0000-a050-4000-8000-000000000023'
   ),
-  2
+  3
 );
+-- Review fix (minor 5, "a negative candidate"): M is claimed but only 1 minute old -- must be
+-- ABSENT from stale_claimed_legs entirely, not merely un-reaped.
+select public._test_expect_count(
+  'stale_claimed_legs does NOT contain M (too fresh)',
+  format(
+    'select count(*) from jsonb_array_elements(%L::jsonb) e where e ->> ''id'' = %L',
+    :'sweep3_stale_claimed_legs', '9e5e0000-a050-4000-8000-000000000024'
+  ),
+  0
+);
+select public._test_expect_eq('leg M: still claimed, untouched', (select state from public.call_legs where id = '9e5e0000-a050-4000-8000-000000000024'), 'claimed');
 
 -- The states-list fix (known-issues #14): session L6-3 was 'ready' with a dead agent leg --
 -- previously excluded from step 2's list entirely; now reconciled like every other active state.
 select public._test_expect_eq('session L6-3 (was ready): now paused_agent_lost', (select state from public.dial_sessions where id = '9e5e0000-a040-4000-8000-000000000022'), 'paused_agent_lost');
+-- Review fix (MAJOR 2): step 2 must persist paused_agent_lost_from (the PRE-loss state, here
+-- 'ready') -- passing '{}' silently dropped it, re-opening the L1 M4 bug through this path
+-- (Reconnect would resume dialing instead of returning to a remembered Pause/etc).
+select public._test_expect_eq('session L6-3: paused_agent_lost_from set to its pre-loss state (ready)', (select paused_agent_lost_from from public.dial_sessions where id = '9e5e0000-a040-4000-8000-000000000022'), 'ready');
 
 -- reap_dead_claimed_leg, called directly (simulating the TS orchestration's own two decision
 -- paths -- deno-tested against a fake RPC; this proves the REAL RPC's own atomicity):
@@ -300,19 +355,36 @@ select public._test_expect_eq('session L6-3 (was ready): now paused_agent_lost',
 select public.reap_dead_claimed_leg('9e5e0000-a050-4000-8000-000000000021', 'timeout') as reaped_k \gset
 select public._test_expect_eq('reap_dead_claimed_leg(K): applied', :'reaped_k', 'true');
 select public._test_expect_eq('leg K: ended, hangup_cause timeout, outcome still connected (untouched)', (select state || '/' || hangup_cause || '/' || outcome from public.call_legs where id = '9e5e0000-a050-4000-8000-000000000021'), 'ended/timeout/connected');
-select public._test_expect_eq('session L6-2: moved to wrap_up (K was its active_leg_id)', (select state from public.dial_sessions where id = '9e5e0000-a040-4000-8000-000000000021'), 'wrap_up');
-select public._test_expect_eq('lead for K: still in_flight (a CONNECTED outcome waits on disposition, not requeued)', (select status from public.campaign_leads where id = '9e5e0000-a030-4000-8000-000000000021'), 'in_flight');
+select public._test_expect_eq('session L6-2: moved to wrap_up, active_leg_id cleared (K was its active_leg_id)', (select state || '/active=' || coalesce(active_leg_id::text, '<null>') from public.dial_sessions where id = '9e5e0000-a040-4000-8000-000000000021'), 'wrap_up/active=<null>');
+select public._test_expect_eq('lead for K: attempts 1, still in_flight (a CONNECTED outcome waits on disposition, not requeued)', (select status || '/' || attempts::text from public.campaign_leads where id = '9e5e0000-a030-4000-8000-000000000021'), 'in_flight/1');
 
 -- Idempotency / race-safety: calling it again on the now-'ended' K is a no-op, not a re-apply.
 select public.reap_dead_claimed_leg('9e5e0000-a050-4000-8000-000000000021', 'timeout') as reaped_k_again \gset
 select public._test_expect_eq('reap_dead_claimed_leg(K) again: false (already resolved)', :'reaped_k_again', 'false');
+select public._test_expect_eq('lead for K: attempts still 1 after the no-op re-reap', (select attempts from public.campaign_leads where id = '9e5e0000-a030-4000-8000-000000000021'), '1');
 
 -- J: confirmed not-alive by Telnyx (simulated -- the real Telnyx call is deno-tested) -- TS
 -- would call this with 'call_not_alive'.
 select public.reap_dead_claimed_leg('9e5e0000-a050-4000-8000-000000000020', 'call_not_alive') as reaped_j \gset
 select public._test_expect_eq('reap_dead_claimed_leg(J): applied', :'reaped_j', 'true');
 select public._test_expect_eq('leg J: ended, hangup_cause call_not_alive', (select state || '/' || hangup_cause from public.call_legs where id = '9e5e0000-a050-4000-8000-000000000020'), 'ended/call_not_alive');
-select public._test_expect_eq('session L6-1: moved to wrap_up (J was its active_leg_id)', (select state from public.dial_sessions where id = '9e5e0000-a040-4000-8000-000000000020'), 'wrap_up');
+select public._test_expect_eq('session L6-1: moved to wrap_up, active_leg_id cleared (J was its active_leg_id)', (select state || '/active=' || coalesce(active_leg_id::text, '<null>') from public.dial_sessions where id = '9e5e0000-a040-4000-8000-000000000020'), 'wrap_up/active=<null>');
+select public._test_expect_eq('lead for J: attempts 1, in_flight', (select status || '/' || attempts::text from public.campaign_leads where id = '9e5e0000-a030-4000-8000-000000000020'), 'in_flight/1');
+
+-- L (review fix, MAJOR 1): outcome was NULL (the win-outcome patch never landed) -- reap must
+-- coalesce it to 'connected', exactly what the real call.hangup path would have written
+-- (hangupOutcome, dialer-core.ts), not leave it NULL (which would make apply_leg_outcome
+-- no-op, strand active_leg_id on the dead leg, and let the NEXT sweep's step 3b requeue this
+-- human-answered lead at attempts+0 -- the exact regression the review dry-run reproduced).
+select public.reap_dead_claimed_leg('9e5e0000-a050-4000-8000-000000000023', 'call_not_alive') as reaped_l \gset
+select public._test_expect_eq('reap_dead_claimed_leg(L): applied', :'reaped_l', 'true');
+select public._test_expect_eq('leg L: ended, outcome coalesced to connected (was NULL)', (select state || '/' || coalesce(outcome, '<null>') from public.call_legs where id = '9e5e0000-a050-4000-8000-000000000023'), 'ended/connected');
+select public._test_expect_eq('session L6-4: moved to wrap_up, active_leg_id cleared (L was its active_leg_id)', (select state || '/active=' || coalesce(active_leg_id::text, '<null>') from public.dial_sessions where id = '9e5e0000-a040-4000-8000-000000000023'), 'wrap_up/active=<null>');
+select public._test_expect_eq('lead for L: attempts 1, in_flight (NOT requeued at attempts+0)', (select status || '/' || attempts::text from public.campaign_leads where id = '9e5e0000-a030-4000-8000-000000000022'), 'in_flight/1');
+
+-- Confirm the next sweep does NOT requeue L's lead (the regression the dry-run reproduced pre-fix).
+select * from public.run_dialer_sweep() \gset sweep4_
+select public._test_expect_eq('lead for L: still in_flight after a second sweep (not requeued at attempts+0)', (select status from public.campaign_leads where id = '9e5e0000-a030-4000-8000-000000000022'), 'in_flight');
 
 rollback;
 

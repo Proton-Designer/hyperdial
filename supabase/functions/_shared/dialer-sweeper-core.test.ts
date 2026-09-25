@@ -36,16 +36,29 @@ function fakeSupabase(reapResult: boolean | null) {
   };
 }
 
-function fakeTelnyxClient(getCallStatus: TelnyxClient['getCallStatus']): TelnyxClient {
-  // deno-lint-ignore no-explicit-any
-  return { getCallStatus } as any;
+function fakeTelnyxClient(getCallStatus: TelnyxClient['getCallStatus']): {
+  client: TelnyxClient;
+  hangupCalls: string[];
+} {
+  const hangupCalls: string[] = [];
+  const client = {
+    getCallStatus,
+    hangup: (callControlId: string) => {
+      hangupCalls.push(callControlId);
+      return Promise.resolve();
+    },
+    // deno-lint-ignore no-explicit-any
+  } as any;
+  return { client, hangupCalls };
 }
 
 Deno.test(
   'reconcileStaleClaimedLeg: Telnyx says alive -> "alive", leg left untouched (no RPC call at all)',
   async () => {
     const { client, rpcCalls } = fakeSupabase(true);
-    const telnyx = fakeTelnyxClient(() => Promise.resolve({ isAlive: true }));
+    const { client: telnyx, hangupCalls } = fakeTelnyxClient(() =>
+      Promise.resolve({ isAlive: true })
+    );
     const outcome = await reconcileStaleClaimedLeg(CANDIDATE, {
       supabase: client,
       client: telnyx,
@@ -55,6 +68,7 @@ Deno.test(
     // Positive control: prove the "leave it alone" branch really never touches the leg, not
     // just that it happens to return the right label.
     assertEquals(rpcCalls.length, 0, 'a live call must never trigger reap_dead_claimed_leg');
+    assertEquals(hangupCalls.length, 0, 'a live call must never be hung up either');
   }
 );
 
@@ -62,7 +76,9 @@ Deno.test(
   'reconcileStaleClaimedLeg: Telnyx says not alive -> reaps via the normal hangup outcome path',
   async () => {
     const { client, rpcCalls } = fakeSupabase(true);
-    const telnyx = fakeTelnyxClient(() => Promise.resolve({ isAlive: false }));
+    const { client: telnyx, hangupCalls } = fakeTelnyxClient(() =>
+      Promise.resolve({ isAlive: false })
+    );
     const outcome = await reconcileStaleClaimedLeg(CANDIDATE, {
       supabase: client,
       client: telnyx,
@@ -73,6 +89,9 @@ Deno.test(
     assertEquals(rpcCalls[0].name, 'reap_dead_claimed_leg');
     assertEquals(rpcCalls[0].args.p_leg, 'leg-1');
     assertEquals(rpcCalls[0].args.p_hangup_cause, 'call_not_alive');
+    // Review fix (minor 3): a successful reap also sends a best-effort real Telnyx hangup, in
+    // case the "dead" read was itself wrong (stale key, wrong API base, ...).
+    assertEquals(hangupCalls, ['call-1']);
   }
 );
 
@@ -83,7 +102,7 @@ Deno.test(
     // getCallStatus's own contract (telnyx-client.ts) already maps a 404 to {isAlive:false} --
     // this test proves reconcileStaleClaimedLeg's OWN handling of that value, independent of the
     // client's mapping (already covered separately in telnyx-client.test.ts).
-    const telnyx = fakeTelnyxClient(() => Promise.resolve({ isAlive: false }));
+    const { client: telnyx } = fakeTelnyxClient(() => Promise.resolve({ isAlive: false }));
     const outcome = await reconcileStaleClaimedLeg(CANDIDATE, {
       supabase: client,
       client: telnyx,
@@ -98,7 +117,7 @@ Deno.test(
   'reconcileStaleClaimedLeg: Telnyx API error -> "inconclusive", leg left untouched (no RPC call)',
   async () => {
     const { client, rpcCalls } = fakeSupabase(true);
-    const telnyx = fakeTelnyxClient(() => Promise.resolve(null)); // getCallStatus's own "inconclusive" value
+    const { client: telnyx, hangupCalls } = fakeTelnyxClient(() => Promise.resolve(null)); // getCallStatus's own "inconclusive" value
     const outcome = await reconcileStaleClaimedLeg(CANDIDATE, {
       supabase: client,
       client: telnyx,
@@ -106,6 +125,7 @@ Deno.test(
     });
     assertEquals(outcome, 'inconclusive');
     assertEquals(rpcCalls.length, 0, 'a Telnyx error must never end a leg');
+    assertEquals(hangupCalls.length, 0);
   }
 );
 
@@ -113,7 +133,7 @@ Deno.test(
   'reconcileStaleClaimedLeg: a getCallStatus that REJECTS (network failure) is also inconclusive, not a crash',
   async () => {
     const { client, rpcCalls } = fakeSupabase(true);
-    const telnyx = fakeTelnyxClient(() => Promise.reject(new Error('network down')));
+    const { client: telnyx } = fakeTelnyxClient(() => Promise.reject(new Error('network down')));
     const outcome = await reconcileStaleClaimedLeg(CANDIDATE, {
       supabase: client,
       client: telnyx,
@@ -129,7 +149,7 @@ Deno.test(
   async () => {
     const { client, rpcCalls } = fakeSupabase(true);
     let getCallStatusCalls = 0;
-    const telnyx = fakeTelnyxClient(() => {
+    const { client: telnyx, hangupCalls } = fakeTelnyxClient(() => {
       getCallStatusCalls++;
       return Promise.resolve({ isAlive: true }); // even if it WERE asked and said alive
     });
@@ -147,6 +167,8 @@ Deno.test(
     // Positive control: proves this branch is genuinely unconditional -- it must not even ask
     // Telnyx, not just that it ignores an "alive" answer if it did.
     assertEquals(getCallStatusCalls, 0, 'past the hard timeout, Telnyx must never be asked at all');
+    // A best-effort real hangup still goes out even for an unconditional timeout reap.
+    assertEquals(hangupCalls, ['call-1']);
   }
 );
 
@@ -155,7 +177,7 @@ Deno.test(
   async () => {
     const { client } = fakeSupabase(true);
     let asked = false;
-    const telnyx = fakeTelnyxClient(() => {
+    const { client: telnyx } = fakeTelnyxClient(() => {
       asked = true;
       return Promise.resolve({ isAlive: true });
     });
@@ -176,7 +198,9 @@ Deno.test(
   'reconcileStaleClaimedLeg: reap_dead_claimed_leg itself returning false (lost the race to a real webhook) surfaces as inconclusive, not a false success',
   async () => {
     const { client, rpcCalls } = fakeSupabase(false); // SQL's own race-loss no-op
-    const telnyx = fakeTelnyxClient(() => Promise.resolve({ isAlive: false }));
+    const { client: telnyx, hangupCalls } = fakeTelnyxClient(() =>
+      Promise.resolve({ isAlive: false })
+    );
     const outcome = await reconcileStaleClaimedLeg(CANDIDATE, {
       supabase: client,
       client: telnyx,
@@ -184,6 +208,31 @@ Deno.test(
     });
     assertEquals(outcome, 'inconclusive');
     assertEquals(rpcCalls.length, 1); // it WAS called -- just didn't apply, a real distinction
+    assertEquals(hangupCalls.length, 0, 'no hangup when the reap itself did not apply');
+  }
+);
+
+Deno.test(
+  'reconcileStaleClaimedLeg: a pending-* call_control_id (never actually dialed) is left alone, Telnyx never asked, no RPC call',
+  async () => {
+    const { client, rpcCalls } = fakeSupabase(true);
+    let asked = false;
+    const { client: telnyx } = fakeTelnyxClient(() => {
+      asked = true;
+      return Promise.resolve({ isAlive: false });
+    });
+    const pendingCandidate: StaleClaimedLegCandidate = {
+      ...CANDIDATE,
+      call_control_id: 'pending-abc123',
+    };
+    const outcome = await reconcileStaleClaimedLeg(pendingCandidate, {
+      supabase: client,
+      client: telnyx,
+      now: () => NOW,
+    });
+    assertEquals(outcome, 'inconclusive');
+    assertEquals(asked, false, 'a placeholder call_control_id must never be asked about');
+    assertEquals(rpcCalls.length, 0);
   }
 );
 

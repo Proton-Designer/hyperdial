@@ -45,10 +45,36 @@ export interface ReconcileStaleClaimedLegDeps {
   now?: () => Date;
 }
 
+/** Review fix (minor 3): after a SUCCESSFUL reap, best-effort hang up the real Telnyx call --
+ *  a false "dead" read (a stale/rotated Telnyx key after a BYO-account swap, a wrong
+ *  TELNYX_API_BASE, or any other reason `getCallStatus`/the hard-timeout branch was wrong)
+ *  would otherwise leave a live customer parked in the conference while our own bookkeeping
+ *  has already moved on to wrap_up/dialing and a NEW winner joins the same conference. Mirrors
+ *  dialer-sweeper/index.ts's own existing best-effort hangup loop for `reaped_legs` -- a failed
+ *  hangup is logged, never fatal (our own state is already 'ended' regardless). A no-op on a
+ *  genuinely dead call. */
+async function bestEffortHangup(client: TelnyxClient | null, callControlId: string): Promise<void> {
+  if (!client) return;
+  try {
+    await client.hangup(callControlId);
+  } catch {
+    // Swallow -- see this function's own comment. Nothing to escalate to; the caller has no
+    // more useful action to take than what it already did (reap the leg in our own bookkeeping).
+  }
+}
+
 export async function reconcileStaleClaimedLeg(
   candidate: StaleClaimedLegCandidate,
   deps: ReconcileStaleClaimedLegDeps
 ): Promise<ReconcileOutcome> {
+  // Review fix (minor 3): a placeholder call_control_id (claim_next_leads inserts the leg row
+  // BEFORE dialing, dialer-engine.ts's refillSession) was never actually dialed on Telnyx --
+  // asking Telnyx about it would 404 (a definitive "not alive" per getCallStatus's own
+  // contract) for a leg that in reality just hasn't been dialed yet, a false positive this
+  // candidate set should never contain in practice (a 'claimed' leg is always past dialing) but
+  // is cheap and correct to guard against explicitly rather than relying on that invariant.
+  if (candidate.call_control_id.startsWith('pending-')) return 'inconclusive';
+
   const now = (deps.now ?? (() => new Date()))();
   const timeLimitSecs = deps.timeLimitSecs ?? CONTACT_DIAL_TIME_LIMIT_SECS;
   const graceSecs = deps.timeLimitGraceSecs ?? 300;
@@ -59,7 +85,9 @@ export async function reconcileStaleClaimedLeg(
       p_leg: candidate.id,
       p_hangup_cause: 'timeout',
     });
-    return data ? 'reaped_timeout' : 'inconclusive';
+    if (!data) return 'inconclusive';
+    await bestEffortHangup(deps.client, candidate.call_control_id);
+    return 'reaped_timeout';
   }
 
   if (!deps.client) return 'inconclusive';
@@ -71,5 +99,7 @@ export async function reconcileStaleClaimedLeg(
     p_leg: candidate.id,
     p_hangup_cause: 'call_not_alive',
   });
-  return data ? 'reaped_confirmed_dead' : 'inconclusive';
+  if (!data) return 'inconclusive';
+  await bestEffortHangup(deps.client, candidate.call_control_id);
+  return 'reaped_confirmed_dead';
 }
