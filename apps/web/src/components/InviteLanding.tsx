@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Loader2, Mail, Lock, User, ArrowRight, LogOut } from 'lucide-react';
-import { AnimatedBackground } from './AnimatedBackground';
-import { Logo } from '@/components/brand/Logo';
+import { AuthSplitLayout } from '@/components/auth/AuthSplitLayout';
+import { Button } from '@/components/ui/button';
 import { useAuth } from '@/contexts/AuthContext';
 import { useOrg } from '@/contexts/OrgContext';
 import { previewOrgInvite, acceptOrgInvite, type InvitePreview } from '@/lib/api';
@@ -85,195 +85,176 @@ export function InviteLanding({ token, onDone }: InviteLandingProps) {
   };
 
   return (
-    <div className="min-h-screen flex bg-[#0A1628] overflow-hidden">
-      <div className="hidden lg:flex lg:w-[45%] relative overflow-hidden">
-        <AnimatedBackground />
-      </div>
-
-      <div className="w-full lg:w-[55%] flex items-center justify-center p-8">
-        <div className="w-full max-w-[440px]">
-          <div className="mb-8 flex justify-center lg:justify-start">
-            <Logo size={40} wordmarkClassName="text-2xl" />
+    <AuthSplitLayout>
+      <div className="bg-surface-1 rounded-app-lg p-8 shadow-app-md border border-border-subtle">
+        {previewLoading ? (
+          <div className="flex justify-center py-8">
+            <Loader2 className="w-8 h-8 text-accent-to animate-spin" />
           </div>
-
-          <div className="bg-[#1A2332]/60 backdrop-blur-xl rounded-2xl p-8 shadow-[0_4px_24px_rgba(0,102,255,0.15)] border border-white/5">
-            {previewLoading ? (
-              <div className="flex justify-center py-8">
-                <Loader2 className="w-8 h-8 text-[#00D9FF] animate-spin" />
+        ) : !preview?.valid ? (
+          <>
+            <h2 className="text-page-title text-text-primary mb-2">Invite not available</h2>
+            <p className="text-body text-text-secondary mb-6">
+              {preview?.reason === 'accepted'
+                ? 'This invite has already been used.'
+                : preview?.reason === 'expired'
+                  ? 'This invite has expired. Ask your team to send a new one.'
+                  : "This invite link isn't valid."}
+            </p>
+            <Button variant="primary" className="w-full h-12" onClick={onDone}>
+              Go to sign in
+            </Button>
+          </>
+        ) : user ? (
+          <>
+            <h2 className="text-page-title text-text-primary mb-2">Join {preview.orgName}</h2>
+            <p className="text-body text-text-secondary mb-2">
+              You've been invited as{' '}
+              <span className="text-text-primary font-medium">
+                {ROLE_LABEL[preview.role ?? ''] ?? preview.role}
+              </span>
+              .
+            </p>
+            <p className="text-body text-text-secondary mb-6">
+              Signed in as <span className="text-text-primary">{user.email}</span>.
+              {user.email?.toLowerCase() !== preview.email?.toLowerCase() && (
+                <span className="text-danger">
+                  {' '}
+                  This invite was sent to {preview.email} -- accepting may fail.
+                </span>
+              )}
+            </p>
+            {previewError && (
+              <div className="mb-5 p-3 rounded-app-md bg-danger-soft border border-danger/30 text-danger text-body">
+                {previewError}
               </div>
-            ) : !preview?.valid ? (
-              <>
-                <h2 className="text-2xl font-bold text-white mb-2">Invite not available</h2>
-                <p className="text-sm text-[#B0BEC5] mb-6">
-                  {preview?.reason === 'accepted'
-                    ? 'This invite has already been used.'
-                    : preview?.reason === 'expired'
-                      ? 'This invite has expired. Ask your team to send a new one.'
-                      : "This invite link isn't valid."}
-                </p>
-                <button
-                  type="button"
-                  onClick={onDone}
-                  className="w-full h-12 bg-gradient-to-r from-[#00D9FF] to-[#0066FF] rounded-xl text-white font-semibold"
-                >
-                  Go to sign in
-                </button>
-              </>
-            ) : user ? (
-              <>
-                <h2 className="text-2xl font-bold text-white mb-2">Join {preview.orgName}</h2>
-                <p className="text-sm text-[#B0BEC5] mb-2">
-                  You've been invited as{' '}
-                  <span className="text-white font-medium">
-                    {ROLE_LABEL[preview.role ?? ''] ?? preview.role}
-                  </span>
-                  .
-                </p>
-                <p className="text-sm text-[#B0BEC5] mb-6">
-                  Signed in as <span className="text-white">{user.email}</span>.
-                  {user.email?.toLowerCase() !== preview.email?.toLowerCase() && (
-                    <span className="text-[#FF3D00]">
-                      {' '}
-                      This invite was sent to {preview.email} -- accepting may fail.
-                    </span>
-                  )}
-                </p>
-                {previewError && (
-                  <div className="mb-5 p-3 rounded-xl bg-red-500/10 border border-red-500/30 text-red-400 text-sm">
-                    {previewError}
-                  </div>
-                )}
-                <button
-                  type="button"
-                  onClick={handleAcceptAsSignedIn}
-                  disabled={submitting}
-                  className="w-full h-12 bg-gradient-to-r from-[#00D9FF] to-[#0066FF] rounded-xl text-white font-semibold flex items-center justify-center gap-2 disabled:opacity-60"
-                >
-                  <span>{submitting ? 'Joining…' : `Accept & join ${preview.orgName}`}</span>
-                  {!submitting && <ArrowRight className="w-5 h-5" />}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => signOut()}
-                  className="w-full mt-3 h-11 flex items-center justify-center gap-2 text-sm text-[#B0BEC5] hover:text-white transition-colors"
-                >
-                  <LogOut className="w-4 h-4" />
-                  Sign out and use a different account
-                </button>
-              </>
-            ) : (
-              <>
-                <h2 className="text-2xl font-bold text-white mb-2">Join {preview.orgName}</h2>
-                <p className="text-sm text-[#B0BEC5] mb-6">
-                  You've been invited as{' '}
-                  <span className="text-white font-medium">
-                    {ROLE_LABEL[preview.role ?? ''] ?? preview.role}
-                  </span>
-                  . {mode === 'signup' ? 'Create an account to accept.' : 'Sign in to accept.'}
-                </p>
-
-                {(error || previewError) && (
-                  <div className="mb-5 p-3 rounded-xl bg-red-500/10 border border-red-500/30 text-red-400 text-sm">
-                    {error || previewError}
-                  </div>
-                )}
-
-                <form onSubmit={handleSubmit} className="space-y-5">
-                  {mode === 'signup' && (
-                    <div className="grid grid-cols-2 gap-3">
-                      <div>
-                        <label className="block text-xs text-[#B0BEC5] mb-2 ml-1">First name</label>
-                        <div className="relative">
-                          <User className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-[#B0BEC5]" />
-                          <input
-                            type="text"
-                            value={firstName}
-                            onChange={(e) => setFirstName(e.target.value)}
-                            className="w-full bg-[#1E2A3A] border border-white/10 rounded-xl pl-12 pr-4 py-3.5 text-white placeholder-[#B0BEC5]/50 focus:outline-none focus:border-[#00D9FF]"
-                            placeholder="John"
-                            required
-                          />
-                        </div>
-                      </div>
-                      <div>
-                        <label className="block text-xs text-[#B0BEC5] mb-2 ml-1">Last name</label>
-                        <div className="relative">
-                          <User className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-[#B0BEC5]" />
-                          <input
-                            type="text"
-                            value={lastName}
-                            onChange={(e) => setLastName(e.target.value)}
-                            className="w-full bg-[#1E2A3A] border border-white/10 rounded-xl pl-12 pr-4 py-3.5 text-white placeholder-[#B0BEC5]/50 focus:outline-none focus:border-[#00D9FF]"
-                            placeholder="Doe"
-                            required
-                          />
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  <div>
-                    <label className="block text-xs text-[#B0BEC5] mb-2 ml-1">Email</label>
-                    <div className="relative">
-                      <Mail className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-[#B0BEC5]" />
-                      <input
-                        type="email"
-                        value={preview.email ?? ''}
-                        readOnly
-                        className="w-full bg-[#1E2A3A]/60 border border-white/10 rounded-xl pl-12 pr-4 py-3.5 text-[#B0BEC5] cursor-not-allowed"
-                      />
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="block text-xs text-[#B0BEC5] mb-2 ml-1">Password</label>
-                    <div className="relative">
-                      <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-[#B0BEC5]" />
-                      <input
-                        type="password"
-                        value={password}
-                        onChange={(e) => setPassword(e.target.value)}
-                        className="w-full bg-[#1E2A3A] border border-white/10 rounded-xl pl-12 pr-4 py-3.5 text-white placeholder-[#B0BEC5]/50 focus:outline-none focus:border-[#00D9FF]"
-                        placeholder="••••••••"
-                        required
-                        minLength={6}
-                      />
-                    </div>
-                  </div>
-
-                  <button
-                    type="submit"
-                    disabled={submitting}
-                    className="w-full h-12 bg-gradient-to-r from-[#00D9FF] to-[#0066FF] rounded-xl text-white font-semibold flex items-center justify-center gap-2 disabled:opacity-60"
-                  >
-                    <span>
-                      {submitting
-                        ? 'Please wait…'
-                        : mode === 'signup'
-                          ? 'Create account & join'
-                          : 'Sign in & join'}
-                    </span>
-                    {!submitting && <ArrowRight className="w-5 h-5" />}
-                  </button>
-                </form>
-
-                <div className="mt-6 text-center">
-                  <span className="text-sm text-[#B0BEC5]">
-                    {mode === 'signup' ? 'Already have an account?' : 'New here?'}
-                  </span>{' '}
-                  <button
-                    type="button"
-                    onClick={() => setMode(mode === 'signup' ? 'signin' : 'signup')}
-                    className="text-sm text-[#00D9FF] hover:underline font-semibold"
-                  >
-                    {mode === 'signup' ? 'Sign In' : 'Create Account'}
-                  </button>
-                </div>
-              </>
             )}
-          </div>
-        </div>
+            <Button
+              variant="primary"
+              className="w-full h-12"
+              onClick={handleAcceptAsSignedIn}
+              disabled={submitting}
+              loading={submitting}
+            >
+              {`Accept & join ${preview.orgName}`}
+              <ArrowRight className="w-5 h-5" />
+            </Button>
+            <Button variant="fe-ghost" className="w-full mt-3 h-11" onClick={() => signOut()}>
+              <LogOut className="w-4 h-4" />
+              Sign out and use a different account
+            </Button>
+          </>
+        ) : (
+          <>
+            <h2 className="text-page-title text-text-primary mb-2">Join {preview.orgName}</h2>
+            <p className="text-body text-text-secondary mb-6">
+              You've been invited as{' '}
+              <span className="text-text-primary font-medium">
+                {ROLE_LABEL[preview.role ?? ''] ?? preview.role}
+              </span>
+              . {mode === 'signup' ? 'Create an account to accept.' : 'Sign in to accept.'}
+            </p>
+
+            {(error || previewError) && (
+              <div className="mb-5 p-3 rounded-app-md bg-danger-soft border border-danger/30 text-danger text-body">
+                {error || previewError}
+              </div>
+            )}
+
+            <form onSubmit={handleSubmit} className="space-y-5">
+              {mode === 'signup' && (
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-meta text-text-secondary mb-2 ml-1">
+                      First name
+                    </label>
+                    <div className="relative">
+                      <User className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-text-secondary" />
+                      <input
+                        type="text"
+                        value={firstName}
+                        onChange={(e) => setFirstName(e.target.value)}
+                        className="w-full bg-surface-2 border border-border-subtle rounded-app-md pl-12 pr-4 py-3.5 text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent-to"
+                        placeholder="John"
+                        required
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-meta text-text-secondary mb-2 ml-1">
+                      Last name
+                    </label>
+                    <div className="relative">
+                      <User className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-text-secondary" />
+                      <input
+                        type="text"
+                        value={lastName}
+                        onChange={(e) => setLastName(e.target.value)}
+                        className="w-full bg-surface-2 border border-border-subtle rounded-app-md pl-12 pr-4 py-3.5 text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent-to"
+                        placeholder="Doe"
+                        required
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <div>
+                <label className="block text-meta text-text-secondary mb-2 ml-1">Email</label>
+                <div className="relative">
+                  <Mail className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-text-secondary" />
+                  <input
+                    type="email"
+                    value={preview.email ?? ''}
+                    readOnly
+                    className="w-full bg-surface-2/60 border border-border-subtle rounded-app-md pl-12 pr-4 py-3.5 text-text-secondary cursor-not-allowed"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-meta text-text-secondary mb-2 ml-1">Password</label>
+                <div className="relative">
+                  <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-text-secondary" />
+                  <input
+                    type="password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className="w-full bg-surface-2 border border-border-subtle rounded-app-md pl-12 pr-4 py-3.5 text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent-to"
+                    placeholder="••••••••"
+                    required
+                    minLength={6}
+                  />
+                </div>
+              </div>
+
+              <Button
+                type="submit"
+                variant="primary"
+                className="w-full h-12"
+                disabled={submitting}
+                loading={submitting}
+              >
+                {mode === 'signup' ? 'Create account & join' : 'Sign in & join'}
+                <ArrowRight className="w-5 h-5" />
+              </Button>
+            </form>
+
+            <div className="mt-6 text-center">
+              <span className="text-body text-text-secondary">
+                {mode === 'signup' ? 'Already have an account?' : 'New here?'}
+              </span>{' '}
+              <button
+                type="button"
+                onClick={() => setMode(mode === 'signup' ? 'signin' : 'signup')}
+                className="text-body text-accent-to hover:underline font-semibold"
+              >
+                {mode === 'signup' ? 'Sign In' : 'Create Account'}
+              </button>
+            </div>
+          </>
+        )}
       </div>
-    </div>
+    </AuthSplitLayout>
   );
 }

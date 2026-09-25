@@ -326,6 +326,44 @@ html {
   animation: skeleton-shimmer 1.8s ease-in-out infinite;
 }
 
+/* Converge brand background (FE-B, Auth/Invite/Reset split layout): a subtle animated version
+   of the logo's "three parallel lines converging into one node" motif. CSS-only (no framer-
+   motion) so it's automatically frozen by the global prefers-reduced-motion rule above, same as
+   every other animation in this file. */
+@keyframes converge-line-glow {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+@keyframes converge-node-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 0.9;
+  }
+  50% {
+    transform: scale(1.15);
+    opacity: 1;
+  }
+}
+.converge-line {
+  animation: converge-line-glow 4.5s ease-in-out infinite;
+}
+.converge-line:nth-child(2) {
+  animation-delay: 0.6s;
+}
+.converge-line:nth-child(3) {
+  animation-delay: 1.2s;
+}
+.converge-node {
+  animation: converge-node-pulse 4.5s ease-in-out infinite;
+  transform-origin: center;
+}
+
 /* Safe-area insets for the mobile bottom tab bar (FE-A). */
 .pb-safe {
   padding-bottom: env(safe-area-inset-bottom, 0px);
