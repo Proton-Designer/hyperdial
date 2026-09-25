@@ -1096,8 +1096,8 @@ class whenever it's combined in the SAME `cn()` call with a `text-text-*`/`text-
   which twMerge groups separately from color and never conflicts with `text-text-*`). Worth a
   dedicated sweep before trusting any other `cn(...'text-meta'...'text-text-*'...)` combination.
 
-## 30. Settings → Dispositions up/down reorder (B1-009) is a no-op for any existing org whose
-migrated-in canonical dispositions collide in `sort` with its pre-existing rows
+## 30. FIXED — Settings → Dispositions up/down reorder (B1-009) was a no-op for any existing org
+whose migrated-in canonical dispositions collided in `sort` with its pre-existing rows
 
 - Found live during TASK-F-P1's post-deploy UI verification against the QA sandbox org (which
   pre-dated the migration, same shape as every real org). `seed_default_dispositions`'s ADD-only
@@ -1115,15 +1115,24 @@ migrated-in canonical dispositions collide in `sort` with its pre-existing rows
   `PATCH .../dispositions?id=eq...` requests, both bodies `{"sort":10}`, and the re-fetched list
   came back in the same order. Separately, `order=sort.asc` with real ties has no defined
   secondary sort key, so row order among tied dispositions is not guaranteed stable across loads.
-- Not a regression in `moveDisposition` itself (the swap logic is correct when sort values
-  differ) -- the bug is upstream, in the backfill's blind reuse of fixed sort constants without
-  checking what an existing org already occupies at those values. Only affects orgs that existed
-  before this migration; a brand-new org's canonical set is seeded once, with no collision
-  possible. Not fixed forward (found during the final verification pass, after code was already
-  committed/deployed at `129eb75`; flagged to the lead rather than silently shipped or silently
-  fixed past the no-new-work cutoff). Fix direction for whoever picks this up: give the ADD-only
-  backfill DO block a per-org `max(sort)+10`-style offset instead of the seed function's literal
-  constants, or add `key` as a stable secondary sort key everywhere `dispositions` is ordered.
+- Not a regression in the pairwise-swap idea itself (it was correct when sort values differed) --
+  the bug was upstream, in the backfill's blind reuse of fixed sort constants without checking
+  what an existing org already occupies at those values. Only ever affected orgs that existed
+  before the migration; a brand-new org's canonical set is seeded once, with no collision
+  possible.
+- **Fixed forward** (same day, code-only, no migration): `moveDisposition` no longer swaps just
+  the two neighbors' existing `sort` values. It now re-derives the WHOLE order from the swapped
+  local array and writes `sort = (position+1)*10` to every row whose value actually changes --
+  self-healing any collision, old or new, the moment an admin reorders anything. Verified live
+  against the QA org via `npm run dev` (same live Supabase backend): before the fix, `sort=10`
+  was shared by `interested`/`yes_build_profile`, `sort=40` by `wrong_number`/`already_on_platform`,
+  `sort=60` by `voicemail`/`gatekeeper`, `sort=70` by `no_answer`/`do_not_call`; one "move down"
+  click fired 11 PATCH requests (every row except the one whose target position already matched
+  its current sort) and left all 12 rows at unique `sort` values 10..120; a second "move down" on
+  the same item, then a hard reload, confirmed the new order persists. No migration and no data
+  backfill involved -- a real org's `dispositions.sort` only changes when a user reorders it.
+  `apps/web/src/lib/api.ts` needed no change (`updateDisposition` already accepts a partial
+  `{sort}` patch; this was always a direct Supabase client call, never an Edge Function/RPC).
 
 ---
 

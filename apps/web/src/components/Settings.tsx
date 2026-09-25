@@ -917,22 +917,27 @@ function DispositionsTab() {
 
   // B1-009: reorder via up/down (not drag-to-reorder -- the task file offers either). Persists to
   // the live `sort` column (the task's own text says "sort_order"; the real column has always
-  // been named `sort` since TASK-P3-E1 -- see known-issues.md). Swaps the two neighbors' `sort`
-  // values so the ordering is a plain total order, same as every row's own creation-time spacing
-  // (10, 20, 30...). WrapUpModal's 1-9 shortcuts already follow `sort` (listDispositions orders by
+  // been named `sort` since TASK-P3-E1 -- see known-issues.md). Re-derives the WHOLE order from
+  // the swapped local array and writes sort = (position+1)*10 to every row whose value actually
+  // changes -- NOT a pairwise swap of the two neighbors' existing `sort` values. A pairwise swap
+  // is a no-op when the two already share a `sort` (known-issues.md #30: TASK-F-P1's ADD-only
+  // migration backfill reused the seed's fixed constants, colliding with a pre-existing org's own
+  // rows); renumbering the full list by position self-heals any such collision on first use,
+  // fixed-forward here with no migration/backfill -- only a user-triggered reorder ever changes a
+  // real org's data. WrapUpModal's 1-9 shortcuts already follow `sort` (listDispositions orders by
   // it), so this reorder takes effect there immediately on next load.
   const moveDisposition = async (index: number, direction: -1 | 1) => {
     const neighborIndex = index + direction;
     if (neighborIndex < 0 || neighborIndex >= dispositions.length) return;
-    const current = dispositions[index];
-    const neighbor = dispositions[neighborIndex];
-    setMovingId(current.id);
+    const reordered = [...dispositions];
+    [reordered[index], reordered[neighborIndex]] = [reordered[neighborIndex], reordered[index]];
+    setMovingId(dispositions[index].id);
     setError(null);
     try {
-      await Promise.all([
-        updateDisposition(current.id, { sort: neighbor.sort }),
-        updateDisposition(neighbor.id, { sort: current.sort }),
-      ]);
+      const updates = reordered
+        .map((d, i) => ({ d, sort: (i + 1) * 10 }))
+        .filter(({ d, sort }) => d.sort !== sort);
+      await Promise.all(updates.map(({ d, sort }) => updateDisposition(d.id, { sort })));
       load();
     } catch (e) {
       setError(String(e));
