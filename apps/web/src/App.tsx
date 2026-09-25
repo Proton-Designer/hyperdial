@@ -6,6 +6,7 @@ import { AuthScreen } from './components/AuthScreen';
 import { MainApp } from './components/MainApp';
 import { InviteLanding } from './components/InviteLanding';
 import { ResetPassword } from './components/ResetPassword';
+import { Toaster } from '@/components/ui/sonner';
 
 function getInviteTokenFromUrl(): string | null {
   return new URLSearchParams(window.location.search).get('invite');
@@ -55,6 +56,11 @@ export default function App() {
     <AuthProvider>
       <OrgProvider>
         <AppContent />
+        {/* FE-A: the one toast system for the whole app (sonner) -- there were no ad-hoc
+            toasts/banners to remove (grepped the tree, none exist), just nothing mounted it
+            yet. theme="dark" avoids depending on next-themes' ThemeProvider, which this
+            dark-only app never sets up. */}
+        <Toaster theme="dark" position="bottom-right" />
       </OrgProvider>
     </AuthProvider>
   );
