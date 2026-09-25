@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { TopNavigation } from './TopNavigation';
 import { Sidebar } from './Sidebar';
 import { Dashboard } from './Dashboard';
@@ -22,8 +22,29 @@ export interface ParallelDialLaunchContext {
 // Dialer instead of rendering a hidden tab.
 const AGENT_ALLOWED_TABS: readonly TabType[] = ['dashboard', 'dialer', 'contacts'];
 
+// TASK-B1 Phase 1: minimal URL sync (B1's known gap -- no routing, refresh always lands on
+// Dashboard, Back/Forward don't move tabs, tabs aren't bookmarkable/deep-linkable). Real
+// pathname + History API, not a hash route -- vercel.json already rewrites every path to
+// index.html, so a deep link like /campaigns is already served correctly by the host; only the
+// client-side sync was missing.
+const TAB_PATHS: Record<TabType, string> = {
+  dashboard: '/',
+  dialer: '/dialer',
+  contacts: '/contacts',
+  campaigns: '/campaigns',
+  analytics: '/analytics',
+  settings: '/settings',
+};
+const PATH_TABS: Partial<Record<string, TabType>> = Object.fromEntries(
+  Object.entries(TAB_PATHS).map(([tab, path]) => [path, tab as TabType])
+);
+
+function tabFromPath(pathname: string): TabType {
+  return PATH_TABS[pathname] ?? 'dashboard';
+}
+
 export function MainApp() {
-  const { role } = useOrg();
+  const { role, loading: orgLoading } = useOrg();
   // Fail CLOSED, not just "hide from agents": gate on a CONFIRMED owner/admin role, not on
   // role === 'agent'. While role is still null (loading, or right after accepting an invite
   // before OrgContext has refetched) `isManager` is false, so an actual agent never gets a
@@ -38,21 +59,74 @@ export function MainApp() {
   // out of a manager-only tab every time something else triggers a refetch.
   const isManager = role === 'owner' || role === 'admin';
   const restrictToAgentTabs = !isManager;
-  const [activeTab, setActiveTabState] = useState<TabType>('dashboard');
+  // If the deep-linked path is manager-only, we don't yet know (role hasn't resolved on first
+  // paint) whether to honor it -- start on the same safe 'dialer' fallback an agent would land
+  // on, and remember the real target here so the role-resolution effect below can promote to it
+  // once we know the visitor is actually a manager. Never guessed at wrong; only ever narrows.
+  const pendingDeepLinkTabRef = useRef<TabType | null>(null);
+  const [activeTab, setActiveTabState] = useState<TabType>(() => {
+    const urlTab = tabFromPath(window.location.pathname);
+    if (AGENT_ALLOWED_TABS.includes(urlTab)) return urlTab;
+    pendingDeepLinkTabRef.current = urlTab;
+    return 'dialer';
+  });
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [parallelDialContext, setParallelDialContext] = useState<ParallelDialLaunchContext | null>(
     null
   );
 
+  const syncUrl = (tab: TabType, opts?: { replace?: boolean }) => {
+    const path = TAB_PATHS[tab];
+    if (window.location.pathname === path) return;
+    if (opts?.replace) window.history.replaceState(null, '', path);
+    else window.history.pushState(null, '', path);
+  };
+
   const setActiveTab = (tab: TabType) => {
-    setActiveTabState(restrictToAgentTabs && !AGENT_ALLOWED_TABS.includes(tab) ? 'dialer' : tab);
+    const resolved = restrictToAgentTabs && !AGENT_ALLOWED_TABS.includes(tab) ? 'dialer' : tab;
+    setActiveTabState(resolved);
+    syncUrl(resolved);
   };
 
   // Guards against role loading in after a hidden tab was already selected (e.g. `role` starts
   // null while OrgContext's own fetch is still in flight) -- not just new navigation attempts.
   useEffect(() => {
-    if (restrictToAgentTabs && !AGENT_ALLOWED_TABS.includes(activeTab)) setActiveTabState('dialer');
+    if (restrictToAgentTabs && !AGENT_ALLOWED_TABS.includes(activeTab)) {
+      setActiveTabState('dialer');
+      syncUrl('dialer', { replace: true });
+    }
   }, [restrictToAgentTabs, activeTab]);
+
+  // Resolves the deep-link deferred above, exactly once, as soon as OrgContext's first fetch
+  // settles: promote to the real manager-only tab if the visitor turned out to be a manager,
+  // otherwise just correct the URL to match the 'dialer' fallback already on screen.
+  useEffect(() => {
+    if (orgLoading) return;
+    const pending = pendingDeepLinkTabRef.current;
+    if (pending === null) return;
+    pendingDeepLinkTabRef.current = null;
+    if (!restrictToAgentTabs) {
+      setActiveTabState(pending);
+      syncUrl(pending, { replace: true });
+    } else {
+      syncUrl('dialer', { replace: true });
+    }
+  }, [orgLoading, restrictToAgentTabs]);
+
+  // Back/Forward: reflect the browser's own history navigation in state without pushing a new
+  // entry (that would corrupt the back-stack) -- only ever replaceState, and only to correct a
+  // URL an agent reached that they're not allowed to see.
+  useEffect(() => {
+    const onPopState = () => {
+      const urlTab = tabFromPath(window.location.pathname);
+      const resolved =
+        restrictToAgentTabs && !AGENT_ALLOWED_TABS.includes(urlTab) ? 'dialer' : urlTab;
+      setActiveTabState(resolved);
+      if (resolved !== urlTab) window.history.replaceState(null, '', TAB_PATHS[resolved]);
+    };
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, [restrictToAgentTabs]);
 
   const topBarHeight = 72;
 
