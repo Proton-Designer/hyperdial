@@ -126,6 +126,18 @@ export interface DialArgs {
   /** Telnyx default is 30s, min 5, max 600 (CallRequest.timeout_secs). Design uses 25s. */
   timeoutSecs?: number;
   amdMode: AmdMode;
+  /** CallRequest.time_limit_secs (verified against spec3.json, 2026-09-24 -- TASK-L1/BUG-8):
+   *  "Sets the maximum duration of a Call Control Leg in seconds... default is 14400 (4h)."
+   *  Every CONTACT dial passes 1800 (30min) explicitly -- the 4h default is sized for a
+   *  human agent call, not a parallel-dial candidate leg that should never run that long.
+   *  Omitted (agent leg dials) falls through to Telnyx's own 14400s default. */
+  timeLimitSecs?: number;
+  /** CallRequest.custom_headers (verified against spec3.json): "Custom headers to be added
+   *  to the SIP INVITE." This is how the agent leg's dial carries a session-identifying
+   *  header through to the browser's incoming-call notification (TASK-L1) -- client_state
+   *  round-trips through Telnyx's own webhooks/dialogParams either way, but a real SIP
+   *  header is what the task spec asks for as the belt-and-suspenders signal. */
+  customHeaders?: { name: string; value: string }[];
 }
 
 export interface TelnyxDialPayload {
@@ -135,6 +147,8 @@ export interface TelnyxDialPayload {
   webhook_url: string;
   client_state: string;
   timeout_secs: number;
+  time_limit_secs?: number;
+  custom_headers?: { name: string; value: string }[];
   answering_machine_detection: 'disabled' | 'premium';
 }
 
@@ -144,7 +158,7 @@ export function amdModeToTelnyxValue(mode: AmdMode): 'disabled' | 'premium' {
 }
 
 export function buildDialPayload(args: DialArgs): TelnyxDialPayload {
-  return {
+  const payload: TelnyxDialPayload = {
     connection_id: args.connectionId,
     to: args.to,
     from: args.from,
@@ -153,6 +167,11 @@ export function buildDialPayload(args: DialArgs): TelnyxDialPayload {
     timeout_secs: args.timeoutSecs ?? 25,
     answering_machine_detection: amdModeToTelnyxValue(args.amdMode),
   };
+  if (args.timeLimitSecs !== undefined) payload.time_limit_secs = args.timeLimitSecs;
+  if (args.customHeaders && args.customHeaders.length > 0) {
+    payload.custom_headers = args.customHeaders;
+  }
+  return payload;
 }
 
 export interface RecordStartArgs {

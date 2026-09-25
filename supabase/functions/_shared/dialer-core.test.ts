@@ -1,5 +1,6 @@
 import { assertEquals, assertThrows } from 'jsr:@std/assert@1';
 import {
+  agentLegTransition,
   amdDecision,
   hangupOutcome,
   leadOutcomeUpdate,
@@ -437,6 +438,60 @@ Deno.test('refillCount: dialing + agent answered fills up to `lines`', () => {
   assertEquals(refillCount('dialing', 'answered', 5, 2), 3);
   assertEquals(refillCount('dialing', 'answered', 5, 5), 0);
 });
+
+// TASK-L1 positive control: the ONLY thing that ever made refillCount return non-zero before
+// an agent leg was real was DIALER_DEV_SKIP_AGENT_GATE forcing the caller to pass 'answered'
+// regardless of the truth. This asserts the gate itself (not the flag, which lived in
+// dialer-engine.ts and is now deleted) genuinely discriminates on agentLegState -- every
+// non-'answered' value refuses, matching every real pre-answer/lost state an agent leg can be
+// in. If this regressed to ignoring agentLegState entirely, this is what would catch it.
+Deno.test(
+  'refillCount positive control: every non-answered agent leg state refuses to dial, not just a chosen example',
+  () => {
+    const nonAnsweredStates: LegState[] = [
+      'initiated',
+      'ringing',
+      'amd_pending',
+      'claimed',
+      'dropped',
+      'abandoned',
+      'machine',
+      'ended',
+    ];
+    for (const state of nonAnsweredStates) {
+      assertEquals(refillCount('dialing', state, 5, 0), 0);
+    }
+    assertEquals(refillCount('dialing', 'answered', 5, 0), 5);
+  }
+);
+
+// ---------------------------------------------------------------------------
+// agentLegTransition (TASK-L1)
+// ---------------------------------------------------------------------------
+
+Deno.test('agentLegTransition: call.initiated only advances from initiated', () => {
+  assertEquals(agentLegTransition('initiated', { eventType: 'call.initiated' }), 'ringing');
+  assertEquals(agentLegTransition('ringing', { eventType: 'call.initiated' }), null);
+  assertEquals(agentLegTransition('answered', { eventType: 'call.initiated' }), null);
+});
+
+Deno.test('agentLegTransition: call.answered accepted from initiated or ringing only', () => {
+  assertEquals(agentLegTransition('initiated', { eventType: 'call.answered' }), 'answered');
+  assertEquals(agentLegTransition('ringing', { eventType: 'call.answered' }), 'answered');
+  assertEquals(agentLegTransition('answered', { eventType: 'call.answered' }), null);
+  assertEquals(agentLegTransition('ended', { eventType: 'call.answered' }), null);
+});
+
+Deno.test(
+  'agentLegTransition: call.hangup ends any non-ended state, no-ops if already ended',
+  () => {
+    const hangup = { eventType: 'call.hangup', hangupCause: 'normal_clearing' } as const;
+    assertEquals(agentLegTransition('initiated', hangup), 'ended');
+    assertEquals(agentLegTransition('ringing', hangup), 'ended');
+    assertEquals(agentLegTransition('answered', hangup), 'ended');
+    assertEquals(agentLegTransition('ended', hangup), null);
+  }
+);
 
 Deno.test('refillCount: never goes negative when activeLegs exceeds lines', () => {
   assertEquals(refillCount('dialing', 'answered', 3, 7), 0);

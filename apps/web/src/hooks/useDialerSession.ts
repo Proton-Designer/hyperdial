@@ -3,6 +3,7 @@ import {
   getDialerSession,
   hangupLiveCall,
   pauseDialerSession,
+  reconnectDialerSession,
   startDialerSession,
   stopDialerSession,
   type CallLegRecord,
@@ -36,7 +37,19 @@ interface DialerHookState {
 }
 
 const POLL_INTERVAL_MS = 3000;
-const ACTIVE_SESSION_STATES = new Set(['dialing', 'connecting', 'on_call', 'wrap_up']);
+// TASK-L1: 'ready_pending' (waiting for the agent leg to answer, right after Go Ready) and
+// 'paused_agent_lost' (waiting for Reconnect) both need to keep polling -- the whole point is
+// to notice the state change (to 'ready'/cascaded further, or after Reconnect succeeds)
+// without the intern refreshing the page.
+const ACTIVE_SESSION_STATES = new Set([
+  'ready_pending',
+  'ready',
+  'dialing',
+  'connecting',
+  'on_call',
+  'wrap_up',
+  'paused_agent_lost',
+]);
 const TERMINAL_LEG_STATES = new Set(['ended', 'dropped', 'abandoned', 'machine']);
 
 function contactName(leg: CallLegRecord): string {
@@ -101,6 +114,17 @@ export function useDialerSession(initialSessionId: string | null = null) {
   const pause = useCallback(async () => {
     if (!state.sessionId) return null;
     const res = await pauseDialerSession(state.sessionId);
+    await loadSession(state.sessionId);
+    return res;
+  }, [loadSession, state.sessionId]);
+
+  /** TASK-L1: the Reconnect button, shown when session.state === 'paused_agent_lost'. Only
+   *  dials the agent leg again server-side -- the caller (the pre-flight/Reconnect UI) is
+   *  responsible for making sure useTelnyxCall's client is registered and will auto-answer
+   *  the resulting inbound call. */
+  const reconnect = useCallback(async () => {
+    if (!state.sessionId) return null;
+    const res = await reconnectDialerSession(state.sessionId);
     await loadSession(state.sessionId);
     return res;
   }, [loadSession, state.sessionId]);
@@ -179,6 +203,7 @@ export function useDialerSession(initialSessionId: string | null = null) {
     start,
     stop,
     pause,
+    reconnect,
     endLiveCall,
     loadSession,
   };

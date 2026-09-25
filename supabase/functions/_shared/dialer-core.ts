@@ -209,6 +209,36 @@ export function legTransition(
 }
 
 // ---------------------------------------------------------------------------
+// agentLegTransition (TASK-L1)
+// ---------------------------------------------------------------------------
+
+/** The agent leg never runs AMD or a single-winner claim -- it only ever answers or hangs
+ *  up, so it gets its own tiny state machine instead of sharing legTransition's
+ *  claim/AMD-aware one. */
+export type AgentLegEvent =
+  | { eventType: 'call.initiated' }
+  | { eventType: 'call.answered' }
+  | { eventType: 'call.hangup'; hangupCause: HangupCause };
+
+/**
+ * Maps (current agent-leg state, event) to the next state, or null for an out-of-order/
+ * duplicate event (same no-op convention as legTransition -- safe under webhook redelivery).
+ * The agent leg has no `outcome` column value that means anything (apply_leg_outcome is a
+ * lead/campaign_leads concept) -- callers pass a fixed bookkeeping value at the DB layer, not
+ * one derived here.
+ */
+export function agentLegTransition(current: LegState, event: AgentLegEvent): LegState | null {
+  switch (event.eventType) {
+    case 'call.initiated':
+      return current === 'initiated' ? 'ringing' : null;
+    case 'call.answered':
+      return current === 'initiated' || current === 'ringing' ? 'answered' : null;
+    case 'call.hangup':
+      return current === 'ended' ? null : 'ended';
+  }
+}
+
+// ---------------------------------------------------------------------------
 // amdDecision
 // ---------------------------------------------------------------------------
 

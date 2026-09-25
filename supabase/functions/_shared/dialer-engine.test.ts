@@ -1,0 +1,650 @@
+/**
+ * TASK-L1 acceptance substitution, per the lead's explicit decision (this run's launch-
+ * blockers phase forbids starting a local Supabase/Docker stack -- see RESUME_PLAN-eng2.md
+ * and this task's own Log). The task's original acceptance item #2 ("a mock-sim script
+ * walks Go Ready -> ... -> Reconnect -> ready") required `supabase functions serve` + a real
+ * local Postgres, exactly like `scripts/dev/dialer-sim.ts` (TASK-P2-E2's own acceptance
+ * script) -- both are unrunnable now that local Docker is retired.
+ *
+ * This file drives the SAME scenario end-to-end, but against:
+ * - an in-memory fake of the Supabase client (`.from()`/`.rpc()`) that reimplements exactly
+ *   the table shapes and RPC semantics `dialer-engine.ts` actually calls (claim_next_leads,
+ *   claim_leg, transition_leg, transition_session, apply_leg_outcome, record_webhook_event,
+ *   get_org_telnyx_key) -- no network, no DB, no Docker.
+ * - the REAL `createTelnyxClient` (`_shared/telnyx-client.ts`), with `globalThis.fetch`
+ *   stubbed exactly like `telnyx-client.test.ts` already does. This is deliberately not a
+ *   hand-rolled fake Telnyx client -- reusing the real client means this test also exercises
+ *   the real request-shape code (BUG-8's time_limit_secs, the custom_headers/client_state on
+ *   the agent dial), not just the engine's own decisions.
+ *
+ * Scenario (mirrors the task's own acceptance walk):
+ *   startSession (Go Ready) -> agent leg dialed -> agent call.answered -> conference created,
+ *   session ready_pending -> ready -> dialing -> refillSession dials 3 contacts -> one
+ *   contact's call.answered (amd off) claims the session -> winner joins the (already-
+ *   existing) conference, session -> on_call, the other two contacts get dropped/abandoned ->
+ *   agent call.hangup -> session -> paused_agent_lost, the winner (claimed) leg is untouched,
+ *   any other still-active contact leg is hung up -> reconnectAgentLeg redials a fresh agent
+ *   leg into the SAME conference -> its own call.answered -> ready (asserted via the
+ *   transition log, since this engine cascades further in the same call) -> on_call (rejoins
+ *   the still-live winner call, which is the correct behavior per this task's own invariant:
+ *   a live claimed contact is never abandoned by an agent-leg problem).
+ */
+import { assertEquals, assertExists } from 'jsr:@std/assert@1';
+import {
+  startSession,
+  reconnectAgentLeg,
+  processTelnyxDialerEvent,
+  type RawTelnyxEvent,
+} from './dialer-engine.ts';
+import type { DialClientStateKind } from './client-state.ts';
+
+// ---------------------------------------------------------------------------
+// In-memory fake Supabase client -- exactly the tables/RPCs dialer-engine.ts uses.
+// ---------------------------------------------------------------------------
+
+interface Row {
+  [key: string]: unknown;
+}
+
+class FakeDb {
+  tables = new Map<string, Map<string, Row>>();
+  webhookEvents = new Set<string>();
+  /** Every transition_session call, in order -- lets the test prove an intermediate state
+   *  (e.g. 'ready') was really reached even though the engine cascades past it synchronously
+   *  within the same call. */
+  sessionTransitions: { from: string; to: string }[] = [];
+
+  table(name: string): Map<string, Row> {
+    if (!this.tables.has(name)) this.tables.set(name, new Map());
+    return this.tables.get(name)!;
+  }
+
+  insert(table: string, row: Row): Row {
+    const id = (row.id as string | undefined) ?? crypto.randomUUID();
+    const full = { ...row, id };
+    this.table(table).set(id, full);
+    return full;
+  }
+}
+
+function matchesFilters(row: Row, filters: [string, 'eq' | 'neq', unknown][]): boolean {
+  return filters.every(([col, op, val]) => (op === 'eq' ? row[col] === val : row[col] !== val));
+}
+
+class FakeQuery implements PromiseLike<{ data: unknown; error: null }> {
+  private filters: [string, 'eq' | 'neq', unknown][] = [];
+  private mode: 'select' | 'insert' | 'update' = 'select';
+  private payload: Row = {};
+  private singleMode: 'single' | 'maybeSingle' | null = null;
+  private insertedRow: Row | null = null;
+
+  constructor(
+    private db: FakeDb,
+    private table: string
+  ) {}
+
+  select(_cols?: string): this {
+    return this;
+  }
+  insert(payload: Row): this {
+    this.mode = 'insert';
+    this.payload = payload;
+    return this;
+  }
+  update(payload: Row): this {
+    this.mode = 'update';
+    this.payload = payload;
+    return this;
+  }
+  eq(col: string, val: unknown): this {
+    this.filters.push([col, 'eq', val]);
+    return this;
+  }
+  neq(col: string, val: unknown): this {
+    this.filters.push([col, 'neq', val]);
+    return this;
+  }
+  single(): this {
+    this.singleMode = 'single';
+    return this;
+  }
+  maybeSingle(): this {
+    this.singleMode = 'maybeSingle';
+    return this;
+  }
+
+  private execute(): { data: unknown; error: null } {
+    if (this.mode === 'insert') {
+      this.insertedRow = this.db.insert(this.table, this.payload);
+      return { data: this.singleMode ? this.insertedRow : [this.insertedRow], error: null };
+    }
+    if (this.mode === 'update') {
+      const rows = [...this.db.table(this.table).values()].filter((r) =>
+        matchesFilters(r, this.filters)
+      );
+      for (const row of rows) Object.assign(row, this.payload);
+      return { data: null, error: null };
+    }
+    // select
+    const rows = [...this.db.table(this.table).values()].filter((r) =>
+      matchesFilters(r, this.filters)
+    );
+    if (this.singleMode) return { data: rows[0] ?? null, error: null };
+    return { data: rows, error: null };
+  }
+
+  then<TResult1 = { data: unknown; error: null }, TResult2 = never>(
+    onfulfilled?:
+      ((value: { data: unknown; error: null }) => TResult1 | PromiseLike<TResult1>) | null,
+    onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null
+  ): PromiseLike<TResult1 | TResult2> {
+    return Promise.resolve(this.execute()).then(onfulfilled, onrejected);
+  }
+}
+
+const FAKE_TELNYX_KEY = 'fake-telnyx-key';
+
+function rpc(
+  db: FakeDb,
+  name: string,
+  args: Record<string, unknown>
+): { data: unknown; error: null } {
+  switch (name) {
+    case 'get_org_telnyx_key':
+      return { data: FAKE_TELNYX_KEY, error: null };
+
+    case 'record_webhook_event': {
+      const eventId = args.p_event_id as string;
+      if (db.webhookEvents.has(eventId)) return { data: false, error: null };
+      db.webhookEvents.add(eventId);
+      return { data: true, error: null };
+    }
+
+    case 'claim_next_leads': {
+      const sessionId = args.p_session as string;
+      const session = db.table('dial_sessions').get(sessionId);
+      if (!session) return { data: [], error: null };
+      const activeContactLegs = [...db.table('call_legs').values()].filter(
+        (l) => l.session_id === sessionId && l.kind === 'contact' && l.state !== 'ended'
+      ).length;
+      const capacity = Math.max(0, (session.lines as number) - activeContactLegs);
+      if (capacity === 0) return { data: [], error: null };
+      const dueLeads = [...db.table('campaign_leads').values()]
+        .filter((l) => l.campaign_id === session.campaign_id && l.status === 'queued')
+        .sort((a, b) => (a.position as number) - (b.position as number))
+        .slice(0, capacity);
+      const results = dueLeads.map((lead) => {
+        lead.status = 'in_flight';
+        const contact = db.table('contacts').get(lead.contact_id as string)!;
+        const legId = crypto.randomUUID();
+        const callControlId = `pending-${crypto.randomUUID()}`;
+        db.insert('call_legs', {
+          id: legId,
+          org_id: session.org_id,
+          session_id: sessionId,
+          campaign_id: session.campaign_id,
+          contact_id: lead.contact_id,
+          lead_id: lead.id,
+          kind: 'contact',
+          call_control_id: callControlId,
+          state: 'initiated',
+          outcome: null,
+        });
+        return {
+          leg_id: legId,
+          lead_id: lead.id,
+          contact_id: lead.contact_id,
+          phone_number: contact.phone_number,
+          call_control_id: callControlId,
+        };
+      });
+      return { data: results, error: null };
+    }
+
+    case 'claim_leg': {
+      const session = db.table('dial_sessions').get(args.p_session as string);
+      const leg = db.table('call_legs').get(args.p_leg as string);
+      if (!session || !leg || session.state !== 'dialing' || session.active_leg_id) {
+        return { data: false, error: null };
+      }
+      session.active_leg_id = leg.id;
+      session.state = 'connecting';
+      leg.state = 'claimed';
+      leg.claimed_at = new Date().toISOString();
+      return { data: true, error: null };
+    }
+
+    case 'transition_leg': {
+      const callControlId = args.p_call_control_id as string;
+      const expected = args.p_expected_states as string[];
+      const leg = [...db.table('call_legs').values()].find(
+        (l) => l.call_control_id === callControlId
+      );
+      if (!leg || !expected.includes(leg.state as string)) return { data: false, error: null };
+      leg.state = args.p_new_state;
+      Object.assign(leg, (args.p_fields as Row | undefined) ?? {});
+      return { data: true, error: null };
+    }
+
+    case 'transition_session': {
+      const session = db.table('dial_sessions').get(args.p_session as string);
+      const expected = args.p_expected_states as string[];
+      if (!session || !expected.includes(session.state as string)) {
+        return { data: false, error: null };
+      }
+      const from = session.state as string;
+      const to = args.p_new_state as string;
+      session.state = to;
+      Object.assign(session, (args.p_fields as Row | undefined) ?? {});
+      db.sessionTransitions.push({ from, to });
+      return { data: true, error: null };
+    }
+
+    case 'apply_leg_outcome': {
+      const leg = db.table('call_legs').get(args.p_leg as string);
+      if (!leg || leg.outcome == null) return { data: null, error: null };
+      if (leg.session_id) {
+        const session = db.table('dial_sessions').get(leg.session_id as string);
+        if (session && session.active_leg_id === leg.id) session.active_leg_id = null;
+      }
+      return { data: null, error: null };
+    }
+
+    default:
+      throw new Error(`fake rpc: unhandled function ${name}`);
+  }
+}
+
+function createFakeSupabase(db: FakeDb) {
+  return {
+    from(table: string) {
+      return new FakeQuery(db, table);
+    },
+    rpc(name: string, args: Record<string, unknown>) {
+      return Promise.resolve(rpc(db, name, args));
+    },
+    // deno-lint-ignore no-explicit-any
+  } as any;
+}
+
+// ---------------------------------------------------------------------------
+// Fake Telnyx HTTP surface -- stubs the REAL createTelnyxClient's fetch calls, same
+// technique as telnyx-client.test.ts's stubFetch. No network, no mock server process.
+// ---------------------------------------------------------------------------
+
+interface FakeTelnyxCall {
+  callControlId: string;
+  to: string;
+  body: Record<string, unknown>;
+}
+
+class FakeTelnyxServer {
+  calls = new Map<string, FakeTelnyxCall>();
+  conferenceCounter = 0;
+  requests: { method: string; path: string; body: unknown }[] = [];
+
+  handle(url: string, init?: RequestInit): Response {
+    const path = new URL(url).pathname;
+    const method = init?.method ?? 'GET';
+    const body = init?.body ? JSON.parse(String(init.body)) : {};
+    this.requests.push({ method, path, body });
+
+    if (method === 'POST' && path === '/v2/calls') {
+      const callControlId = `call-${this.calls.size + 1}`;
+      this.calls.set(callControlId, { callControlId, to: String(body.to), body });
+      return Response.json({ data: { call_control_id: callControlId } });
+    }
+    if (method === 'POST' && /\/v2\/calls\/[^/]+\/actions\/(hangup|speak)$/.test(path)) {
+      return Response.json({ data: {} });
+    }
+    if (method === 'POST' && path === '/v2/conferences') {
+      this.conferenceCounter++;
+      return Response.json({ data: { id: `conf-${this.conferenceCounter}`, name: body.name } });
+    }
+    if (method === 'POST' && /\/v2\/conferences\/[^/]+\/actions\/(join|leave)$/.test(path)) {
+      return Response.json({ data: {} });
+    }
+    if (method === 'GET' && /\/v2\/telephony_credentials\/[^/]+$/.test(path)) {
+      return Response.json({ data: { sip_username: 'agent-sip-user' } });
+    }
+    return Response.json(
+      { errors: [{ detail: `not mocked: ${method} ${path}` }] },
+      { status: 404 }
+    );
+  }
+}
+
+function stubTelnyxFetch(server: FakeTelnyxServer): () => void {
+  const original = globalThis.fetch;
+  globalThis.fetch = ((url: string | URL | Request, init?: RequestInit) =>
+    Promise.resolve(server.handle(String(url), init))) as typeof fetch;
+  return () => {
+    globalThis.fetch = original;
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Fixtures
+// ---------------------------------------------------------------------------
+
+function seedFixtures(db: FakeDb) {
+  const orgId = 'org-1';
+  const agentId = 'agent-1';
+  const campaignId = 'campaign-1';
+  const numberId = 'number-1';
+
+  db.insert('orgs', { id: orgId, name: 'Fixture Org' });
+  db.insert('org_telephony', {
+    id: 'telephony-1',
+    org_id: orgId,
+    status: 'connected',
+    call_control_app_id: 'cca-1',
+    credential_connection_id: 'cred-conn-1',
+  });
+  db.insert('org_members', {
+    id: 'member-1',
+    org_id: orgId,
+    user_id: agentId,
+    telnyx_credential_id: 'cred-1',
+  });
+  db.insert('user_phone_numbers', { id: numberId, org_id: orgId, phone_number: '+15550001000' });
+  db.insert('campaigns', {
+    id: campaignId,
+    org_id: orgId,
+    name: 'Fixture Campaign',
+    abandon_message_enabled: true,
+    caller_id_number_id: numberId,
+  });
+
+  const contactIds = ['contact-1', 'contact-2', 'contact-3'];
+  for (const [i, contactId] of contactIds.entries()) {
+    db.insert('contacts', { id: contactId, phone_number: `+1555000100${i + 1}` });
+    db.insert('campaign_leads', {
+      id: `lead-${i + 1}`,
+      campaign_id: campaignId,
+      contact_id: contactId,
+      status: 'queued',
+      position: i + 1,
+    });
+  }
+
+  return { orgId, agentId, campaignId };
+}
+
+function agentEvent(
+  orgId: string,
+  sessionId: string,
+  legId: string,
+  callControlId: string,
+  eventType: 'call.answered' | 'call.hangup',
+  extra: Record<string, unknown> = {}
+): RawTelnyxEvent {
+  return {
+    orgId,
+    eventId: crypto.randomUUID(),
+    eventType,
+    callControlId,
+    payload: extra,
+    clientState: {
+      org: orgId,
+      session: sessionId,
+      leg: legId,
+      kind: 'agent' as DialClientStateKind,
+    },
+  };
+}
+
+function contactEvent(
+  orgId: string,
+  sessionId: string,
+  legId: string,
+  callControlId: string,
+  eventType: 'call.answered' | 'call.hangup',
+  extra: Record<string, unknown> = {}
+): RawTelnyxEvent {
+  return {
+    orgId,
+    eventId: crypto.randomUUID(),
+    eventType,
+    callControlId,
+    payload: extra,
+    clientState: {
+      org: orgId,
+      session: sessionId,
+      leg: legId,
+      kind: 'contact' as DialClientStateKind,
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// The scenario
+// ---------------------------------------------------------------------------
+
+Deno.test(
+  'dialer-engine end-to-end (fake Supabase + real TelnyxClient/stubbed fetch): Go Ready -> answered -> ready -> dialing -> winner joins conference -> agent lost (claimed leg untouched) -> reconnect -> rejoins the live call',
+  async () => {
+    const db = new FakeDb();
+    const server = new FakeTelnyxServer();
+    const restoreFetch = stubTelnyxFetch(server);
+    const supabase = createFakeSupabase(db);
+    const { orgId, agentId, campaignId } = seedFixtures(db);
+
+    try {
+      // --- Go Ready ------------------------------------------------------------------------
+      const { sessionId } = await startSession(supabase, {
+        orgId,
+        campaignId,
+        agentId,
+        lines: 3,
+        amdMode: 'off',
+      });
+      const sessionAfterStart = db.table('dial_sessions').get(sessionId)!;
+      assertEquals(sessionAfterStart.state, 'ready_pending');
+
+      const agentLeg1 = [...db.table('call_legs').values()].find((l) => l.kind === 'agent')!;
+      assertExists(agentLeg1, 'agent leg row should exist after Go Ready');
+      assertEquals(agentLeg1.state, 'initiated');
+      assertEquals(sessionAfterStart.agent_leg_id, agentLeg1.id);
+      // BUG-8 is contact-only: the agent leg dial must NOT carry time_limit_secs.
+      const agentDial1 = server.calls.get(agentLeg1.call_control_id as string)!;
+      assertEquals(agentDial1.body.time_limit_secs, undefined);
+      assertEquals(agentDial1.to, 'sip:agent-sip-user@sip.telnyx.com');
+      assertEquals(
+        (agentDial1.body.custom_headers as { name: string }[])[0].name,
+        'X-Hyperdial-Session'
+      );
+
+      // --- Agent answers -> ready -> dialing (3 contacts dialed) ----------------------------
+      await processTelnyxDialerEvent(
+        supabase,
+        agentEvent(
+          orgId,
+          sessionId,
+          agentLeg1.id as string,
+          agentLeg1.call_control_id as string,
+          'call.answered'
+        )
+      );
+      const sessionAfterAgentAnswered = db.table('dial_sessions').get(sessionId)!;
+      assertEquals(sessionAfterAgentAnswered.state, 'dialing');
+      assertExists(
+        sessionAfterAgentAnswered.conference_id,
+        'conference should be created around the agent leg'
+      );
+      // Prove 'ready' was really reached, even though the engine cascades past it in the same
+      // call (see this file's header) -- not just a guessed intermediate value.
+      assertEquals(
+        db.sessionTransitions.some((t) => t.from === 'ready_pending' && t.to === 'ready'),
+        true
+      );
+      assertEquals(
+        db.sessionTransitions.some((t) => t.from === 'ready' && t.to === 'dialing'),
+        true
+      );
+
+      const contactLegs = [...db.table('call_legs').values()].filter((l) => l.kind === 'contact');
+      assertEquals(contactLegs.length, 3, 'refillSession should have dialed all 3 fixture leads');
+      for (const leg of contactLegs) {
+        const dialed = server.calls.get(leg.call_control_id as string)!;
+        // BUG-8: every CONTACT dial carries time_limit_secs 1800.
+        assertEquals(dialed.body.time_limit_secs, 1800);
+      }
+
+      // --- One contact answers (amd off) -> claims the session -> winner joins conference --
+      const winnerLeg = contactLegs[0];
+      const loserLegs = contactLegs.slice(1);
+      await processTelnyxDialerEvent(
+        supabase,
+        contactEvent(
+          orgId,
+          sessionId,
+          winnerLeg.id as string,
+          winnerLeg.call_control_id as string,
+          'call.answered'
+        )
+      );
+      const sessionAfterWin = db.table('dial_sessions').get(sessionId)!;
+      assertEquals(sessionAfterWin.state, 'on_call');
+      assertEquals(sessionAfterWin.active_leg_id, winnerLeg.id);
+      const winnerLegRow = db.table('call_legs').get(winnerLeg.id as string)!;
+      assertEquals(winnerLegRow.state, 'claimed');
+      assertEquals(winnerLegRow.outcome, 'connected');
+      // The winner joins the conference the AGENT already created -- not a second, new one.
+      const joinRequests = server.requests.filter((r) => /\/actions\/join$/.test(r.path));
+      assertEquals(joinRequests.length >= 1, true);
+      const conferenceCreateRequests = server.requests.filter((r) => r.path === '/v2/conferences');
+      assertEquals(
+        conferenceCreateRequests.length,
+        1,
+        'only ever ONE conference for the whole session'
+      );
+      // The two losing legs are moved to 'dropped' (never having answered) by handleWin
+      // itself; `outcome` is only finalized once each leg's OWN call.hangup webhook lands
+      // (hangupOutcome preserves the dropped/abandoned decision through to it -- dialer-
+      // core.ts's own header) -- exactly what the real hangup command handleWin just issued
+      // will eventually produce. Fire it here, same as dialer-sim.ts's own scenario did.
+      for (const loser of loserLegs) {
+        const loserRow = db.table('call_legs').get(loser.id as string)!;
+        assertEquals(loserRow.state, 'dropped');
+        assertEquals(loserRow.outcome, null);
+        await processTelnyxDialerEvent(
+          supabase,
+          contactEvent(
+            orgId,
+            sessionId,
+            loser.id as string,
+            loser.call_control_id as string,
+            'call.hangup',
+            {
+              hangup_cause: 'normal_clearing',
+            }
+          )
+        );
+        assertEquals(db.table('call_legs').get(loser.id as string)!.outcome, 'dropped');
+      }
+      // The agent's own leg was NOT touched by the loser-resolution loop (the real bug this
+      // test caught: loserActions/loadActiveLegs predate the agent leg and are kind-agnostic
+      // -- handleWin now filters to kind==='contact' before computing losers).
+      assertEquals(db.table('call_legs').get(agentLeg1.id as string)!.state, 'answered');
+      const agentHangupCommands = server.requests.filter(
+        (r) => r.path === `/v2/calls/${agentLeg1.call_control_id}/actions/hangup`
+      );
+      assertEquals(
+        agentHangupCommands.length,
+        0,
+        'the agent leg must never be hung up as a "loser"'
+      );
+
+      // --- Agent leg lost -> paused_agent_lost, claimed leg untouched -----------------------
+      await processTelnyxDialerEvent(
+        supabase,
+        agentEvent(
+          orgId,
+          sessionId,
+          agentLeg1.id as string,
+          agentLeg1.call_control_id as string,
+          'call.hangup',
+          { hangup_cause: 'normal_clearing' }
+        )
+      );
+      const sessionAfterLost = db.table('dial_sessions').get(sessionId)!;
+      assertEquals(sessionAfterLost.state, 'paused_agent_lost');
+      assertEquals(db.table('call_legs').get(agentLeg1.id as string)!.state, 'ended');
+      // The task's own explicit invariant: a live, bridged (claimed) contact is never hung up
+      // for an agent-leg problem.
+      const winnerAfterAgentLost = db.table('call_legs').get(winnerLeg.id as string)!;
+      assertEquals(winnerAfterAgentLost.state, 'claimed');
+      assertEquals(sessionAfterLost.active_leg_id, winnerLeg.id);
+      const winnerHangupRequests = server.requests.filter(
+        (r) => r.path === `/v2/calls/${winnerLeg.call_control_id}/actions/hangup`
+      );
+      assertEquals(winnerHangupRequests.length, 0, 'the claimed leg must never be hung up');
+
+      // --- Reconnect: fresh agent leg into the SAME conference ------------------------------
+      const reconnectResult = await reconnectAgentLeg(supabase, orgId, sessionId);
+      assertEquals(reconnectResult.ok, true);
+      const agentLeg2 = [...db.table('call_legs').values()].find(
+        (l) => l.kind === 'agent' && l.id !== agentLeg1.id
+      )!;
+      assertExists(agentLeg2, 'a fresh agent leg should have been dialed for reconnect');
+      assertEquals(agentLeg2.state, 'initiated');
+      assertEquals(db.table('dial_sessions').get(sessionId)!.agent_leg_id, agentLeg2.id);
+      // Still paused until the new leg actually answers.
+      assertEquals(db.table('dial_sessions').get(sessionId)!.state, 'paused_agent_lost');
+
+      await processTelnyxDialerEvent(
+        supabase,
+        agentEvent(
+          orgId,
+          sessionId,
+          agentLeg2.id as string,
+          agentLeg2.call_control_id as string,
+          'call.answered'
+        )
+      );
+      // 'ready' really was reached from paused_agent_lost, then cascaded to on_call because
+      // the winner leg is STILL claimed/live -- rejoining the live call is the correct
+      // behavior (see this file's header), not a literal stop at 'ready'.
+      assertEquals(
+        db.sessionTransitions.some((t) => t.from === 'paused_agent_lost' && t.to === 'ready'),
+        true
+      );
+      const sessionAfterReconnect = db.table('dial_sessions').get(sessionId)!;
+      assertEquals(sessionAfterReconnect.state, 'on_call');
+      assertEquals(sessionAfterReconnect.active_leg_id, winnerLeg.id);
+      // Joined the ORIGINAL conference again, never created a second one.
+      const conferenceCreateRequestsAfterReconnect = server.requests.filter(
+        (r) => r.path === '/v2/conferences'
+      );
+      assertEquals(conferenceCreateRequestsAfterReconnect.length, 1);
+    } finally {
+      restoreFetch();
+    }
+  }
+);
+
+Deno.test(
+  'dialer-engine: reconnectAgentLeg is a no-op (ok:false) from any state other than paused_agent_lost',
+  async () => {
+    const db = new FakeDb();
+    const server = new FakeTelnyxServer();
+    const restoreFetch = stubTelnyxFetch(server);
+    const supabase = createFakeSupabase(db);
+    const { orgId, campaignId, agentId } = seedFixtures(db);
+    try {
+      const { sessionId } = await startSession(supabase, {
+        orgId,
+        campaignId,
+        agentId,
+        lines: 1,
+        amdMode: 'off',
+      });
+      // Still ready_pending -- never answered.
+      const result = await reconnectAgentLeg(supabase, orgId, sessionId);
+      assertEquals(result, { ok: false, reason: 'not_paused_agent_lost' });
+    } finally {
+      restoreFetch();
+    }
+  }
+);

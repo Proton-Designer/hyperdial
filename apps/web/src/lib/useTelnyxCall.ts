@@ -6,9 +6,64 @@ export type CallState = 'idle' | 'dialing' | 'ringing' | 'connected' | 'ended';
 
 interface UseTelnyxCallOptions {
   remoteElementId?: string;
+  /**
+   * TASK-L1: when set, this hook ALSO auto-answers an inbound call whose client_state
+   * decodes to `{kind:'agent', session: sessionId}` -- the parallel dialer's own agent leg,
+   * dialed server-side (dialer-engine.ts's dialAgentLeg/reconnectAgentLeg) from the org's Call
+   * Control app into this member's WebRTC credential SIP URI. Every OTHER inbound call
+   * (anything that doesn't decode to this exact session) is rejected (hung up before
+   * answering) -- this hook must never auto-answer a call it wasn't told to expect. Omitted
+   * (the legacy single-line manual dialer's usage): inbound calls are left entirely alone,
+   * same as before this task.
+   */
+  sessionId?: string;
 }
 
 const ACTIVE_AGENT_CALL_CONTROL_ID_KEY = 'hyperdial_active_agent_call_control_id';
+
+/**
+ * Browser-safe port of `supabase/functions/_shared/client-state.ts`'s decode logic -- kept as
+ * a small, self-contained copy rather than importing a Deno edge-function module into the web
+ * app (that module also assumes `Deno`-side base64/JSON helpers are the only ones in scope;
+ * `atob`/`JSON.parse` are the same built-ins in a browser). Never throws -- the input is
+ * untrusted (an SDK-reported field off an inbound call notification, not something this app
+ * produced), so any malformed value just fails to match and gets rejected below.
+ */
+function decodeAgentClientState(
+  value: unknown
+): { org: string; session: string; leg: string; kind: 'agent' | 'contact' } | null {
+  if (typeof value !== 'string' || !value) return null;
+  let decoded: Record<string, unknown>;
+  try {
+    decoded = JSON.parse(atob(value)) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+  const { org, session, leg, kind } = decoded;
+  if (
+    typeof org !== 'string' ||
+    !org ||
+    typeof session !== 'string' ||
+    !session ||
+    typeof leg !== 'string' ||
+    !leg
+  ) {
+    return null;
+  }
+  return { org, session, leg, kind: kind === 'agent' ? 'agent' : 'contact' };
+}
+
+/** The invite's `custom_headers` (TASK-L1: `X-Hyperdial-Session`), as a defense-in-depth
+ *  secondary signal alongside client_state -- see telnyx-client.ts's DialArgs header comment.
+ *  Not relied on alone: header name/case over the real SIP INVITE wasn't live-verified this
+ *  task (NEEDS-LIVE-VERIFY), client_state is the primary, already-structured signal. */
+function customHeaderSessionId(customHeaders: unknown): string | null {
+  if (!Array.isArray(customHeaders)) return null;
+  const header = customHeaders.find(
+    (h) => h && typeof h === 'object' && (h as { name?: string }).name === 'X-Hyperdial-Session'
+  ) as { value?: string } | undefined;
+  return typeof header?.value === 'string' ? header.value : null;
+}
 
 function toE164(phone: string): string {
   const digits = phone.replace(/\D/g, '');
@@ -24,6 +79,12 @@ export function useTelnyxCall(options: UseTelnyxCallOptions = {}) {
   const [isReady, setIsReady] = useState(false);
   const clientRef = useRef<TelnyxRTC | null>(null);
   const activeCallRef = useRef<{ hangup: () => void } | null>(null);
+  /** TASK-L1: the SDK re-fires telnyx.notification repeatedly as an inbound call's state
+   *  changes (new -> ringing -> ...) -- decide answer-vs-reject exactly once per call id, not
+   *  once per notification, and remember the decision so a REJECTED call's later
+   *  notifications (e.g. its own eventual hangup/destroy) never fall through to the normal
+   *  state-tracking below and get mistaken for this hook's own active call. */
+  const inboundCallDecisionsRef = useRef<Map<string, 'answered' | 'rejected'>>(new Map());
 
   const persistAgentCallControlId = useCallback((maybeCall: unknown) => {
     if (typeof window === 'undefined') return;
@@ -61,9 +122,48 @@ export function useTelnyxCall(options: UseTelnyxCallOptions = {}) {
           .on('telnyx.error', reject)
           .on(
             'telnyx.notification',
-            (notification: { type?: string; call?: { state?: string; hangup: () => void } }) => {
+            (notification: {
+              type?: string;
+              call?: {
+                id?: string;
+                state?: string;
+                direction?: string;
+                options?: { clientState?: string; customHeaders?: unknown };
+                hangup: () => void;
+                answer: (params?: { remoteElement?: string }) => void;
+              };
+            }) => {
               if (notification.type !== 'callUpdate' || !notification.call) return;
               const call = notification.call;
+
+              if (call.direction === 'inbound' && call.id) {
+                const priorDecision = inboundCallDecisionsRef.current.get(call.id);
+                if (priorDecision === 'rejected') return;
+                if (!priorDecision) {
+                  const decoded = decodeAgentClientState(call.options?.clientState);
+                  const headerSessionId = customHeaderSessionId(call.options?.customHeaders);
+                  const matchesThisSession =
+                    Boolean(options.sessionId) &&
+                    ((decoded?.kind === 'agent' && decoded.session === options.sessionId) ||
+                      headerSessionId === options.sessionId);
+                  if (matchesThisSession) {
+                    inboundCallDecisionsRef.current.set(call.id, 'answered');
+                    call.answer(
+                      options.remoteElementId
+                        ? { remoteElement: options.remoteElementId }
+                        : undefined
+                    );
+                  } else {
+                    // Not this session (or this hook wasn't told to expect one at all, e.g.
+                    // the legacy manual dialer) -- reject. Never auto-answer a call this hook
+                    // was not explicitly told to expect.
+                    inboundCallDecisionsRef.current.set(call.id, 'rejected');
+                    call.hangup();
+                    return;
+                  }
+                }
+              }
+
               activeCallRef.current = call;
               persistAgentCallControlId(call);
               const state = (call.state || '').toLowerCase();
@@ -92,7 +192,7 @@ export function useTelnyxCall(options: UseTelnyxCallOptions = {}) {
       setIsConnecting(false);
       throw err;
     });
-  }, [options.remoteElementId, persistAgentCallControlId]);
+  }, [options.remoteElementId, options.sessionId, persistAgentCallControlId]);
 
   const disconnect = useCallback(() => {
     if (clientRef.current) {

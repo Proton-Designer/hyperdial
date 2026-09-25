@@ -50,6 +50,40 @@ Deno.test('buildDialPayload: premium AMD and a custom timeout override the defau
   assertEquals(payload.timeout_secs, 20);
 });
 
+Deno.test(
+  'buildDialPayload: TASK-L1/BUG-8 -- time_limit_secs and custom_headers are omitted when not supplied',
+  () => {
+    const payload = buildDialPayload({
+      connectionId: 'conn-1',
+      to: '+15551234567',
+      from: '+15557654321',
+      webhookUrl: 'https://example.com/telnyx-webhook',
+      clientState: 'ZW5jb2RlZA==',
+      amdMode: 'off',
+    });
+    assertEquals('time_limit_secs' in payload, false);
+    assertEquals('custom_headers' in payload, false);
+  }
+);
+
+Deno.test(
+  'buildDialPayload: TASK-L1/BUG-8 -- every contact dial can carry time_limit_secs 1800 and custom_headers',
+  () => {
+    const payload = buildDialPayload({
+      connectionId: 'conn-1',
+      to: '+15551234567',
+      from: '+15557654321',
+      webhookUrl: 'https://example.com/telnyx-webhook',
+      clientState: 'ZW5jb2RlZA==',
+      amdMode: 'off',
+      timeLimitSecs: 1800,
+      customHeaders: [{ name: 'X-Hyperdial-Session', value: 'session-1' }],
+    });
+    assertEquals(payload.time_limit_secs, 1800);
+    assertEquals(payload.custom_headers, [{ name: 'X-Hyperdial-Session', value: 'session-1' }]);
+  }
+);
+
 Deno.test('buildRecordStartPayload: defaults to mp3, requires channels', () => {
   assertEquals(buildRecordStartPayload({ channels: 'dual' }), {
     format: 'mp3',

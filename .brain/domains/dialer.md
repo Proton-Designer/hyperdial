@@ -61,7 +61,7 @@ them anymore — see "Not covered here" for what's actually dead versus still re
 | Single-winner claim | `claim_leg(session, leg)` — one atomic conditional UPDATE (`active_leg_id is null → set it`). Exactly one caller ever gets `true`, no matter how many legs answer at once. Replaces the legacy engine's Redis `SET NX` lock; see `mem.decisions`. |
 | `client_state` | Base64 `{org, session, leg}` (`_shared/client-state.ts`), round-tripped through every Telnyx call. `telnyx-webhook` hard-rejects any `call.*` event whose client_state doesn't decode and name the request's own `org`. |
 | AMD modes | `off` (every `call.answered` claims immediately) or `on` (holds at `amd_pending` until the leg's own `call.machine.(premium.)detection.ended` resolves it — claim on human, reject to `machine` otherwise). |
-| Dev flag | `DIALER_DEV_SKIP_AGENT_GATE=true` (server env) bypasses the "agent leg must be answered" refill gate. There is no real agent leg yet (E3 builds it) — every session today only dials at all because of this flag. |
+| Agent leg | `kind='agent'` `call_legs` row, one per session (TASK-L1). Dialed via the member's own WebRTC on-demand credential's SIP URI (`sip:<sip_username>@sip.telnyx.com`, from `org_members.telnyx_credential_id`) with `client_state{kind:'agent'}` + a `custom_headers` session marker. Its own `call.answered` creates the session's conference (once) and cascades `ready_pending`/`paused_agent_lost` → `ready` → `on_call` (a contact is still `claimed`) or `dialing` (+ an immediate refill). The `DIALER_DEV_SKIP_AGENT_GATE` dev flag this row used to replace no longer exists anywhere in the codebase. |
 
 ## Where the code lives
 
@@ -72,20 +72,33 @@ them anymore — see "Not covered here" for what's actually dead versus still re
 | `client_state` codec | `supabase/functions/_shared/client-state.ts` | `encodeDialClientState`/`decodeDialClientState`. |
 | Telnyx REST (BYO key) | `supabase/functions/_shared/telnyx-client.ts`, `_shared/telnyx-org-context.ts` | `createTelnyxClient(apiKey, {apiBase?})`; `getConnectedOrgTelnyxContext` builds one from the org's own stored key. `apiBase` exists only for `scripts/dev/dialer-sim.ts`'s mock server. |
 | Schema + RPCs | `supabase/migrations/20260924000700/000800/001000/001900` | `dial_sessions`, `call_legs`, `webhook_events`; `claim_next_leads`/`claim_leg`/`transition_leg`/`transition_session`/`apply_leg_outcome`/`record_webhook_event`. |
-| Session control | `supabase/functions/dialer-session-{start,stop,pause,get,active,hangup-live}/index.ts` | Org-scoped auth via `requireTelnyxOrgRole`; owner/admin can act on any session in the org, an agent only their own. |
+| Session control | `supabase/functions/dialer-session-{start,stop,pause,reconnect,get,active,hangup-live}/index.ts` | Org-scoped auth via `requireTelnyxOrgRole`; owner/admin can act on any session in the org, an agent only their own. `-reconnect` (TASK-L1) re-dials the agent leg from `paused_agent_lost`. |
 | Webhook ingress | `supabase/functions/telnyx-webhook/index.ts` | Signature-verifies, requires `client_state` on `call.*` events, acks 200, processes async via `processTelnyxDialerEvent`. |
-| Client | `apps/web/src/hooks/useDialerSession.ts`, `apps/web/src/lib/api.ts` | Polls `dialer-session-get` (no realtime push — see gotchas). |
-| UI | `apps/web/src/components/Dialer.tsx`, `apps/web/src/components/dialer/*.tsx`, `CampaignManageModal.tsx` | Not rewritten for this task (E4); only adapted enough to compile against the new contract. |
-| Acceptance script | `scripts/dev/dialer-sim.ts` | `functions serve` + a mock Telnyx HTTP server + signed fake webhooks against the real local DB. Read its header before running it. |
+| Client | `apps/web/src/hooks/useDialerSession.ts`, `apps/web/src/lib/useTelnyxCall.ts`, `apps/web/src/lib/api.ts` | Polls `dialer-session-get` (no realtime push — see gotchas). `useTelnyxCall`'s optional `sessionId` (TASK-L1) makes it auto-answer the agent leg's own inbound call for that session and reject every other inbound call. |
+| UI | `apps/web/src/components/Dialer.tsx`, `apps/web/src/components/dialer/*.tsx`, `CampaignManageModal.tsx` | Not rewritten for this task (E4/L2b); TASK-L1 added only `components/dialer/AgentConnectionStatus.tsx` (pre-flight/Reconnect status) and the minimal wiring in `Dialer.tsx` to register the WebRTC client and show it. |
+| Acceptance | `supabase/functions/_shared/dialer-engine.test.ts` | `deno test`, in-memory fake Supabase client + the real `createTelnyxClient` with `fetch` stubbed — no DB, no Docker. `scripts/dev/dialer-sim.ts` (the old `functions serve` + real local Postgres script) is now UNRUNNABLE — local Docker is retired (RULES-CARD) — and is left as dead code, not deleted. |
 
 ## How it works
 
 1. `dialer-session-start` resolves the org's connected `TelnyxClient`, validates the campaign
    (`active`, not `deleted_at`, has a `caller_id_number_id`), checks no active session already
-   exists for this agent+campaign, inserts a `dial_sessions` row (`state='dialing'`), then calls
-   `refillSession`.
+   exists for this AGENT (TASK-L1/SEC-8: globally, not per-campaign — one SIP endpoint per
+   agent, backed by a live partial unique index), inserts a `dial_sessions` row
+   (`state='ready_pending'`, the schema's own default), then dials the agent's own WebRTC
+   credential SIP URI ("Go Ready" — `dialAgentLeg`). Dialing contacts does NOT start here
+   anymore; it waits for the agent leg's own `call.answered` (see step 1b).
+1b. The agent leg's `call.answered` (`processAgentLegEvent`/`handleAgentLegAnswered`) creates the
+   session's conference around it (first time) or joins it (Reconnect), then cascades
+   `ready_pending`/`paused_agent_lost` → `ready` → `on_call` (a contact leg is still `claimed` —
+   rejoining a live call after Reconnect) or `dialing` + an immediate `refillSession` (the normal
+   case). The agent leg's own `call.hangup` (`handleAgentLegLost`) moves the session to
+   `paused_agent_lost` and hangs up every active CONTACT leg that is NOT `claimed` — a live,
+   bridged contact is never hung up for an agent-leg problem. `dialer-session-reconnect` /
+   `reconnectAgentLeg` (Reconnect button) is the only way back from `paused_agent_lost`: it dials
+   a FRESH agent leg into the SAME conference.
 2. `refillSession`: `refillCount` is a fast-path hint only (zero unless `state='dialing'` AND the
-   agent leg reads `answered`, or the dev flag is set) — the real capacity decision now lives
+   agent leg reads `answered` — real code now, no dev-flag bypass exists) — the real capacity
+   decision now lives
    entirely inside `claim_next_leads(session)` (fix-forward, migration `20260924001900`): under
    a `dial_sessions` row lock held for the whole call, it computes `lines - active contact legs`
    itself and, in the SAME statement, inserts each claimed lead's `call_legs` row with a
@@ -167,10 +180,13 @@ them anymore — see "Not covered here" for what's actually dead versus still re
   `dialer-session-get`'s leg list orders by `created_at, id` for a deterministic (not
   necessarily priority-matching) display order — this is display-only, nothing reads
   `call_legs.created_at` for actual logic.
-- **No agent leg exists yet (E3).** `refillCount`'s "agent leg must be answered" gate is real
-  code, not a stub — nothing dials at all unless `DIALER_DEV_SKIP_AGENT_GATE=true` is set
-  server-side. Removing that flag before E3 lands a real WebRTC agent leg means the dial loop
-  never starts.
+- **`handleWin`'s loser-resolution loop predates the agent leg and is kind-agnostic by
+  default.** `loadActiveLegs` returns every active leg regardless of `kind`, and `loserActions`
+  (dialer-core.ts) has no concept of `kind` at all — without an explicit `.filter(l => l.kind
+  === 'contact')` before computing losers, the agent's own still-`answered` leg gets treated as
+  a losing contact and gets spoken to / hung up the instant any contact wins. A real bug, caught
+  by `dialer-engine.test.ts`'s first run (TASK-L1) before it ever shipped — any FUTURE change to
+  `loadActiveLegs`'s call sites needs the same filter if it doesn't want the agent leg mixed in.
 - **No realtime push.** The legacy engine's `_shared/dialer-events.ts`/`publishDialerEvent`
   broadcast (`dialer:user:{userId}`) has nothing publishing to it anymore — the new engine never
   calls it. `useDialerSession.ts` polls `dialer-session-get` every 3s instead while the session is
@@ -223,9 +239,14 @@ them anymore — see "Not covered here" for what's actually dead versus still re
   1. A pre-connect/hangup-pending contact leg (anything non-terminal except `claimed`) with no
      `webhook_events` row (or none ever, falling back to `created_at`) for over the threshold --
      ended as `failed`/`no_answer`, then `apply_leg_outcome`.
-  2. A session whose agent leg independently reached `ended` -- `paused_agent_lost`. No agent
-     legs exist yet (E3's job); this is a no-op in production today, exercised in tests via a
-     synthetic `kind='agent'` leg.
+  2. A session whose agent leg independently reached `ended` -- `paused_agent_lost`. Real agent
+     legs exist as of TASK-L1, so this is a genuine lost-webhook safety net now, not a no-op --
+     the fast path is `handleAgentLegLost` (dialer-engine.ts) reacting to the real `call.hangup`
+     webhook; this is the fallback if THAT webhook is ever lost. **Flag for TASK-L6 (this
+     sweeper's own next task):** its states-to-check list is `array['dialing','connecting',
+     'on_call','wrap_up']` — TASK-L1's own webhook-driven path treats `ready_pending`/`ready`/
+     `paused` as equally in-scope (`AGENT_ACTIVE_SESSION_STATES` in `dialer-engine.ts`). Worth
+     reconciling when L6 touches this function, not fixed here (out of this task's file list).
   3. In_flight leads a leg can no longer speak for: an ended leg with a decided outcome that
      never got applied (TASK-P2-E2's own carried item 5 -- `record_webhook_event` commits its
      dedupe row before processing runs, so a webhook whose processing throws after that commit

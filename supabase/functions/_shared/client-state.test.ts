@@ -1,8 +1,17 @@
 import { assertEquals, assertThrows } from 'jsr:@std/assert@1';
 import { decodeDialClientState, encodeDialClientState } from './client-state.ts';
 
-Deno.test('encodeDialClientState/decodeDialClientState: round-trips', () => {
-  const state = { org: 'org-1', session: 'session-1', leg: 'leg-1' };
+Deno.test(
+  'encodeDialClientState/decodeDialClientState: round-trips, kind defaults to contact',
+  () => {
+    const state = { org: 'org-1', session: 'session-1', leg: 'leg-1' };
+    const encoded = encodeDialClientState(state);
+    assertEquals(decodeDialClientState(encoded), { ...state, kind: 'contact' });
+  }
+);
+
+Deno.test('encodeDialClientState/decodeDialClientState: round-trips an explicit agent kind', () => {
+  const state = { org: 'org-1', session: 'session-1', leg: 'leg-1', kind: 'agent' as const };
   const encoded = encodeDialClientState(state);
   assertEquals(decodeDialClientState(encoded), state);
 });

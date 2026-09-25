@@ -9,6 +9,7 @@ import { ActiveCall } from './dialer/ActiveCall';
 import { CampaignStats } from './dialer/CampaignStats';
 import { useDialerSession } from '@/hooks/useDialerSession';
 import { ParallelDialerUI } from './dialer/ParallelDialerUI';
+import { AgentConnectionStatus } from './dialer/AgentConnectionStatus';
 import { getActiveDialerSession } from '@/lib/api';
 
 const REMOTE_AUDIO_ID = 'telnyx-remote-audio';
@@ -33,10 +34,6 @@ export function Dialer({
   const [callDuration, setCallDuration] = useState(0);
   const [outboundNumber, setOutboundNumber] = useState('');
 
-  const { callState, error, dial, hangup, setMuted } = useTelnyxCall({
-    remoteElementId: REMOTE_AUDIO_ID,
-  });
-
   /** When opening Dialer without launch context, restore active session so parallel UI can show. */
   const [restoredParallelContext, setRestoredParallelContext] = useState<{
     sessionId: string;
@@ -46,6 +43,47 @@ export function Dialer({
   const effectiveSessionId = parallelSessionId ?? restoredParallelContext?.sessionId ?? null;
   const effectiveCampaignId = parallelCampaignId ?? restoredParallelContext?.campaignId ?? null;
   const parallelSession = useDialerSession(effectiveSessionId);
+
+  // TASK-L1: sessionId (when a parallel session exists) makes this SAME hook instance also
+  // auto-answer the agent leg's inbound call for that session -- see useTelnyxCall.ts's own
+  // header comment. Outside parallel mode (manual single-line dialer), sessionId is undefined
+  // and behavior is unchanged from before this task.
+  const {
+    callState,
+    error,
+    dial,
+    hangup,
+    setMuted,
+    connect: connectAgentLine,
+    isReady: agentLineReady,
+    isConnecting: agentLineConnecting,
+  } = useTelnyxCall({
+    remoteElementId: REMOTE_AUDIO_ID,
+    sessionId: effectiveSessionId ?? undefined,
+  });
+
+  // Proactively register the WebRTC client the moment there's a parallel session to serve --
+  // the agent leg's inbound call has nowhere to be auto-answered until this has run. This is
+  // the closest this lane can get to AUD-7's "connect before Go Ready" pre-flight without
+  // editing CampaignManageModal.tsx's own Start Session button (owned by the other lane) --
+  // the actual hard backstop if a member skips this entirely is server-side
+  // (dialer-session-start's AGENT_NOT_REGISTERED, from dialer-engine.ts's agentSipUri).
+  useEffect(() => {
+    if (!effectiveSessionId) return;
+    if (agentLineReady || agentLineConnecting) return;
+    connectAgentLine().catch(() => {
+      // Surfaced via useTelnyxCall's own `error` state; AgentConnectionStatus renders it.
+    });
+  }, [effectiveSessionId, agentLineReady, agentLineConnecting, connectAgentLine]);
+
+  const handleReconnectAgentLine = useCallback(async () => {
+    try {
+      await parallelSession.reconnect();
+      toast.success('Reconnecting your line…');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to reconnect');
+    }
+  }, [parallelSession.reconnect]);
 
   useEffect(() => {
     if (parallelSessionId != null) return;
@@ -192,6 +230,16 @@ export function Dialer({
             <div className="w-10 h-10 border-2 border-[#00D9FF] border-t-transparent rounded-full animate-spin mb-4" />
             <p className="text-white font-medium">Loading parallel dialing session…</p>
           </div>
+        )}
+        {isParallelMode && !isParallelLoading && !parallelSession.error && (
+          <AgentConnectionStatus
+            sessionState={parallelSession.session?.state ?? null}
+            webrtcReady={agentLineReady}
+            webrtcConnecting={agentLineConnecting}
+            webrtcError={error}
+            onReconnect={() => void handleReconnectAgentLine()}
+            reconnecting={parallelSession.loading}
+          />
         )}
         {isParallelMode && !isParallelLoading && !parallelSession.error && (
           <ParallelDialerUI

@@ -389,6 +389,55 @@ automatically inherit it), SMS STOP handling, and GHL push of DNC (already exist
 
 ---
 
+## 14. ~~The agent audio path was 0% built — `DIALER_DEV_SKIP_AGENT_GATE` was the only reason the dialer could dial at all~~ — FIXED by TASK-L1 (2026-09-25)
+
+**AUD-1/2/3/5/6/7, UI-6, BUG-8, SEC-8, audit/final.json.** Confirmed by the TASK-A2 audit
+(`audit/findings-eng2.md`): no code created a `kind='agent'` `call_legs` row, joined a WebRTC
+client into a session conference, or read a real agent `call_control_id` anywhere. With
+`DIALER_DEV_SKIP_AGENT_GATE` unset (the only safe production setting), `refillCount` refused to
+dial anything at all; with it set, nothing ever bridged the intern into a live call.
+
+Fixed: `startSession` now dials the agent's own WebRTC on-demand credential SIP URI ("Go
+Ready") before ever dialing a contact; the agent leg's own `call.answered`
+(`processAgentLegEvent`/`handleAgentLegAnswered`, `_shared/dialer-engine.ts`) creates the
+session's conference and cascades `ready_pending`/`paused_agent_lost` → `ready` →
+`on_call`/`dialing`. `agentLegTransition` (`_shared/dialer-core.ts`) is the agent leg's own
+tiny state machine. The agent leg's own `call.hangup` (`handleAgentLegLost`) moves the session
+to `paused_agent_lost` and hangs up every active contact leg that is NOT `claimed` — a live,
+bridged contact is never hung up for an agent-leg problem — and `dialer-session-reconnect`
+re-dials a fresh agent leg into the same conference. `DIALER_DEV_SKIP_AGENT_GATE` no longer
+exists anywhere in the codebase (`scripts/dev/dialer-sim.ts` still references it in comments —
+that script is itself dead code now, see below).
+
+A real, previously-shipping bug was caught building this: `handleWin`'s loser-resolution loop
+(`loadActiveLegs` + `loserActions`, both written before an agent leg ever existed, kind-
+agnostic by default) was treating the agent's own still-`answered` leg as a losing contact —
+speaking to it / hanging it up the instant any real contact won. Fixed by filtering to
+`kind==='contact'` before computing losers. Caught by `dialer-engine.test.ts`'s first run, not
+by inspection.
+
+**Also newly true, worth remembering:** an agent can now have only one non-terminal
+`dial_sessions` row, GLOBALLY (not per campaign) — enforced by a partial unique index
+(`dial_sessions_one_active_per_agent`, `20260925005000`). This is a real invariant, not just a
+race-closing nicety: one agent has exactly one WebRTC/SIP endpoint, so they physically cannot be
+bridged into two sessions' conferences at once.
+
+**Also newly relevant for whoever next touches `dialer-sweeper`:** its own agent-leg-lost
+reconciliation (`run_dialer_sweep`'s step 2, previously a documented no-op "until E3 lands") is
+now a genuine, live lost-webhook safety net, not a no-op — but its states-to-check list
+(`array['dialing','connecting','on_call','wrap_up']`) doesn't yet match the webhook-driven
+path's own `AGENT_ACTIVE_SESSION_STATES` (which also treats `ready_pending`/`ready`/`paused` as
+in-scope). Flagged for TASK-L6, not fixed in TASK-L1 (out of that task's file list).
+
+**Acceptance note:** the task's original "mock-sim script" acceptance style
+(`scripts/dev/dialer-sim.ts`, `functions serve` + a real local Postgres) requires `supabase
+start`, which is now forbidden — local Docker is retired (RULES-CARD, this run's launch-
+blockers phase). Replaced with `dialer-engine.test.ts`: `deno test` against an in-memory fake
+Supabase client + the real `createTelnyxClient` with `fetch` stubbed. `dialer-sim.ts` itself is
+left as unrunnable dead code, not deleted — fixing/removing it is out of scope here.
+
+---
+
 ## Not issues — deliberate, documented elsewhere
 
 - Redis alongside Postgres → `mem.decisions`

@@ -11,9 +11,17 @@ import { startSession } from '../_shared/dialer-engine.ts';
  * Behavior change from the legacy function: no `fromNumber`/`agentCallControlId`/
  * `agentCallbackNumber` request fields anymore. The caller ID now comes from the
  * campaign's own `caller_id_number_id` (added TASK-P2-P1) -- a campaign, not a per-session
- * choice -- and there is no agent leg yet at all (E3 builds the real WebRTC agent leg;
- * until then DIALER_DEV_SKIP_AGENT_GATE=true is required server-side for dialing to
- * actually start, since refillCount refuses to dial without an answered agent leg).
+ * choice.
+ *
+ * TASK-L1: `startSession` now dials the real agent WebRTC leg ("Go Ready") instead of
+ * dialing contacts immediately -- the session starts 'ready_pending' and only reaches
+ * 'dialing' once the agent leg answers (see dialer-engine.ts's header). The active-session
+ * check below is now per-AGENT, not per-campaign (SEC-8: an agent has exactly one SIP
+ * endpoint, so they can only ever be in one session at a time, regardless of campaign) --
+ * backed by a live partial unique index (`dial_sessions_one_active_per_agent`,
+ * `20260925005000`); the catch block maps its violation (surfaced as
+ * `ACTIVE_SESSION_EXISTS_FOR_AGENT` from startSession) to the same 409 shape as this
+ * proactive check, closing the check-then-insert race.
  */
 
 interface StartBody {
@@ -91,10 +99,11 @@ Deno.serve(async (req) => {
       });
     }
 
+    // Per-agent, not per-campaign (SEC-8) -- see this file's header. `dial_sessions_one_active_
+    // per_agent` (live) enforces this for real; this is the fast, clean-error proactive path.
     const { data: existing, error: existingError } = await supabase
       .from('dial_sessions')
       .select('id')
-      .eq('campaign_id', campaignId)
       .eq('agent_id', user.id)
       .in('state', [
         'ready_pending',
@@ -104,12 +113,14 @@ Deno.serve(async (req) => {
         'on_call',
         'wrap_up',
         'paused',
+        'paused_agent_lost',
       ])
       .maybeSingle();
     if (existingError) return jsonResponse(500, { error: existingError.message });
     if (existing) {
       return jsonResponse(409, {
-        error: 'An active dialer session already exists for this campaign.',
+        error:
+          'You already have an active dialer session. Stop or reconnect it before starting another.',
         code: 'ACTIVE_SESSION_EXISTS',
         existingSessionId: existing.id,
       });
@@ -137,6 +148,23 @@ Deno.serve(async (req) => {
       return jsonResponse(400, {
         error: 'This campaign is no longer active, so a dial session cannot be started.',
         code: 'CAMPAIGN_NOT_ACTIVE',
+      });
+    }
+    // SEC-8 TOCTOU fallback: another request inserted a session for this same agent between
+    // the proactive check above and this INSERT. startSession (dialer-engine.ts) maps the live
+    // partial unique index's violation to this exact message.
+    if (msg.includes('ACTIVE_SESSION_EXISTS_FOR_AGENT')) {
+      return jsonResponse(409, {
+        error:
+          'You already have an active dialer session. Stop or reconnect it before starting another.',
+        code: 'ACTIVE_SESSION_EXISTS',
+      });
+    }
+    if (msg.includes('AGENT_NOT_REGISTERED')) {
+      return jsonResponse(400, {
+        error:
+          'Your WebRTC client is not registered yet. Connect it (mic permission + WebRTC token) before starting.',
+        code: 'AGENT_NOT_REGISTERED',
       });
     }
     console.error('dialer-session-start error:', err);
