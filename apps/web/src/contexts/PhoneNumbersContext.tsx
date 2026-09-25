@@ -7,6 +7,12 @@ export interface UserPhoneNumber {
   phone_number: string;
   telnyx_phone_number_id: string;
   created_at: string;
+  /** TASK-N1 (CID-1, CID-2, ADM-5): null = unassigned (the team pool). */
+  assigned_user_id: string | null;
+  status: 'active' | 'resting' | 'retired';
+  resting_until: string | null;
+  daily_cap: number;
+  dials_today: number;
 }
 
 interface PhoneNumbersContextValue {

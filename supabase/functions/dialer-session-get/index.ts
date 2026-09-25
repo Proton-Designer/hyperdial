@@ -37,7 +37,7 @@ Deno.serve(async (req) => {
     const { data: session, error: sessionError } = await supabase
       .from('dial_sessions')
       .select(
-        'id, org_id, campaign_id, agent_id, state, lines, amd_mode, agent_leg_id, active_leg_id, conference_id, started_at, ended_at, updated_at'
+        'id, org_id, campaign_id, agent_id, state, lines, amd_mode, agent_leg_id, active_leg_id, conference_id, started_at, ended_at, updated_at, pause_reason'
       )
       .eq('id', sessionId)
       .maybeSingle();

@@ -99,12 +99,23 @@ Deno.serve(async (req) => {
         code: 'CAMPAIGN_NOT_ACTIVE',
       });
     }
+    // TASK-N1: a pool-only org (no legacy campaign.caller_id_number_id ever set) must still be
+    // able to Go Ready -- the agent leg's own dial (agentDialFromNumber, dialer-engine.ts) falls
+    // back to ANY org-owned number when the legacy field is empty, so the only real requirement
+    // is that the org owns at least one phone number at all, not that THIS campaign has a fixed
+    // one. A campaign with its own caller_id_number_id set skips this extra check entirely.
     if (!campaign.caller_id_number_id) {
-      return jsonResponse(400, {
-        error:
-          'This campaign has no caller ID number set. Choose one in the campaign settings first.',
-        code: 'MISSING_CALLER_ID',
-      });
+      const { count: numberCount, error: numberCountError } = await supabase
+        .from('user_phone_numbers')
+        .select('id', { count: 'exact', head: true })
+        .eq('org_id', orgId);
+      if (numberCountError) return jsonResponse(500, { error: numberCountError.message });
+      if (!numberCount) {
+        return jsonResponse(400, {
+          error: 'This org has no phone numbers yet. Buy one in Settings first.',
+          code: 'MISSING_CALLER_ID',
+        });
+      }
     }
 
     // Review fix (L1 round-3 review-notes-r3.md, MAJOR 1): owners/admins may start any org

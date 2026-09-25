@@ -83,7 +83,7 @@ function matchesFilters(row: Row, filters: [string, 'eq' | 'neq' | 'is', unknown
 
 class FakeQuery implements PromiseLike<{ data: unknown; error: null }> {
   private filters: [string, 'eq' | 'neq' | 'is', unknown][] = [];
-  private mode: 'select' | 'insert' | 'update' = 'select';
+  private mode: 'select' | 'insert' | 'update' | 'delete' = 'select';
   private payload: Row = {};
   private singleMode: 'single' | 'maybeSingle' | null = null;
   private limitCount: number | null = null;
@@ -105,6 +105,10 @@ class FakeQuery implements PromiseLike<{ data: unknown; error: null }> {
   update(payload: Row): this {
     this.mode = 'update';
     this.payload = payload;
+    return this;
+  }
+  delete(): this {
+    this.mode = 'delete';
     return this;
   }
   eq(col: string, val: unknown): this {
@@ -144,6 +148,12 @@ class FakeQuery implements PromiseLike<{ data: unknown; error: null }> {
       for (const row of rows) Object.assign(row, this.payload);
       return { data: null, error: null };
     }
+    if (this.mode === 'delete') {
+      const table = this.db.table(this.table);
+      const rows = [...table.values()].filter((r) => matchesFilters(r, this.filters));
+      for (const row of rows) table.delete(row.id as string);
+      return { data: null, error: null };
+    }
     // select
     let rows = [...this.db.table(this.table).values()].filter((r) =>
       matchesFilters(r, this.filters)
@@ -173,6 +183,7 @@ const TRANSITION_SESSION_FIELDS = [
   'conference_id',
   'ended_at',
   'paused_agent_lost_from',
+  'pause_reason',
 ];
 
 /** Same masking-bug class as TRANSITION_SESSION_FIELDS above (M4) -- transition_leg's fake used
@@ -190,6 +201,31 @@ const TRANSITION_LEG_FIELDS = [
   'ended_at',
   'duration_seconds',
 ];
+
+/** TASK-N1: UTC calendar day, matching the real SQL's `(now() at time zone 'utc')::date`. */
+function fakeToday(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function fakeDialsToday(db: FakeDb, numberId: string, today: string): number {
+  const usage = db.table('number_daily_usage').get(`${numberId}|${today}`);
+  return (usage?.dials as number | undefined) ?? 0;
+}
+
+function reactivateRestedNumbers(db: FakeDb, orgId: string): void {
+  const now = Date.now();
+  for (const n of db.table('user_phone_numbers').values()) {
+    if (
+      n.org_id === orgId &&
+      n.status === 'resting' &&
+      typeof n.resting_until === 'string' &&
+      new Date(n.resting_until).getTime() <= now
+    ) {
+      n.status = 'active';
+      n.resting_until = null;
+    }
+  }
+}
 
 function rpc(
   db: FakeDb,
@@ -332,6 +368,74 @@ function rpc(
         if (session && session.active_leg_id === leg.id) session.active_leg_id = null;
       }
       return { data: null, error: null };
+    }
+
+    // TASK-N1: both mirror private.reactivate_rested_numbers/has_available_dial_number's own
+    // SQL exactly (20260925070000_number_pool.sql) -- same reactivation-then-check shape.
+    case 'has_available_dial_number': {
+      const orgId = args.p_org_id as string;
+      const agentId = args.p_agent_id as string;
+      reactivateRestedNumbers(db, orgId);
+      const today = fakeToday();
+      const available = [...db.table('user_phone_numbers').values()].some((n) => {
+        if (n.org_id !== orgId || n.status !== 'active') return false;
+        if (n.assigned_user_id != null && n.assigned_user_id !== agentId) return false;
+        const dials = fakeDialsToday(db, n.id as string, today);
+        return dials < (n.daily_cap as number);
+      });
+      return { data: available, error: null };
+    }
+
+    case 'pick_and_reserve_dial_number': {
+      const orgId = args.p_org_id as string;
+      const agentId = args.p_agent_id as string;
+      const contactPhone = args.p_contact_phone as string;
+      reactivateRestedNumbers(db, orgId);
+      const today = fakeToday();
+      const restDays =
+        (db.table('org_number_pool_settings').get(orgId)?.rest_days as number | undefined) ?? 2;
+      const areaCodeMatch = /^\+1\d{10}$/.test(contactPhone) ? contactPhone.slice(2, 5) : null;
+
+      const candidates = [...db.table('user_phone_numbers').values()].filter((n) => {
+        if (n.org_id !== orgId || n.status !== 'active') return false;
+        if (n.assigned_user_id != null && n.assigned_user_id !== agentId) return false;
+        const dials = fakeDialsToday(db, n.id as string, today);
+        return dials < (n.daily_cap as number);
+      });
+      candidates.sort((a, b) => {
+        const aAssigned = a.assigned_user_id === agentId ? 1 : 0;
+        const bAssigned = b.assigned_user_id === agentId ? 1 : 0;
+        if (aAssigned !== bAssigned) return bAssigned - aAssigned;
+        const aAreaMatch =
+          areaCodeMatch && (a.phone_number as string).slice(2, 5) === areaCodeMatch ? 1 : 0;
+        const bAreaMatch =
+          areaCodeMatch && (b.phone_number as string).slice(2, 5) === areaCodeMatch ? 1 : 0;
+        if (aAreaMatch !== bAreaMatch) return bAreaMatch - aAreaMatch;
+        return (
+          fakeDialsToday(db, a.id as string, today) - fakeDialsToday(db, b.id as string, today)
+        );
+      });
+      const chosen = candidates[0];
+      if (!chosen) return { data: null, error: null };
+
+      const usageId = `${chosen.id}|${today}`;
+      const usage = db.table('number_daily_usage').get(usageId);
+      const newDials = ((usage?.dials as number | undefined) ?? 0) + 1;
+      if (usage) usage.dials = newDials;
+      else
+        db.insert('number_daily_usage', {
+          id: usageId,
+          number_id: chosen.id,
+          org_id: orgId,
+          day: today,
+          dials: newDials,
+        });
+
+      if (newDials >= (chosen.daily_cap as number)) {
+        chosen.status = 'resting';
+        chosen.resting_until = new Date(Date.now() + restDays * 24 * 60 * 60 * 1000).toISOString();
+      }
+      return { data: chosen.id, error: null };
     }
 
     default:
@@ -2323,6 +2427,184 @@ Deno.test(
       const result = await stopSession(supabase, orgId, sessionId);
       assertEquals(result, { ok: true });
       assertEquals(db.table('dial_sessions').get(sessionId)!.state, 'stopped');
+    } finally {
+      restoreFetch();
+    }
+  }
+);
+
+// ---------------------------------------------------------------------------
+// TASK-N1: caller-ID number pool (CID-1, CID-2, ADM-5, CID-5).
+//
+// The pool's own selection/priority-order/cap/resting SQL logic (private.pick_and_reserve_
+// dial_number / private.has_available_dial_number, 20260925070000_number_pool.sql) is verified
+// against the REAL migration by audit/N1/dryrun-tests.sql, same as claim_next_leads' own
+// selection logic -- the fake `rpc()` cases above mirror that SQL closely enough for the
+// engine tests below to exercise real dialer-engine.ts orchestration (does it call the right
+// RPC, does it wire a returned number into the actual dial, does it recover correctly from a
+// null result), not to re-prove the SQL's own correctness a second time.
+// ---------------------------------------------------------------------------
+
+/** No legacy caller_id_number_id, no ELIGIBLE user_phone_numbers -- but the org still owns one
+ *  RETIRED number (so the agent leg's own dial -- out of the pool's scope entirely, see
+ *  agentDialFromNumber's header -- still has something to dial `from`; a pool-only org never
+ *  needs a legacy campaign number, just at least one number ever purchased). */
+function seedFixturesNoNumbers(db: FakeDb) {
+  const orgId = 'org-n1';
+  const agentId = 'agent-n1';
+  const campaignId = 'campaign-n1';
+
+  db.insert('orgs', { id: orgId, name: 'N1 Fixture Org' });
+  db.insert('org_telephony', {
+    id: 'telephony-n1',
+    org_id: orgId,
+    status: 'connected',
+    call_control_app_id: 'cca-n1',
+    credential_connection_id: 'cred-conn-n1',
+  });
+  db.insert('org_members', {
+    id: 'member-n1',
+    org_id: orgId,
+    user_id: agentId,
+    telnyx_credential_id: 'cred-n1',
+  });
+  db.insert('user_phone_numbers', {
+    id: 'retired-1',
+    org_id: orgId,
+    phone_number: '+15125559999',
+    status: 'retired',
+    daily_cap: 100,
+    assigned_user_id: null,
+  });
+  db.insert('campaigns', {
+    id: campaignId,
+    org_id: orgId,
+    name: 'N1 Fixture Campaign',
+    abandon_message_enabled: true,
+    caller_id_number_id: null,
+  });
+  for (const [i, contactId] of ['contact-n1', 'contact-n2'].entries()) {
+    db.insert('contacts', { id: contactId, phone_number: `+1555000200${i + 1}` });
+    db.insert('campaign_leads', {
+      id: `lead-n${i + 1}`,
+      campaign_id: campaignId,
+      contact_id: contactId,
+      status: 'queued',
+      position: i + 1,
+    });
+  }
+  return { orgId, agentId, campaignId };
+}
+
+Deno.test(
+  'TASK-N1: no pool number and no legacy caller ID -> refillSession pauses before claiming any lead',
+  async () => {
+    const db = new FakeDb();
+    const server = new FakeTelnyxServer();
+    const restoreFetch = stubTelnyxFetch(server);
+    const supabase = createFakeSupabase(db);
+    const { orgId, campaignId, agentId } = seedFixturesNoNumbers(db);
+    try {
+      const { sessionId } = await startSession(supabase, {
+        orgId,
+        campaignId,
+        agentId,
+        lines: 2,
+        amdMode: 'off',
+      });
+      const agentLeg = [...db.table('call_legs').values()].find((l) => l.kind === 'agent')!;
+      await processTelnyxDialerEvent(
+        supabase,
+        agentEvent(
+          orgId,
+          sessionId,
+          agentLeg.id as string,
+          agentLeg.call_control_id as string,
+          'call.answered'
+        )
+      );
+
+      const session = db.table('dial_sessions').get(sessionId)!;
+      assertEquals(session.state, 'paused');
+      assertEquals(session.pause_reason, 'no_numbers_available');
+      assertEquals(
+        [...db.table('call_legs').values()].filter((l) => l.kind === 'contact').length,
+        0,
+        'no lead should ever be claimed if there is nothing to dial it with'
+      );
+      assertEquals(
+        [...db.table('campaign_leads').values()].every((l) => l.status === 'queued'),
+        true,
+        'every lead must stay queued, untouched'
+      );
+    } finally {
+      restoreFetch();
+    }
+  }
+);
+
+Deno.test(
+  'TASK-N1: a pool number is used as the dial from-number and persisted on the leg; hitting its cap mid-batch releases the next lead and pauses the session',
+  async () => {
+    const db = new FakeDb();
+    const server = new FakeTelnyxServer();
+    const restoreFetch = stubTelnyxFetch(server);
+    const supabase = createFakeSupabase(db);
+    const { orgId, campaignId, agentId } = seedFixturesNoNumbers(db);
+    db.insert('user_phone_numbers', {
+      id: 'pool-1',
+      org_id: orgId,
+      phone_number: '+15125550000',
+      status: 'active',
+      daily_cap: 1,
+      assigned_user_id: null,
+    });
+    try {
+      const { sessionId } = await startSession(supabase, {
+        orgId,
+        campaignId,
+        agentId,
+        lines: 2,
+        amdMode: 'off',
+      });
+      const agentLeg = [...db.table('call_legs').values()].find((l) => l.kind === 'agent')!;
+      await processTelnyxDialerEvent(
+        supabase,
+        agentEvent(
+          orgId,
+          sessionId,
+          agentLeg.id as string,
+          agentLeg.call_control_id as string,
+          'call.answered'
+        )
+      );
+
+      const contactLegs = [...db.table('call_legs').values()].filter((l) => l.kind === 'contact');
+      assertEquals(contactLegs.length, 1, 'only the first lead could actually be dialed');
+      const dialedLeg = contactLegs[0];
+      assertEquals(dialedLeg.from_number_id, 'pool-1');
+      const dialReq = server.calls.get(dialedLeg.call_control_id as string)!;
+      assertEquals(dialReq.body.from, '+15125550000');
+
+      assertEquals(
+        db.table('user_phone_numbers').get('pool-1')!.status,
+        'resting',
+        'the only number must be resting once its cap (1) is hit'
+      );
+
+      const dialedLeadId = dialedLeg.lead_id as string;
+      const strandedLead = [...db.table('campaign_leads').values()].find(
+        (l) => l.id !== dialedLeadId
+      )!;
+      assertEquals(
+        strandedLead.status,
+        'queued',
+        'the second lead must be released back to queued, not left in_flight'
+      );
+
+      const session = db.table('dial_sessions').get(sessionId)!;
+      assertEquals(session.state, 'paused');
+      assertEquals(session.pause_reason, 'no_numbers_available');
     } finally {
       restoreFetch();
     }

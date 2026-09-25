@@ -204,6 +204,31 @@ unpaused-count detection) — B13 above only covers what a real GHL round trip a
 add on top of that: the Settings editor actually persisting, and the retroactive `campaign_leads`
 status change actually happening against a live campaign.
 
+### B14 — Caller-ID number pool: daily caps, rest days, manager assignment (TASK-N1, CID-1/CID-2/ADM-5/CID-5) — **needs a real Telnyx call to exercise the actual dial**
+
+| #     | Step                                                                                                                                                                                                                                                                                                                                                                                                 | Expected                                                                                                                                                                                                                              | ☐   |
+| ----- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --- |
+| B14.1 | Settings → Telephony → Phone Numbers. Confirm the org defaults panel shows "Default daily cap" 100 and "Rest days after cap" 2, and every existing number shows real status/cap/dials-today/resting-until (not the old hardcoded "Active" badge).                                                                                                                                                    | Values load from `org_number_pool_settings`/`user_phone_numbers`, not placeholders.                                                                                                                                                   | ☐   |
+| B14.2 | Owner/admin: lower the default cap to something small (e.g. 3) and Save. Buy or note a fresh number.                                                                                                                                                                                                                                                                                                 | The new number's own cap column shows 3 — new purchases honor the CURRENT org default, not the schema's 100 default.                                                                                                                  | ☐   |
+| B14.3 | Owner/admin: assign a number to a specific intern via the "Assigned to" select.                                                                                                                                                                                                                                                                                                                      | The row updates immediately; reload confirms it persisted. As that intern, Settings still shows nothing (Telephony stays owner/admin-only by design — see decisions.md), but the Dialer idle screen (B14.6) does.                     | ☐   |
+| B14.4 | As an agent (not owner/admin), try updating `user_phone_numbers` directly (e.g. via the Supabase dashboard's own SQL editor logged in as that user, or just trust the dry-run's RLS coverage) — this step is a note, not a click-through: ADM-5's negative case is covered by `audit/N1/dryrun-tests.sql`'s RLS assertions, not a UI control (there is no reassign button exposed to agents at all). | N/A — documents why there's no B14.4 UI step to click.                                                                                                                                                                                | ☐   |
+| B14.5 | Start a session on a campaign whose agent is assigned a low-cap number (e.g. cap 2) and dial two contacts that actually connect through AMD to a real, distinct outbound leg each.                                                                                                                                                                                                                   | Both dials use the assigned number as caller ID (check `call_legs.from_number_id` via the Supabase dashboard, or Telnyx's own call log for the "from" shown). After the 2nd dial, the number's status flips to `resting` in Settings. | ☐   |
+| B14.6 | With that agent's ONLY usable number now resting (and no other pool number assigned/unassigned available, and the campaign has no legacy caller ID set), start or continue a session.                                                                                                                                                                                                                | The session pauses itself with the banner "All your numbers have hit today's dial limit" (not a crash, not silent). The Dialer idle screen shows "Your numbers: 0 active, 1 resting" before starting.                                 | ☐   |
+| B14.7 | Add contacts with phone numbers in the same area code as one of the org's pool numbers, and a different area code for another. Dial both (multi-line session, more than one available pool number, none assigned to this agent).                                                                                                                                                                     | The area-code-matching pool number is preferred for the matching contact over an equally-eligible, non-matching pool number (check `from_number_id` per leg).                                                                         | ☐   |
+
+The selection priority order (assigned → pool → legacy fallback, with area-code preference and
+fewest-dials as tiebreaks), the cap → resting flip, sequential-call increment safety, and RLS
+(ADM-5: an agent cannot reassign a number) are all covered by `audit/N1/dryrun-tests.sql` against a
+rolled-back live transaction — B14 above covers only what a real multi-line session with real
+Telnyx calls can add on top of that: numbers actually showing up as the real dial's `from`, and the
+pause banner actually appearing live. The ~2-day rest period itself is not practically waitable
+within a test session; `resting_until` being set correctly is covered by the dry-run instead.
+
+**Known open item (not a bug):** once a pool is exhausted for an agent, a campaign that still has
+its own legacy `caller_id_number_id` set keeps dialing from that fixed number rather than pausing —
+uncapped, untracked, by design (decisions.md's own TASK-N1 entry). Don't re-report this as "the cap
+didn't stop it" unless the campaign has actually cleared its legacy caller ID too.
+
 ---
 
 ## C. Evidence to capture
@@ -245,3 +270,15 @@ status change actually happening against a live campaign.
 - **No delete/remove control on the voicemail-drop upload UI** (TASK-F-T3): Settings → Voicemail
   drop can upload/replace a file but has no button to clear one back to "unset." Re-uploading is
   the only way to change it today; tracked as a minor gap, not a launch blocker.
+- **Interns have no Settings view of the number pool** (TASK-N1): the Telephony tab stays
+  owner/admin-only (a standing invariant that predates this task) — an intern's own read-only
+  visibility is the Dialer idle screen's "Your numbers: N active, M resting" line instead. See
+  decisions.md's TASK-N1 entry (decision 4). Don't re-report the missing Settings view for agents.
+- **A capped-out pool spills over onto a campaign's legacy caller ID, uncapped** (TASK-N1): by
+  design, per the task's own priority order (assigned → pool → legacy fallback) — see decisions.md.
+  Clear a campaign's legacy caller ID once its pool is fully set up if a hard cap with no spillover
+  is actually wanted.
+- **No per-number cap override in the UI** (TASK-N1): a number's `daily_cap` is set once at
+  purchase time (from the org's current default) and is otherwise only changeable by hand in the
+  database — the UI shows it but doesn't offer a per-row editor. Tracked as a minor gap, not a
+  launch blocker; the org-level default is the intended day-to-day lever.

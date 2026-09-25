@@ -22,6 +22,11 @@ const FIXTURE_NUMBERS: UserPhoneNumber[] = [
     phone_number: '+15125550100',
     telnyx_phone_number_id: 'tn-1',
     created_at: new Date().toISOString(),
+    assigned_user_id: null,
+    status: 'active',
+    resting_until: null,
+    daily_cap: 100,
+    dials_today: 0,
   },
 ];
 

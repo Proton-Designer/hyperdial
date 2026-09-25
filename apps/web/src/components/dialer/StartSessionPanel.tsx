@@ -1,6 +1,7 @@
 import { Phone, Play, Users } from 'lucide-react';
 import type { CampaignWithStats } from '@/lib/api';
 import type { UserPhoneNumber } from '@/contexts/PhoneNumbersContext';
+import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/app/EmptyState';
 import { ListSkeleton } from '@/components/app/skeletons';
@@ -45,12 +46,28 @@ export function StartSessionPanel({
   onOpenConflict,
   onDismissConflict,
 }: StartSessionPanelProps) {
+  const { user } = useAuth();
+  // TASK-N1: numbers this intern could actually dial from -- assigned to them, or unassigned
+  // (the team pool). RLS lets every org member SEE the whole org's numbers (needed to pick a
+  // caller ID while dialing), so a number assigned to a DIFFERENT intern must be excluded here
+  // or this count would misleadingly include numbers this agent can never actually be picked
+  // for.
+  const myNumbers = userNumbers.filter(
+    (n) => n.assigned_user_id === null || n.assigned_user_id === user?.id
+  );
   return (
     <div className="max-w-3xl mx-auto mb-8">
       <h2 className="text-page-title text-text-primary mb-1">Start a session</h2>
       <p className="text-body text-text-secondary mb-6">
         Pick a campaign below. We'll register your phone line first, then start dialing.
       </p>
+
+      {myNumbers.length > 0 && (
+        <p className="text-meta text-text-muted mb-6">
+          Your numbers: {myNumbers.filter((n) => n.status === 'active').length} active,{' '}
+          {myNumbers.filter((n) => n.status === 'resting').length} resting
+        </p>
+      )}
 
       {conflict && (
         <div className="rounded-app-lg border border-warning/30 bg-warning-soft p-4 mb-6 flex items-center justify-between gap-4">

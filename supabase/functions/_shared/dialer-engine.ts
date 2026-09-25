@@ -207,6 +207,12 @@ interface DialSessionRow {
    *  Reconnect's cascade can tell "was manually paused" apart from "was rolling dialing" --
    *  see the migration's own header for why this is only used for the `paused` case. */
   paused_agent_lost_from: string | null;
+  /** TASK-N1: set by refillSession when no dial-able number exists at all (pool exhausted/
+   *  resting AND no legacy campaign.caller_id_number_id) -- the ONLY reason value in use today
+   *  is 'no_numbers_available'. Not CHECK-constrained (see the migration's own comment); read
+   *  only while `state === 'paused'`, cleared on resume/manual-pause so a stale value from a
+   *  past pause can never be misread once the session has moved on. */
+  pause_reason: string | null;
 }
 
 interface CampaignRow {
@@ -250,12 +256,16 @@ interface CallLegRow {
    *  `ctx.voicemailDrop` -- a single decision, made once, never re-derived a second time from
    *  campaign/attempt/file lookups that could drift from the first answer. */
   voicemail_drop_path: string | null;
+  /** TASK-N1: which pool number this leg actually dialed from -- null for the agent leg (out of
+   *  this task's scope, see resolveDialNumberForLeg's own header) and for a leg dialed via the
+   *  legacy campaign.caller_id_number_id fallback (that tier has no row to point at). */
+  from_number_id: string | null;
 }
 
 const SESSION_COLUMNS =
-  'id, org_id, campaign_id, agent_id, state, lines, amd_mode, agent_leg_id, active_leg_id, conference_id, paused_agent_lost_from';
+  'id, org_id, campaign_id, agent_id, state, lines, amd_mode, agent_leg_id, active_leg_id, conference_id, paused_agent_lost_from, pause_reason';
 const LEG_COLUMNS =
-  'id, org_id, session_id, campaign_id, contact_id, lead_id, kind, call_control_id, state, answered_at, claimed_at, bridged_at, voicemail_drop_path';
+  'id, org_id, session_id, campaign_id, contact_id, lead_id, kind, call_control_id, state, answered_at, claimed_at, bridged_at, voicemail_drop_path, from_number_id';
 
 async function loadSession(
   supabase: SupabaseClient,
@@ -323,6 +333,12 @@ async function loadOrgName(supabase: SupabaseClient, orgId: string): Promise<str
   return (data?.name as string | undefined) ?? null;
 }
 
+/** The campaign's own fixed caller ID. Still used, unchanged, for the agent leg's own dial (see
+ *  `dialAgentLegInternal`) -- TASK-N1's pool is scoped to CONTACT-facing dials, where per-number
+ *  spam-flagging risk from volume actually accumulates. The agent leg is an internal dial to the
+ *  agent's own WebRTC device, never seen by an external network as a "from" number in the sense
+ *  CID-1/CID-2 care about, so rotating/capping it would add nothing. Also used, unchanged, as
+ *  TASK-N1's own tier-3 legacy fallback for contact dials (see `resolveDialNumberForLeg`). */
 async function resolvedFromNumber(
   supabase: SupabaseClient,
   orgId: string,
@@ -336,6 +352,76 @@ async function resolvedFromNumber(
     .eq('org_id', orgId)
     .maybeSingle();
   return (data?.phone_number as string | undefined) ?? null;
+}
+
+/**
+ * TASK-N1: the agent leg's own dial (see `resolvedFromNumber`'s header for why it's out of the
+ * pool's scope entirely -- no cap, no rest, no assignment check) still needs SOME valid E.164
+ * value for Telnyx's `from` field, even though nothing external ever sees it. Before this task,
+ * that was always `campaign.caller_id_number_id` -- but requiring every campaign to keep a fixed
+ * legacy number just so its agent leg can dial defeats the whole point of a pool-only org (one
+ * that never sets a legacy number at all). Falls back to ANY phone number the org owns
+ * (regardless of status/assignment -- again, this dial is never billed against or rate-limited)
+ * so a pool-only org's sessions still start; only a genuinely number-less org (nothing ever
+ * purchased) still fails here, which is a real, correct failure (there is nothing at all to
+ * dial `from`).
+ */
+async function agentDialFromNumber(
+  supabase: SupabaseClient,
+  orgId: string,
+  campaign: CampaignRow
+): Promise<string | null> {
+  const legacyNumber = await resolvedFromNumber(supabase, orgId, campaign);
+  if (legacyNumber) return legacyNumber;
+  const { data } = await supabase
+    .from('user_phone_numbers')
+    .select('phone_number')
+    .eq('org_id', orgId)
+    .limit(1)
+    .maybeSingle();
+  return (data?.phone_number as string | undefined) ?? null;
+}
+
+/**
+ * TASK-N1 (CID-1, CID-2, CID-5): picks and atomically reserves the caller-ID number for ONE
+ * contact leg's dial, in this priority order (design's own list):
+ *   1. An unresting, under-cap number already assigned to this agent.
+ *   2. Else an unresting, under-cap unassigned (team pool) number.
+ *      Both tiers prefer an area-code match with the contact, then the fewest dials today --
+ *      see `private.pick_and_reserve_dial_number` (the migration) for the actual ordering/lock.
+ *   3. Else the campaign's own legacy `caller_id_number_id` (uncapped, untracked -- an
+ *      intentional escape hatch so an org that hasn't set up a pool, or has fully exhausted one,
+ *      keeps dialing rather than stalling; see decisions.md for why this is accepted, not a bug).
+ * Returns null only when NONE of the three tiers has anything at all -- refillSession's caller
+ * treats that as "truly no number available" and pauses the session (design's own explicit ask:
+ * "never fail silently or dial from nothing").
+ */
+async function resolveDialNumberForLeg(
+  supabase: SupabaseClient,
+  orgId: string,
+  agentId: string,
+  contactPhone: string,
+  legacyNumber: string | null
+): Promise<{ phoneNumber: string; numberId: string | null } | null> {
+  const { data: pooledId, error: pickError } = await supabase.rpc('pick_and_reserve_dial_number', {
+    p_org_id: orgId,
+    p_agent_id: agentId,
+    p_contact_phone: contactPhone,
+  });
+  if (pickError) throw new Error(`pick_and_reserve_dial_number: ${pickError.message}`);
+  if (pooledId) {
+    const { data: numberRow } = await supabase
+      .from('user_phone_numbers')
+      .select('phone_number')
+      .eq('id', pooledId as string)
+      .maybeSingle();
+    const phoneNumber = numberRow?.phone_number as string | undefined;
+    if (phoneNumber) return { phoneNumber, numberId: pooledId as string };
+    // The row vanished between the reserve and this read (should not happen -- reserving locks
+    // it) -- fall through to the legacy tier rather than surface a spurious "no number" pause.
+  }
+
+  return legacyNumber ? { phoneNumber: legacyNumber, numberId: null } : null;
 }
 
 /** TASK-L1: reads the REAL agent leg's state -- no bypass. `refillCount`'s gate (dialer-
@@ -535,8 +621,8 @@ async function dialAgentLegInternal(
 
     const campaign = await loadCampaign(supabase, session.campaign_id);
     if (!campaign) throw new Error(`dialAgentLeg: campaign ${session.campaign_id} not found`);
-    const fromNumber = await resolvedFromNumber(supabase, orgId, campaign);
-    if (!fromNumber) throw new Error('dialAgentLeg: campaign has no caller ID number set');
+    const fromNumber = await agentDialFromNumber(supabase, orgId, campaign);
+    if (!fromNumber) throw new Error('dialAgentLeg: org has no phone number at all yet');
 
     const sipUri = await agentSipUri(
       supabase,
@@ -700,10 +786,32 @@ export async function refillSession(
 
   const campaign = await loadCampaign(supabase, session.campaign_id);
   if (!campaign) throw new Error(`refillSession: campaign ${session.campaign_id} not found`);
-  const fromNumber = await resolvedFromNumber(supabase, orgId, campaign);
-  if (!fromNumber) {
-    dialerLog('refill_skip_no_caller_id', { sessionId, campaignId: campaign.id });
-    return { dialed: 0 };
+
+  // TASK-N1: the legacy fixed number is tier 3 (resolveDialNumberForLeg's own header) -- if the
+  // campaign still has one set, there is always SOMETHING to dial with, so skip the pool
+  // pre-check entirely. Otherwise, refuse to even claim leads unless the pool actually has
+  // something available right now -- "never fail silently or dial from nothing" (design's own
+  // words): pausing BEFORE claim_next_leads means no lead ever gets marked in_flight for a dial
+  // that was never going to happen.
+  const legacyNumber = await resolvedFromNumber(supabase, orgId, campaign);
+  if (!legacyNumber) {
+    const { data: hasNumber, error: hasNumberError } = await supabase.rpc(
+      'has_available_dial_number',
+      { p_org_id: orgId, p_agent_id: session.agent_id }
+    );
+    if (hasNumberError) {
+      throw new Error(`has_available_dial_number: ${hasNumberError.message}`);
+    }
+    if (!hasNumber) {
+      dialerLog('refill_pause_no_numbers_available', { sessionId, campaignId: campaign.id });
+      await supabase.rpc('transition_session', {
+        p_session: sessionId,
+        p_expected_states: ['dialing'],
+        p_new_state: 'paused',
+        p_fields: { pause_reason: 'no_numbers_available' },
+      });
+      return { dialed: 0 };
+    }
   }
 
   const { client, callControlAppId, error } = await getConnectedOrgTelnyxContext(supabase, orgId);
@@ -732,7 +840,8 @@ export async function refillSession(
 
   const webhookUrl = webhookUrlForOrg(webhookBaseUrl(), orgId);
   let dialed = 0;
-  for (const leg of legs) {
+  for (let i = 0; i < legs.length; i++) {
+    const leg = legs[i];
     if (!leg.phone_number) {
       // The row already exists (claim_next_leads inserted it) -- terminate it now via the
       // normal RPCs so it doesn't sit as a phantom 'initiated' leg forever. In practice
@@ -751,13 +860,52 @@ export async function refillSession(
       await supabase.rpc('apply_leg_outcome', { p_leg: leg.leg_id });
       continue;
     }
+
+    const picked = await resolveDialNumberForLeg(
+      supabase,
+      orgId,
+      session.agent_id,
+      leg.phone_number,
+      legacyNumber
+    );
+    if (!picked) {
+      // TASK-N1: extremely rare race -- the pre-check above (or an earlier leg in THIS same
+      // batch) found something, but the pool genuinely ran out between then and this leg's own
+      // reserve call (another session's concurrent dial won the last slot). This leg, and every
+      // other not-yet-dialed leg already claimed in this batch, never really started (no real
+      // Telnyx dial was ever placed) -- release each one back to the front of the queue
+      // (`queued`, untouched attempts/next_attempt_at) rather than let claim_next_leads' own
+      // `in_flight` stick, or spend a real attempt on a contact that was never actually called.
+      dialerLog('refill_pause_no_numbers_mid_batch', {
+        sessionId,
+        legId: leg.leg_id,
+        remaining: legs.length - i,
+      });
+      for (const stranded of legs.slice(i)) {
+        await supabase
+          .from('campaign_leads')
+          .update({ status: 'queued', updated_at: new Date().toISOString() })
+          .eq('id', stranded.lead_id)
+          .eq('status', 'in_flight');
+        await supabase.from('call_legs').delete().eq('id', stranded.leg_id);
+      }
+      await supabase.rpc('transition_session', {
+        p_session: sessionId,
+        p_expected_states: ['dialing'],
+        p_new_state: 'paused',
+        p_fields: { pause_reason: 'no_numbers_available' },
+      });
+      break;
+    }
+
     await dialLead(supabase, client, {
       orgId,
       sessionId,
       legId: leg.leg_id,
       placeholderCallControlId: leg.call_control_id,
       callControlAppId,
-      fromNumber,
+      fromNumber: picked.phoneNumber,
+      fromNumberId: picked.numberId,
       webhookUrl,
       amdMode: session.amd_mode,
       leadId: leg.lead_id,
@@ -779,6 +927,9 @@ async function dialLead(
     placeholderCallControlId: string;
     callControlAppId: string;
     fromNumber: string;
+    /** TASK-N1: the pool number this dial actually reserved, or null when it came from the
+     *  legacy campaign.caller_id_number_id fallback tier (nothing to point at). */
+    fromNumberId: string | null;
     webhookUrl: string;
     amdMode: CoreAmdMode;
     leadId: string;
@@ -810,7 +961,7 @@ async function dialLead(
     });
     const { error: updateError } = await supabase
       .from('call_legs')
-      .update({ call_control_id: callControlId })
+      .update({ call_control_id: callControlId, from_number_id: args.fromNumberId })
       .eq('id', args.legId);
     if (updateError) throw new Error(`dialLead update: ${updateError.message}`);
     dialerLog('dial_lead_success', {
@@ -2131,11 +2282,14 @@ export async function pauseSession(
 ): Promise<boolean> {
   const session = await loadSession(supabase, sessionId);
   if (!session || session.org_id !== orgId) return false;
+  // TASK-N1: explicitly clear pause_reason -- a manual Pause is never the auto-pause reason
+  // refillSession sets ('no_numbers_available'), so a stale value from an earlier auto-pause
+  // must not linger on the row through this transition.
   const { data, error } = await supabase.rpc('transition_session', {
     p_session: sessionId,
     p_expected_states: ['dialing', 'ready'],
     p_new_state: 'paused',
-    p_fields: {},
+    p_fields: { pause_reason: null },
   });
   if (error) throw new Error(`pauseSession: ${error.message}`);
   return Boolean(data);
@@ -2155,7 +2309,7 @@ export async function resumeToDialing(
     p_session: sessionId,
     p_expected_states: ['wrap_up', 'paused'],
     p_new_state: 'dialing',
-    p_fields: {},
+    p_fields: { pause_reason: null },
   });
   if (error) throw new Error(`resumeToDialing: ${error.message}`);
   if (data) await refillSession(supabase, orgId, sessionId);

@@ -67,6 +67,9 @@ export function DialerStatesHarness() {
   const [selectedState, setSelectedState] = useState<DialSessionState>('dialing');
   const [wrapUpResult, setWrapUpResult] = useState<SubmitDispositionResult | null>(null);
   const [wrapUpKey, setWrapUpKey] = useState(0);
+  // TASK-N1: only meaningful for a 'paused' toggle -- a second, independent checkbox rather
+  // than a 9th ALL_STATES button, since it's a sub-variant of one existing state, not a new one.
+  const [noNumbersAvailable, setNoNumbersAvailable] = useState(false);
 
   const scenario = useMemo(() => {
     switch (selectedState) {
@@ -136,11 +139,24 @@ export function DialerStatesHarness() {
             switches the toggle above to demonstrate the cycle).
           </p>
         )}
+        {selectedState === 'paused' && (
+          <label className="flex items-center gap-2 text-sm text-[#B0BEC5] mt-3">
+            <input
+              type="checkbox"
+              checked={noNumbersAvailable}
+              onChange={(e) => setNoNumbersAvailable(e.target.checked)}
+            />
+            TASK-N1: pause_reason = 'no_numbers_available'
+          </label>
+        )}
       </div>
 
       <div className="max-w-3xl mx-auto">
         <DialerStateBanner
           sessionState={selectedState}
+          pauseReason={
+            selectedState === 'paused' && noNumbersAvailable ? 'no_numbers_available' : null
+          }
           ringingCount={scenario.batchContacts.length}
           connectedContact={
             scenario.connectedContactId

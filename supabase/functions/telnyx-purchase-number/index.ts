@@ -73,11 +73,23 @@ Deno.serve(async (req: Request) => {
     return jsonResponse({ error: 'Failed to create number order' }, 500);
   }
 
+  // TASK-N1: a freshly purchased number lands in the team pool (assigned_user_id stays null --
+  // the column default) at the org's CURRENT default_daily_cap, not the daily_cap column's own
+  // hardcoded fallback -- an owner who has raised/lowered the org default should see every new
+  // purchase honor it, not silently get the schema default.
+  const { data: poolSettings } = await supabase
+    .from('org_number_pool_settings')
+    .select('default_daily_cap')
+    .eq('org_id', orgId)
+    .maybeSingle();
+  const dailyCap = (poolSettings?.default_daily_cap as number | undefined) ?? 100;
+
   const { error: insertError } = await supabase.from('user_phone_numbers').insert({
     user_id: user.id,
     org_id: orgId,
     telnyx_phone_number_id: telnyxId || (order.id as string),
     phone_number: num,
+    daily_cap: dailyCap,
   });
   if (insertError) {
     console.error('[telnyx-purchase-number] insert failed', insertError.message);

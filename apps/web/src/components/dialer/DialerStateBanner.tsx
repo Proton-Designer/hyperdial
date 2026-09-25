@@ -21,6 +21,10 @@ import type { DialSessionState } from '@/lib/api';
 
 interface DialerStateBannerProps {
   sessionState: DialSessionState | null;
+  /** TASK-N1: only meaningful while `sessionState === 'paused'` -- see DialSessionRecord's own
+   *  field comment (api.ts) for why a stale value must never be read once the session has moved
+   *  on to a different state. */
+  pauseReason: string | null;
   /** Contacts currently in a non-terminal state ("Ringing N lines"). */
   ringingCount: number;
   connectedContact: { name: string; phone: string } | null;
@@ -36,6 +40,7 @@ interface DialerStateBannerProps {
 
 export function DialerStateBanner({
   sessionState,
+  pauseReason,
   ringingCount,
   webrtcReady,
   webrtcConnecting,
@@ -123,6 +128,22 @@ export function DialerStateBanner({
         icon={<Pause className="w-5 h-5" />}
         title="Wrapping up"
         detail="Submit a disposition for the last call to continue dialing."
+      />
+    );
+  }
+
+  if (sessionState === 'paused' && pauseReason === 'no_numbers_available') {
+    return (
+      <StatusBanner
+        tone="error"
+        icon={<AlertTriangle className="w-5 h-5" />}
+        title="All your numbers have hit today's dial limit"
+        detail="Ask your manager to assign you another number or wait for one to finish resting, then resume."
+        action={
+          <Button variant="primary" onClick={onResume} disabled={resuming}>
+            {resuming ? 'Resuming…' : 'Resume'}
+          </Button>
+        }
       />
     );
   }

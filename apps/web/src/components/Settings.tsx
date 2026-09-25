@@ -6,7 +6,6 @@ import {
   Users as UsersIcon,
   Zap,
   Shield,
-  Globe,
   Search,
   Loader2,
   Copy,
@@ -73,6 +72,11 @@ import {
   getOrgDefaultVoicemailDrop,
   uploadMyVoicemailDrop,
   uploadOrgDefaultVoicemailDrop,
+  getNumberPoolSettings,
+  updateNumberPoolSettings,
+  assignPhoneNumber,
+  setPhoneNumberStatus,
+  type NumberPoolSettings,
   type VoicemailDropInfo,
   type OrgMember,
   type GhlIntegrationStatus,
@@ -1747,13 +1751,212 @@ function DncTab() {
   );
 }
 
+/** TASK-N1 (CID-1, CID-2, ADM-5): org-level defaults (default cap, rest days) + the assignment
+ *  table. Mounted inside the existing Telephony tab (owner/admin only, per that tab's own
+ *  standing invariant -- see the `isAgent` tab-visibility comment above `Settings()`), replacing
+ *  the old plain number list. Interns' OWN read-only visibility is deliberately NOT here --
+ *  `StartSessionPanel`'s "Your numbers: N active, M resting" line (the Dialer idle screen) is the
+ *  intern-facing surface this task's own UI spec also asks for, and restructuring the Telephony
+ *  tab's agent-exclusion to carve out a read-only sub-view would be a much bigger, unrelated
+ *  change to an explicitly-documented existing boundary. */
+function NumberPoolCard() {
+  const { numbers, loading: numbersLoading, error: numbersError, refetch } = usePhoneNumbers();
+  const [members, setMembers] = useState<OrgMember[]>([]);
+  const [settings, setSettings] = useState<NumberPoolSettings | null>(null);
+  const [settingsSaving, setSettingsSaving] = useState(false);
+  const [rowBusyId, setRowBusyId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    listOrgMembers()
+      .then(setMembers)
+      .catch((e) => setError(String(e)));
+    getNumberPoolSettings()
+      .then(setSettings)
+      .catch((e) => setError(String(e)));
+  }, []);
+
+  const memberLabel = (userId: string | null): string => {
+    if (!userId) return 'Team pool';
+    const m = members.find((mm) => mm.user_id === userId);
+    if (!m) return 'Unknown member';
+    const name = [m.first_name, m.last_name].filter(Boolean).join(' ');
+    return name || m.email || 'Unknown member';
+  };
+
+  const handleSettingsChange = async (next: NumberPoolSettings) => {
+    setSettings(next);
+    setSettingsSaving(true);
+    setError(null);
+    try {
+      await updateNumberPoolSettings(next);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setSettingsSaving(false);
+    }
+  };
+
+  const handleAssign = async (numberId: string, userId: string | null) => {
+    setRowBusyId(numberId);
+    setError(null);
+    try {
+      await assignPhoneNumber(numberId, userId);
+      await refetch();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setRowBusyId(null);
+    }
+  };
+
+  const handleRetireToggle = async (numberId: string, currentStatus: string) => {
+    setRowBusyId(numberId);
+    setError(null);
+    try {
+      await setPhoneNumberStatus(numberId, currentStatus === 'retired' ? 'active' : 'retired');
+      await refetch();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setRowBusyId(null);
+    }
+  };
+
+  return (
+    <div className="mb-8">
+      <h2 className="text-section-title text-text-primary mb-4">Phone Numbers</h2>
+
+      {error && (
+        <div className="mb-4 p-4 rounded-app-md bg-danger/10 border border-danger/30 text-danger text-sm">
+          {error}
+        </div>
+      )}
+
+      {/* CID-2's two org-level defaults. */}
+      <div className="bg-surface-1 rounded-app-lg p-6 border border-border-subtle mb-6 flex flex-wrap gap-6 items-end">
+        <div>
+          <label className="block text-meta text-text-secondary mb-1">Default daily cap</label>
+          <input
+            type="number"
+            min={1}
+            value={settings?.default_daily_cap ?? ''}
+            disabled={!settings || settingsSaving}
+            onChange={(e) =>
+              settings &&
+              void handleSettingsChange({
+                ...settings,
+                default_daily_cap: Math.max(1, parseInt(e.target.value, 10) || 1),
+              })
+            }
+            className="w-32 bg-surface-2 border border-white/10 rounded-app-md px-3 py-2 text-white focus:outline-none focus:border-accent-to"
+          />
+          <p className="text-meta text-text-muted mt-1">New numbers start with this cap.</p>
+        </div>
+        <div>
+          <label className="block text-meta text-text-secondary mb-1">Rest days after cap</label>
+          <input
+            type="number"
+            min={0}
+            value={settings?.rest_days ?? ''}
+            disabled={!settings || settingsSaving}
+            onChange={(e) =>
+              settings &&
+              void handleSettingsChange({
+                ...settings,
+                rest_days: Math.max(0, parseInt(e.target.value, 10) || 0),
+              })
+            }
+            className="w-32 bg-surface-2 border border-white/10 rounded-app-md px-3 py-2 text-white focus:outline-none focus:border-accent-to"
+          />
+        </div>
+      </div>
+
+      {numbersError && (
+        <div className="mb-4 p-4 rounded-app-md bg-danger/10 border border-danger/30 text-danger text-sm">
+          {numbersError}
+        </div>
+      )}
+
+      {numbersLoading ? (
+        <ListSkeleton rows={2} />
+      ) : numbers.length === 0 ? (
+        <div className="bg-surface-1 rounded-app-lg p-8 border border-border-subtle text-center">
+          <p className="text-text-secondary">No phone numbers yet. Search and purchase below.</p>
+        </div>
+      ) : (
+        <div className="bg-surface-1 rounded-app-lg border border-border-subtle overflow-x-auto">
+          <table className="w-full text-left text-sm">
+            <thead>
+              <tr className="border-b border-border-subtle text-text-secondary">
+                <th className="p-3 font-medium">Number</th>
+                <th className="p-3 font-medium">Assigned to</th>
+                <th className="p-3 font-medium">Status</th>
+                <th className="p-3 font-medium">Dials today / cap</th>
+                <th className="p-3 font-medium">Resting until</th>
+                <th className="p-3 font-medium" />
+              </tr>
+            </thead>
+            <tbody>
+              {numbers.map((n) => (
+                <tr key={n.id} className="border-b border-border-subtle last:border-0">
+                  <td className="p-3 text-white font-medium">{n.phone_number}</td>
+                  <td className="p-3">
+                    <select
+                      value={n.assigned_user_id ?? ''}
+                      disabled={rowBusyId === n.id}
+                      onChange={(e) => void handleAssign(n.id, e.target.value || null)}
+                      className="bg-surface-2 border border-white/10 rounded-app-md px-2 py-1.5 text-white focus:outline-none focus:border-accent-to"
+                    >
+                      <option value="">Team pool</option>
+                      {members.map((m) => (
+                        <option key={m.user_id} value={m.user_id}>
+                          {memberLabel(m.user_id)}
+                        </option>
+                      ))}
+                    </select>
+                  </td>
+                  <td className="p-3">
+                    <span
+                      className={`px-2 py-1 rounded-full text-xs border ${
+                        n.status === 'active'
+                          ? 'bg-success/10 text-success border-success/20'
+                          : n.status === 'resting'
+                            ? 'bg-warning/10 text-warning border-warning/20'
+                            : 'bg-white/5 text-text-secondary border-white/10'
+                      }`}
+                    >
+                      {n.status}
+                    </span>
+                  </td>
+                  <td className="p-3 text-text-secondary">
+                    {n.dials_today} / {n.daily_cap}
+                  </td>
+                  <td className="p-3 text-text-secondary">
+                    {n.resting_until ? new Date(n.resting_until).toLocaleString() : '—'}
+                  </td>
+                  <td className="p-3">
+                    <button
+                      type="button"
+                      disabled={rowBusyId === n.id}
+                      onClick={() => void handleRetireToggle(n.id, n.status)}
+                      className="text-meta text-text-secondary hover:text-text-primary disabled:opacity-50"
+                    >
+                      {n.status === 'retired' ? 'Reactivate' : 'Retire'}
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function Settings() {
-  const {
-    numbers: phoneNumbers,
-    loading: phoneNumbersLoading,
-    error: phoneNumbersError,
-    refetch: refetchPhoneNumbers,
-  } = usePhoneNumbers();
+  const { refetch: refetchPhoneNumbers } = usePhoneNumbers();
   const { role, loading: orgLoading } = useOrg();
   const [activeTab, setActiveTab] = useState<SettingsTab>('profile');
 
@@ -2060,49 +2263,13 @@ export function Settings() {
                     </div>
                   )}
 
-                  <h2 className="text-section-title text-text-primary mb-4">Phone Numbers</h2>
-
-                  {(phoneError || phoneNumbersError) && (
+                  {phoneError && (
                     <div className="mb-6 p-4 rounded-app-md bg-danger/10 border border-danger/30 text-danger text-sm">
-                      {phoneError || phoneNumbersError}
+                      {phoneError}
                     </div>
                   )}
 
-                  <div className="space-y-4 mb-8">
-                    {phoneNumbersLoading ? (
-                      <ListSkeleton rows={2} />
-                    ) : phoneNumbers.length === 0 ? (
-                      <div className="bg-surface-1 rounded-app-lg p-8 border border-border-subtle text-center">
-                        <p className="text-text-secondary">
-                          No phone numbers yet. Search and purchase below.
-                        </p>
-                      </div>
-                    ) : (
-                      phoneNumbers.map((phone) => (
-                        <div
-                          key={phone.id}
-                          className="bg-surface-1 rounded-app-lg p-6 border border-border-subtle shadow-app-sm"
-                        >
-                          <div className="flex items-center justify-between">
-                            <div className="flex-1">
-                              <div className="text-2xl font-bold text-white mb-1">
-                                {phone.phone_number}
-                              </div>
-                              <div className="flex items-center gap-4 text-sm text-text-secondary">
-                                <span className="flex items-center gap-1.5">
-                                  <Globe className="w-4 h-4" />
-                                  US
-                                </span>
-                                <span className="px-2 py-1 rounded-full text-xs bg-success/10 text-success border border-success/20">
-                                  Active
-                                </span>
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                      ))
-                    )}
-                  </div>
+                  <NumberPoolCard />
 
                   {!isTelnyxConnected ? (
                     <div className="bg-gradient-to-r from-accent-from/10 to-accent-to/10 rounded-app-lg p-8 border border-accent-from/20 text-center">

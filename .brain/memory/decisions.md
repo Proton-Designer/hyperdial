@@ -703,3 +703,72 @@ org-creation just to allow pre-configuring tags nobody can match against yet.
 
 **Do not undo without understanding:** don't merge `'paused'` back into `'passthrough'` to "simplify"
 the status enum -- see the Context paragraph above for why that collapses two different meanings.
+
+### TASK-N1: caller-ID number pool tradeoffs (CID-1/CID-2/ADM-5/CID-5) -- legacy fallback stays uncapped, UTC day boundary, agent leg stays out of the pool entirely
+
+**Status:** Active · **Decided by:** eng2 (TASK-N1, 2026-09-25)
+
+**Context:** before this task, every contact dial in a session used ONE fixed number
+(`campaigns.caller_id_number_id`), the root cause the user's own words called out: "several interns
+each dialing 3-5 lines from one or two numbers will get those numbers labelled Spam Likely within
+days." The new pool (`user_phone_numbers.assigned_user_id`/`status`/`daily_cap`/`resting_until`,
+`number_daily_usage`, `org_number_pool_settings`) picks a DIFFERENT number per contact leg, capped
+per number per day, resting for N days once capped.
+
+**Decision 1 -- the legacy number is an UNCAPPED tier-3 fallback, not a "pool not configured yet"
+special case.** The design's own priority order is explicit: assigned number, else pool, else the
+campaign's legacy number. This is followed literally: even once a pool exists, if it's fully
+exhausted (every number resting/capped) for a given agent, a campaign that still has
+`caller_id_number_id` set keeps dialing FROM THAT NUMBER rather than pausing -- uncapped, untracked.
+This can, in principle, push a busy org's legacy number toward the exact Spam-Likely risk this task
+exists to fix, for whatever dials spill over onto it on a capped-out day. Accepted because (a) it's
+literally what the task's own design specifies, in that exact order, and (b) "keep dialing on the
+old number" is a strictly better failure mode than "silently stop working" for an org mid-migration
+to the pool model. An org that wants the cap to be a hard ceiling with no spillover should clear
+`caller_id_number_id` entirely once its pool is set up -- `refillSession` then genuinely pauses
+(`pause_reason: 'no_numbers_available'`) once the pool is exhausted, no escape hatch.
+
+**Decision 2 -- `number_daily_usage.day` is the UTC calendar date, not "the org's own timezone".**
+The task's own design note says "day in the org tz" -- but no org-level timezone column exists
+anywhere in this schema (contacts/campaigns use a per-CONTACT IANA timezone string for calling
+windows, never a per-org one). Adding one just for this cap boundary would be scope creep past
+what CID-2 actually asks for (a daily cap, not a specific reset-time guarantee). UTC calendar day is
+the simplest defensible choice absent a real column to read -- documented here rather than silently
+assumed, so a future task that DOES add an org timezone knows to revisit
+`private.pick_and_reserve_dial_number`/`has_available_dial_number`'s `(now() at time zone 'utc')::date`
+expressions.
+
+**Decision 3 -- the agent leg's own dial stays completely outside the pool, on its own
+`agentDialFromNumber` fallback (legacy number, else ANY org-owned number regardless of status).**
+The pool exists to manage EXTERNAL spam-reputation risk from contact-facing dial volume; the agent
+leg is an internal SIP dial to the agent's own WebRTC credential that no outside network ever sees
+as a "from" number in the sense CID-1/CID-2 care about. Before this task, the agent leg's dial
+required `campaign.caller_id_number_id` to be set at all (an existing constraint, not something
+this task introduced) -- left as-is would have meant a pool-only org (no legacy number ever set)
+could never even start a session. `agentDialFromNumber` closes that gap: legacy number if set, else
+literally any phone number the org owns (no cap/rest/assignment check -- this dial is never
+rate-limited or billed against). Only a genuinely number-less org (nothing ever purchased) still
+fails to Go Ready, which is a real, correct failure, not a regression.
+
+`dialer-session-start/index.ts` had its OWN, separate hard gate on `campaign.caller_id_number_id`
+(pre-dating this task, `MISSING_CALLER_ID`) that would have rejected starting a session at all for
+a pool-only campaign, making `agentDialFromNumber`'s fallback unreachable in practice -- widened to
+also accept "the org owns at least one phone number at all" (any status), matching the fallback it
+now needs to satisfy; the error CODE (`MISSING_CALLER_ID`) is kept for any existing client-side
+handling, only its trigger condition changed.
+
+**Decision 4 -- Settings' Telephony tab stays owner/admin-only; interns' own "your numbers" view
+lives on the Dialer idle screen instead.** The task's own UI ask lists both "Interns see their own
+numbers read-only" (Settings) and "the Dialer idle screen shows 'Your numbers: N active, M resting'"
+(`StartSessionPanel.tsx`) as separate bullets. Settings.tsx's Telephony tab has a standing,
+explicitly-documented invariant (`isAgent` excludes it entirely, with its own comment: "Team
+management and number purchase... are owner/admin only... cosmetic tab-visibility narrowing")
+predating this task. Restructuring that boundary to carve out a read-only intern sub-view is a
+materially bigger, unrelated change to an existing documented boundary for a HIGH-risk task that
+already touches the engine, RLS, and a migration. The Dialer idle screen bullet already gives
+interns exactly the read-only summary the other bullet asks for, so it's treated as the one real
+surface for this requirement -- not a silent gap.
+
+**Do not undo without understanding:** don't "fix" decision 1 by capping the legacy fallback too --
+that would remove the org's only continuity path while migrating onto the pool model, which is the
+opposite of what an accepted, documented tradeoff should be casually reversed for.

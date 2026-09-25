@@ -70,7 +70,70 @@ export async function listPhoneNumbers() {
     telnyx_phone_number_id: string;
     phone_number: string;
     created_at: string;
+    /** TASK-N1 -- see PhoneNumbersContext's own UserPhoneNumber type for field docs. */
+    assigned_user_id: string | null;
+    status: 'active' | 'resting' | 'retired';
+    resting_until: string | null;
+    daily_cap: number;
+    dials_today: number;
   }[];
+}
+
+// --- TASK-N1: caller-ID number pool (CID-1, CID-2, ADM-5) ---
+
+export interface NumberPoolSettings {
+  default_daily_cap: number;
+  rest_days: number;
+}
+
+/** Same "member read, owner/admin write, direct client upsert against RLS" shape as
+ *  getRecordingEnabled/setRecordingEnabled below -- no Edge Function needed. */
+export async function getNumberPoolSettings(): Promise<NumberPoolSettings> {
+  const orgId = await getActiveOrgId();
+  const { data, error } = await supabase
+    .from('org_number_pool_settings')
+    .select('default_daily_cap, rest_days')
+    .eq('org_id', orgId)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return (data as NumberPoolSettings | null) ?? { default_daily_cap: 100, rest_days: 2 };
+}
+
+export async function updateNumberPoolSettings(settings: NumberPoolSettings): Promise<void> {
+  const orgId = await getActiveOrgId();
+  const { error } = await supabase.from('org_number_pool_settings').upsert({
+    org_id: orgId,
+    default_daily_cap: settings.default_daily_cap,
+    rest_days: settings.rest_days,
+    updated_at: new Date().toISOString(),
+  });
+  if (error) throw new Error(error.message);
+}
+
+/** ADM-5: owner/admin only -- `user_phone_numbers`' own RLS (owner/admin write) is what actually
+ *  enforces this; an agent's own call fails with an RLS error, not a client-side check. Pass
+ *  `null` to return a number to the team pool. */
+export async function assignPhoneNumber(numberId: string, userId: string | null): Promise<void> {
+  const { error } = await supabase
+    .from('user_phone_numbers')
+    .update({ assigned_user_id: userId })
+    .eq('id', numberId);
+  if (error) throw new Error(error.message);
+}
+
+/** ADM-5/CID-2: owner/admin only, same RLS-enforced shape as assignPhoneNumber. */
+export async function setPhoneNumberStatus(
+  numberId: string,
+  status: 'active' | 'retired'
+): Promise<void> {
+  // Clears resting_until too -- a manual "make active"/"retire" always overrides whatever the
+  // pool-picker's own lazy reactivation was tracking; 'resting' itself is set only by
+  // private.pick_and_reserve_dial_number (the migration), never directly from the UI.
+  const { error } = await supabase
+    .from('user_phone_numbers')
+    .update({ status, resting_until: null })
+    .eq('id', numberId);
+  if (error) throw new Error(error.message);
 }
 
 export async function searchPhoneNumbers(areaCode: string, countryCode = 'US') {
@@ -1160,6 +1223,10 @@ export interface DialSessionRecord {
   started_at: string;
   ended_at: string | null;
   updated_at: string;
+  /** TASK-N1: only meaningful while `state === 'paused'` -- see dialer-engine.ts's own
+   *  `pause_reason` field comment for why a stale value from a past pause must be ignored once
+   *  the session has moved on. Today's only real value is 'no_numbers_available'. */
+  pause_reason: string | null;
 }
 
 export interface CallLegRecord {
