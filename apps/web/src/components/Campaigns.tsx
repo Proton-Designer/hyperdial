@@ -1,15 +1,34 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Search, Plus, Target, Loader2 } from 'lucide-react';
+import { Search, Plus, Target, Play } from 'lucide-react';
 import { listCampaigns, createCampaign, type CampaignWithStats } from '../lib/api';
 import { CampaignManageModal } from './campaigns/CampaignManageModal';
-import { Skeleton } from '@/components/ui/skeleton';
+import { PageHeader } from '@/components/app/PageHeader';
+import { EmptyState } from '@/components/app/EmptyState';
+import { Button } from '@/components/ui/button';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
+import { useBreakpoint } from '@/hooks/useBreakpoint';
+import { useFocusTrap } from '@/hooks/useFocusTrap';
+import { cn } from '@/components/ui/utils';
 
 function formatDate(s: string | null): string {
   if (!s) return '—';
   const d = new Date(s);
   return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 }
+
+const STATUS_CHIP: Record<CampaignWithStats['status'], string> = {
+  active: 'bg-success-soft text-success',
+  paused: 'bg-warning-soft text-warning',
+  completed: 'bg-surface-3 text-text-secondary',
+};
 
 interface CampaignsProps {
   onNavigateToDialer?: () => void;
@@ -22,6 +41,8 @@ export function Campaigns({
   onStartParallelDial,
   onOpenDialerWithSession,
 }: CampaignsProps) {
+  const breakpoint = useBreakpoint();
+  const isDesktop = breakpoint === 'desktop';
   const [campaigns, setCampaigns] = useState<CampaignWithStats[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
@@ -33,6 +54,8 @@ export function Campaigns({
   const [newCampaignName, setNewCampaignName] = useState('');
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
+  const newCampaignModalRef = useRef<HTMLDivElement>(null);
+  useFocusTrap(newCampaignModalRef, newCampaignOpen);
 
   const fetchCampaigns = useCallback(() => {
     setLoading(true);
@@ -74,55 +97,42 @@ export function Campaigns({
   };
 
   return (
-    <div className="h-full bg-[#0A1628]">
-      <div className="p-8 max-w-[1600px] mx-auto">
-        <div className="flex items-center justify-between mb-8">
-          <div>
-            <h1 className="text-3xl font-bold text-white mb-2">Campaigns</h1>
-            <p className="text-[#B0BEC5]">Manage your outreach campaigns</p>
-          </div>
-          <motion.button
-            type="button"
-            whileHover={{ scale: 1.05 }}
-            whileTap={{ scale: 0.95 }}
-            onClick={() => setNewCampaignOpen(true)}
-            className="flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-[#00D9FF] to-[#0066FF] rounded-xl text-white font-semibold shadow-[0_4px_24px_rgba(0,217,255,0.3)] hover:shadow-[0_6px_32px_rgba(0,217,255,0.4)] transition-all"
-          >
-            <Plus className="w-5 h-5" />
-            New Campaign
-          </motion.button>
-        </div>
+    <div className="h-full bg-surface-0">
+      <div className="p-4 sm:p-8 max-w-[1600px] mx-auto">
+        <PageHeader
+          title="Campaigns"
+          description="Manage your outreach campaigns"
+          actions={
+            <Button variant="primary" onClick={() => setNewCampaignOpen(true)}>
+              <Plus className="w-4 h-4" />
+              New campaign
+            </Button>
+          }
+        />
 
-        <div className="bg-[#1A2332]/60 backdrop-blur-xl rounded-2xl p-6 border border-white/5 shadow-[0_4px_24px_rgba(0,102,255,0.15)] mb-6">
-          <div className="flex flex-wrap gap-4 items-center">
-            <div className="flex-1 min-w-[300px]">
-              <div className="relative">
-                <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-[#B0BEC5]" />
-                <input
-                  type="text"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="Search campaigns..."
-                  className="w-full bg-[#1E2A3A] border border-white/10 rounded-xl pl-12 pr-4 py-3 text-white placeholder-[#B0BEC5]/50 focus:outline-none focus:border-[#00D9FF] transition-colors"
-                />
-              </div>
+        <div className="rounded-app-lg border border-border-subtle bg-surface-1 p-4 mb-6">
+          <div className="flex flex-wrap gap-3 items-center">
+            <div className="flex-1 min-w-[240px] relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-secondary" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search campaigns..."
+                className="w-full bg-surface-2 border border-border-subtle rounded-app-md pl-9 pr-3 py-2 text-body text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent-to transition-colors"
+              />
             </div>
-            <div className="flex gap-2">
+            <div className="flex gap-1.5">
               {(['all', 'active', 'paused', 'completed'] as const).map((status) => (
                 <button
                   key={status}
                   onClick={() => setFilterStatus(status)}
-                  className={`px-4 py-3 rounded-xl font-medium transition-all ${
+                  className={cn(
+                    'px-2.5 py-1.5 rounded-app-sm text-meta font-medium transition-colors',
                     filterStatus === status
-                      ? status === 'all'
-                        ? 'bg-[#0066FF] text-white'
-                        : status === 'active'
-                          ? 'bg-[#00E676] text-white'
-                          : status === 'paused'
-                            ? 'bg-[#FFB300] text-white'
-                            : 'bg-[#B0BEC5] text-white'
-                      : 'bg-[#1E2A3A] text-[#B0BEC5] hover:bg-[#252F3E]'
-                  }`}
+                      ? 'bg-accent-from/20 text-accent-to'
+                      : 'bg-surface-2 text-text-secondary hover:bg-surface-3'
+                  )}
                 >
                   {status === 'all' ? 'All' : status.charAt(0).toUpperCase() + status.slice(1)}
                 </button>
@@ -132,109 +142,177 @@ export function Campaigns({
         </div>
 
         {loading ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-            {Array.from({ length: 8 }).map((_, i) => (
-              <Skeleton key={i} className="h-[180px] rounded-2xl" />
-            ))}
+          isDesktop ? (
+            <div className="rounded-app-lg border border-border-subtle bg-surface-1 overflow-hidden">
+              {Array.from({ length: 6 }).map((_, i) => (
+                <div
+                  key={i}
+                  className="skeleton-shimmer h-12 border-b border-border-subtle last:border-0"
+                />
+              ))}
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {Array.from({ length: 6 }).map((_, i) => (
+                <div key={i} className="skeleton-shimmer h-[160px] rounded-app-lg" />
+              ))}
+            </div>
+          )
+        ) : filteredCampaigns.length === 0 ? (
+          <EmptyState
+            icon={Target}
+            title="No campaigns found"
+            body="Create a campaign or try adjusting your search or filters."
+            action={
+              <Button variant="primary" onClick={() => setNewCampaignOpen(true)}>
+                <Plus className="w-4 h-4" />
+                New campaign
+              </Button>
+            }
+          />
+        ) : isDesktop ? (
+          <div className="rounded-app-lg border border-border-subtle bg-surface-1 overflow-hidden">
+            <Table>
+              <TableHeader className="sticky top-0 z-10 bg-surface-1">
+                <TableRow className="border-border-subtle hover:bg-transparent">
+                  <TableHead className="text-text-secondary">Campaign</TableHead>
+                  <TableHead className="text-text-secondary">Status</TableHead>
+                  <TableHead className="text-text-secondary">Lines</TableHead>
+                  <TableHead className="text-text-secondary">Progress</TableHead>
+                  <TableHead className="text-text-secondary">Connect rate</TableHead>
+                  <TableHead className="text-text-secondary">Last called</TableHead>
+                  <TableHead className="text-right text-text-secondary">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {filteredCampaigns.map((campaign) => {
+                  const total = campaign.total_contacts ?? 0;
+                  const done = campaign.completed ?? 0;
+                  const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+                  return (
+                    <TableRow
+                      key={campaign.id}
+                      onClick={() => setManageCampaignId(campaign.id)}
+                      className="border-border-subtle hover:bg-surface-2 cursor-pointer group"
+                    >
+                      <TableCell className="max-w-[240px]">
+                        <div className="font-medium text-text-primary truncate">
+                          {campaign.name}
+                        </div>
+                        <div className="text-meta text-text-secondary">
+                          Created {formatDate(campaign.created_at)}
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <span
+                          className={cn(
+                            'inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium',
+                            STATUS_CHIP[campaign.status]
+                          )}
+                        >
+                          {campaign.status.charAt(0).toUpperCase() + campaign.status.slice(1)}
+                        </span>
+                      </TableCell>
+                      <TableCell className="text-body text-text-secondary">
+                        {campaign.lines}
+                      </TableCell>
+                      <TableCell className="min-w-[140px]">
+                        <div className="flex items-center gap-2">
+                          <div className="w-24 h-1.5 rounded-full bg-surface-3 overflow-hidden">
+                            <div
+                              className="h-full rounded-full bg-gradient-to-r from-accent-from to-accent-to"
+                              style={{ width: `${pct}%` }}
+                            />
+                          </div>
+                          <span className="text-meta text-text-secondary whitespace-nowrap">
+                            {done}/{total}
+                          </span>
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-body text-text-primary">
+                        {Number(campaign.connect_rate ?? 0).toFixed(1)}%
+                      </TableCell>
+                      <TableCell className="text-meta text-text-secondary whitespace-nowrap">
+                        {formatDate(campaign.last_called_at)}
+                      </TableCell>
+                      <TableCell onClick={(e) => e.stopPropagation()}>
+                        <div className="flex justify-end opacity-0 group-hover:opacity-100 transition-opacity">
+                          {total > 0 && (
+                            <Button
+                              variant="fe-secondary"
+                              size="sm"
+                              onClick={() => setManageCampaignId(campaign.id)}
+                            >
+                              <Play className="w-3.5 h-3.5" />
+                              Start
+                            </Button>
+                          )}
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-            {filteredCampaigns.map((campaign, index) => (
-              <motion.div
-                key={campaign.id}
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: index * 0.05 }}
-                onClick={() => setManageCampaignId(campaign.id)}
-                className="group bg-[#1A2332]/60 backdrop-blur-xl hover:bg-[#1A2332] rounded-2xl p-6 border border-white/5 hover:border-[#00D9FF]/30 shadow-[0_4px_24px_rgba(0,102,255,0.15)] hover:shadow-[0_8px_32px_rgba(0,102,255,0.25)] transition-all cursor-pointer"
-              >
-                <div className="flex items-start justify-between mb-4">
-                  <div className="flex-1">
-                    <h3 className="font-bold text-white text-lg mb-2 line-clamp-2">
-                      {campaign.name}
-                    </h3>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {filteredCampaigns.map((campaign, index) => {
+              const total = campaign.total_contacts ?? 0;
+              const done = campaign.completed ?? 0;
+              const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+              return (
+                <motion.div
+                  key={campaign.id}
+                  initial={{ opacity: 0, y: 12 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: Math.min(index, 5) * 0.04, duration: 0.12 }}
+                  onClick={() => setManageCampaignId(campaign.id)}
+                  className="rounded-app-lg border border-border-subtle bg-surface-1 p-4 cursor-pointer"
+                >
+                  <div className="flex items-start justify-between gap-2 mb-3">
+                    <h3 className="font-semibold text-text-primary truncate">{campaign.name}</h3>
                     <span
-                      className={`inline-block px-2.5 py-1 rounded-full text-xs font-semibold ${
-                        campaign.status === 'active'
-                          ? 'bg-[#00E676]/10 text-[#00E676] border border-[#00E676]/20'
-                          : campaign.status === 'paused'
-                            ? 'bg-[#FFB300]/10 text-[#FFB300] border border-[#FFB300]/20'
-                            : 'bg-[#B0BEC5]/10 text-[#B0BEC5] border border-[#B0BEC5]/20'
-                      }`}
+                      className={cn(
+                        'inline-flex flex-shrink-0 items-center px-2 py-0.5 rounded-full text-xs font-medium',
+                        STATUS_CHIP[campaign.status]
+                      )}
                     >
                       {campaign.status.charAt(0).toUpperCase() + campaign.status.slice(1)}
                     </span>
                   </div>
-                </div>
-                <div className="space-y-3 mb-4">
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm text-[#B0BEC5]">Total Contacts</span>
-                    <span className="text-lg font-bold text-white">
-                      {campaign.total_contacts ?? 0}
-                    </span>
+                  <div className="text-meta text-text-secondary mb-1">
+                    {campaign.lines} lines · {Number(campaign.connect_rate ?? 0).toFixed(1)}%
+                    connect
                   </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm text-[#B0BEC5]">Passthrough</span>
-                    <span className="text-lg font-bold text-[#00D9FF]">
-                      {campaign.passthrough ?? 0}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm text-[#B0BEC5]">Queued</span>
-                    <span className="text-lg font-bold text-[#00D9FF]">{campaign.queued ?? 0}</span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm text-[#B0BEC5]">Completed</span>
-                    <span className="text-lg font-bold text-[#00E676]">
-                      {campaign.completed ?? 0}
-                    </span>
-                  </div>
-                </div>
-                <div className="pt-4 border-t border-white/5">
-                  <div className="flex items-center justify-between text-sm mb-2">
-                    <div className="flex items-center gap-1.5 text-[#B0BEC5]">
-                      <Target className="w-4 h-4" />
-                      <span>Connect Rate</span>
+                  <div className="flex items-center gap-2 mb-3">
+                    <div className="flex-1 h-1.5 rounded-full bg-surface-3 overflow-hidden">
+                      <div
+                        className="h-full rounded-full bg-gradient-to-r from-accent-from to-accent-to"
+                        style={{ width: `${pct}%` }}
+                      />
                     </div>
-                    <span className="font-semibold text-[#00E676]">
-                      {Number(campaign.connect_rate ?? 0).toFixed(1)}%
+                    <span className="text-meta text-text-secondary whitespace-nowrap">
+                      {done}/{total}
                     </span>
                   </div>
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="text-[#B0BEC5]">Total Calls Made</span>
-                    <span className="font-semibold text-white">
-                      {campaign.total_calls_made ?? 0}
-                    </span>
-                  </div>
-                </div>
-                <div className="mt-4 text-xs text-[#B0BEC5] space-y-1">
-                  <div>Created {formatDate(campaign.created_at)}</div>
-                  <div>Last called {formatDate(campaign.last_called_at)}</div>
-                </div>
-                {(campaign.total_contacts ?? 0) > 0 && (
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setManageCampaignId(campaign.id);
-                    }}
-                    className="mt-4 w-full px-3 py-2 rounded-lg bg-gradient-to-r from-[#00D9FF] to-[#0066FF] text-white text-sm font-semibold"
-                  >
-                    Start Parallel Dial
-                  </button>
-                )}
-              </motion.div>
-            ))}
-          </div>
-        )}
-
-        {!loading && filteredCampaigns.length === 0 && (
-          <div className="text-center py-20">
-            <div className="text-6xl mb-4">🎯</div>
-            <h3 className="text-xl font-semibold text-white mb-2">No campaigns found</h3>
-            <p className="text-[#B0BEC5]">
-              Create a campaign or try adjusting your search or filters
-            </p>
+                  {total > 0 && (
+                    <Button
+                      variant="fe-secondary"
+                      size="sm"
+                      className="w-full"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setManageCampaignId(campaign.id);
+                      }}
+                    >
+                      <Play className="w-3.5 h-3.5" />
+                      Start
+                    </Button>
+                  )}
+                </motion.div>
+              );
+            })}
           </div>
         )}
       </div>
@@ -257,17 +335,19 @@ export function Campaigns({
                 them had this bug; removed here instead of restructuring, since this wrapper
                 carries no meaningful content of its own beyond positioning the dialog. */}
             <motion.div
+              ref={newCampaignModalRef}
+              tabIndex={-1}
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.95 }}
               onClick={(e) => e.stopPropagation()}
-              className="w-[88vw] max-w-[280px] sm:w-[80vw] sm:max-w-[300px] rounded-2xl border border-white/10 bg-[#1A2332] p-4 sm:p-5 shadow-xl"
+              className="w-[88vw] max-w-[280px] sm:w-[80vw] sm:max-w-[300px] rounded-app-lg border border-border-subtle bg-surface-1 p-4 sm:p-5 shadow-app-md outline-none"
               role="dialog"
               aria-modal="true"
               aria-labelledby="new-campaign-title"
             >
-              <h3 id="new-campaign-title" className="text-xl font-bold text-white mb-4">
-                New Campaign
+              <h3 id="new-campaign-title" className="text-page-title text-text-primary mb-4">
+                New campaign
               </h3>
               <input
                 type="text"
@@ -277,28 +357,26 @@ export function Campaigns({
                   setCreateError(null);
                 }}
                 placeholder="Campaign name"
-                className="w-full bg-[#1E2A3A] border border-white/10 rounded-xl px-4 py-3 text-white placeholder-[#B0BEC5]/50 focus:outline-none focus:border-[#00D9FF] mb-4"
+                className="w-full bg-surface-2 border border-border-subtle rounded-app-md px-4 py-3 text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent-to mb-4"
                 onKeyDown={(e) => e.key === 'Enter' && handleCreateCampaign()}
               />
-              {createError && <p className="text-sm text-[#FF3D00] mb-4">{createError}</p>}
+              {createError && <p className="text-body text-danger mb-4">{createError}</p>}
               <div className="flex justify-end gap-2">
-                <button
-                  type="button"
+                <Button
+                  variant="fe-ghost"
                   disabled={creating}
                   onClick={() => setNewCampaignOpen(false)}
-                  className="px-4 py-2 rounded-xl bg-[#1E2A3A] text-white disabled:opacity-50"
                 >
                   Cancel
-                </button>
-                <button
-                  type="button"
+                </Button>
+                <Button
+                  variant="primary"
                   disabled={creating || !newCampaignName.trim()}
                   onClick={handleCreateCampaign}
-                  className="px-4 py-2 rounded-xl bg-[#0066FF] text-white disabled:opacity-50 flex items-center gap-2"
+                  loading={creating}
                 >
-                  {creating && <Loader2 className="w-4 h-4 animate-spin" />}
                   Create
-                </button>
+                </Button>
               </div>
             </motion.div>
           </motion.div>

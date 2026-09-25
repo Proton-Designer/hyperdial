@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import {
@@ -44,6 +44,7 @@ import { usePhoneNumbers } from '../../contexts/PhoneNumbersContext';
 import { useOrg } from '../../contexts/OrgContext';
 import { setPendingStartCampaignId } from '../../lib/dialerLaunchIntent';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
+import { useFocusTrap } from '@/hooks/useFocusTrap';
 
 const CATEGORIES = ['All', 'Cold', 'Warm', 'Follow Up', 'Voicemail', 'Booked'] as const;
 const CONTACT_STATUSES = ['All', 'No Contact', 'Contacted'] as const;
@@ -126,15 +127,15 @@ function RetryRulesCard({ campaignId }: { campaignId: string }) {
 
   if (loading) {
     return (
-      <div className="bg-[#1E2A3A]/60 rounded-2xl border border-white/5 p-6 mb-6">
-        <Loader2 className="w-5 h-5 text-[#00D9FF] animate-spin" />
+      <div className="bg-surface-2/60 rounded-app-lg border border-white/5 p-6 mb-6">
+        <Loader2 className="w-5 h-5 text-accent-to animate-spin" />
       </div>
     );
   }
   if (rules.length === 0) return null;
 
   return (
-    <div className="bg-[#1E2A3A]/60 rounded-2xl border border-white/5 p-6 mb-6">
+    <div className="bg-surface-2/60 rounded-app-lg border border-white/5 p-6 mb-6">
       <div className="flex items-center justify-between mb-4">
         <h3 className="text-lg font-bold text-white flex items-center gap-2">
           <RotateCw className="w-5 h-5" />
@@ -144,7 +145,7 @@ function RetryRulesCard({ campaignId }: { campaignId: string }) {
           type="button"
           onClick={handleSave}
           disabled={saving}
-          className="flex items-center gap-2 px-3 py-2 bg-gradient-to-r from-[#00D9FF] to-[#0066FF] rounded-lg text-white text-sm font-semibold disabled:opacity-60"
+          className="flex items-center gap-2 px-3 py-2 bg-gradient-to-r from-accent-from to-accent-to rounded-lg text-white text-sm font-semibold disabled:opacity-60"
         >
           {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
           Save Rules
@@ -159,7 +160,7 @@ function RetryRulesCard({ campaignId }: { campaignId: string }) {
             <select
               value={r.action}
               onChange={(e) => updateRule(r.id, { action: e.target.value as RetryRuleAction })}
-              className="bg-[#1A2332] border border-white/10 rounded-lg px-3 py-2 text-sm text-white"
+              className="bg-surface-1 border border-white/10 rounded-lg px-3 py-2 text-sm text-white"
             >
               <option value="retry">Retry</option>
               <option value="out">Out (exhaust)</option>
@@ -177,11 +178,11 @@ function RetryRulesCard({ campaignId }: { campaignId: string }) {
                         delay_minutes: Math.max(1, Number(e.target.value)) * 1440,
                       })
                     }
-                    className="w-20 bg-[#1A2332] border border-white/10 rounded-lg px-2 py-2 text-sm text-white"
+                    className="w-20 bg-surface-1 border border-white/10 rounded-lg px-2 py-2 text-sm text-white"
                   />
-                  <span className="text-xs text-[#B0BEC5]">days</span>
+                  <span className="text-xs text-text-secondary">days</span>
                 </div>
-                <label className="flex items-center gap-2 text-xs text-[#B0BEC5]">
+                <label className="flex items-center gap-2 text-xs text-text-secondary">
                   <input
                     type="checkbox"
                     checked={r.rotate_block}
@@ -228,6 +229,8 @@ export function CampaignManageModal({
   const [contactsForPicker, setContactsForPicker] = useState<Contact[]>([]);
   const [leadsPage, setLeadsPage] = useState(0);
   const [confirmRemoveContactId, setConfirmRemoveContactId] = useState<string | null>(null);
+  const modalRef = useRef<HTMLDivElement>(null);
+  useFocusTrap(modalRef, open);
   const [confirmBulkRemove, setConfirmBulkRemove] = useState(false);
 
   const fetchCampaign = useCallback(async () => {
@@ -515,9 +518,11 @@ export function CampaignManageModal({
     <div style={{ position: 'fixed', inset: 0, zIndex: 9999, isolation: 'isolate' }}>
       <div className="fixed inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} aria-hidden />
       <motion.div
+        ref={modalRef}
+        tabIndex={-1}
         initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
-        className="fixed inset-8 bg-[#1A2332] rounded-3xl border border-white/10 shadow-xl overflow-hidden flex flex-col"
+        className="fixed inset-8 bg-surface-1 rounded-3xl border border-white/10 shadow-xl overflow-hidden flex flex-col outline-none"
         style={{ zIndex: 1 }}
         onClick={(e) => e.stopPropagation()}
       >
@@ -532,7 +537,7 @@ export function CampaignManageModal({
             ) : (
               <>
                 <h2 className="text-2xl font-bold text-white">{campaign?.name ?? 'Campaign'}</h2>
-                <p className="text-sm text-[#B0BEC5] mt-1">
+                <p className="text-sm text-text-secondary mt-1">
                   Created {campaign ? formatDate(campaign.created_at) : '—'}
                 </p>
               </>
@@ -543,7 +548,7 @@ export function CampaignManageModal({
               <button
                 type="button"
                 onClick={() => setConfirmDeleteOpen(true)}
-                className="p-2 rounded-lg bg-[#FF3D00]/10 hover:bg-[#FF3D00]/20 text-[#FF3D00]"
+                className="p-2 rounded-lg bg-danger/10 hover:bg-danger/20 text-danger"
                 title="Delete campaign"
               >
                 <Trash2 className="w-5 h-5" />
@@ -552,48 +557,48 @@ export function CampaignManageModal({
             <button
               type="button"
               onClick={onClose}
-              className="p-2 rounded-lg bg-[#1E2A3A] hover:bg-[#252F3E] text-white"
+              className="p-2 rounded-lg bg-surface-2 hover:bg-surface-3 text-white"
             >
               <X className="w-5 h-5" />
             </button>
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-6 custom-scrollbar min-h-0">
+        <div className="flex-1 overflow-y-auto p-6 min-h-0">
           {campaign && (
             <>
               {/* Status + Start Parallel Dialing */}
               <div className="flex flex-wrap items-center gap-4 mb-6">
                 <div className="flex items-center gap-2">
-                  <span className="text-sm text-[#B0BEC5]">Status</span>
+                  <span className="text-sm text-text-secondary">Status</span>
                   <Select
                     value={campaign.status}
                     onValueChange={(v) =>
                       handleUpdateStatus(v as 'active' | 'paused' | 'completed')
                     }
                   >
-                    <SelectTrigger className="w-[140px] bg-[#1E2A3A] border-white/10 text-white">
+                    <SelectTrigger className="w-[140px] bg-surface-2 border-white/10 text-white">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent
-                      className="bg-[#1E2A3A] border-white/10"
+                      className="bg-surface-2 border-white/10"
                       style={{ zIndex: 10001 }}
                     >
                       <SelectItem
                         value="active"
-                        className="bg-[#1E2A3A] hover:bg-white/10 focus:bg-white/10 text-white focus:text-white"
+                        className="bg-surface-2 hover:bg-white/10 focus:bg-white/10 text-white focus:text-white"
                       >
                         Active
                       </SelectItem>
                       <SelectItem
                         value="paused"
-                        className="bg-[#1E2A3A] hover:bg-white/10 focus:bg-white/10 text-white focus:text-white"
+                        className="bg-surface-2 hover:bg-white/10 focus:bg-white/10 text-white focus:text-white"
                       >
                         Paused
                       </SelectItem>
                       <SelectItem
                         value="completed"
-                        className="bg-[#1E2A3A] hover:bg-white/10 focus:bg-white/10 text-white focus:text-white"
+                        className="bg-surface-2 hover:bg-white/10 focus:bg-white/10 text-white focus:text-white"
                       >
                         Completed
                       </SelectItem>
@@ -603,7 +608,7 @@ export function CampaignManageModal({
                 <button
                   type="button"
                   onClick={handleStartParallelDialing}
-                  className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-[#00D9FF] to-[#0066FF] rounded-xl text-white font-semibold"
+                  className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-accent-from to-accent-to rounded-xl text-white font-semibold"
                 >
                   <Play className="w-4 h-4" />
                   Start Parallel Dialing Session
@@ -613,7 +618,7 @@ export function CampaignManageModal({
               {/* Dialer settings (admin+ only -- RLS is the real authority, this just hides
                   the UI for an agent) */}
               {canManage && settingsForm && (
-                <div className="bg-[#1E2A3A]/60 rounded-2xl border border-white/5 p-6 mb-6">
+                <div className="bg-surface-2/60 rounded-app-lg border border-white/5 p-6 mb-6">
                   <div className="flex items-center justify-between mb-4">
                     <h3 className="text-lg font-bold text-white flex items-center gap-2">
                       <SettingsIcon className="w-5 h-5" />
@@ -623,7 +628,7 @@ export function CampaignManageModal({
                       type="button"
                       onClick={handleSaveSettings}
                       disabled={savingSettings}
-                      className="flex items-center gap-2 px-3 py-2 bg-gradient-to-r from-[#00D9FF] to-[#0066FF] rounded-lg text-white text-sm font-semibold disabled:opacity-60"
+                      className="flex items-center gap-2 px-3 py-2 bg-gradient-to-r from-accent-from to-accent-to rounded-lg text-white text-sm font-semibold disabled:opacity-60"
                     >
                       {savingSettings ? (
                         <Loader2 className="w-4 h-4 animate-spin" />
@@ -635,25 +640,25 @@ export function CampaignManageModal({
                   </div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                     <div>
-                      <label className="text-sm text-[#B0BEC5] block mb-1">Lines</label>
+                      <label className="text-sm text-text-secondary block mb-1">Lines</label>
                       <Select
                         value={String(settingsForm.lines ?? 3)}
                         onValueChange={(v) =>
                           setSettingsForm((f) => (f ? { ...f, lines: Number(v) } : f))
                         }
                       >
-                        <SelectTrigger className="w-full bg-[#1A2332] border-white/10 text-white">
+                        <SelectTrigger className="w-full bg-surface-1 border-white/10 text-white">
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent
-                          className="bg-[#1E2A3A] border-white/10"
+                          className="bg-surface-2 border-white/10"
                           style={{ zIndex: 10001 }}
                         >
                           {[1, 2, 3, 4, 5, 6, 7].map((n) => (
                             <SelectItem
                               key={n}
                               value={String(n)}
-                              className="bg-[#1E2A3A] hover:bg-white/10 focus:bg-white/10 text-white focus:text-white"
+                              className="bg-surface-2 hover:bg-white/10 focus:bg-white/10 text-white focus:text-white"
                             >
                               {n}
                             </SelectItem>
@@ -662,7 +667,7 @@ export function CampaignManageModal({
                       </Select>
                     </div>
                     <div>
-                      <label className="text-sm text-[#B0BEC5] block mb-1">
+                      <label className="text-sm text-text-secondary block mb-1">
                         Answering Machine Detection
                       </label>
                       <Select
@@ -671,33 +676,35 @@ export function CampaignManageModal({
                           setSettingsForm((f) => (f ? { ...f, amd_mode: v as 'off' | 'on' } : f))
                         }
                       >
-                        <SelectTrigger className="w-full bg-[#1A2332] border-white/10 text-white">
+                        <SelectTrigger className="w-full bg-surface-1 border-white/10 text-white">
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent
-                          className="bg-[#1E2A3A] border-white/10"
+                          className="bg-surface-2 border-white/10"
                           style={{ zIndex: 10001 }}
                         >
                           <SelectItem
                             value="off"
-                            className="bg-[#1E2A3A] hover:bg-white/10 focus:bg-white/10 text-white focus:text-white"
+                            className="bg-surface-2 hover:bg-white/10 focus:bg-white/10 text-white focus:text-white"
                           >
                             Off
                           </SelectItem>
                           <SelectItem
                             value="on"
-                            className="bg-[#1E2A3A] hover:bg-white/10 focus:bg-white/10 text-white focus:text-white"
+                            className="bg-surface-2 hover:bg-white/10 focus:bg-white/10 text-white focus:text-white"
                           >
                             On
                           </SelectItem>
                         </SelectContent>
                       </Select>
-                      <p className="text-xs text-[#B0BEC5]/70 mt-1">
+                      <p className="text-xs text-text-secondary/70 mt-1">
                         AMD adds ~2–4s after answer; some humans hang up in that gap.
                       </p>
                     </div>
                     <div>
-                      <label className="text-sm text-[#B0BEC5] block mb-1">Caller ID Number</label>
+                      <label className="text-sm text-text-secondary block mb-1">
+                        Caller ID Number
+                      </label>
                       <Select
                         value={settingsForm.caller_id_number_id ?? '__none__'}
                         onValueChange={(v) =>
@@ -706,16 +713,16 @@ export function CampaignManageModal({
                           )
                         }
                       >
-                        <SelectTrigger className="w-full bg-[#1A2332] border-white/10 text-white">
+                        <SelectTrigger className="w-full bg-surface-1 border-white/10 text-white">
                           <SelectValue placeholder="None" />
                         </SelectTrigger>
                         <SelectContent
-                          className="bg-[#1E2A3A] border-white/10"
+                          className="bg-surface-2 border-white/10"
                           style={{ zIndex: 10001 }}
                         >
                           <SelectItem
                             value="__none__"
-                            className="bg-[#1E2A3A] hover:bg-white/10 focus:bg-white/10 text-white focus:text-white"
+                            className="bg-surface-2 hover:bg-white/10 focus:bg-white/10 text-white focus:text-white"
                           >
                             None
                           </SelectItem>
@@ -723,7 +730,7 @@ export function CampaignManageModal({
                             <SelectItem
                               key={num.id}
                               value={num.id}
-                              className="bg-[#1E2A3A] hover:bg-white/10 focus:bg-white/10 text-white focus:text-white"
+                              className="bg-surface-2 hover:bg-white/10 focus:bg-white/10 text-white focus:text-white"
                             >
                               {num.phone_number}
                             </SelectItem>
@@ -732,7 +739,7 @@ export function CampaignManageModal({
                       </Select>
                     </div>
                     <div>
-                      <label className="text-sm text-[#B0BEC5] block mb-1">Max Attempts</label>
+                      <label className="text-sm text-text-secondary block mb-1">Max Attempts</label>
                       <input
                         type="number"
                         min={1}
@@ -742,11 +749,11 @@ export function CampaignManageModal({
                             f ? { ...f, max_attempts: Math.max(1, Number(e.target.value)) } : f
                           )
                         }
-                        className="w-full bg-[#1A2332] border border-white/10 rounded-lg px-3 py-2 text-white"
+                        className="w-full bg-surface-1 border border-white/10 rounded-lg px-3 py-2 text-white"
                       />
                     </div>
                     <div>
-                      <label className="text-sm text-[#B0BEC5] block mb-1">
+                      <label className="text-sm text-text-secondary block mb-1">
                         Retry Interval (minutes)
                       </label>
                       <input
@@ -763,11 +770,11 @@ export function CampaignManageModal({
                               : f
                           )
                         }
-                        className="w-full bg-[#1A2332] border border-white/10 rounded-lg px-3 py-2 text-white"
+                        className="w-full bg-surface-1 border border-white/10 rounded-lg px-3 py-2 text-white"
                       />
                     </div>
                     <div className="flex items-end gap-2">
-                      <label className="flex items-center gap-2 text-sm text-[#B0BEC5]">
+                      <label className="flex items-center gap-2 text-sm text-text-secondary">
                         <input
                           type="checkbox"
                           checked={settingsForm.abandon_message_enabled ?? true}
@@ -781,7 +788,7 @@ export function CampaignManageModal({
                       </label>
                     </div>
                     <div>
-                      <label className="text-sm text-[#B0BEC5] block mb-1">
+                      <label className="text-sm text-text-secondary block mb-1">
                         Calling Window Start (contact-local)
                       </label>
                       <input
@@ -792,11 +799,11 @@ export function CampaignManageModal({
                             f ? { ...f, calling_window_start: e.target.value } : f
                           )
                         }
-                        className="w-full bg-[#1A2332] border border-white/10 rounded-lg px-3 py-2 text-white"
+                        className="w-full bg-surface-1 border border-white/10 rounded-lg px-3 py-2 text-white"
                       />
                     </div>
                     <div>
-                      <label className="text-sm text-[#B0BEC5] block mb-1">
+                      <label className="text-sm text-text-secondary block mb-1">
                         Calling Window End (contact-local)
                       </label>
                       <input
@@ -807,7 +814,7 @@ export function CampaignManageModal({
                             f ? { ...f, calling_window_end: e.target.value } : f
                           )
                         }
-                        className="w-full bg-[#1A2332] border border-white/10 rounded-lg px-3 py-2 text-white"
+                        className="w-full bg-surface-1 border border-white/10 rounded-lg px-3 py-2 text-white"
                       />
                     </div>
                   </div>
@@ -819,7 +826,7 @@ export function CampaignManageModal({
               {/* Agent assignment (admin+ only). RLS on campaign_agents already scopes agents
                   to their assigned campaigns (TASK-P1-01); this is that assignment's UI. */}
               {canManage && (
-                <div className="bg-[#1E2A3A]/60 rounded-2xl border border-white/5 p-6 mb-6">
+                <div className="bg-surface-2/60 rounded-app-lg border border-white/5 p-6 mb-6">
                   <div className="flex items-center justify-between mb-4">
                     <h3 className="text-lg font-bold text-white flex items-center gap-2">
                       <Users className="w-5 h-5" />
@@ -829,7 +836,7 @@ export function CampaignManageModal({
                       type="button"
                       onClick={handleSaveAgents}
                       disabled={savingAgents}
-                      className="flex items-center gap-2 px-3 py-2 bg-gradient-to-r from-[#00D9FF] to-[#0066FF] rounded-lg text-white text-sm font-semibold disabled:opacity-60"
+                      className="flex items-center gap-2 px-3 py-2 bg-gradient-to-r from-accent-from to-accent-to rounded-lg text-white text-sm font-semibold disabled:opacity-60"
                     >
                       {savingAgents ? (
                         <Loader2 className="w-4 h-4 animate-spin" />
@@ -840,7 +847,7 @@ export function CampaignManageModal({
                     </button>
                   </div>
                   {orgMembers.length === 0 ? (
-                    <p className="text-sm text-[#B0BEC5]">No org members to assign.</p>
+                    <p className="text-sm text-text-secondary">No org members to assign.</p>
                   ) : (
                     <div className="flex flex-wrap gap-2">
                       {orgMembers.map((m) => {
@@ -854,8 +861,8 @@ export function CampaignManageModal({
                             key={m.user_id}
                             className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-sm cursor-pointer ${
                               checked
-                                ? 'bg-[#00D9FF]/10 border-[#00D9FF]/30 text-[#00D9FF]'
-                                : 'bg-[#1A2332] border-white/10 text-[#B0BEC5]'
+                                ? 'bg-accent-to/10 border-accent-to/30 text-accent-to'
+                                : 'bg-surface-1 border-white/10 text-text-secondary'
                             }`}
                           >
                             <input
@@ -873,14 +880,14 @@ export function CampaignManageModal({
               )}
 
               {/* Leads section */}
-              <div className="bg-[#1E2A3A]/60 rounded-2xl border border-white/5 p-6">
+              <div className="bg-surface-2/60 rounded-app-lg border border-white/5 p-6">
                 <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
                   <h3 className="text-lg font-bold text-white">Leads</h3>
                   <div className="flex flex-wrap items-center gap-2">
                     <button
                       type="button"
                       onClick={() => setImportModalOpen(true)}
-                      className="flex items-center gap-2 px-3 py-2 bg-[#1A2332] hover:bg-[#252F3E] border border-white/10 rounded-lg text-white text-sm"
+                      className="flex items-center gap-2 px-3 py-2 bg-surface-1 hover:bg-surface-3 border border-white/10 rounded-lg text-white text-sm"
                     >
                       <Upload className="w-4 h-4" />
                       Import from CSV
@@ -888,7 +895,7 @@ export function CampaignManageModal({
                     <button
                       type="button"
                       onClick={() => setAddExistingOpen(true)}
-                      className="flex items-center gap-2 px-3 py-2 bg-[#1A2332] hover:bg-[#252F3E] border border-white/10 rounded-lg text-white text-sm"
+                      className="flex items-center gap-2 px-3 py-2 bg-surface-1 hover:bg-surface-3 border border-white/10 rounded-lg text-white text-sm"
                     >
                       <Users className="w-4 h-4" />
                       Add existing contacts
@@ -896,7 +903,7 @@ export function CampaignManageModal({
                     <button
                       type="button"
                       onClick={() => setAddNewOpen(true)}
-                      className="flex items-center gap-2 px-3 py-2 bg-[#1A2332] hover:bg-[#252F3E] border border-white/10 rounded-lg text-white text-sm"
+                      className="flex items-center gap-2 px-3 py-2 bg-surface-1 hover:bg-surface-3 border border-white/10 rounded-lg text-white text-sm"
                     >
                       <UserPlus className="w-4 h-4" />
                       Add new contact
@@ -905,7 +912,7 @@ export function CampaignManageModal({
                       <button
                         type="button"
                         onClick={handleBulkRemove}
-                        className="flex items-center gap-2 px-3 py-2 bg-[#FF3D00]/10 hover:bg-[#FF3D00]/20 border border-[#FF3D00]/20 rounded-lg text-[#FF3D00] text-sm"
+                        className="flex items-center gap-2 px-3 py-2 bg-danger/10 hover:bg-danger/20 border border-danger/20 rounded-lg text-danger text-sm"
                       >
                         <Trash2 className="w-4 h-4" />
                         Remove selected ({selectedLeadIds.size})
@@ -916,20 +923,20 @@ export function CampaignManageModal({
 
                 {/* Sort/filter leads */}
                 <div className="flex flex-wrap items-center gap-3 mb-4">
-                  <span className="text-sm text-[#B0BEC5]">Filter:</span>
+                  <span className="text-sm text-text-secondary">Filter:</span>
                   <Select value={categoryFilter} onValueChange={setCategoryFilter}>
-                    <SelectTrigger className="w-[160px] bg-[#1A2332] border-white/10 text-white">
+                    <SelectTrigger className="w-[160px] bg-surface-1 border-white/10 text-white">
                       <SelectValue placeholder="Category" />
                     </SelectTrigger>
                     <SelectContent
-                      className="bg-[#1E2A3A] border-white/10"
+                      className="bg-surface-2 border-white/10"
                       style={{ zIndex: 10001 }}
                     >
                       {CATEGORIES.map((c) => (
                         <SelectItem
                           key={c}
                           value={c}
-                          className="bg-[#1E2A3A] hover:bg-white/10 focus:bg-white/10 text-white focus:text-white"
+                          className="bg-surface-2 hover:bg-white/10 focus:bg-white/10 text-white focus:text-white"
                         >
                           {c}
                         </SelectItem>
@@ -937,18 +944,18 @@ export function CampaignManageModal({
                     </SelectContent>
                   </Select>
                   <Select value={contactStatusFilter} onValueChange={setContactStatusFilter}>
-                    <SelectTrigger className="w-[160px] bg-[#1A2332] border-white/10 text-white">
+                    <SelectTrigger className="w-[160px] bg-surface-1 border-white/10 text-white">
                       <SelectValue placeholder="Contact status" />
                     </SelectTrigger>
                     <SelectContent
-                      className="bg-[#1E2A3A] border-white/10"
+                      className="bg-surface-2 border-white/10"
                       style={{ zIndex: 10001 }}
                     >
                       {CONTACT_STATUSES.map((s) => (
                         <SelectItem
                           key={s}
                           value={s}
-                          className="bg-[#1E2A3A] hover:bg-white/10 focus:bg-white/10 text-white focus:text-white"
+                          className="bg-surface-2 hover:bg-white/10 focus:bg-white/10 text-white focus:text-white"
                         >
                           {s}
                         </SelectItem>
@@ -958,7 +965,7 @@ export function CampaignManageModal({
                 </div>
 
                 {leadsLoading ? (
-                  <div className="flex items-center justify-center py-12 text-[#B0BEC5]">
+                  <div className="flex items-center justify-center py-12 text-text-secondary">
                     <Loader2 className="w-8 h-8 animate-spin" />
                   </div>
                 ) : (
@@ -966,7 +973,7 @@ export function CampaignManageModal({
                     <div className="overflow-x-auto">
                       <table className="w-full text-sm">
                         <thead>
-                          <tr className="text-left text-[#B0BEC5] border-b border-white/5">
+                          <tr className="text-left text-text-secondary border-b border-white/5">
                             <th className="pb-2 pr-2">
                               <input
                                 type="checkbox"
@@ -1002,26 +1009,26 @@ export function CampaignManageModal({
                               <td className="py-3 pr-2 text-white">
                                 {contactDisplayName(lead.contact)}
                               </td>
-                              <td className="py-3 pr-2 text-[#B0BEC5]">
+                              <td className="py-3 pr-2 text-text-secondary">
                                 {lead.contact?.business_type ?? '—'}
                               </td>
-                              <td className="py-3 pr-2 text-[#00D9FF]">
+                              <td className="py-3 pr-2 text-accent-to">
                                 {lead.contact?.phone_number ?? '—'}
                               </td>
-                              <td className="py-3 pr-2 text-[#B0BEC5]">
+                              <td className="py-3 pr-2 text-text-secondary">
                                 {lead.contact?.category ?? '—'}
                               </td>
-                              <td className="py-3 pr-2 text-[#B0BEC5]">
+                              <td className="py-3 pr-2 text-text-secondary">
                                 {lead.contact?.contact_status ?? '—'}
                               </td>
                               <td className="py-3 pr-2">
                                 <span
                                   className={`px-2 py-0.5 rounded text-xs ${
                                     lead.status === 'completed'
-                                      ? 'bg-[#00E676]/10 text-[#00E676]'
+                                      ? 'bg-success/10 text-success'
                                       : lead.status === 'passthrough'
-                                        ? 'bg-[#00D9FF]/10 text-[#00D9FF]'
-                                        : 'bg-[#FFB300]/10 text-[#FFB300]'
+                                        ? 'bg-accent-to/10 text-accent-to'
+                                        : 'bg-warning/10 text-warning'
                                   }`}
                                 >
                                   {lead.status}
@@ -1034,7 +1041,7 @@ export function CampaignManageModal({
                                     onClick={() =>
                                       handleCallLead(lead.contact?.phone_number ?? null)
                                     }
-                                    className="p-2 rounded-lg hover:bg-[#00D9FF]/20 text-[#00D9FF]"
+                                    className="p-2 rounded-lg hover:bg-accent-to/20 text-accent-to"
                                     title="Call"
                                   >
                                     <Phone className="w-4 h-4" />
@@ -1042,7 +1049,7 @@ export function CampaignManageModal({
                                   <button
                                     type="button"
                                     onClick={() => handleRemoveLead(lead.contact_id)}
-                                    className="p-2 rounded-lg hover:bg-[#FF3D00]/20 text-[#FF3D00]"
+                                    className="p-2 rounded-lg hover:bg-danger/20 text-danger"
                                     title="Remove from campaign"
                                   >
                                     <Trash2 className="w-4 h-4" />
@@ -1055,13 +1062,13 @@ export function CampaignManageModal({
                       </table>
                     </div>
                     {filteredLeads.length === 0 && (
-                      <div className="py-12 text-center text-[#B0BEC5]">
+                      <div className="py-12 text-center text-text-secondary">
                         No leads match the filters. Import or add contacts to this campaign.
                       </div>
                     )}
                     {totalPages > 1 && (
                       <div className="flex items-center justify-between mt-4 pt-4 border-t border-white/5">
-                        <span className="text-sm text-[#B0BEC5]">
+                        <span className="text-sm text-text-secondary">
                           Page {leadsPage + 1} of {totalPages}
                         </span>
                         <div className="flex gap-2">
@@ -1069,7 +1076,7 @@ export function CampaignManageModal({
                             type="button"
                             disabled={leadsPage === 0}
                             onClick={() => setLeadsPage((p) => Math.max(0, p - 1))}
-                            className="px-3 py-1 rounded bg-[#1E2A3A] disabled:opacity-50 text-white text-sm"
+                            className="px-3 py-1 rounded bg-surface-2 disabled:opacity-50 text-white text-sm"
                           >
                             Previous
                           </button>
@@ -1077,7 +1084,7 @@ export function CampaignManageModal({
                             type="button"
                             disabled={leadsPage >= totalPages - 1}
                             onClick={() => setLeadsPage((p) => Math.min(totalPages - 1, p + 1))}
-                            className="px-3 py-1 rounded bg-[#1E2A3A] disabled:opacity-50 text-white text-sm"
+                            className="px-3 py-1 rounded bg-surface-2 disabled:opacity-50 text-white text-sm"
                           >
                             Next
                           </button>
@@ -1141,7 +1148,7 @@ export function CampaignManageModal({
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.95 }}
-              className="relative z-[1] w-full max-w-sm rounded-2xl border border-white/10 bg-[#1A2332] shadow-xl p-6"
+              className="relative z-[1] w-full max-w-sm rounded-app-lg border border-white/10 bg-surface-1 shadow-xl p-6"
               onClick={(e) => e.stopPropagation()}
             >
               <p className="text-white mb-6">
@@ -1156,7 +1163,7 @@ export function CampaignManageModal({
                     setConfirmRemoveContactId(null);
                     setConfirmBulkRemove(false);
                   }}
-                  className="px-4 py-2 rounded-lg bg-[#1E2A3A] text-white hover:bg-[#252F3E]"
+                  className="px-4 py-2 rounded-lg bg-surface-2 text-white hover:bg-surface-3"
                 >
                   Cancel
                 </button>
@@ -1166,7 +1173,7 @@ export function CampaignManageModal({
                     if (confirmRemoveContactId !== null) doRemoveLead(confirmRemoveContactId);
                     else if (confirmBulkRemove) doBulkRemove();
                   }}
-                  className="px-4 py-2 rounded-lg bg-[#FF3D00]/20 text-[#FF3D00] border border-[#FF3D00]/30 hover:bg-[#FF3D00]/30"
+                  className="px-4 py-2 rounded-lg bg-danger/20 text-danger border border-danger/30 hover:bg-danger/30"
                 >
                   Remove
                 </button>
@@ -1195,13 +1202,13 @@ export function CampaignManageModal({
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.95 }}
-              className="relative z-[1] w-full max-w-sm rounded-2xl border border-white/10 bg-[#1A2332] shadow-xl p-6"
+              className="relative z-[1] w-full max-w-sm rounded-app-lg border border-white/10 bg-surface-1 shadow-xl p-6"
               onClick={(e) => e.stopPropagation()}
             >
               <p className="text-white mb-2 font-semibold">
                 Delete &ldquo;{campaign?.name ?? 'this campaign'}&rdquo;?
               </p>
-              <p className="text-sm text-[#B0BEC5] mb-6">
+              <p className="text-sm text-text-secondary mb-6">
                 Its leads and call history are kept, but the campaign will no longer be usable or
                 visible in your list. This cannot be undone from the UI.
               </p>
@@ -1210,7 +1217,7 @@ export function CampaignManageModal({
                   type="button"
                   disabled={deleting}
                   onClick={() => setConfirmDeleteOpen(false)}
-                  className="px-4 py-2 rounded-lg bg-[#1E2A3A] text-white hover:bg-[#252F3E] disabled:opacity-60"
+                  className="px-4 py-2 rounded-lg bg-surface-2 text-white hover:bg-surface-3 disabled:opacity-60"
                 >
                   Cancel
                 </button>
@@ -1218,7 +1225,7 @@ export function CampaignManageModal({
                   type="button"
                   disabled={deleting}
                   onClick={handleDeleteCampaign}
-                  className="flex items-center gap-2 px-4 py-2 rounded-lg bg-[#FF3D00]/20 text-[#FF3D00] border border-[#FF3D00]/30 hover:bg-[#FF3D00]/30 disabled:opacity-60"
+                  className="flex items-center gap-2 px-4 py-2 rounded-lg bg-danger/20 text-danger border border-danger/30 hover:bg-danger/30 disabled:opacity-60"
                 >
                   {deleting && <Loader2 className="w-4 h-4 animate-spin" />}
                   Delete
@@ -1228,12 +1235,6 @@ export function CampaignManageModal({
           </motion.div>
         )}
       </AnimatePresence>
-
-      <style>{`
-        .custom-scrollbar::-webkit-scrollbar { width: 8px; }
-        .custom-scrollbar::-webkit-scrollbar-track { background: rgba(255,255,255,0.05); border-radius: 4px; }
-        .custom-scrollbar::-webkit-scrollbar-thumb { background: #00D9FF; border-radius: 4px; }
-      `}</style>
     </div>,
     document.body
   );
@@ -1253,6 +1254,8 @@ function AddExistingContactsModal({
   onConfirm,
 }: AddExistingContactsModalProps) {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const modalRef = useRef<HTMLDivElement>(null);
+  useFocusTrap(modalRef, true);
 
   const available = contacts.filter((c) => !existingContactIds.has(c.id));
 
@@ -1269,9 +1272,11 @@ function AddExistingContactsModal({
     <div className="fixed inset-0 flex items-center justify-center p-4" style={{ zIndex: 10000 }}>
       <div className="absolute inset-0 bg-black/60" onClick={onClose} aria-hidden />
       <motion.div
+        ref={modalRef}
+        tabIndex={-1}
         initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
-        className="relative z-[1] w-full max-w-lg max-h-[80vh] flex flex-col rounded-2xl border border-white/10 bg-[#1A2332] shadow-xl"
+        className="relative z-[1] w-full max-w-lg max-h-[80vh] flex flex-col rounded-app-lg border border-white/10 bg-surface-1 shadow-xl outline-none"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between border-b border-white/10 p-4">
@@ -1279,14 +1284,14 @@ function AddExistingContactsModal({
           <button
             type="button"
             onClick={onClose}
-            className="rounded-lg p-2 text-[#B0BEC5] hover:bg-white/10 hover:text-white"
+            className="rounded-lg p-2 text-text-secondary hover:bg-white/10 hover:text-white"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
         <div className="p-4 overflow-y-auto flex-1">
           {available.length === 0 ? (
-            <p className="text-[#B0BEC5]">
+            <p className="text-text-secondary">
               No contacts available to add (all are already in this campaign).
             </p>
           ) : (
@@ -1299,7 +1304,7 @@ function AddExistingContactsModal({
                     onChange={() => toggle(c.id)}
                   />
                   <span className="text-white">{contactDisplayName(c)}</span>
-                  <span className="text-sm text-[#B0BEC5]">{c.phone_number ?? '—'}</span>
+                  <span className="text-sm text-text-secondary">{c.phone_number ?? '—'}</span>
                 </li>
               ))}
             </ul>
@@ -1309,7 +1314,7 @@ function AddExistingContactsModal({
           <button
             type="button"
             onClick={onClose}
-            className="px-4 py-2 rounded-lg bg-[#1E2A3A] text-white"
+            className="px-4 py-2 rounded-lg bg-surface-2 text-white"
           >
             Cancel
           </button>
@@ -1317,7 +1322,7 @@ function AddExistingContactsModal({
             type="button"
             disabled={selectedIds.size === 0}
             onClick={() => onConfirm(Array.from(selectedIds))}
-            className="px-4 py-2 rounded-lg bg-[#0066FF] text-white disabled:opacity-50"
+            className="px-4 py-2 rounded-lg bg-accent-from text-white disabled:opacity-50"
           >
             Add {selectedIds.size} contact(s)
           </button>
