@@ -50,6 +50,14 @@ const POLL_INTERVAL_MS = 3000;
 // 'paused_agent_lost' (waiting for Reconnect) both need to keep polling -- the whole point is
 // to notice the state change (to 'ready'/cascaded further, or after Reconnect succeeds)
 // without the intern refreshing the page.
+// TASK-L2b review fix: 'paused' ALSO needs to keep polling, for the same reason -- the server
+// can transition a manually-paused session to 'paused_agent_lost' out from under it if the
+// agent leg drops while paused (handleAgentLegLost runs from any AGENT_ACTIVE_SESSION_STATES
+// state, which includes 'paused', dialer-engine.ts). Without this, the client stops polling
+// the instant Pause is clicked and never notices the state changed underneath it -- the UI
+// sticks on "Paused" forever, never shows the Reconnect banner, and Dialer.tsx's own UI-6
+// auto-reconnect effect (keyed on session.state === 'paused_agent_lost') never fires either,
+// since state.session itself is stale.
 const ACTIVE_SESSION_STATES = new Set([
   'ready_pending',
   'ready',
@@ -57,6 +65,7 @@ const ACTIVE_SESSION_STATES = new Set([
   'connecting',
   'on_call',
   'wrap_up',
+  'paused',
   'paused_agent_lost',
 ]);
 const TERMINAL_LEG_STATES = new Set(['ended', 'dropped', 'abandoned', 'machine']);
