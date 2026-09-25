@@ -60,7 +60,11 @@ function formatNotificationDate(created_at: string): string {
 
 export function TopNavigation({ activeTab = 'dashboard', onTabChange }: TopNavigationProps) {
   const { user, signOut } = useAuth();
-  const { orgId, orgs, switchOrg, role } = useOrg();
+  const { orgId, orgs, switchOrg, role, loading: orgLoading } = useOrg();
+  // Fail CLOSED, matching MainApp.tsx/Sidebar.tsx/Dashboard.tsx (review fix-forward, NIT): the
+  // Settings tab is manager-only, so this menu's Profile/Settings entries (both just navigate
+  // there) must not be shown until role is CONFIRMED owner/admin.
+  const isManager = !orgLoading && (role === 'owner' || role === 'admin');
   const [searchFocused, setSearchFocused] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
@@ -358,30 +362,32 @@ export function TopNavigation({ activeTab = 'dashboard', onTabChange }: TopNavig
                     <div className="text-sm text-[#B0BEC5] truncate">{email || 'No email'}</div>
                   </div>
 
-                  <div className="p-2">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setShowUserMenu(false);
-                        onTabChange?.('settings');
-                      }}
-                      className="w-full flex items-center gap-3 px-3 py-2.5 hover:bg-white/5 rounded-lg transition-colors text-white"
-                    >
-                      <User className="w-4 h-4 text-[#B0BEC5]" />
-                      Profile
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setShowUserMenu(false);
-                        onTabChange?.('settings');
-                      }}
-                      className="w-full flex items-center gap-3 px-3 py-2.5 hover:bg-white/5 rounded-lg transition-colors text-white"
-                    >
-                      <Settings className="w-4 h-4 text-[#B0BEC5]" />
-                      Settings
-                    </button>
-                  </div>
+                  {isManager && (
+                    <div className="p-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowUserMenu(false);
+                          onTabChange?.('settings');
+                        }}
+                        className="w-full flex items-center gap-3 px-3 py-2.5 hover:bg-white/5 rounded-lg transition-colors text-white"
+                      >
+                        <User className="w-4 h-4 text-[#B0BEC5]" />
+                        Profile
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowUserMenu(false);
+                          onTabChange?.('settings');
+                        }}
+                        className="w-full flex items-center gap-3 px-3 py-2.5 hover:bg-white/5 rounded-lg transition-colors text-white"
+                      >
+                        <Settings className="w-4 h-4 text-[#B0BEC5]" />
+                        Settings
+                      </button>
+                    </div>
+                  )}
 
                   <div className="p-2 border-t border-white/10">
                     <button

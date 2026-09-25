@@ -45,8 +45,12 @@ export function Dashboard({
   onNavigateToCampaigns,
 }: DashboardProps = {}) {
   const { user } = useAuth();
-  const { role } = useOrg();
-  const isAgent = role === 'agent';
+  const { role, loading: orgLoading } = useOrg();
+  // Fail CLOSED, matching MainApp.tsx/Sidebar.tsx: treat "role not yet confirmed owner/admin"
+  // (loading, or null right after an invite accept) the same as agent, not the same as manager
+  // (review fix-forward, MEDIUM).
+  const isManager = role === 'owner' || role === 'admin';
+  const isAgent = orgLoading || !isManager;
   const [stats, setStats] = useState<{
     callsToday: number;
     connectRate: number;

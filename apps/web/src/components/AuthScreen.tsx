@@ -64,14 +64,15 @@ export function AuthScreen() {
             transition={{ delay: 0.3, duration: 0.8 }}
           >
             <h1 className="text-6xl font-bold mb-6 leading-tight">
-              Close{' '}
+              Parallel{' '}
               <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#00D9FF] to-[#0066FF]">
-                3X
+                Dialing
               </span>{' '}
-              More Deals
+              for Sales Teams
             </h1>
             <p className="text-xl text-[#B0BEC5] mb-12 max-w-lg">
-              Power dialing platform trusted by high-velocity sales teams to crush quota every month
+              Dial multiple lines at once -- the first human answer connects you, the rest hang up
+              automatically.
             </p>
           </motion.div>
         </div>

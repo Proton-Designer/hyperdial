@@ -38,9 +38,14 @@ const tabs: NavTab[] = [
 const TOP_NAV_HEIGHT = 72;
 
 export function Sidebar({ activeTab, onTabChange, collapsed, onToggleCollapse }: SidebarProps) {
-  const { role } = useOrg();
+  const { role, loading: orgLoading } = useOrg();
+  // Fail CLOSED: an owner/admin-only tab is visible only once role is CONFIRMED owner/admin, not
+  // merely "not confirmed agent" -- while role is loading (or null right after an invite accept
+  // that hasn't refetched yet), this must not show manager tabs (review fix-forward, MEDIUM).
+  const isManager = role === 'owner' || role === 'admin';
+  const showManagerTabs = !orgLoading && isManager;
   const isAgent = role === 'agent';
-  const visibleTabs = tabs.filter((tab) => !isAgent || !tab.ownerAdminOnly);
+  const visibleTabs = tabs.filter((tab) => showManagerTabs || !tab.ownerAdminOnly);
 
   return (
     <motion.aside
@@ -93,7 +98,7 @@ export function Sidebar({ activeTab, onTabChange, collapsed, onToggleCollapse }:
 
       {/* Settings at bottom -- owner/admin only, same as Campaigns/Analytics above */}
       <div className="p-3 border-t border-white/5">
-        {!isAgent && (
+        {showManagerTabs && (
           <button
             onClick={() => onTabChange('settings')}
             className={`

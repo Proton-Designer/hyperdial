@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Loader2, Mail, Lock, User, ArrowRight, LogOut } from 'lucide-react';
 import { AnimatedBackground } from './AnimatedBackground';
 import { useAuth } from '@/contexts/AuthContext';
+import { useOrg } from '@/contexts/OrgContext';
 import { previewOrgInvite, acceptOrgInvite, type InvitePreview } from '@/lib/api';
 
 interface InviteLandingProps {
@@ -15,6 +16,7 @@ const ROLE_LABEL: Record<string, string> = { owner: 'Owner', admin: 'Admin', age
 
 export function InviteLanding({ token, onDone }: InviteLandingProps) {
   const { user, signUp, signIn, signOut, error, clearError } = useAuth();
+  const { refetch: refetchOrg } = useOrg();
   const [preview, setPreview] = useState<InvitePreview | null>(null);
   const [previewLoading, setPreviewLoading] = useState(true);
   const [previewError, setPreviewError] = useState<string | null>(null);
@@ -37,6 +39,11 @@ export function InviteLanding({ token, onDone }: InviteLandingProps) {
     setPreviewError(null);
     try {
       await acceptOrgInvite(token);
+      // OrgContext only refetches on mount / when `user` changes -- accepting an invite doesn't
+      // change `user` (already signed in), so without this, role/orgId would stay whatever they
+      // were before the membership existed (null, for a first-ever invite) all the way into
+      // MainApp rendering -- exactly the review fix-forward's role-not-yet-confirmed gap.
+      await refetchOrg();
       onDone();
     } catch (e) {
       setPreviewError(String(e));
@@ -64,6 +71,9 @@ export function InviteLanding({ token, onDone }: InviteLandingProps) {
         await signIn(preview.email, password);
       }
       await acceptOrgInvite(token);
+      // See handleAcceptAsSignedIn's comment -- same staleness gap applies to a brand-new signup
+      // via this form (a fresh user has no membership at all until this accept call lands it).
+      await refetchOrg();
       onDone();
     } catch {
       // Error is set in AuthContext, or acceptOrgInvite threw -- surfaced via previewError below
