@@ -525,6 +525,9 @@ export interface Contact {
   /** LeadConnector contact id, set once a contact has been pulled from or linked to GHL
    *  (TASK-P3-P2). Null for a CSV-imported or manually-added contact never synced with GHL. */
   ghl_contact_id: string | null;
+  /** Raw snapshot of the contact's GHL tags as of its last import (TASK-G7). Null until the
+   *  contact has been imported from/linked to GHL at least once. */
+  ghl_tags: string[] | null;
   created_at: string;
   updated_at: string;
 }
@@ -1368,6 +1371,10 @@ export interface GhlIntegrationStatus {
   status: 'disconnected' | 'pending_verification' | 'connected' | 'error';
   location_id: string | null;
   connected_at: string | null;
+  /** TASK-G7 (GHL-7): the org's configured blocked-tag lists. Defaults to
+   *  ['do not call','dnc','do-not-call'] / ['paused','pause'] until an owner/admin edits them. */
+  ghl_dnc_tags: string[];
+  ghl_paused_tags: string[];
 }
 
 /** Reads the safe `org_integrations_status` view -- never the base table, which has no client policies at all. */
@@ -1375,12 +1382,28 @@ export async function getGhlIntegrationStatus(): Promise<GhlIntegrationStatus | 
   const orgId = await getActiveOrgId();
   const { data, error } = await supabase
     .from('org_integrations_status')
-    .select('status, location_id, connected_at')
+    .select('status, location_id, connected_at, ghl_dnc_tags, ghl_paused_tags')
     .eq('org_id', orgId)
     .eq('provider', 'ghl')
     .maybeSingle();
   if (error) throw new Error(error.message);
   return data as GhlIntegrationStatus | null;
+}
+
+/** Owner/admin only (TASK-G7). Replaces both lists wholesale -- there's no partial-update
+ *  endpoint, matching how the Settings editor always submits both lists together. */
+export async function updateGhlBlockedTags(
+  dncTags: string[],
+  pausedTags: string[]
+): Promise<{ dncTags: string[]; pausedTags: string[] }> {
+  const res = await fetch(`${getFunctionsUrl()}/ghl-update-blocked-tags`, {
+    method: 'POST',
+    headers: await getEdgeFunctionHeaders(),
+    body: JSON.stringify({ dncTags, pausedTags }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Failed to update blocked tags');
+  return data;
 }
 
 export async function connectGhl(
@@ -1427,12 +1450,22 @@ export interface ImportFromGhlResult {
   skipped: number;
   invalid: number;
   /** Only meaningful when campaignId was passed -- contacts (new or updated) not queued onto it
-   *  because GHL marked them dnd or tagged them dialer:dnc (TASK-L3, GHL-7). */
+   *  because GHL marked them dnd or tagged them with one of the org's configured DNC tags
+   *  (TASK-G7, GHL-7). */
   skippedDnc: number;
-  /** Same, for contacts tagged dialer:paused. */
+  /** Same, for contacts tagged with one of the org's configured paused tags. */
   skippedPaused: number;
   /** Same, for contacts already active in a different campaign (QUE-8). */
   skippedActiveCampaign: number;
+  /** TASK-G7: total contacts this run marked DNC from a GHL tag/dnd flag, regardless of whether
+   *  campaignId was passed -- unlike skippedDnc, which only covers the optional queue step. */
+  dncTagged: number;
+  /** Same, for the org's configured paused tags. */
+  pausedTagged: number;
+  /** TASK-G7: contacts that were paused as of their last import and no longer carry a paused tag
+   *  this run. Re-queueing them onto a campaign is never automatic -- this is a count only, for
+   *  a manager to act on. */
+  unpaused: number;
   /** true when the org has more matching GHL contacts than this run fetched (a 2,000-contact
    *  per-run cap -- see ghl-import.ts) -- re-running the same import continues from where the
    *  last one left off, since matched contacts are skipped as already up to date. */

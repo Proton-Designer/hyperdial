@@ -672,3 +672,34 @@ there is no vendor signal to time a drop against, no matter which mode the campa
 delay after `call.machine.detection.ended` -- Telnyx gives no event to validate that guess against under this mode, so it's an unbounded false-positive risk
 (playing over a live human, or into dead air) with no way to detect the failure. If an org wants voicemail drop, the campaign must run `detect_words` or
 `premium`; `detect`/`off` are for early answer/mute-tone speed only.
+
+### GHL-7 (TASK-G7): a new `campaign_leads.status='paused'`, org-wide retroactive DNC/paused enforcement, and blocked tags gated behind an existing GHL connection
+
+**Status:** Active · **Decided by:** eng1 (TASK-G7, 2026-09-25)
+
+**Context:** the task file offered "use an existing status such as `passthrough`/`completed`, or add
+a `paused` status if cleaner" for a GHL-paused contact's already-queued `campaign_leads` rows.
+`passthrough` already means something specific and unrelated -- "this row lost a same-contact-
+same-campaign dedupe collision" (`20260925000200`) -- reusing it would make a future "which leads
+are GHL-paused" query indistinguishable from "which leads were dedupe losers."
+
+**Decision:** added `'paused'` to `campaign_leads_status_check` (`20260925080000`), deliberately
+NOT added to `campaign-queue.ts`'s `ACTIVE_CAMPAIGN_LEAD_STATUSES` (so `claim_next_leads` ignores
+it like every other terminal status). Separately, the task's own DNC clause only said "never added
+to a campaign queue" (no explicit already-queued case, unlike the paused clause) -- extended it to
+also retroactively move a DNC-tagged contact's active leads to `status='dnc'`, mirroring
+`submit_disposition`'s own disposition-driven DNC branch (`20260924002200`/`20260925060000`:
+`update campaign_leads set status='dnc' where contact_id=...`, org-wide, not scoped to one
+campaign). A contact left dialable in some other campaign after being marked DNC would be a real
+compliance bug, and the existing disposition path already sets this precedent. Both the DNC and
+paused retroactive updates apply org-wide (every campaign the contact is active in), not just the
+optional `campaignId` the import call happened to pass.
+
+**Also:** `ghl_dnc_tags`/`ghl_paused_tags` live on `org_integrations`, the same row `ghl-connect`
+creates -- there's nothing to write them onto before an org's first GHL connect, so the Settings
+editor is gated behind `isConnected` (same as the existing sync-status panel) and
+`set_org_ghl_blocked_tags` raises if called with no row. Not worth a separate seeded row at
+org-creation just to allow pre-configuring tags nobody can match against yet.
+
+**Do not undo without understanding:** don't merge `'paused'` back into `'passthrough'` to "simplify"
+the status enum -- see the Context paragraph above for why that collapses two different meanings.

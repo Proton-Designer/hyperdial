@@ -193,6 +193,26 @@ export function ImportFromGhlModal({
                     .
                   </p>
                 )}
+                {(result.dncTagged > 0 || result.pausedTagged > 0) && (
+                  <p className="text-sm text-text-secondary">
+                    From GHL tags:{' '}
+                    {[
+                      result.dncTagged > 0 && `${result.dncTagged} marked do-not-call`,
+                      result.pausedTagged > 0 &&
+                        `${result.pausedTagged} paused (removed from any campaign they were queued in)`,
+                    ]
+                      .filter(Boolean)
+                      .join(', ')}
+                    .
+                  </p>
+                )}
+                {result.unpaused > 0 && (
+                  <p className="text-sm text-text-secondary">
+                    {result.unpaused} contact{result.unpaused === 1 ? '' : 's'} no longer have a
+                    paused tag in GHL. Re-queueing them is a separate, deliberate step -- find them
+                    in a campaign's lead list and requeue manually if you want them dialed again.
+                  </p>
+                )}
                 {result.truncated && (
                   <p className="text-sm text-yellow-400">
                     This org has more matching GHL contacts than one run fetches. Run "Re-sync"

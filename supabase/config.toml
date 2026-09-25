@@ -403,6 +403,8 @@ verify_jwt = false
 verify_jwt = false
 [functions.ghl-import]
 verify_jwt = false
+[functions.ghl-update-blocked-tags]
+verify_jwt = false
 [functions.ghl-sync-worker]
 # Triggered by pg_net (a cron job), which sends no Supabase JWT at all -- without this the
 # gateway 401s every tick once deployed, before the function's own X-Cron-Secret check ever

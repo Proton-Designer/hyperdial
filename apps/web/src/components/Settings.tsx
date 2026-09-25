@@ -55,6 +55,7 @@ import {
   getGhlIntegrationStatus,
   connectGhl,
   disconnectGhl,
+  updateGhlBlockedTags,
   listCrmSyncJobs,
   getTelnyxConnectionStatus,
   connectTelnyx,
@@ -743,8 +744,196 @@ function IntegrationsTab() {
         </div>
       )}
 
+      {isConnected && (
+        <GhlBlockedTagsEditor
+          status={status}
+          onSaved={load}
+          isAdmin={isOwner || role === 'admin'}
+        />
+      )}
       {isConnected && <SyncStatusList />}
     </motion.div>
+  );
+}
+
+/** TASK-G7 (GHL-7): owner/admin-editable lists of GHL tags that mean "do not call" / "paused" for
+ *  this org. Both lists start from `status`'s current values (the DB's own defaults the first
+ *  time an org connects) and are edited as a simple add/remove chip list -- no reason for
+ *  anything fancier for a handful of short tag strings. */
+function GhlBlockedTagsEditor({
+  status,
+  onSaved,
+  isAdmin,
+}: {
+  status: GhlIntegrationStatus | null;
+  onSaved: () => void;
+  isAdmin: boolean;
+}) {
+  const [dncTags, setDncTags] = useState<string[]>(status?.ghl_dnc_tags ?? []);
+  const [pausedTags, setPausedTags] = useState<string[]>(status?.ghl_paused_tags ?? []);
+  const [dncDraft, setDncDraft] = useState('');
+  const [pausedDraft, setPausedDraft] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    setDncTags(status?.ghl_dnc_tags ?? []);
+    setPausedTags(status?.ghl_paused_tags ?? []);
+  }, [status]);
+
+  const addTag = (
+    list: string[],
+    setList: (v: string[]) => void,
+    draft: string,
+    setDraft: (v: string) => void
+  ) => {
+    const trimmed = draft.trim();
+    if (!trimmed) return;
+    if (list.some((t) => t.toLowerCase() === trimmed.toLowerCase())) {
+      setDraft('');
+      return;
+    }
+    setList([...list, trimmed]);
+    setDraft('');
+  };
+
+  const removeTag = (list: string[], setList: (v: string[]) => void, tag: string) => {
+    setList(list.filter((t) => t !== tag));
+  };
+
+  const dirty =
+    JSON.stringify(dncTags) !== JSON.stringify(status?.ghl_dnc_tags ?? []) ||
+    JSON.stringify(pausedTags) !== JSON.stringify(status?.ghl_paused_tags ?? []);
+
+  const handleSave = async () => {
+    if (dncTags.length === 0 || pausedTags.length === 0) {
+      setError('Each list needs at least one tag.');
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    setSaved(false);
+    try {
+      await updateGhlBlockedTags(dncTags, pausedTags);
+      setSaved(true);
+      onSaved();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const tagList = (
+    label: string,
+    hint: string,
+    list: string[],
+    setList: (v: string[]) => void,
+    draft: string,
+    setDraft: (v: string) => void,
+    inputId: string
+  ) => (
+    <div>
+      <label htmlFor={inputId} className="block text-sm text-text-secondary mb-1">
+        {label}
+      </label>
+      <p className="text-xs text-text-secondary mb-2">{hint}</p>
+      <div className="flex flex-wrap gap-2 mb-2">
+        {list.map((tag) => (
+          <span
+            key={tag}
+            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs bg-surface-2 border border-white/10 text-white"
+          >
+            {tag}
+            {isAdmin && (
+              <button
+                type="button"
+                onClick={() => removeTag(list, setList, tag)}
+                className="text-text-secondary hover:text-danger"
+                aria-label={`Remove ${tag}`}
+              >
+                <X className="w-3 h-3" />
+              </button>
+            )}
+          </span>
+        ))}
+      </div>
+      {isAdmin && (
+        <div className="flex gap-2">
+          <input
+            id={inputId}
+            type="text"
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                addTag(list, setList, draft, setDraft);
+              }
+            }}
+            className="flex-1 bg-surface-2 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-accent-to"
+            placeholder="Add a tag"
+          />
+          <button
+            type="button"
+            onClick={() => addTag(list, setList, draft, setDraft)}
+            className="px-3 py-2 bg-surface-2 border border-white/10 rounded-lg text-sm text-white hover:bg-surface-3"
+          >
+            Add
+          </button>
+        </div>
+      )}
+    </div>
+  );
+
+  return (
+    <div className="bg-surface-1 rounded-app-lg p-6 border border-border-subtle max-w-xl mt-4 space-y-5">
+      <div>
+        <div className="text-white font-medium mb-1">Blocked tags</div>
+        <p className="text-sm text-text-secondary">
+          Contacts tagged with any of these in GHL are never queued or dialed.
+        </p>
+      </div>
+
+      {error && (
+        <div className="p-3 rounded-app-md bg-danger/10 border border-danger/30 text-danger text-sm">
+          {error}
+        </div>
+      )}
+
+      {tagList(
+        'Do-not-call tags',
+        'A contact with one of these tags is marked do-not-call and added to the org-wide DNC list.',
+        dncTags,
+        setDncTags,
+        dncDraft,
+        setDncDraft,
+        'ghl-dnc-tags-input'
+      )}
+
+      {tagList(
+        'Paused tags',
+        "A contact with one of these tags is skipped by new imports and pulled off any campaign it's already queued in, until the tag is removed and you re-queue it yourself.",
+        pausedTags,
+        setPausedTags,
+        pausedDraft,
+        setPausedDraft,
+        'ghl-paused-tags-input'
+      )}
+
+      {isAdmin && (
+        <button
+          type="button"
+          onClick={handleSave}
+          disabled={saving || !dirty}
+          className="px-5 py-2.5 bg-gradient-to-r from-accent-from to-accent-to rounded-app-md text-white text-sm font-medium disabled:opacity-50 flex items-center gap-2"
+        >
+          {saving && <Loader2 className="w-4 h-4 animate-spin" />}
+          {saved && !dirty ? 'Saved' : 'Save changes'}
+        </button>
+      )}
+    </div>
   );
 }
 

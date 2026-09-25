@@ -14,6 +14,7 @@ sources:
   - supabase/functions/_shared/ghl-client.ts
   - supabase/functions/_shared/ghl-import.ts
   - supabase/functions/ghl-import/index.ts
+  - supabase/migrations/20260925080000_ghl_blocked_tags.sql
   - supabase/migrations/20260924001600_contacts_ghl_contact_id.sql
   - supabase/migrations/20260924002000_ghl_push_worker.sql
   - supabase/functions/_shared/ghl-sync-worker.ts
@@ -32,7 +33,7 @@ answers:
   - "what payload shape does enqueue_crm_job expect for a disposition job"
   - "how does Import from GHL dedupe, and what happens if you run it twice"
   - "why does tag-based import page every contact instead of filtering server-side"
-  - "how is a retried sync job kept from double-posting a note"
+  - "how is a retried sync job kept from double-posting a note; what makes a GHL-tagged contact do-not-call or paused"
 covers: "GHL (GoHighLevel) connect/disconnect, the org_integrations token store, the crm_sync_jobs push outbox (worker included), and the pull-import (contacts by tag/search) path."
 excludes: "The disposition/wrap-up UI that will call enqueue_crm_job -- not yet built (see Not covered here)."
 tokens_est: 3269
@@ -71,7 +72,7 @@ and is tested, but has nothing feeding it in production until then.
 | Settings UI | `apps/web/src/components/Settings.tsx` (`IntegrationsTab`) | Connect form + status card + `SyncStatusList` (last 20 jobs), owner-only controls |
 | Push worker | `supabase/functions/_shared/ghl-sync-worker.ts` (pure per-step processors, deno-tested), `ghl-sync-worker/index.ts` (claim + dispatch) | `20260924002000_ghl_push_worker.sql`: claim/complete/fail/progress RPCs + pg_cron |
 | Client wrappers | `apps/web/src/lib/api.ts` | `getGhlIntegrationStatus`, `connectGhl`, `disconnectGhl`, `importFromGhl`, `listCrmSyncJobs` |
-| Pull import (TASK-P3-P2) | `supabase/functions/_shared/ghl-import.ts` (pure paging/dedupe, deno-tested), `ghl-import/index.ts` (thin wrapper) | `Contacts.tsx`'s "Import from GHL"/"Re-sync"; contacts-side detail → `.brain/domains/contacts.md` |
+| Pull import + blocked tags (TASK-P3-P2, TASK-G7) | `_shared/ghl-import.ts`/`ghl-import/index.ts`; blocked tags: `org_integrations.ghl_dnc_tags`/`ghl_paused_tags` (`20260925080000`), `ghl-update-blocked-tags/`, `Settings.tsx`'s `GhlBlockedTagsEditor` | `Contacts.tsx`'s "Import from GHL"/"Re-sync"; contacts detail → `.brain/domains/contacts.md`. Tag lists owner/admin-editable via `set_org_ghl_blocked_tags` RPC (service-role only, same wrapper as `set_org_ghl_token`) |
 
 ## How it works
 
@@ -108,6 +109,7 @@ Admin+ only, same as CSV import. "By tag" and "by search" share one code path: `
 `planGhlImport` (pure) filters by `GhlContact.tags` client-side for tag mode and dedupes on `ghl_contact_id` first, normalized phone second -- same order as
 `contacts.md`'s De-duplication section. GHL `dnd:true` sets `dnc: true`; `dnd:false`/absent never forces it back to false. "Re-sync" replays the last
 `{mode, value}` through the same call -- dedupe makes that idempotent. `truncated: true` in the response means the 2,000-contact cap was hit.
+**Blocked tags (TASK-G7, GHL-7):** `GhlContact.tags` is also checked against the org's `ghl_dnc_tags`/`ghl_paused_tags` (`org_integrations`, defaults `["do not call","dnc","do-not-call"]`/`["paused","pause"]`, owner/admin-editable, exact case/whitespace-insensitive match). A matched DNC tag sets `contacts.dnc`, writes a `dnc_numbers` row (`note='GHL tag: <tag>'`), and -- like `submit_disposition`'s own DNC branch -- moves every active `campaign_leads` row for that contact, org-wide, to `status='dnc'`. A matched paused tag isn't stored (no `contacts.paused` column) but is re-derived every import: skipped from queueing, active `campaign_leads` rows move to `status='paused'` (distinct from the dedupe-loser `'passthrough'`). `contacts.ghl_tags` snapshots the raw tags so a re-import can detect "was paused, isn't now" -- surfaced as an `unpaused` count only, re-queueing is always manual. Verified the push worker never adds/removes these tags (no `removeTags` exists; `upsertContact` never sends `tags`).
 
 ### Push worker (TASK-P3-P3)
 

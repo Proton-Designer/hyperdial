@@ -181,6 +181,29 @@ hangup or a real 30-minute contact time-limit hangup live is impractical within 
 is not part of this checklist; both are unit-tested (`dialer-core.ts`'s `hangupOutcome` for
 `hangup_cause: 'time_limit'`) instead.
 
+### B13 — Contacts tagged do-not-call/paused in GHL are never queued or dialed (TASK-G7, GHL-7)
+
+Requires a connected GHL sub-account (Settings → Integrations) and a GHL contact you can freely
+tag for this test — do not use a real MyHomeBase contact.
+
+| #     | Step                                                                                                                                                                  | Expected                                                                                                                                                                                      | ☐   |
+| ----- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --- |
+| B13.1 | Settings → Integrations → GHL, scroll to "Blocked tags". Confirm the two lists' starting values.                                                                      | Do-not-call: `do not call`, `dnc`, `do-not-call`. Paused: `paused`, `pause` — the built-in defaults, since this org hasn't customized them yet.                                               | ☐   |
+| B13.2 | Add a custom tag to each list (e.g. `blacklisted` / `hold`) and click Save changes.                                                                                   | Button shows "Saved"; reloading Settings shows the new tag still present in both lists.                                                                                                       | ☐   |
+| B13.3 | In GHL, tag a test contact with `dnc` (a default tag). Contacts → Import from GHL → By tag → `dnc` → Import (no campaign).                                            | Result shows 1 created (or updated) and "1 marked do-not-call from GHL tags". The contact appears in Contacts with its DNC flag set.                                                          | ☐   |
+| B13.4 | Settings → Do-not-call list.                                                                                                                                          | The contact's E.164 number is on the list, source `import`, note `GHL tag: dnc` (or whatever the real tag's casing was in GHL).                                                               | ☐   |
+| B13.5 | Import that same contact again with a campaign selected this time.                                                                                                    | The contact is **not** added to the campaign's lead list — result shows it under "skipped (do-not-call)".                                                                                     | ☐   |
+| B13.6 | In GHL, tag a second test contact with `paused` and import it (by tag `paused`) onto a real campaign.                                                                 | Result shows 1 "paused" from GHL tags; the contact is **not** in that campaign's lead list (skipped as paused).                                                                               | ☐   |
+| B13.7 | Manually queue that same contact onto the campaign in-app (Campaign → Manage → Add to campaign), then re-run the Import from GHL for the `paused` tag (same contact). | The contact's `campaign_leads` row for that campaign flips to a non-dialable `paused` status — it does not get dialed by that campaign's session even though it's still listed there.         | ☐   |
+| B13.8 | In GHL, remove the `paused` tag from that contact, then re-import (search mode, contact's name, no campaign) works too.                                               | Result shows "1 no longer paused in GHL" — the campaign_leads row from B13.7 stays `paused` (re-queueing is manual, not automatic); the note in the UI says to find and re-queue it yourself. | ☐   |
+| B13.9 | Non-owner/admin (an agent account) opens Settings → Integrations.                                                                                                     | The "Blocked tags" panel is visible read-only (chips, no Add/remove controls, no Save button) — matches the existing owner/admin-only pattern for the rest of this tab.                       | ☐   |
+
+The tag-matching/skip/queue logic itself is fully covered by `ghl-import.test.ts`'s deno tests
+(default lists, custom lists, case/whitespace normalization, the `dnc_numbers` note text, and the
+unpaused-count detection) — B13 above only covers what a real GHL round trip and real DB state can
+add on top of that: the Settings editor actually persisting, and the retroactive `campaign_leads`
+status change actually happening against a live campaign.
+
 ---
 
 ## C. Evidence to capture

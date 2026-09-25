@@ -20,6 +20,8 @@ import { planCampaignQueue, type CampaignQueueCandidate } from '../_shared/campa
 import {
   fetchActiveElsewhereContactIds,
   fetchDncE164Set,
+  insertDncNumbersFromGhlTags,
+  setCampaignLeadsStatusForContacts,
   upsertCampaignLeads,
 } from '../_shared/campaign-queue-io.ts';
 
@@ -47,7 +49,7 @@ async function fetchAllExistingContactRows(
   for (let offset = 0; ; offset += PAGE_SIZE) {
     const { data, error } = await supabase
       .from('contacts')
-      .select('id, phone_number, ghl_contact_id, dnc')
+      .select('id, phone_number, ghl_contact_id, dnc, ghl_tags')
       .eq('org_id', orgId)
       // TASK-L8 review nit: same as contacts-import's own fetchAllContactRows -- .range() paging
       // with no explicit order isn't guaranteed stable across separate requests.
@@ -90,7 +92,7 @@ Deno.serve(async (req: Request) => {
 
   const { data: integration, error: integrationError } = await supabase
     .from('org_integrations')
-    .select('status, location_id')
+    .select('status, location_id, ghl_dnc_tags, ghl_paused_tags')
     .eq('org_id', orgId)
     .eq('provider', 'ghl')
     .maybeSingle();
@@ -155,11 +157,23 @@ Deno.serve(async (req: Request) => {
     value,
     ghlContacts: fetched.contacts,
     existing: existingRows,
+    dncTags: (integration.ghl_dnc_tags as string[] | null) ?? undefined,
+    pausedTags: (integration.ghl_paused_tags as string[] | null) ?? undefined,
   });
 
   const now = new Date().toISOString();
   const existingById = new Map(existingRows.map((r) => [r.id, r]));
   const queueCandidates: CampaignQueueCandidate[] = [];
+  // TASK-G7: every contact this run created/updated, with enough to (a) write a dnc_numbers row
+  // when its DNC-ness came from a matched GHL tag, and (b) retroactively pull it off every active
+  // campaign queue org-wide when it's DNC or paused. Built alongside queueCandidates below.
+  const touched: {
+    contactId: string;
+    ghlContactId: string;
+    phoneNumber: string;
+    dnc: boolean;
+    paused: boolean;
+  }[] = [];
 
   // TASK-F-T1 (QUE-7): the org-wide DNC list, checked in addition to (never synced with) GHL's
   // own dnd/dialer:dnc-tag signal already folded into `fields.dnc`/`patch.dnc` above by
@@ -212,10 +226,15 @@ Deno.serve(async (req: Request) => {
     // each new row's ghl_contact_id/dnc without a second round trip.
     (inserted ?? []).forEach((row: { id: string }, i) => {
       const fields = plan.toInsert[i];
-      queueCandidates.push({
+      const dnc = fields.dnc === true;
+      const paused = plan.pausedGhlContactIds.has(fields.ghl_contact_id);
+      queueCandidates.push({ contactId: row.id, dnc, paused });
+      touched.push({
         contactId: row.id,
-        dnc: fields.dnc === true,
-        paused: plan.pausedGhlContactIds.has(fields.ghl_contact_id),
+        ghlContactId: fields.ghl_contact_id,
+        phoneNumber: fields.phone_number,
+        dnc,
+        paused,
       });
     });
   }
@@ -237,14 +256,61 @@ Deno.serve(async (req: Request) => {
         console.error('[ghl-import] update failed', updateError.message);
         return jsonResponse({ error: updateError.message }, 500);
       }
-      queueCandidates.push({
+      // patch.dnc is only ever `true` or absent (never an explicit false) -- an update that
+      // didn't set it keeps whatever the contact already had.
+      const dnc = u.patch.dnc === true || existingById.get(u.id)?.dnc === true;
+      const paused = plan.pausedGhlContactIds.has(u.patch.ghl_contact_id);
+      queueCandidates.push({ contactId: u.id, dnc, paused });
+      touched.push({
         contactId: u.id,
-        // patch.dnc is only ever `true` or absent (never an explicit false) -- an update that
-        // didn't set it keeps whatever the contact already had.
-        dnc: u.patch.dnc === true || existingById.get(u.id)?.dnc === true,
-        paused: plan.pausedGhlContactIds.has(u.patch.ghl_contact_id),
+        ghlContactId: u.patch.ghl_contact_id,
+        phoneNumber: u.patch.phone_number ?? existingById.get(u.id)?.phone_number ?? '',
+        dnc,
+        paused,
       });
     }
+  }
+
+  // TASK-G7 (GHL-7): dnc_numbers row for every contact whose DNC-ness came from a matched GHL tag
+  // this run (not from GHL's own dnd flag alone, and not from the org's pre-existing dnc_numbers
+  // list -- neither of those has a "GHL tag: <tag>" to cite). Then retroactively pull every
+  // DNC/paused contact touched this run off any campaign it's currently active in, org-wide --
+  // see setCampaignLeadsStatusForContacts's header for why this isn't scoped to just `campaignId`.
+  try {
+    const dncNumberRows = touched
+      .filter((t) => plan.dncTagNoteByGhlContactId.has(t.ghlContactId) && t.phoneNumber)
+      .map((t) => ({
+        e164: t.phoneNumber,
+        note: plan.dncTagNoteByGhlContactId.get(t.ghlContactId)!,
+      }));
+    if (dncNumberRows.length > 0) {
+      await insertDncNumbersFromGhlTags(supabase, { orgId, rows: dncNumberRows });
+    }
+
+    const dncContactIds = touched.filter((t) => t.dnc).map((t) => t.contactId);
+    // DNC takes priority over paused (same ordering campaign-queue.ts's planCampaignQueue
+    // documents) -- a contact matching both never gets its already-'dnc' rows overwritten back to
+    // 'paused' by the second call below.
+    const pausedOnlyContactIds = touched.filter((t) => t.paused && !t.dnc).map((t) => t.contactId);
+
+    if (dncContactIds.length > 0) {
+      await setCampaignLeadsStatusForContacts(supabase, {
+        orgId,
+        contactIds: dncContactIds,
+        status: 'dnc',
+      });
+    }
+    if (pausedOnlyContactIds.length > 0) {
+      await setCampaignLeadsStatusForContacts(supabase, {
+        orgId,
+        contactIds: pausedOnlyContactIds,
+        status: 'paused',
+      });
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error('[ghl-import] GHL-7 dnc/paused enforcement failed', message);
+    return jsonResponse({ error: 'Failed to apply do-not-call/paused rules from GHL tags' }, 500);
   }
 
   let skippedDnc = 0;
@@ -296,6 +362,12 @@ Deno.serve(async (req: Request) => {
     skippedDnc,
     skippedPaused,
     skippedActiveCampaign,
+    // TASK-G7: totals across every contact touched this run, regardless of whether campaignId was
+    // passed -- the skipped* counters above only ever cover the optional queue-onto-a-campaign
+    // step, but GHL-7 asks for the DNC/paused counts unconditionally.
+    dncTagged: touched.filter((t) => t.dnc).length,
+    pausedTagged: touched.filter((t) => t.paused).length,
+    unpaused: plan.unpausedCount,
     truncated: fetched.truncated,
   });
 });

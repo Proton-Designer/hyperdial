@@ -111,3 +111,47 @@ export async function upsertCampaignLeads(
   }
   return { raceDropped };
 }
+
+/** TASK-G7 (GHL-7): writes the org-wide DNC list entry for a contact whose GHL tags matched one
+ * of the org's configured DNC tags this import. `ignoreDuplicates` -- a number can already be on
+ * the list (manual entry, a prior disposition, or a prior import) and re-importing must not
+ * clobber that earlier row's own note/source/added_by. Chunked like every other batch write in
+ * this file. */
+export async function insertDncNumbersFromGhlTags(
+  supabase: SupabaseAny,
+  args: { orgId: string; rows: { e164: string; note: string }[] }
+): Promise<void> {
+  for (const batch of chunk(args.rows, 200)) {
+    if (batch.length === 0) continue;
+    const { error } = await supabase.from('dnc_numbers').upsert(
+      batch.map((r) => ({ org_id: args.orgId, e164: r.e164, source: 'import', note: r.note })),
+      { onConflict: 'org_id,e164', ignoreDuplicates: true }
+    );
+    if (error) throw new Error(`dnc_numbers insert failed: ${error.message}`);
+  }
+}
+
+/** TASK-G7 (GHL-7): "if it's already queued, set those campaign_leads to a non-dialable status."
+ * Moves every ACTIVE campaign_leads row (see ACTIVE_CAMPAIGN_LEAD_STATUSES) for the given contacts
+ * -- across ALL of the org's campaigns, not only the one this import may be queueing into --
+ * to `status`. Mirrors `submit_disposition`'s own org-wide `update ... where contact_id = ...`
+ * for a disposition-driven DNC (20260924002200/20260925060000): once a contact is known DNC (or,
+ * new for this task, paused), it must stop being dialable everywhere, not just in the campaign
+ * the current request happens to be about. */
+export async function setCampaignLeadsStatusForContacts(
+  supabase: SupabaseAny,
+  args: { orgId: string; contactIds: string[]; status: string }
+): Promise<void> {
+  for (const batch of chunk(args.contactIds, 200)) {
+    if (batch.length === 0) continue;
+    const { error } = await supabase
+      .from('campaign_leads')
+      .update({ status: args.status, updated_at: new Date().toISOString() })
+      .eq('org_id', args.orgId)
+      .in('contact_id', batch)
+      .in('status', ACTIVE_CAMPAIGN_LEAD_STATUSES);
+    if (error) {
+      throw new Error(`campaign_leads status update to '${args.status}' failed: ${error.message}`);
+    }
+  }
+}
