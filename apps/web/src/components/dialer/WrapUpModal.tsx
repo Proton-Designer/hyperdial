@@ -7,6 +7,7 @@ import {
   type Disposition,
   type SubmitDispositionResult,
 } from '@/lib/api';
+import { Button } from '@/components/ui/button';
 
 /** TASK-F-T2 (REC-5): the recording may still be processing when this modal opens (the
  *  call.recording.saved webhook lands seconds after hangup, independently of this modal's own
@@ -55,7 +56,7 @@ function RecordingButton({ legId }: { legId: string }) {
     );
   }
   if (checking) {
-    return <p className="text-xs text-[#B0BEC5]/70">Recording processing…</p>;
+    return <p className="text-xs text-text-muted">Recording processing…</p>;
   }
   return null;
 }
@@ -297,12 +298,12 @@ export function WrapUpModal({
     >
       {/* No onClick here on purpose: a backdrop click must do nothing (unskippable). */}
       <div className="absolute inset-0 bg-black/70" aria-hidden="true" />
-      <div className="relative z-[1] w-full max-w-lg rounded-2xl border border-white/10 bg-[#1A2332] shadow-xl">
-        <div className="border-b border-white/10 p-4">
-          <h2 id="wrapup-title" className="text-xl font-bold text-white">
+      <div className="relative z-[1] w-full max-w-lg rounded-app-lg border border-border-subtle bg-surface-1 shadow-app-md">
+        <div className="border-b border-border-subtle p-4">
+          <h2 id="wrapup-title" className="text-page-title text-text-primary">
             Wrap up the call
           </h2>
-          <p className="text-sm text-[#B0BEC5] mt-1">
+          <p className="text-body text-text-secondary mt-1">
             {contact.name || 'Unknown contact'} · {contact.phone}
             {typeof callDurationSeconds === 'number' && (
               <> · {formatDuration(callDurationSeconds)}</>
@@ -312,25 +313,28 @@ export function WrapUpModal({
 
         <div className="p-4 space-y-4 max-h-[70vh] overflow-y-auto">
           {submitError && (
-            <div className="rounded-lg bg-red-500/10 border border-red-500/30 text-red-400 text-sm p-3">
+            <div className="rounded-app-md bg-danger-soft border border-danger/30 text-danger text-body p-3">
               {submitError}
             </div>
           )}
           {loadError && (
-            <div className="rounded-lg bg-red-500/10 border border-red-500/30 text-red-400 text-sm p-3">
+            <div className="rounded-app-md bg-danger-soft border border-danger/30 text-danger text-body p-3">
               Could not load dispositions: {loadError}
             </div>
           )}
 
           {!dispositions && !loadError && (
-            <div className="text-sm text-[#B0BEC5]">Loading dispositions…</div>
+            <div className="text-body text-text-secondary">Loading dispositions…</div>
           )}
 
           <RecordingButton legId={legId} />
 
           {dispositions && (
             <div>
-              <div id="disposition-group-label" className="block text-sm text-[#B0BEC5] mb-2">
+              <div
+                id="disposition-group-label"
+                className="block text-meta text-text-secondary mb-2"
+              >
                 Disposition
               </div>
               <div
@@ -348,14 +352,14 @@ export function WrapUpModal({
                       type="button"
                       aria-pressed={isSelected}
                       onClick={() => setSelectedKey(d.key)}
-                      className={`w-full flex items-center gap-3 rounded-xl border px-4 py-3 text-left transition-colors ${
+                      className={`w-full flex items-center gap-3 rounded-app-md border px-4 py-3 text-left transition-colors ${
                         isSelected
-                          ? 'border-[#00D9FF] bg-[#00D9FF]/10 text-white'
-                          : 'border-white/10 bg-[#1E2A3A] text-[#B0BEC5] hover:border-white/30 hover:text-white'
+                          ? 'border-accent-to bg-accent-to/10 text-text-primary'
+                          : 'border-border-subtle bg-surface-2 text-text-secondary hover:border-border-strong hover:text-text-primary'
                       }`}
                     >
                       {shortcut !== null && (
-                        <span className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-md bg-white/10 text-xs font-semibold text-white">
+                        <span className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-app-sm bg-white/10 text-xs font-semibold text-text-primary">
                           {shortcut}
                         </span>
                       )}
@@ -369,7 +373,7 @@ export function WrapUpModal({
 
           {needsCallback && (
             <div>
-              <label htmlFor="wrapup-callback" className="block text-sm text-[#B0BEC5] mb-1">
+              <label htmlFor="wrapup-callback" className="block text-meta text-text-secondary mb-1">
                 Callback time (required)
               </label>
               <input
@@ -378,20 +382,20 @@ export function WrapUpModal({
                 value={callbackLocal}
                 min={minCallback}
                 onChange={(e) => setCallbackLocal(e.target.value)}
-                className="w-full bg-[#1E2A3A] border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-[#00D9FF]"
+                className="w-full bg-surface-2 border border-border-subtle rounded-app-md px-4 py-3 text-text-primary focus:outline-none focus:border-accent-to"
               />
               {callbackLocal && !callbackValid && (
-                <p className="text-xs text-red-400 mt-1">Callback time must be in the future.</p>
+                <p className="text-xs text-danger mt-1">Callback time must be in the future.</p>
               )}
             </div>
           )}
 
           <div>
             <div className="flex items-center justify-between mb-1">
-              <label htmlFor="wrapup-notes" className="block text-sm text-[#B0BEC5]">
+              <label htmlFor="wrapup-notes" className="block text-meta text-text-secondary">
                 Notes
               </label>
-              <span className="text-xs text-[#B0BEC5]/70">
+              <span className="text-xs text-text-muted">
                 {notes.length}/{NOTES_MAX_LENGTH}
               </span>
             </div>
@@ -403,21 +407,22 @@ export function WrapUpModal({
               maxLength={NOTES_MAX_LENGTH}
               rows={4}
               placeholder="Quick notes for this call..."
-              className="w-full bg-[#1E2A3A] border border-white/10 rounded-xl px-4 py-3 text-white placeholder-[#B0BEC5]/50 focus:outline-none focus:border-[#00D9FF] resize-none"
+              className="w-full bg-surface-2 border border-border-subtle rounded-app-md px-4 py-3 text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent-to resize-none"
             />
           </div>
         </div>
 
-        <div className="border-t border-white/10 p-4">
-          <button
+        <div className="border-t border-border-subtle p-4">
+          <Button
             type="button"
+            variant="primary"
             onClick={() => void handleSubmit()}
             disabled={!canSubmit}
-            className="w-full rounded-xl bg-[#0066FF] px-4 py-3 font-semibold text-white transition-colors hover:bg-[#0066FF]/90 disabled:cursor-not-allowed disabled:opacity-40"
+            className="w-full"
           >
             {submitting ? 'Submitting…' : 'Submit (Enter)'}
-          </button>
-          <p className="text-xs text-[#B0BEC5]/70 mt-2 text-center">
+          </Button>
+          <p className="text-xs text-text-muted mt-2 text-center">
             Press 1-9 to pick a disposition, Enter to submit. This call must be dispositioned before
             the next batch dials.
           </p>
