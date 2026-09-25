@@ -13,6 +13,9 @@ const NOTES_MAX_LENGTH = 500;
  * beyond rendering the extras as plain (unshortcut-able) buttons. */
 const MAX_SHORTCUT_DISPOSITIONS = 9;
 
+const FOCUSABLE_SELECTOR =
+  'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
 export interface WrapUpModalProps {
   sessionId: string;
   legId: string;
@@ -55,6 +58,27 @@ function nowAsDateTimeLocalMin(): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+/** Any element that consumes typed characters itself (so digit/Enter shortcuts must not hijack
+ * it) -- not just the notes textarea. Review finding (TASK-L2a fix pass): pressing "1" while the
+ * callback datetime-local input was focused re-picked disposition #1 out from under the user. */
+function isTypingTarget(el: Element | null): boolean {
+  if (!el) return false;
+  if (
+    el instanceof HTMLTextAreaElement ||
+    el instanceof HTMLInputElement ||
+    el instanceof HTMLSelectElement
+  ) {
+    return true;
+  }
+  return el instanceof HTMLElement && el.isContentEditable;
+}
+
+function getFocusable(container: HTMLElement): HTMLElement[] {
+  return Array.from(container.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter(
+    (el) => el.offsetParent !== null
+  );
+}
+
 export function WrapUpModal({
   sessionId,
   legId,
@@ -72,7 +96,9 @@ export function WrapUpModal({
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
+  const modalRef = useRef<HTMLDivElement>(null);
   const notesRef = useRef<HTMLTextAreaElement>(null);
+  const firstDispositionRef = useRef<HTMLButtonElement>(null);
   const minCallback = useMemo(() => nowAsDateTimeLocalMin(), []);
 
   useEffect(() => {
@@ -94,6 +120,17 @@ export function WrapUpModal({
     // wrap up) is the actual intent here.
   }, [sessionId, legId]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Autofocus (review finding, MAJOR): move focus into the modal as soon as there's something
+  // focusable in it, so a keyboard user never has to Tab in from wherever focus happened to be
+  // (which, once L2b wires this in, could be a control behind the modal).
+  useEffect(() => {
+    if (dispositions && dispositions.length > 0) {
+      firstDispositionRef.current?.focus();
+    } else {
+      modalRef.current?.focus();
+    }
+  }, [dispositions]);
+
   const selected = dispositions?.find((d) => d.key === selectedKey) ?? null;
   const needsCallback = selected?.lead_effect === 'callback';
   const callbackIso = needsCallback ? localDateTimeToIso(callbackLocal) : null;
@@ -102,7 +139,19 @@ export function WrapUpModal({
   const canSubmit = selected !== null && callbackValid && !submitting;
 
   const handleSubmit = async () => {
-    if (!canSubmit || !selected) return;
+    if (!selected || submitting) return;
+    // Re-check at submit time, not just at whatever render last computed `callbackValid` (review
+    // finding, MINOR): a callback time that was valid when picked can become past while the form
+    // just sits there with no other state change to trigger a re-render.
+    let freshCallbackIso: string | undefined;
+    if (needsCallback) {
+      const iso = localDateTimeToIso(callbackLocal);
+      if (!iso || new Date(iso) <= new Date()) {
+        setSubmitError('Callback time must be in the future.');
+        return;
+      }
+      freshCallbackIso = iso;
+    }
     setSubmitting(true);
     setSubmitError(null);
     try {
@@ -110,7 +159,7 @@ export function WrapUpModal({
         legId,
         dispositionKey: selected.key,
         notes: notes.trim() || undefined,
-        callbackAt: needsCallback ? (callbackIso ?? undefined) : undefined,
+        callbackAt: freshCallbackIso,
       });
       onSubmitted(result);
       // Deliberately do not reset local state here: the parent unmounts this component once
@@ -124,22 +173,50 @@ export function WrapUpModal({
     }
   };
 
-  // Keyboard: 1-9 pick a disposition, Enter submits -- except while the notes textarea has
-  // focus, where digits must type normally and only Cmd/Ctrl+Enter submits (a plain Enter in a
-  // textarea should insert a newline, matching every other multi-line input in this app).
-  // Escape and any other key are deliberately no-ops: this modal has no close/cancel path.
+  // Keyboard: 1-9 pick a disposition, Enter submits -- except while ANY typing target (notes
+  // textarea, the callback datetime input, or any other future form control) has focus, where
+  // keys must behave normally and only Cmd/Ctrl+Enter submits. Fixes a review-found blocker:
+  // digit shortcuts were previously only suppressed inside the notes textarea, so typing "1" into
+  // the callback date/time input re-picked disposition #1 out from under the user instead of
+  // typing a "1". Tab/Shift+Tab are trapped inside the modal (focus never leaves it) since this
+  // component has no close/cancel path and must not let a keyboard user tab to whatever is behind
+  // it once L2b mounts this inside the real dialer screen. Escape and any other key are
+  // deliberately no-ops: this modal has no close/cancel path.
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      const inNotes = document.activeElement === notesRef.current;
+      const active = document.activeElement;
+      const typing = isTypingTarget(active);
+
+      if (e.key === 'Tab') {
+        const root = modalRef.current;
+        if (!root) return;
+        const focusable = getFocusable(root);
+        if (focusable.length === 0) return;
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (!active || !root.contains(active)) {
+          e.preventDefault();
+          first.focus();
+          return;
+        }
+        if (e.shiftKey && active === first) {
+          e.preventDefault();
+          last.focus();
+        } else if (!e.shiftKey && active === last) {
+          e.preventDefault();
+          first.focus();
+        }
+        return;
+      }
 
       if (e.key === 'Enter') {
-        if (inNotes && !(e.metaKey || e.ctrlKey)) return; // let it insert a newline
+        if (typing && !(e.metaKey || e.ctrlKey)) return; // let it type/insert normally
         e.preventDefault();
         void handleSubmit();
         return;
       }
 
-      if (inNotes) return; // every other key types into notes normally
+      if (typing) return; // every other key behaves normally in whatever field has focus
 
       if (/^[1-9]$/.test(e.key) && dispositions) {
         const index = Number(e.key) - 1;
@@ -157,17 +234,21 @@ export function WrapUpModal({
 
   return createPortal(
     <div
-      className="fixed inset-0 flex items-center justify-center p-4"
+      ref={modalRef}
+      className="fixed inset-0 flex items-center justify-center p-4 outline-none"
       style={{ zIndex: 10000 }}
       role="dialog"
       aria-modal="true"
-      aria-label="Call wrap-up"
+      aria-labelledby="wrapup-title"
+      tabIndex={-1}
     >
       {/* No onClick here on purpose: a backdrop click must do nothing (unskippable). */}
       <div className="absolute inset-0 bg-black/70" aria-hidden="true" />
       <div className="relative z-[1] w-full max-w-lg rounded-2xl border border-white/10 bg-[#1A2332] shadow-xl">
         <div className="border-b border-white/10 p-4">
-          <h2 className="text-xl font-bold text-white">Wrap up the call</h2>
+          <h2 id="wrapup-title" className="text-xl font-bold text-white">
+            Wrap up the call
+          </h2>
           <p className="text-sm text-[#B0BEC5] mt-1">
             {contact.name || 'Unknown contact'} · {contact.phone}
             {typeof callDurationSeconds === 'number' && (
@@ -194,15 +275,23 @@ export function WrapUpModal({
 
           {dispositions && (
             <div>
-              <label className="block text-sm text-[#B0BEC5] mb-2">Disposition</label>
-              <div className="grid grid-cols-1 gap-2">
+              <div id="disposition-group-label" className="block text-sm text-[#B0BEC5] mb-2">
+                Disposition
+              </div>
+              <div
+                role="group"
+                aria-labelledby="disposition-group-label"
+                className="grid grid-cols-1 gap-2"
+              >
                 {dispositions.map((d, i) => {
                   const shortcut = i < MAX_SHORTCUT_DISPOSITIONS ? i + 1 : null;
                   const isSelected = d.key === selectedKey;
                   return (
                     <button
                       key={d.id}
+                      ref={i === 0 ? firstDispositionRef : undefined}
                       type="button"
+                      aria-pressed={isSelected}
                       onClick={() => setSelectedKey(d.key)}
                       className={`w-full flex items-center gap-3 rounded-xl border px-4 py-3 text-left transition-colors ${
                         isSelected
@@ -225,8 +314,11 @@ export function WrapUpModal({
 
           {needsCallback && (
             <div>
-              <label className="block text-sm text-[#B0BEC5] mb-1">Callback time (required)</label>
+              <label htmlFor="wrapup-callback" className="block text-sm text-[#B0BEC5] mb-1">
+                Callback time (required)
+              </label>
               <input
+                id="wrapup-callback"
                 type="datetime-local"
                 value={callbackLocal}
                 min={minCallback}
@@ -241,12 +333,15 @@ export function WrapUpModal({
 
           <div>
             <div className="flex items-center justify-between mb-1">
-              <label className="block text-sm text-[#B0BEC5]">Notes</label>
+              <label htmlFor="wrapup-notes" className="block text-sm text-[#B0BEC5]">
+                Notes
+              </label>
               <span className="text-xs text-[#B0BEC5]/70">
                 {notes.length}/{NOTES_MAX_LENGTH}
               </span>
             </div>
             <textarea
+              id="wrapup-notes"
               ref={notesRef}
               value={notes}
               onChange={(e) => setNotes(e.target.value.slice(0, NOTES_MAX_LENGTH))}
