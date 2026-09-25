@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { motion } from 'motion/react';
 import { Mail, Lock, ArrowRight, Eye, EyeOff, CheckCircle } from 'lucide-react';
 import { AnimatedBackground } from './AnimatedBackground';
+import { Logo } from '@/components/brand/Logo';
 import { useAuth } from '@/contexts/AuthContext';
 
 // Invite-only (TASK-L4 / ADM-3): this screen is sign-in + password reset only. The only way to
@@ -89,13 +90,8 @@ export function AuthScreen() {
           transition={{ delay: 0.2, duration: 0.8 }}
         >
           {/* Logo */}
-          <div className="mb-12 text-center lg:text-left">
-            <div className="inline-flex items-center gap-3">
-              <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-[#00D9FF] to-[#0066FF] flex items-center justify-center">
-                <div className="w-6 h-6 border-2 border-white rounded-full" />
-              </div>
-              <span className="text-2xl font-bold text-white">HyperDial</span>
-            </div>
+          <div className="mb-12 flex justify-center lg:justify-start">
+            <Logo size={40} wordmarkClassName="text-2xl" />
           </div>
 
           {/* Card */}

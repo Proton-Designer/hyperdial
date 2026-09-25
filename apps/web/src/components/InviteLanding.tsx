@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Loader2, Mail, Lock, User, ArrowRight, LogOut } from 'lucide-react';
 import { AnimatedBackground } from './AnimatedBackground';
+import { Logo } from '@/components/brand/Logo';
 import { useAuth } from '@/contexts/AuthContext';
 import { useOrg } from '@/contexts/OrgContext';
 import { previewOrgInvite, acceptOrgInvite, type InvitePreview } from '@/lib/api';
@@ -91,13 +92,8 @@ export function InviteLanding({ token, onDone }: InviteLandingProps) {
 
       <div className="w-full lg:w-[55%] flex items-center justify-center p-8">
         <div className="w-full max-w-[440px]">
-          <div className="mb-8 text-center lg:text-left">
-            <div className="inline-flex items-center gap-3">
-              <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-[#00D9FF] to-[#0066FF] flex items-center justify-center">
-                <div className="w-6 h-6 border-2 border-white rounded-full" />
-              </div>
-              <span className="text-2xl font-bold text-white">HyperDial</span>
-            </div>
+          <div className="mb-8 flex justify-center lg:justify-start">
+            <Logo size={40} wordmarkClassName="text-2xl" />
           </div>
 
           <div className="bg-[#1A2332]/60 backdrop-blur-xl rounded-2xl p-8 shadow-[0_4px_24px_rgba(0,102,255,0.15)] border border-white/5">
