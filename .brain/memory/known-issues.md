@@ -1096,6 +1096,35 @@ class whenever it's combined in the SAME `cn()` call with a `text-text-*`/`text-
   which twMerge groups separately from color and never conflicts with `text-text-*`). Worth a
   dedicated sweep before trusting any other `cn(...'text-meta'...'text-text-*'...)` combination.
 
+## 30. Settings → Dispositions up/down reorder (B1-009) is a no-op for any existing org whose
+migrated-in canonical dispositions collide in `sort` with its pre-existing rows
+
+- Found live during TASK-F-P1's post-deploy UI verification against the QA sandbox org (which
+  pre-dated the migration, same shape as every real org). `seed_default_dispositions`'s ADD-only
+  backfill DO block (`20260925060000_dispositions_v2.sql`) inserts each new canonical-key row with
+  the seed function's own fixed `sort` constants (10/20/30/40/50/60/70/80) -- the same constants
+  the ORIGINAL seed used for that org's pre-existing rows. Any org whose custom dispositions still
+  sit at those original sort values (the common case -- nothing in this app lets an org compact
+  sort gaps) ends up with ties: confirmed live at `sort=10` (`interested` / `yes_build_profile`),
+  `sort=40` (`wrong_number` / `already_on_platform`), `sort=60` (`voicemail` / `gatekeeper`),
+  `sort=70` (`no_answer` / `do_not_call`) in the QA org's `dispositions` table.
+- Impact: `Settings.tsx`'s `moveDisposition` swaps two adjacent rows' `sort` values
+  (`updateDisposition(current.id, {sort: neighbor.sort})` / vice versa) -- when the two already
+  share the same `sort`, the swap PATCHes both to the identical value, so the button visibly does
+  nothing. Confirmed via live network capture: clicking "Move down" on `interested` fired two
+  `PATCH .../dispositions?id=eq...` requests, both bodies `{"sort":10}`, and the re-fetched list
+  came back in the same order. Separately, `order=sort.asc` with real ties has no defined
+  secondary sort key, so row order among tied dispositions is not guaranteed stable across loads.
+- Not a regression in `moveDisposition` itself (the swap logic is correct when sort values
+  differ) -- the bug is upstream, in the backfill's blind reuse of fixed sort constants without
+  checking what an existing org already occupies at those values. Only affects orgs that existed
+  before this migration; a brand-new org's canonical set is seeded once, with no collision
+  possible. Not fixed forward (found during the final verification pass, after code was already
+  committed/deployed at `129eb75`; flagged to the lead rather than silently shipped or silently
+  fixed past the no-new-work cutoff). Fix direction for whoever picks this up: give the ADD-only
+  backfill DO block a per-org `max(sort)+10`-style offset instead of the seed function's literal
+  constants, or add `key` as a stable secondary sort key everywhere `dispositions` is ordered.
+
 ---
 
 ## Not issues — deliberate, documented elsewhere
