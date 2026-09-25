@@ -51,21 +51,42 @@ shown again in plaintext after this.
 
 Settings → Telephony → Phone Numbers → search by area code → purchase.
 
-**How many do you need?** Each number can be dialed from up to its daily cap
-(100 calls/day by default, step 5 below) before it "rests" for a couple of
-days. For **M interns**, each making up to 100 dials/day:
+**How many do you need?** A number that hits its daily cap doesn't come back
+the next day — it rests for `rest_days` (2 by default, step 5 below), so a
+number dialed at the cap is only usable 1 day out of every `1 + rest_days` = 3. A number that stays BELOW the cap never rests at all, so a light team
+genuinely needs fewer numbers, not just proportionally fewer dials.
 
-- **Minimum workable**: 1 number per intern who'll be actively dialing at
-  the same time, so nobody's ever waiting on someone else's number.
-- **Recommended**: 1.5–2× that — extra numbers sit in the shared team pool
-  and automatically cover a number that's resting, so an intern isn't
-  suddenly stuck mid-day. For M = 3 interns dialing 100/day each, that's
-  4–6 numbers, not 3.
-- If your team won't hit 100 dials/intern/day, you need fewer — the cap is
-  a ceiling, not a target.
+**Formula, per intern:**
 
-Buy a few more than the bare minimum; it's cheap insurance against a resting
-number blocking someone.
+```
+numbers per intern = ceil(dials per intern per day ÷ daily cap) × (1 + rest_days)
+```
+
+With the default cap (100) and rest period (2 days), that's ×3 once an
+intern's volume reaches the cap. Multiply by the number of interns dialing
+at once, then add 10–20% pool headroom (a number can be temporarily
+unavailable — provisioning delay, carrier issue, manual pause — and you
+don't want that to block anyone).
+
+| Interns (M) | Dials/intern/day          | Numbers/intern | Pool (M × that) | + 15% headroom |
+| ----------- | ------------------------- | -------------- | --------------- | -------------- |
+| 1           | 100                       | 3              | 3               | 4              |
+| 1           | 200                       | 6              | 6               | 7              |
+| 1           | 400 (parallel, 3–5 lines) | 12             | 12              | 14             |
+| 3           | 100                       | 3              | 9               | 11             |
+| 3           | 200                       | 6              | 18              | 21             |
+| 3           | 400 (parallel, 3–5 lines) | 12             | 36              | 42             |
+| 5           | 100                       | 3              | 15              | 18             |
+| 5           | 200                       | 6              | 30              | 35             |
+| 5           | 400 (parallel, 3–5 lines) | 12             | 60              | 69             |
+
+**Alternative to buying more numbers:** raise the daily cap or shorten the
+rest period in Settings → Telephony (step 5). Both push a number's real-world
+call volume higher, which is a genuine carrier-reputation tradeoff — carriers
+flag/deprioritize numbers that suddenly dial far more than a normal person
+would, which can hurt your answer rate. Buying more numbers to stay under a
+conservative cap is the safer lever; loosening the cap/rest is the cheaper
+one. Don't do both blindly — pick one and watch your connect rate after.
 
 **Expect:** each purchased number appears in the list, status "Active", cap
 matching whatever the org default was at purchase time (see step 5 — set the
@@ -177,12 +198,10 @@ behaviors that most affect what an intern actually experiences:
    version of steps 4–6 above).
 4. **Section B15** — the spend cap and low-balance alert actually fire
    (this is the direct real-call version of step 7 above).
-5. **Team page** (Dashboard sidebar → Team, owner/admin only) — after your
-   interns' first real session, confirm the live board and daily numbers
-   table show real per-intern activity, not zeros. This page has no
-   dedicated `launch-live-test.md` section (it's a pure read, no live
-   Telnyx call needed to prove it works) — just look at it after a real
-   session and confirm the numbers match what actually happened.
+5. **Section B17** — the manager Team page: live board updates within 5s,
+   the daily numbers match the Dashboard/Analytics for the same intern, the
+   range/sort controls, and that an intern still can't reach `/team`. Run
+   this alongside B14 (needs 2 real interns actively dialing).
 6. **Section B16** — inbound callback routing, if your numbers are set up
    to receive calls back from prospects. Needs a real inbound call from a
    personal cell phone to the org's own number.

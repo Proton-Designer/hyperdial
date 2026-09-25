@@ -287,6 +287,34 @@ A bridged inbound call pauses the session rather than literally reusing the outb
 disposition flow -- the agent resumes manually via the existing Resume button, same as any other
 pause (see decisions.md's TASK-I1 entry, decision 7).
 
+### B17 -- Manager Team page (TASK-M2, ADM-6/ADM-7)
+
+Needs at least 2 interns (agent role) with a real, active dialing session each -- run this
+alongside B14 rather than standing up a session from scratch just for this section.
+
+| #     | Step                                                                                                                                                                                                                                                 | Expected                                                                                                                                                                                                                | ☐   |
+| ----- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --- |
+| B17.1 | Owner/admin: open Team (Dashboard sidebar) while both interns have an active session (`ready`/`dialing`/etc.).                                                                                                                                       | The live board shows one card per intern with the real name/email + role chip (Owner/Admin/Agent, not a bare "Agent" for everyone), a status, and non-dash "Calls today"/"Conversations" once either intern has dialed. | ☐   |
+| B17.2 | With the board open, have one intern change state (Pause, or let a call bridge and go `on_call`).                                                                                                                                                    | That intern's card updates -- status and "Time in state" -- within about 5 seconds, with no manual refresh (the board polls every 5s).                                                                                  | ☐   |
+| B17.3 | After some real dialing from both interns, compare the Daily numbers table's row for one intern (Dials, Connects, Conversations, Wins, Talk time, Dialing hrs) against that SAME intern's own Dashboard numbers and Analytics leaderboard for today. | The figures match across all three screens -- same underlying `call_legs`/`dial_sessions` data, not three different counts.                                                                                             | ☐   |
+| B17.4 | Click through the Daily numbers range buttons: Today, Yesterday, Last 7 days, Custom (pick a range spanning today).                                                                                                                                  | Each switch loads cleanly (no console error, no blank table); Yesterday shows zeros if no dialing happened then; Today/Custom(including today) both include the activity from B17.1-B17.3.                              | ☐   |
+| B17.5 | Sort the Daily numbers table by a couple of different columns (e.g. Dials, then Talk time).                                                                                                                                                          | Rows reorder correctly; the Total row at the bottom stays pinned and its sums stay correct regardless of sort order.                                                                                                    | ☐   |
+| B17.6 | As one of the interns (agent role), try the sidebar (no Team item should exist) and navigate directly to `/team`.                                                                                                                                    | No Team entry anywhere in the agent's nav (desktop sidebar or mobile "More" sheet); the direct `/team` URL redirects to `/dialer`, never rendering the board or table.                                                  | ☐   |
+
+Both RPCs (`team_daily_stats`/`team_live_board`) are `SECURITY DEFINER` but granted straight to
+`authenticated` -- each checks the caller's own `has_org_role` itself, so a non-owner/admin caller
+gets an empty array back, not an error or someone else's data. This is unit-level covered by the
+RPCs' own grants (`anon`/`authenticated`-execute revoked and re-granted correctly per
+`.brain/domains/analytics.md`) -- B17 above only covers what real interns and a real live session
+can add on top of that: the numbers actually matching across screens and the board actually
+updating live.
+
+**Known open item (not a bug):** "today" for both the live board and the daily table is midnight
+**America/Chicago**, hardcoded -- no org has its own timezone column yet
+(`.brain/domains/analytics.md`). If your team isn't in Central time, "Today" and "Yesterday"
+switch over at midnight Chicago time, not your own local midnight. Don't re-report this as a
+day-boundary bug.
+
 ---
 
 ## C. Evidence to capture
