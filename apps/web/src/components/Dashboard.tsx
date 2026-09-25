@@ -45,12 +45,15 @@ export function Dashboard({
   onNavigateToCampaigns,
 }: DashboardProps = {}) {
   const { user } = useAuth();
-  const { role, loading: orgLoading } = useOrg();
+  const { role } = useOrg();
   // Fail CLOSED, matching MainApp.tsx/Sidebar.tsx: treat "role not yet confirmed owner/admin"
-  // (loading, or null right after an invite accept) the same as agent, not the same as manager
-  // (review fix-forward, MEDIUM).
+  // (null, e.g. right after an invite accept) the same as agent, not the same as manager. NOT
+  // also gated on OrgContext's `loading` -- that flips true on every refetch, including one an
+  // already-confirmed owner triggers themselves (saving their profile in Settings.tsx), and
+  // `role` alone already fails closed without flashing "My Performance" at an owner on every
+  // unrelated refetch (re-review regression/nit).
   const isManager = role === 'owner' || role === 'admin';
-  const isAgent = orgLoading || !isManager;
+  const isAgent = !isManager;
   const [stats, setStats] = useState<{
     callsToday: number;
     connectRate: number;

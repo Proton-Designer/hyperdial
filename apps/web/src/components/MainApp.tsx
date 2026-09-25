@@ -23,14 +23,21 @@ export interface ParallelDialLaunchContext {
 const AGENT_ALLOWED_TABS: readonly TabType[] = ['dashboard', 'dialer', 'contacts'];
 
 export function MainApp() {
-  const { role, loading: orgLoading } = useOrg();
+  const { role } = useOrg();
   // Fail CLOSED, not just "hide from agents": gate on a CONFIRMED owner/admin role, not on
-  // role === 'agent'. While role is still loading (or came back null -- e.g. right after
-  // accepting an invite, before OrgContext has refetched) `isManager` is false, so an actual
-  // agent never gets a window where manager tabs are reachable just because role hasn't
-  // resolved yet (review fix-forward, TASK-L4, MEDIUM).
+  // role === 'agent'. While role is still null (loading, or right after accepting an invite
+  // before OrgContext has refetched) `isManager` is false, so an actual agent never gets a
+  // window where manager tabs are reachable just because role hasn't resolved yet.
+  //
+  // Deliberately NOT also gating on OrgContext's `loading` flag (a regression from the first
+  // fix-forward pass, caught in re-review): `loading` flips true on every refetch, including one
+  // triggered by an ALREADY-confirmed owner/admin saving their profile in Settings.tsx -- but
+  // `role` itself keeps its last-known value throughout a refetch (OrgContext's `load()` never
+  // resets it to null before the fetch resolves), so gating on role alone already fails closed
+  // on first load/right after an invite accept, without bouncing an already-confirmed manager
+  // out of a manager-only tab every time something else triggers a refetch.
   const isManager = role === 'owner' || role === 'admin';
-  const restrictToAgentTabs = orgLoading || !isManager;
+  const restrictToAgentTabs = !isManager;
   const [activeTab, setActiveTabState] = useState<TabType>('dashboard');
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [parallelDialContext, setParallelDialContext] = useState<ParallelDialLaunchContext | null>(

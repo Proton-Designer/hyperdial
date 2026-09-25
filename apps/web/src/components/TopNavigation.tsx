@@ -60,11 +60,14 @@ function formatNotificationDate(created_at: string): string {
 
 export function TopNavigation({ activeTab = 'dashboard', onTabChange }: TopNavigationProps) {
   const { user, signOut } = useAuth();
-  const { orgId, orgs, switchOrg, role, loading: orgLoading } = useOrg();
-  // Fail CLOSED, matching MainApp.tsx/Sidebar.tsx/Dashboard.tsx (review fix-forward, NIT): the
-  // Settings tab is manager-only, so this menu's Profile/Settings entries (both just navigate
-  // there) must not be shown until role is CONFIRMED owner/admin.
-  const isManager = !orgLoading && (role === 'owner' || role === 'admin');
+  const { orgId, orgs, switchOrg, role } = useOrg();
+  // Fail CLOSED, matching MainApp.tsx/Sidebar.tsx/Dashboard.tsx: the Settings tab is manager-only,
+  // so this menu's Profile/Settings entries (both just navigate there) must not be shown until
+  // role is CONFIRMED owner/admin. NOT also gated on OrgContext's `loading` -- see MainApp.tsx's
+  // comment: that flips true on every refetch (including one an already-confirmed manager
+  // triggers themselves), but `role` alone already fails closed without hiding this menu from a
+  // manager on every unrelated refetch.
+  const isManager = role === 'owner' || role === 'admin';
   const [searchFocused, setSearchFocused] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);

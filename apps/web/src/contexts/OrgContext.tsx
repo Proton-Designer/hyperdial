@@ -1,4 +1,12 @@
-import { createContext, useContext, useEffect, useState, useCallback, type ReactNode } from 'react';
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useState,
+  useCallback,
+  useRef,
+  type ReactNode,
+} from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from './AuthContext';
 
@@ -38,9 +46,20 @@ export function OrgProvider({ children }: { children: ReactNode }) {
   const [firstName, setFirstName] = useState<string | null>(null);
   const [lastName, setLastName] = useState<string | null>(null);
   const [orgs, setOrgs] = useState<OrgMembership[]>([]);
+  // TASK-L4 re-review, LOW: two `load()` calls can be in flight at once (the effect below auto-
+  // fires on every `user` change, e.g. right after signUp() during an invite accept -- and
+  // InviteLanding.tsx also calls `refetch()` explicitly right after `acceptOrgInvite`). Without
+  // this guard, whichever call's network round trip happens to finish LAST wins regardless of
+  // which one started last -- the auto-fired pre-membership load can resolve after the explicit
+  // post-accept refetch and clobber its correct result back to "no membership yet". Each call
+  // captures the sequence number current when IT started, and only commits state if no newer
+  // call has started since -- the latest call to START always eventually wins.
+  const loadSeqRef = useRef(0);
 
   const load = useCallback(async () => {
+    const seq = ++loadSeqRef.current;
     if (!user) {
+      if (seq !== loadSeqRef.current) return;
       setLoading(false);
       setOrgId(null);
       setRole(null);
@@ -60,6 +79,7 @@ export function OrgProvider({ children }: { children: ReactNode }) {
         .eq('user_id', user.id)
         .eq('status', 'active'),
     ]);
+    if (seq !== loadSeqRef.current) return;
 
     setFirstName((profile?.first_name as string | null) ?? null);
     setLastName((profile?.last_name as string | null) ?? null);
