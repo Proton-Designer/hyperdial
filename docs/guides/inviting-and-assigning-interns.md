@@ -39,22 +39,17 @@ campaigns that agent is assigned to -- an intern signed in as `agent` never
 sees any other campaign, even though the underlying RLS on `campaigns` itself
 is org-wide (design §2; see `.brain/known-issues.md`).
 
-## 4. Start the dial session -- **known gap, not yet fixed**
+## 4. The intern starts their own dial session
 
-`dialer-session-start` sets the new session's `agent_id` to whoever calls it,
-and the _only_ UI that calls it today is CampaignManageModal's **Start
-Session** button, which only exists behind the Campaigns screen. TASK-L4
-intentionally hides the Campaigns tab for agents (UI-4) -- which means, as of
-this task, **an intern has no way to start their own parallel-dial session**;
-a manager clicking Start Session on their behalf would start it under the
-_manager's_ `agent_id`, not the intern's, so the intern's Dialer tab would
-never pick it up via `getActiveDialerSession`.
-
-This is a real, currently-open gap, not a documentation nicety -- see
-`.brain/memory/known-issues.md` for the write-up and the fix direction (a
-lightweight "start dialing my assigned campaign" control inside `Dialer.tsx`
-itself, in the dialer lane, calling the same `dialer-session-start` endpoint).
-Until that lands, per-intern dialing needs a temporary workaround chosen by
-whoever picks this up next -- do not paper over it by granting the intern a
-higher role just to click one button, since that defeats the point of the
-role split this task just built.
+**Fixed by TASK-L7** (this section originally documented it as an open gap
+right after TASK-L4 landed -- it no longer is). The intern opens their own
+**Dialer** tab, where a "Start a session" panel lists every campaign they're
+assigned to (with name, lines, caller ID, and queued-lead count) and a Start
+button per campaign -- no need for a manager to click anything on their
+behalf. Starting runs a pre-flight (mic permission, WebRTC registration)
+first; a manager's own **Start Session** button in Campaign Manage now just
+navigates to the Dialer with that campaign preselected instead of starting
+anything itself, so there's exactly one WebRTC client per browser tab either
+way. See `docs/guides/intern-quick-start.md` for the intern-facing version of
+this step, and `docs/validation/launch-live-test.md` section B1 for the live
+verification.

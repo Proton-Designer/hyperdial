@@ -5,7 +5,7 @@ layer: L2
 type: memory
 status: canonical
 owner: maintainer
-updated: 2026-09-24
+updated: 2026-09-25
 related:
   - mem.known-issues
   - domain.contacts
@@ -17,7 +17,7 @@ answers:
   - "what should I pick up next"
 covers: "Work in progress and the near-term backlog"
 excludes: "Shipped decisions (see mem.decisions), defects in shipped behaviour (see mem.known-issues)"
-tokens_est: 1917
+tokens_est: 1450
 ---
 
 # Active Work
@@ -25,70 +25,80 @@ tokens_est: 1917
 ## In flight
 
 **Stage 1 rebuild** (`feat/stage-1`, spec `docs/design/stage-1-architecture.md`).
-The overnight run of 2026-09-23/24 was built and tested against the local stack.
-**On 2026-09-24 (morning) it was integrated into the LIVE project**
-(`lahordgefwsiqzvbfpyp`), and the local Docker stack is no longer used:
-- The live DB had no migration history. Its schema matched the 7 legacy
-  migrations' end state exactly, so those were baselined as applied. Then all 24
-  migrations `20260924000100`–`002500` were applied, one transaction each,
-  through the Management API (the CLI needs the DB password). Data was preserved
-  and backfilled: 2 orgs and 2 owners, and every row got an `org_id`. A JSON
-  backup from before the push is in the overnight run folder
-  (`live-backup-*`).
-- All 28 edge functions were deployed (`--use-api`). New secrets:
-  `DIALER_SWEEPER_SECRET` and `CRM_SYNC_WORKER_SECRET`. Both pg_cron workers
-  are configured and returning 200.
-- Verified live: RLS isolation per user on real data, an end-to-end run with a
-  temporary user (deleted afterwards), GHL and Telnyx rejecting bad
-  credentials, and webhook forgeries returning 401.
-- The psql-based SQL suites were NOT run against live (they need the DB
-  password for `\gset`).
-- Live data notes: 8 contacts are not E.164 (5 junk numbers, 3 that would
-  collide), and one duplicate (org, phone) group exists, so the unique index on
-  contacts(org_id, phone_number) was not created.
-- **Auth "Confirm email" is OFF and the Site URL is localhost.** The
-  invite email-match check assumes confirmation is ON. See the next steps.
+Status as of 2026-09-25: **the LAUNCH BLOCKERS phase (TASK-L1 through L9) is
+built, reviewed, and mostly live — the last gate before real usage is the
+single live test run**, `docs/validation/launch-live-test.md`. That file is
+now the canonical "what's left" list; this section summarizes, it doesn't
+duplicate.
 
-**Landed** (reviewed and verified):
-- Phase 1: org tenancy + RLS, `requireOrgRole`, onboarding/invites/team,
-  BYO Telnyx key in Vault, ed25519 webhook verification that fails closed,
+- Integrated into the LIVE project (`lahordgefwsiqzvbfpyp`) on 2026-09-24
+  morning; local Docker is retired for this phase entirely (dev talks to live
+  Supabase, SQL test fixtures are verified via rolled-back live dry-runs, not
+  a local reset).
+- All 28+ edge functions deployed (`--use-api`); `DIALER_SWEEPER_SECRET` and
+  `CRM_SYNC_WORKER_SECRET` set; both pg_cron workers configured and returning
+  200.
+- **Self-signup is still open on purpose** — TASK-L4's invite-only trigger
+  (`20260925000300_invite_only_signup.sql`) is committed and verified but
+  deliberately **held**, waiting for the user to create the MyHomeBase owner
+  account through it (`launch-live-test.md` step A1/A6). Applying it is the
+  literal last step of the live test, not a separate task.
+
+**Landed and live** (reviewed, applied, deployed):
+- Phase 1: org tenancy + RLS, `requireOrgRole`, onboarding/invites/team, BYO
+  Telnyx key in Vault, ed25519 webhook verification that fails closed,
   numbers + per-member WebRTC credential.
-- Phase 2: contacts E.164/timezone/DNC; campaign settings, agents and soft
-  delete; dialer schema and transition RPCs; the rolling-refill engine and
-  webhook rewrite with Postgres single-winner claims (Redis is out of the dial
-  path).
-- Phase 3: GHL connect, pull import, and push outbox worker (pg_cron).
+- Phase 2: contacts E.164/timezone/DNC; campaign settings, agents, soft
+  delete; dialer schema/RPCs; the rolling-refill engine with Postgres
+  single-winner claims (Redis is out of the dial path).
+- Phase 3: GHL connect, pull import, push outbox worker (pg_cron).
+- Dispositions backend + Settings editor; Dashboard/Analytics on real data
+  (`call_leg_analytics`/`dial_session_hours`); the `call_events` drop.
+- **TASK-L3** (DNC + dedupe, contacts merge migration, one-active-campaign
+  constraint) — applied live.
+- **TASK-L1** (real agent WebRTC leg: Go Ready, agent-lost/Reconnect,
+  conference bridging, mic-permission check) — through 3 review rounds, all
+  fixed; the `DIALER_DEV_SKIP_AGENT_GATE` bypass this used to need is gone.
+- **TASK-L2a/L2b** (wrap-up modal + the real dialer UI state machine: one
+  "big visible state" banner for every `dial_sessions.state`, mandatory
+  wrap-up with no bypass, Pause/Resume, a sound cue).
+- **TASK-L5** (confirm before hanging up a live call when stopping/starting a
+  session).
+- **TASK-L7** (interns start their own session from the Dialer — closes the
+  gap L4's role-based nav opened: Campaigns was the only Start-session entry
+  point and agents can't see that tab).
+- **TASK-L6** (the dialer sweeper now also reaps a `claimed` leg whose own
+  `call.hangup` webhook was lost, via a direct Telnyx status check — closes
+  known-issues #11).
+- **TASK-L1r4** (5 rounds of cross-lane review fixes on the above: campaign-
+  assignment enforcement on session start, auto-reconnect timing/dedup, the
+  agent's WebRTC line surviving a tab switch, and a single-browser-tab lock
+  now that the Dialer stays permanently mounted).
+- **TASK-L4** (invite-only signup trigger, role-based nav) — code landed and
+  verified, migration **held**, see above.
 
-**Built, in review at the end of the run:** dispositions backend
-(submit_disposition plus the Settings editor), Dashboard/Analytics on real
-data, the `call_events` drop, and the dialer sweeper (pg_cron).
+**NEEDS-LIVE-VERIFY**: see `docs/validation/launch-live-test.md` for the full
+ordered runbook (Telnyx WebRTC registration/auto-answer/two-way audio, a real
+parallel dial cycle, agent-lost/Reconnect, tab-switch survival, the
+single-tab lock, DNC enforcement, and — last — closing self-signup). GHL's
+real token connect/pull/push and the crons' one-time Vault config
+(`private.set_crm_sync_worker_config`/`private.set_dialer_sweeper_config`)
+are separate, not blocking the dialer launch test.
 
-**Not started:** agent leg/WebRTC (E3; until then dialing needs
-`DIALER_DEV_SKIP_AGENT_GATE`), the dialer UI state machine (E4, including the
-mandatory wrap-up form), recording to Storage, live transcription, abandon-rate
-reporting + Redis removal, and the E2E checklist rewrite. Task specs are in the
-run folder `.claude/overnight/run-20260923-2024/board/00-backlog/`.
-
-**NEEDS-LIVE-VERIFY** (can't be proven without real accounts):
-- Telnyx: connect with a real key, a signed webhook from Telnyx, number
-  search/purchase, WebRTC credential, a real parallel dial, premium AMD, the
-  conference join, and `EdgeRuntime.waitUntil` in the deployed runtime.
-- GHL: a real token connect, pull import, and push (note, tag, task, DND).
-- Invites: the email-match check relies on "Confirm email" being ON in the
-  live project.
-- Crons: `private.set_crm_sync_worker_config` and
-  `private.set_dialer_sweeper_config` (function URL + secret) must be run on
-  the live DB, and the matching secret set in the function env. Both jobs
-  no-op until then.
-
-**Known gaps logged tonight:**
-- The sweeper doesn't reap a claimed leg whose hangup was lost (known-issues #11).
-- Agent campaign visibility is client-side only (#10).
+**Known gaps** (see `.brain/memory/known-issues.md` for the full write-up of
+each; not repeated here):
+- Agent campaign visibility for non-dialer screens is still client-side only
+  (#10) — RLS on `campaigns` itself stays org-wide.
 - Invite-accept for an existing or disabled member doesn't reactivate them or
   change their role.
-- The area-code timezone table exists in 3 copies (SQL + 2 TS) with no sync test.
-- Local Postgres 17.6 segfaults on any EXECUTE-denied function call, so tests
-  use `has_function_privilege()` instead.
+- The area-code timezone table exists in 3 copies (SQL + 2 TS) with a sync
+  test, but no single source of truth.
+- `sip_uri_calling_preference` isn't set on the agent's Telnyx credential
+  connection — flagged as a live-test contingency, not a known-broken item
+  (#18 minor m1).
+- A stuck lead in a paused/deleted campaign, or in-flight without a
+  disposition, blocks that contact everywhere (#13 addendum) — documented,
+  not built.
 
 ## Backlog
 

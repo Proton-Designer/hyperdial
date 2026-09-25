@@ -12,6 +12,7 @@ Human-facing documentation. For AI-agent context, start at
 | [telnyx-call-control-setup.md](guides/telnyx-call-control-setup.md)           | Configuring Telnyx — **read this before touching connection IDs**         |
 | [csv-import.md](guides/csv-import.md)                                         | Working on contact import and column mapping                              |
 | [inviting-and-assigning-interns.md](guides/inviting-and-assigning-interns.md) | Inviting an intern and setting up their per-campaign caller ID/assignment |
+| [intern-quick-start.md](guides/intern-quick-start.md)                         | You ARE the intern — signing in and dialing, not managing                 |
 
 ## Reference — lookup material
 
@@ -22,9 +23,10 @@ Human-facing documentation. For AI-agent context, start at
 
 ## Validation
 
-| Document                                                                | Contains                                   |
-| ----------------------------------------------------------------------- | ------------------------------------------ |
-| [parallel-dialer-checklist.md](validation/parallel-dialer-checklist.md) | Manual E2E checklist for dial-loop changes |
+| Document                                                                | Contains                                                           |
+| ----------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| [launch-live-test.md](validation/launch-live-test.md)                   | **The** ordered live-verification runbook — run this before launch |
+| [parallel-dialer-checklist.md](validation/parallel-dialer-checklist.md) | Superseded — points to launch-live-test.md                         |
 
 ## Other
 
