@@ -82,6 +82,14 @@ export function Contacts() {
     setCurrentPage(0);
   }, [searchQuery, categoryFilter, contactStatusFilter]);
 
+  // Backlog #1: Prev/Next sits at the bottom of a long list -- clicking it left the viewport
+  // exactly where it was, silently showing a different page's rows while still scrolled to the
+  // bottom (easy to miss the page actually changed). MainApp.tsx's <main> is the real scroll
+  // container (h-screen layout, main has overflow-auto; window itself doesn't scroll here).
+  useEffect(() => {
+    document.querySelector('main')?.scrollTo({ top: 0, behavior: 'smooth' });
+  }, [currentPage]);
+
   const filteredContacts = contacts.filter((contact) => {
     const name = contactDisplayName(contact);
     const company = contact.business_name ?? '';
