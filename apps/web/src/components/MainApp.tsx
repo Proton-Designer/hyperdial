@@ -70,7 +70,15 @@ export function MainApp() {
     pendingDeepLinkTabRef.current = urlTab;
     return 'dialer';
   });
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  // B1 Phase 2: on a narrow (mobile) viewport, an expanded 280px sidebar left only ~110px for
+  // the main content at 390px wide -- cards were clipped, not reflowed (confirmed live, no
+  // horizontal scroll, just genuinely cut off). Default to the existing 64px-collapsed state
+  // (the manual toggle already handles the rest) below the same breakpoint Tailwind's own `md`
+  // utilities use elsewhere in this app, checked once at mount -- not a live resize listener,
+  // matching this component's existing one-shot-at-mount pattern for the URL-driven initial tab.
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(
+    () => typeof window !== 'undefined' && window.matchMedia('(max-width: 768px)').matches
+  );
   const [parallelDialContext, setParallelDialContext] = useState<ParallelDialLaunchContext | null>(
     null
   );
