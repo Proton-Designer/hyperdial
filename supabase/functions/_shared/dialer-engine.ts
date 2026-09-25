@@ -2296,18 +2296,20 @@ export async function stopSession(
 export async function pauseSession(
   supabase: SupabaseClient,
   orgId: string,
-  sessionId: string
+  sessionId: string,
+  // TASK-I1: an inbound call bridging into this session (INB-1/INB-3's "pause the batch
+  // dialing... then connect the inbound caller") passes 'inbound_call' here so the UI can show
+  // something more specific than a bare pause -- every existing call site keeps passing nothing,
+  // which stays the N1 behavior (explicitly clear any stale auto-pause reason).
+  reason: string | null = null
 ): Promise<boolean> {
   const session = await loadSession(supabase, sessionId);
   if (!session || session.org_id !== orgId) return false;
-  // TASK-N1: explicitly clear pause_reason -- a manual Pause is never the auto-pause reason
-  // refillSession sets ('no_numbers_available'), so a stale value from an earlier auto-pause
-  // must not linger on the row through this transition.
   const { data, error } = await supabase.rpc('transition_session', {
     p_session: sessionId,
     p_expected_states: ['dialing', 'ready'],
     p_new_state: 'paused',
-    p_fields: { pause_reason: null },
+    p_fields: { pause_reason: reason },
   });
   if (error) throw new Error(`pauseSession: ${error.message}`);
   return Boolean(data);

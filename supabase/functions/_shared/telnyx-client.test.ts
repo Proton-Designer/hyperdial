@@ -1,10 +1,12 @@
 import { assertEquals } from 'jsr:@std/assert@1';
 import {
   amdModeToTelnyxValue,
+  buildAnswerPayload,
   buildDialPayload,
   buildPlaybackStartPayload,
   buildRecordStartPayload,
   buildTranscriptionStartPayload,
+  buildTransferPayload,
   createTelnyxClient,
 } from './telnyx-client.ts';
 
@@ -117,6 +119,30 @@ Deno.test('buildPlaybackStartPayload: audio_url required, client_state only when
   );
 });
 
+Deno.test('buildAnswerPayload: client_state only when provided', () => {
+  assertEquals(buildAnswerPayload(), {});
+  assertEquals(buildAnswerPayload({ clientState: 'c1' }), { client_state: 'c1' });
+});
+
+Deno.test(
+  'buildTransferPayload: to/from always present, timeout_secs and target_leg_client_state only when provided',
+  () => {
+    assertEquals(buildTransferPayload({ to: 'sip:agent@sip.telnyx.com', from: '+15551234567' }), {
+      to: 'sip:agent@sip.telnyx.com',
+      from: '+15551234567',
+    });
+    assertEquals(
+      buildTransferPayload({
+        to: '+15559876543',
+        from: '+15551234567',
+        timeoutSecs: 20,
+        targetLegClientState: 'c1',
+      }),
+      { to: '+15559876543', from: '+15551234567', timeout_secs: 20, target_leg_client_state: 'c1' }
+    );
+  }
+);
+
 Deno.test('buildTranscriptionStartPayload: defaults to Deepgram + both tracks', () => {
   assertEquals(buildTranscriptionStartPayload(), {
     transcription_engine: 'Deepgram',
@@ -226,6 +252,58 @@ Deno.test(
         threw = true;
       }
       assertEquals(threw, true);
+    } finally {
+      restore();
+    }
+  }
+);
+
+Deno.test(
+  'createTelnyxClient.answer: posts to /calls/{id}/actions/answer with client_state',
+  async () => {
+    let seenUrl = '';
+    let seenBody: unknown = null;
+    const restore = stubFetch((url, init) => {
+      seenUrl = url;
+      seenBody = JSON.parse(String(init?.body ?? '{}'));
+      return new Response(JSON.stringify({ data: {} }), { status: 200 });
+    });
+    try {
+      const client = createTelnyxClient('test-api-key');
+      await client.answer('call-1', { clientState: 'c1' });
+      assertEquals(seenUrl, 'https://api.telnyx.com/v2/calls/call-1/actions/answer');
+      assertEquals(seenBody, { client_state: 'c1' });
+    } finally {
+      restore();
+    }
+  }
+);
+
+Deno.test(
+  'createTelnyxClient.transfer: posts to /calls/{id}/actions/transfer with to/from/timeout_secs/target_leg_client_state',
+  async () => {
+    let seenUrl = '';
+    let seenBody: unknown = null;
+    const restore = stubFetch((url, init) => {
+      seenUrl = url;
+      seenBody = JSON.parse(String(init?.body ?? '{}'));
+      return new Response(JSON.stringify({ data: {} }), { status: 200 });
+    });
+    try {
+      const client = createTelnyxClient('test-api-key');
+      await client.transfer('call-1', {
+        to: 'sip:agent-sip-user@sip.telnyx.com',
+        from: '+15551234567',
+        timeoutSecs: 20,
+        targetLegClientState: 'c2',
+      });
+      assertEquals(seenUrl, 'https://api.telnyx.com/v2/calls/call-1/actions/transfer');
+      assertEquals(seenBody, {
+        to: 'sip:agent-sip-user@sip.telnyx.com',
+        from: '+15551234567',
+        timeout_secs: 20,
+        target_leg_client_state: 'c2',
+      });
     } finally {
       restore();
     }

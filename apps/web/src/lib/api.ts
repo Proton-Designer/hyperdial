@@ -136,6 +136,93 @@ export async function setPhoneNumberStatus(
   if (error) throw new Error(error.message);
 }
 
+// --- TASK-I1: inbound callback routing (INB-1..4, CID-6) ---
+
+export interface InboundSettings {
+  shared_destination_number: string | null;
+  voicemail_greeting_text: string;
+}
+
+/** Same "member read, owner/admin write, direct client upsert against RLS" shape as
+ *  getNumberPoolSettings/updateNumberPoolSettings -- no Edge Function needed. */
+export async function getInboundSettings(): Promise<InboundSettings> {
+  const orgId = await getActiveOrgId();
+  const { data, error } = await supabase
+    .from('org_inbound_settings')
+    .select('shared_destination_number, voicemail_greeting_text')
+    .eq('org_id', orgId)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return (
+    (data as InboundSettings | null) ?? {
+      shared_destination_number: null,
+      voicemail_greeting_text: "You've reached {org_name}. Please leave a message.",
+    }
+  );
+}
+
+export async function updateInboundSettings(settings: InboundSettings): Promise<void> {
+  const orgId = await getActiveOrgId();
+  const { error } = await supabase.from('org_inbound_settings').upsert({
+    org_id: orgId,
+    shared_destination_number: settings.shared_destination_number,
+    voicemail_greeting_text: settings.voicemail_greeting_text,
+    updated_at: new Date().toISOString(),
+  });
+  if (error) throw new Error(error.message);
+}
+
+/** Each intern's own optional cell fallback (INB-3) -- self-service, not owner/admin gated
+ *  (org_members' own new "member can update own heartbeat and forward number" RLS policy,
+ *  20260925070100_inbound_routing.sql). Pass `null` to clear it. */
+export async function getMyForwardNumber(): Promise<string | null> {
+  const orgId = await getActiveOrgId();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) throw new Error('Not signed in');
+  const { data, error } = await supabase
+    .from('org_members')
+    .select('forward_phone_number')
+    .eq('org_id', orgId)
+    .eq('user_id', user.id)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return (data?.forward_phone_number as string | null) ?? null;
+}
+
+export async function setMyForwardNumber(forwardPhoneNumber: string | null): Promise<void> {
+  const orgId = await getActiveOrgId();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) throw new Error('Not signed in');
+  const { error } = await supabase
+    .from('org_members')
+    .update({ forward_phone_number: forwardPhoneNumber })
+    .eq('org_id', orgId)
+    .eq('user_id', user.id);
+  if (error) throw new Error(error.message);
+}
+
+/** INB-3's "was seen in the app in the last 2 min" online signal -- there is no server-visible
+ *  WebRTC-registration status anywhere in this schema, so this cheap heartbeat is the only one.
+ *  Fire-and-forget from the caller (Dialer.tsx, on an interval well under the 2-minute window);
+ *  a failed heartbeat just means the next one (or none, if the tab closed) determines presence
+ *  -- never worth surfacing as an error to the agent. */
+export async function updateMyPresenceHeartbeat(): Promise<void> {
+  const orgId = await getActiveOrgId();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return;
+  await supabase
+    .from('org_members')
+    .update({ last_seen_at: new Date().toISOString() })
+    .eq('org_id', orgId)
+    .eq('user_id', user.id);
+}
+
 // --- TASK-SP: monthly spend cap + low-balance alert (SEC-2 + the balance part of SEC-7) ---
 
 export interface SpendSettings {

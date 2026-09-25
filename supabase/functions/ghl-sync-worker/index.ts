@@ -17,10 +17,12 @@ import { createGhlClient, type GhlClient } from '../_shared/ghl-client.ts';
 import {
   processContactUpsertJob,
   processDispositionJob,
+  processInboundCallNoteJob,
   processNurtureTagJob,
   processTagJob,
   type ContactFields,
   type DispositionPayload,
+  type InboundCallNotePayload,
   type JobProgress,
 } from '../_shared/ghl-sync-worker.ts';
 
@@ -53,7 +55,13 @@ interface CrmSyncJobRow {
   id: string;
   org_id: string;
   provider: string;
-  kind: 'disposition' | 'contact_upsert' | 'nurture_tag' | 'voicemail_tag' | 'no_answer_tag';
+  kind:
+    | 'disposition'
+    | 'contact_upsert'
+    | 'nurture_tag'
+    | 'voicemail_tag'
+    | 'no_answer_tag'
+    | 'inbound_call_note';
   contact_id: string | null;
   call_leg_id: string | null;
   payload: Record<string, unknown>;
@@ -156,6 +164,15 @@ async function processJob(
       locationId: ctx.locationId,
       ghlContactId: contact.ghlContactId,
       contactFields: contact.fields,
+      progress: job.progress ?? {},
+    });
+  } else if (job.kind === 'inbound_call_note') {
+    result = await processInboundCallNoteJob({
+      client: ctx.client,
+      locationId: ctx.locationId,
+      ghlContactId: contact.ghlContactId,
+      contactFields: contact.fields,
+      payload: job.payload as unknown as InboundCallNotePayload,
       progress: job.progress ?? {},
     });
   } else if (job.kind === 'voicemail_tag' || job.kind === 'no_answer_tag') {

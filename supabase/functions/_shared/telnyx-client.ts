@@ -185,6 +185,53 @@ export function buildDialPayload(args: DialArgs): TelnyxDialPayload {
   return payload;
 }
 
+export interface AnswerArgs {
+  /** AnswerRequest.client_state (spec3.json, verified for TASK-I1) -- tags every subsequent
+   *  webhook on THIS SAME leg (call.answered, call.speak.ended, call.recording.saved/error via
+   *  its own separate per-command client_state, ...). */
+  clientState?: string;
+}
+
+export function buildAnswerPayload(args: AnswerArgs = {}): { client_state?: string } {
+  const payload: { client_state?: string } = {};
+  if (args.clientState) payload.client_state = args.clientState;
+  return payload;
+}
+
+export interface TransferArgs {
+  to: string;
+  /** TransferCallRequest.from (spec3.json): "defaults to the `to` number of the original call
+   *  if omitted" -- explicit here anyway (TASK-I1 always passes the caller-reached number, so
+   *  the intern/cell/shared destination sees the SAME caller ID the public number itself has,
+   *  never Telnyx's own default-guess). */
+  from: string;
+  /** Telnyx default 30s/min 5/max 600 (CallRequest.timeout_secs, same field re-verified on
+   *  TransferCallRequest) -- TASK-I1 passes INBOUND_RING_TIMEOUT_SECS (20) explicitly. */
+  timeoutSecs?: number;
+  /** TransferCallRequest.target_leg_client_state: "add state to every subsequent webhook for
+   *  the NEW leg" -- Leg B (the transfer destination) gets its OWN call_control_id, distinct
+   *  from the original inbound leg's; this is how ITS webhooks correlate back to our
+   *  inbound_calls row (see client-state.ts's InboundClientState header). */
+  targetLegClientState?: string;
+}
+
+export function buildTransferPayload(args: TransferArgs): {
+  to: string;
+  from: string;
+  timeout_secs?: number;
+  target_leg_client_state?: string;
+} {
+  const payload: {
+    to: string;
+    from: string;
+    timeout_secs?: number;
+    target_leg_client_state?: string;
+  } = { to: args.to, from: args.from };
+  if (args.timeoutSecs !== undefined) payload.timeout_secs = args.timeoutSecs;
+  if (args.targetLegClientState) payload.target_leg_client_state = args.targetLegClientState;
+  return payload;
+}
+
 export interface RecordStartArgs {
   format?: 'mp3' | 'wav';
   channels: 'single' | 'dual';
@@ -278,6 +325,17 @@ export interface TelnyxClient {
 
   dial(args: DialArgs): Promise<{ callControlId: string }>;
   hangup(callControlId: string): Promise<void>;
+  /** TASK-I1: answers a PARKED inbound leg -- required before any other command on it besides
+   *  transfer (spec3.json: "You must issue this command before executing subsequent commands
+   *  on an incoming call"). Used for the voicemail sub-flow only; the intern/cell/shared
+   *  fallback steps use `transfer` directly on the still-parked original leg instead. */
+  answer(callControlId: string, args?: AnswerArgs): Promise<void>;
+  /** TASK-I1: routes a call (answered OR still parked) to a new destination -- creates a
+   *  brand-new Leg B with its own call_control_id/call.initiated. Verified against spec3.json:
+   *  does NOT require the original leg to be answered first (its own webhook list starts with
+   *  Leg B's `call.initiated`, and "the original call will remain active" on failure -- i.e.
+   *  it was never itself answered/billed by this command). */
+  transfer(callControlId: string, args: TransferArgs): Promise<void>;
   /**
    * TASK-L6: `GET /calls/{call_control_id}` -- verified against spec3.json's own
    * `RetrieveCallStatus` operation ("Retrieve a call status" / "Returns the status of a call
@@ -412,6 +470,20 @@ export function createTelnyxClient(
       await req(`/calls/${encodeURIComponent(callControlId)}/actions/speak`, {
         method: 'POST',
         body: JSON.stringify(payload),
+      });
+    },
+
+    async answer(callControlId, args) {
+      await req(`/calls/${encodeURIComponent(callControlId)}/actions/answer`, {
+        method: 'POST',
+        body: JSON.stringify(buildAnswerPayload(args)),
+      });
+    },
+
+    async transfer(callControlId, args) {
+      await req(`/calls/${encodeURIComponent(callControlId)}/actions/transfer`, {
+        method: 'POST',
+        body: JSON.stringify(buildTransferPayload(args)),
       });
     },
 

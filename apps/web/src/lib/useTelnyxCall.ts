@@ -58,6 +58,26 @@ function decodeAgentClientState(
   return { org, session, leg, kind: kind === 'agent' ? 'agent' : 'contact' };
 }
 
+/** TASK-I1: browser-safe port of client-state.ts's InboundClientState decode -- same rationale
+ *  as decodeAgentClientState above (distinct shape: `{org, inbound, step}`, no `session`/`leg`
+ *  at all). Only `step === 'intern'` ever reaches a browser as a WebRTC invite (the cell/shared
+ *  fallback steps transfer to a plain phone number, never this member's SIP credential). */
+function decodeInboundRoutingClientState(
+  value: unknown
+): { org: string; inbound: string; step: string } | null {
+  if (typeof value !== 'string' || !value) return null;
+  let decoded: Record<string, unknown>;
+  try {
+    decoded = JSON.parse(atob(value)) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+  const { org, inbound, step } = decoded;
+  if (typeof org !== 'string' || !org || typeof inbound !== 'string' || !inbound) return null;
+  if (typeof step !== 'string' || !step) return null;
+  return { org, inbound, step };
+}
+
 /** The invite's `custom_headers` (TASK-L1: `X-Hyperdial-Session`), as a defense-in-depth
  *  secondary signal alongside client_state -- see telnyx-client.ts's DialArgs header comment.
  *  Not relied on alone: header name/case over the real SIP INVITE wasn't live-verified this
@@ -84,12 +104,29 @@ export function useTelnyxCall(options: UseTelnyxCallOptions = {}) {
   const [isReady, setIsReady] = useState(false);
   const clientRef = useRef<TelnyxRTC | null>(null);
   const activeCallRef = useRef<{ hangup: () => void } | null>(null);
+  /** TASK-I1 (INB-2): an inbound-routing invite (`step:'intern'`) is neither auto-answered nor
+   *  auto-rejected -- it's surfaced here for the incoming-call banner (Dialer.tsx) to let the
+   *  human Answer/Decline. Cleared on answer/decline or if the OTHER side hangs up first (the
+   *  server's own INBOUND_RING_TIMEOUT_SECS elapsed, or the caller themselves hung up). */
+  const [pendingInboundCall, setPendingInboundCall] = useState<{
+    callId: string;
+    fromE164: string | null;
+  } | null>(null);
+  const pendingInboundCallRef = useRef<{
+    id?: string;
+    hangup: () => void;
+    answer: (params?: { remoteElement?: string }) => void | Promise<void>;
+  } | null>(null);
   /** TASK-L1: the SDK re-fires telnyx.notification repeatedly as an inbound call's state
    *  changes (new -> ringing -> ...) -- decide answer-vs-reject exactly once per call id, not
    *  once per notification, and remember the decision so a REJECTED call's later
    *  notifications (e.g. its own eventual hangup/destroy) never fall through to the normal
-   *  state-tracking below and get mistaken for this hook's own active call. */
-  const inboundCallDecisionsRef = useRef<Map<string, 'answered' | 'rejected'>>(new Map());
+   *  state-tracking below and get mistaken for this hook's own active call. `pending` (TASK-I1)
+   *  is a third outcome: not yet decided by the human, but already shown on the banner --
+   *  later notifications for the SAME call id must still be able to clear it on a hangup. */
+  const inboundCallDecisionsRef = useRef<Map<string, 'answered' | 'rejected' | 'pending'>>(
+    new Map()
+  );
   /** Review fix (M5): `connect()` only ever runs its OWN `telnyx.notification` handler setup
    *  once per underlying TelnyxRTC client (it early-returns if `clientRef.current` already
    *  exists) -- that handler used to read `options.sessionId` directly, closing over
@@ -188,7 +225,11 @@ export function useTelnyxCall(options: UseTelnyxCallOptions = {}) {
                 id?: string;
                 state?: string;
                 direction?: string;
-                options?: { clientState?: string; customHeaders?: unknown };
+                options?: {
+                  clientState?: string;
+                  customHeaders?: unknown;
+                  remoteCallerNumber?: string;
+                };
                 hangup: () => void;
                 answer: (params?: { remoteElement?: string }) => void | Promise<void>;
               };
@@ -199,6 +240,27 @@ export function useTelnyxCall(options: UseTelnyxCallOptions = {}) {
               if (call.direction === 'inbound' && call.id) {
                 const priorDecision = inboundCallDecisionsRef.current.get(call.id);
                 if (priorDecision === 'rejected') return;
+
+                if (priorDecision === 'pending') {
+                  // TASK-I1: the human hasn't answered/declined yet -- only a hangup/destroy is
+                  // interesting (the server's own ring timeout elapsed, or the caller hung up),
+                  // and even then this call was never `activeCallRef`'s concern, so return
+                  // either way instead of falling into the general state-tracking below.
+                  const pendingState = (call.state || '').toLowerCase();
+                  if (
+                    pendingState === 'hangup' ||
+                    pendingState === 'destroy' ||
+                    pendingState === 'purge'
+                  ) {
+                    inboundCallDecisionsRef.current.delete(call.id);
+                    if (pendingInboundCallRef.current?.id === call.id) {
+                      pendingInboundCallRef.current = null;
+                      setPendingInboundCall(null);
+                    }
+                  }
+                  return;
+                }
+
                 if (!priorDecision) {
                   const currentOptions = optionsRef.current;
                   const decoded = decodeAgentClientState(call.options?.clientState);
@@ -227,9 +289,24 @@ export function useTelnyxCall(options: UseTelnyxCallOptions = {}) {
                       call.hangup();
                     });
                   } else {
-                    // Not this session (or this hook wasn't told to expect one at all, e.g.
-                    // the legacy manual dialer) -- reject. Never auto-answer a call this hook
-                    // was not explicitly told to expect.
+                    // TASK-I1 (INB-2): a fallback-step invite for THIS member's own SIP
+                    // credential -- neither auto-answer (unlike the agent leg) nor auto-reject.
+                    // Surface it for the incoming-call banner; answerPendingInboundCall/
+                    // declinePendingInboundCall below are what the human's click actually calls.
+                    const inboundRouting = decodeInboundRoutingClientState(
+                      call.options?.clientState
+                    );
+                    if (inboundRouting?.step === 'intern') {
+                      inboundCallDecisionsRef.current.set(call.id, 'pending');
+                      pendingInboundCallRef.current = call;
+                      setPendingInboundCall({
+                        callId: call.id,
+                        fromE164: call.options?.remoteCallerNumber ?? null,
+                      });
+                      return;
+                    }
+                    // Not this session, and not a recognized inbound-routing invite -- reject.
+                    // Never auto-answer a call this hook was not explicitly told to expect.
                     inboundCallDecisionsRef.current.set(call.id, 'rejected');
                     call.hangup();
                     return;
@@ -368,6 +445,40 @@ export function useTelnyxCall(options: UseTelnyxCallOptions = {}) {
     expectingAgentLegRef.current = false;
   }, []);
 
+  /** TASK-I1 (INB-2): the incoming-call banner's own "Answer" button. Marks the decision
+   *  'answered' (so this call id's later notifications fall through to the normal active-call
+   *  tracking, same as the agent-leg path) and clears the pending state. */
+  const answerPendingInboundCall = useCallback(() => {
+    const call = pendingInboundCallRef.current;
+    if (!call || !call.id) return;
+    inboundCallDecisionsRef.current.set(call.id, 'answered');
+    pendingInboundCallRef.current = null;
+    setPendingInboundCall(null);
+    Promise.resolve(
+      call.answer(
+        optionsRef.current.remoteElementId
+          ? { remoteElement: optionsRef.current.remoteElementId }
+          : undefined
+      )
+    ).catch((err: unknown) => {
+      setError(err instanceof Error ? err.message : String(err));
+      call.hangup();
+    });
+  }, []);
+
+  /** TASK-I1 (INB-2): the incoming-call banner's own "Decline" button -- a real hangup, which
+   *  sends Telnyx a genuine `call.hangup` for this leg, letting the server (inbound-engine.ts's
+   *  handleClientStateEvent) advance to the next fallback step exactly as if the ring had timed
+   *  out unanswered. */
+  const declinePendingInboundCall = useCallback(() => {
+    const call = pendingInboundCallRef.current;
+    if (!call || !call.id) return;
+    inboundCallDecisionsRef.current.set(call.id, 'rejected');
+    pendingInboundCallRef.current = null;
+    setPendingInboundCall(null);
+    call.hangup();
+  }, []);
+
   return {
     callState,
     error,
@@ -380,5 +491,8 @@ export function useTelnyxCall(options: UseTelnyxCallOptions = {}) {
     setMuted,
     beginAgentLegExpectation,
     endAgentLegExpectation,
+    pendingInboundCall,
+    answerPendingInboundCall,
+    declinePendingInboundCall,
   };
 }

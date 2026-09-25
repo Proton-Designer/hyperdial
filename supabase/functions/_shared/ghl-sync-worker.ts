@@ -171,6 +171,83 @@ export async function processDispositionJob(
   }
 }
 
+/** TASK-I1 (INB-4): "a GHL note job ('Inbound call from …, <outcome>')". */
+export interface InboundCallNotePayload {
+  from_e164: string;
+  outcome: 'answered_by_agent' | 'forwarded' | 'voicemail' | 'missed';
+  agent_name: string | null;
+  duration_seconds: number;
+  recording_url: string | null;
+}
+
+export function buildInboundCallNote(p: InboundCallNotePayload): string {
+  const outcomeLabel: Record<InboundCallNotePayload['outcome'], string> = {
+    answered_by_agent: 'answered',
+    forwarded: 'forwarded',
+    voicemail: 'left a voicemail',
+    missed: 'missed',
+  };
+  const lines = [`Inbound call from ${p.from_e164} -- ${outcomeLabel[p.outcome]}`];
+  if (p.agent_name) lines.push(`Agent: ${p.agent_name}`);
+  lines.push(`Duration: ${p.duration_seconds}s`);
+  if (p.recording_url) lines.push(`Recording: ${p.recording_url}`);
+  return lines.join('\n');
+}
+
+export interface ProcessInboundCallNoteJobArgs {
+  client: GhlClient;
+  locationId: string;
+  ghlContactId: string | null;
+  contactFields: ContactFields;
+  payload: InboundCallNotePayload;
+  progress: JobProgress;
+}
+
+/** Mirrors processNurtureTagJob's shape exactly (upsert-if-needed, one step, no tag/task/dnd)
+ *  with `note_added` as its one step instead of `tag_added`. */
+export async function processInboundCallNoteJob(
+  args: ProcessInboundCallNoteJobArgs
+): Promise<ProcessJobResult> {
+  const progress: JobProgress = { ...args.progress };
+  let ghlContactId = args.ghlContactId;
+
+  try {
+    if (!progress.upserted) {
+      if (!ghlContactId) {
+        if (!args.contactFields.phone) {
+          throw new Error('cannot upsert to GHL: contact has no phone number');
+        }
+        const res = await args.client.upsertContact({
+          locationId: args.locationId,
+          firstName: args.contactFields.firstName ?? undefined,
+          lastName: args.contactFields.lastName ?? undefined,
+          phone: args.contactFields.phone,
+          email: args.contactFields.email ?? undefined,
+        });
+        ghlContactId = res.contactId;
+      }
+      progress.upserted = true;
+    }
+    if (!ghlContactId) {
+      throw new Error('no GHL contact id available after the upsert step');
+    }
+
+    if (!progress.note_added) {
+      await args.client.addNote(ghlContactId, { body: buildInboundCallNote(args.payload) });
+      progress.note_added = true;
+    }
+
+    return { ok: true, progress, resolvedGhlContactId: ghlContactId };
+  } catch (err) {
+    return {
+      ok: false,
+      progress,
+      resolvedGhlContactId: ghlContactId,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
 export interface ProcessNurtureTagJobArgs {
   client: GhlClient;
   locationId: string;

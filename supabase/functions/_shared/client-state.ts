@@ -68,3 +68,62 @@ export function decodeDialClientState(value: string | null | undefined): DialCli
   const kind: DialClientStateKind = decoded.kind === 'agent' ? 'agent' : 'contact';
   return { org: decoded.org, session: decoded.session, leg: decoded.leg, kind };
 }
+
+/**
+ * client_state for TASK-I1 (inbound routing): `{org, inbound, step}` -- a distinct shape from
+ * `DialClientState`, so the webhook entry point tries both decoders and treats a match on
+ * either as "ours" (see telnyx-webhook/index.ts). A genuinely fresh inbound call's own FIRST
+ * `call.initiated` carries no client_state at all (nothing has set one yet) -- that case is
+ * recognized by `direction === 'incoming'` + no decodable state of either shape, not by this
+ * decoder.
+ *
+ * `step` says which command produced the leg this state is riding on:
+ * - 'intern'/'cell'/'shared': a `transfer`'s `target_leg_client_state` -- these ride on Leg B,
+ *   a BRAND NEW call_control_id distinct from the original inbound leg's.
+ * - 'voicemail': the ORIGINAL inbound leg's own `client_state`, set by the `answer` call right
+ *   before entering the voicemail sub-flow (speak/record_start all act on that same leg).
+ */
+export type InboundCallStep = 'intern' | 'cell' | 'shared' | 'voicemail';
+
+export interface InboundClientState {
+  org: string;
+  inbound: string;
+  step: InboundCallStep;
+}
+
+const INBOUND_CALL_STEPS: InboundCallStep[] = ['intern', 'cell', 'shared', 'voicemail'];
+
+export function encodeInboundClientState(state: InboundClientState): string {
+  if (!isNonEmptyString(state.org) || !isNonEmptyString(state.inbound)) {
+    throw new Error('encodeInboundClientState: org and inbound are required non-empty strings');
+  }
+  if (!INBOUND_CALL_STEPS.includes(state.step)) {
+    throw new Error(`encodeInboundClientState: invalid step '${state.step}'`);
+  }
+  return btoa(JSON.stringify({ org: state.org, inbound: state.inbound, step: state.step }));
+}
+
+/** Never throws — untrusted input from a webhook. Returns null on anything malformed. */
+export function decodeInboundClientState(
+  value: string | null | undefined
+): InboundClientState | null {
+  if (!value) return null;
+  let decoded: Record<string, unknown>;
+  try {
+    decoded = JSON.parse(atob(value)) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+  if (
+    !isNonEmptyString(decoded.org) ||
+    !isNonEmptyString(decoded.inbound) ||
+    !INBOUND_CALL_STEPS.includes(decoded.step as InboundCallStep)
+  ) {
+    return null;
+  }
+  return {
+    org: decoded.org,
+    inbound: decoded.inbound,
+    step: decoded.step as InboundCallStep,
+  };
+}
