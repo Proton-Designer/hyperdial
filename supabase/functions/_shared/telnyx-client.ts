@@ -476,6 +476,11 @@ export function createTelnyxClient(
           user_name: args.userName,
           password: args.password,
           connection_name: args.connectionName,
+          // Only calls originated from this Telnyx account may reach the org's WebRTC
+          // credentials by SIP URI (the Call Control dial to the agent leg is one); the
+          // default "disabled" may block that dial, and "unrestricted" would let anyone
+          // ring an agent's browser.
+          sip_uri_calling_preference: 'internal',
         }),
       });
       return response.data ?? {};

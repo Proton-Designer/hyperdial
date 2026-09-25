@@ -1,6 +1,11 @@
 import { assertEquals, assertRejects } from 'jsr:@std/assert@1';
 import type { TelnyxClient } from './telnyx-client.ts';
-import { provisionTelnyxOrg, resourceNamesForOrg, webhookUrlForOrg } from './telnyx-provision.ts';
+import {
+  credentialUserNameForOrg,
+  provisionTelnyxOrg,
+  resourceNamesForOrg,
+  webhookUrlForOrg,
+} from './telnyx-provision.ts';
 
 const ORG_ID = 'org-123';
 const WEBHOOK_BASE = 'https://example.supabase.co/functions/v1/telnyx-webhook';
@@ -277,5 +282,31 @@ Deno.test('provisionTelnyxOrg: throws if Telnyx returns no id for a created reso
     () => provisionTelnyxOrg(client, { orgId: ORG_ID, webhookBaseUrl: WEBHOOK_BASE }),
     Error,
     'outbound voice profile'
+  );
+});
+
+// Telnyx credential_connections.user_name: 4-32 chars, alphanumeric only, one of the first 5
+// characters a letter. The rename-era `hyperdial_<hex>` (underscore, 42 chars) was rejected
+// live with 422 code 10015 -- the positive control below proves this rule catches that shape.
+const TELNYX_USER_NAME_OK = (s: string) =>
+  /^[A-Za-z0-9]{4,32}$/.test(s) && /[A-Za-z]/.test(s.slice(0, 5));
+
+Deno.test('credentialUserNameForOrg: satisfies Telnyx user_name rules', () => {
+  const orgIds = [
+    '4ff2cdd3-9ecc-4a84-b8ee-ba3f96ec8d5f',
+    '00000000-0000-0000-0000-000000000000',
+    '99999999-9999-4999-8999-999999999999',
+  ];
+  for (const orgId of orgIds) {
+    const name = credentialUserNameForOrg(orgId);
+    assertEquals(TELNYX_USER_NAME_OK(name), true, name);
+  }
+  assertEquals(credentialUserNameForOrg(orgIds[0]) === credentialUserNameForOrg(orgIds[1]), false);
+});
+
+Deno.test('credentialUserNameForOrg: positive control — the old shape fails the rule', () => {
+  assertEquals(
+    TELNYX_USER_NAME_OK(`hyperdial_${'4ff2cdd3-9ecc-4a84-b8ee-ba3f96ec8d5f'.replace(/-/g, '')}`),
+    false
   );
 });

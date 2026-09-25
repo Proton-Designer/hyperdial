@@ -51,6 +51,16 @@ export function resourceNamesForOrg(orgId: string): {
   };
 }
 
+/**
+ * Telnyx credential-connection `user_name`: 4–32 characters, letters and digits only, and at
+ * least one of the first 5 characters must be a letter
+ * (https://developers.telnyx.com/api-reference/credential-connections/create-a-credential-connection).
+ * "hd" + the first 30 hex digits of the org UUID = 32 characters, unique per org.
+ */
+export function credentialUserNameForOrg(orgId: string): string {
+  return `hd${orgId.replace(/-/g, '').toLowerCase().slice(0, 30)}`;
+}
+
 export function webhookUrlForOrg(webhookBaseUrl: string, orgId: string): string {
   return `${webhookBaseUrl}?org=${encodeURIComponent(orgId)}`;
 }
@@ -114,7 +124,7 @@ export async function provisionTelnyxOrg(
   }
   if (!credentialConnectionId) {
     const conn = await client.createCredentialConnection({
-      userName: `hyperdial_${args.orgId.replace(/-/g, '')}`,
+      userName: credentialUserNameForOrg(args.orgId),
       password: crypto.randomUUID().replace(/-/g, ''),
       connectionName: names.credentialConnection,
     });
