@@ -125,20 +125,39 @@ above covers what a real click-through can actually exercise.
 
 ### B10 — Call recording (TASK-F-T2) — **needs a real Telnyx call**
 
-| #     | Step                                                                                                                                       | Expected                                                                                                                                                          | ☐   |
-| ----- | ------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --- |
-| B10.1 | Settings → Telephony → confirm "Record calls" is checked (default). As an agent, make and answer a real call that connects for 15+ seconds. | The call proceeds normally — no delay, no error, recording never visible to the agent mid-call.                                                                   | ☐   |
+| #     | Step                                                                                                                                        | Expected                                                                                                                                                             | ☐   |
+| ----- | ------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --- |
+| B10.1 | Settings → Telephony → confirm "Record calls" is checked (default). As an agent, make and answer a real call that connects for 15+ seconds. | The call proceeds normally — no delay, no error, recording never visible to the agent mid-call.                                                                      | ☐   |
 | B10.2 | Within a minute or two of hanging up, open the wrap-up modal (or reopen it if already dispositioned) for that leg.                          | An inline audio player appears with the actual call audio playable. If opened immediately, "Recording processing…" shows first, then the player a few seconds later. | ☐   |
-| B10.3 | Check the `recordings` bucket (Supabase Studio → Storage) for the object at `{org_id}/{call_leg_id}.mp3`.                                    | The object exists, private, non-empty, playable.                                                                                                                   | ☐   |
-| B10.4 | If the org has a connected GHL integration, check the GHL contact's note for this disposition.                                              | The note includes a `https://hyperdial.myhomebasesolutions.com/contacts?leg=<id>` link (not a raw signed URL).                                                    | ☐   |
-| B10.5 | As a different agent (or owner/admin from a different browser/session), try calling `recording-url` for this same `callLegId`.               | Owner/admin: succeeds. A different agent (not this session's own agent): 404.                                                                                     | ☐   |
-| B10.6 | Owner/admin: Settings → Telephony → uncheck "Record calls." Make and answer another real call.                                             | No recording appears for this new call; `call_legs.recording_status` stays null for it. Re-check the box afterward to restore the default.                       | ☐   |
+| B10.3 | Check the `recordings` bucket (Supabase Studio → Storage) for the object at `{org_id}/{call_leg_id}.mp3`.                                   | The object exists, private, non-empty, playable.                                                                                                                     | ☐   |
+| B10.4 | If the org has a connected GHL integration, check the GHL contact's note for this disposition.                                              | The note includes a `https://hyperdial.myhomebasesolutions.com/contacts?leg=<id>` link (not a raw signed URL).                                                       | ☐   |
+| B10.5 | As a different agent (or owner/admin from a different browser/session), try calling `recording-url` for this same `callLegId`.              | Owner/admin: succeeds. A different agent (not this session's own agent): 404.                                                                                        | ☐   |
+| B10.6 | Owner/admin: Settings → Telephony → uncheck "Record calls." Make and answer another real call.                                              | No recording appears for this new call; `call_legs.recording_status` stays null for it. Re-check the box afterward to restore the default.                           | ☐   |
 
 The lead runs `audit/FT2/dryrun-tests.sql` against a rolled-back live transaction for the bucket/
 columns/RLS/retention-scaffolding parts (nothing here needs a real Telnyx call to verify). B10
 above covers only what genuinely needs a real recorded call — retention (90-day deletion) is not
 practically checkable live within a single session and is covered by `_shared/recording-core.
 test.ts`'s `isPastRetention` unit tests instead.
+
+### B11 — Voicemail drop + real AMD modes (TASK-F-T3) — **needs a real Telnyx call to a voicemail box**
+
+| #     | Step                                                                                                                                                                 | Expected                                                                                                                                                                                                                     | ☐   |
+| ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --- |
+| B11.1 | Settings → Voicemail drop: upload a short mp3 or wav for your own user, wait for the preview player, then play it back.                                              | Upload succeeds, a signed preview URL loads and plays the uploaded audio.                                                                                                                                                    | ☐   |
+| B11.2 | As owner/admin, Settings → Voicemail drop → org default: upload a different file.                                                                                    | Org-default preview updates independently of the per-user file from B11.1; a non-admin agent can still hear the org default if they have no personal file set.                                                               | ☐   |
+| B11.3 | Campaign Manage → set AMD mode to **`detect_words`** (or `premium`) and Voicemail drop mode to **`every_attempt`**. Add the known voicemail-only number and dial it. | The AMD result is `machine`; the engine waits for `call.machine.greeting.ended` (or the premium greeting-ended), plays the uploaded voicemail, then hangs up on `call.playback.ended`.                                       | ☐   |
+| B11.4 | Check that leg's `call_legs.outcome` after the call above.                                                                                                           | `voicemail_left`, not `machine` — and it counted as an attempt on the lead (`campaign_leads.attempts` incremented).                                                                                                          | ☐   |
+| B11.5 | If the org has a connected GHL integration, check the contact's tags after B11.3/B11.4.                                                                              | A `call:voicemail-<n>` tag appears, where `<n>` matches the contact's voicemail-left count so far (1 on the first drop).                                                                                                     | ☐   |
+| B11.6 | Repeat B11.3 with AMD mode set to plain **`detect`** (not `detect_words`/`premium`).                                                                                 | No voicemail is played — Telnyx never sends `call.machine.greeting.ended` for plain `detect`, so the leg hangs up plainly with outcome `machine`, matching the vendor constraint documented in `.brain/memory/decisions.md`. | ☐   |
+| B11.7 | During a multi-line session, confirm a VM-drop leg from B11.3 does not delay the next batch firing.                                                                  | The next batch of lines dials immediately once the batch's other legs resolve — it does not wait for the voicemail-dropping leg to finish playing/hanging up (VMD-5).                                                        | ☐   |
+
+The lead runs `audit/FT3/dryrun-tests.sql` against a rolled-back live transaction for the
+migration/RLS/pacing-exclusion/sweeper-timeout parts (nothing here needs a real Telnyx call to
+verify). B11 above covers only what genuinely needs a real AMD-detected call to a voicemail box —
+the ~90s sweeper reap for a stuck `voicemail_dropping` leg is covered by the dry-run and by
+`dialer-engine.test.ts`'s own timeout tests instead, the same way B8 covers the general sweeper
+reap without forcing a live lost webhook.
 
 ---
 
@@ -174,3 +193,10 @@ test.ts`'s `isPastRetention` unit tests instead.
 - **REC-5's contact-history recording link** (TASK-F-T2) is not built — there's no contact
   call-history UI anywhere in the app yet. Only the wrap-up modal's recording player exists;
   don't re-report the missing history view, it's tracked as deferred to TASK-F-P4.
+- **Voicemail drop under plain `detect`/`off` AMD modes** (TASK-F-T3) is a vendor limitation, not
+  a bug: Telnyx never emits `call.machine.greeting.ended` for those modes, so there is no safe
+  "greeting is over" signal to time playback against. B11.6 exercises this on purpose — don't
+  re-report it as a missed drop.
+- **No delete/remove control on the voicemail-drop upload UI** (TASK-F-T3): Settings → Voicemail
+  drop can upload/replace a file but has no button to clear one back to "unset." Re-uploading is
+  the only way to change it today; tracked as a minor gap, not a launch blocker.

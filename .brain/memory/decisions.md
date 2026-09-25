@@ -648,3 +648,27 @@ membership instead, since DSP-9 explicitly wants cross-agent history). `WrapUpMo
 **Do not undo without understanding:** TASK-F-P4's own future touch-history strip (a fuller, contact-detail-page view, not modal-scoped) can and should reuse
 `contact_disposition_history` (just drop the `limit 3`, or add a param) rather than building a second, parallel cross-agent-history query -- the RLS-bypass
 reasoning above applies identically there.
+
+### BUG-7: campaign AMD mode maps 1:1 to Telnyx's real enum (off/detect/detect_words/premium), and voicemail drop only works on two of the four
+
+**Status:** Active · **Decided by:** eng2 (TASK-F-T3, 2026-09-25)
+
+**Context:** the prior build's `amd_mode` only had `'on' | 'off'`, mapped to Telnyx's `disabled | premium` -- i.e. "on" always meant the most expensive tier.
+Re-verified against `spec3.json`'s real `CallRequest.answering_machine_detection` enum: `premium | detect | detect_beep | detect_words | greeting_end |
+disabled`. Pricing re-checked at telnyx.com/pricing/voice (fetched 2026-09-25): standard AMD (`detect`/`detect_words`/etc.) is ~$0.002/call; `premium` is
+~$0.0065/call -- about **3.25x** the cost per call.
+
+**Decision:** widened `amd_mode` to the 4 values this build actually surfaces -- `off` (`disabled`) / `detect` / `detect_words` / `premium` -- and fixed
+`amdModeToTelnyxValue` to pass them straight through instead of collapsing everything non-off to `premium`. Campaign Manage's AMD select now shows a cost
+hint per option so an org can knowingly trade detection quality for the 3.25x price gap.
+
+Separately, and NOT a design choice: Telnyx only emits `call.machine.greeting.ended` for `detect_words`/`detect_beep`/`greeting_end` (standard) or an
+actually-detected beep under `premium` -- plain `detect` NEVER emits it (spec3.json's own field description for that mode). Voicemail drop (TASK-F-T3) needs
+that event as its "safe to play now" signal, so `amdModeSupportsVoicemailDrop` in `_shared/voicemail-core.ts` returns `true` only for `detect_words`/`premium`.
+Under `detect` or `off`, a machine result always just hangs up plainly (`outcome: 'machine'`) regardless of the campaign's own `voicemail_drop_mode` --
+there is no vendor signal to time a drop against, no matter which mode the campaign asks for.
+
+**Do not undo without understanding:** don't "fix" voicemail drop not firing under plain `detect` by trying to guess a greeting-end time from a fixed
+delay after `call.machine.detection.ended` -- Telnyx gives no event to validate that guess against under this mode, so it's an unbounded false-positive risk
+(playing over a live human, or into dead air) with no way to detect the failure. If an org wants voicemail drop, the campaign must run `detect_words` or
+`premium`; `detect`/`off` are for early answer/mute-tone speed only.
