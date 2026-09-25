@@ -261,8 +261,20 @@ export function buildTranscriptionStartPayload(args: TranscriptionStartArgs = {}
 // Client
 // ---------------------------------------------------------------------------
 
+/** TASK-SP: `GET /balance`'s real fields (verified against spec3.json's `UserBalance` schema --
+ *  `https://raw.githubusercontent.com/team-telnyx/openapi/master/openapi/spec3.json`, 2026-09-25).
+ *  Telnyx returns every amount as a decimal STRING ("300.00"), parsed to number here so callers
+ *  never have to. */
+export interface TelnyxBalance {
+  balanceUsd: number;
+  /** balance + credit_limit -- the actual amount that can still be spent. */
+  availableCreditUsd: number;
+  creditLimitUsd: number;
+  currency: string;
+}
+
 export interface TelnyxClient {
-  getBalance(): Promise<unknown>;
+  getBalance(): Promise<TelnyxBalance>;
 
   dial(args: DialArgs): Promise<{ callControlId: string }>;
   hangup(callControlId: string): Promise<void>;
@@ -339,7 +351,21 @@ export function createTelnyxClient(
 
   return {
     async getBalance() {
-      return req<TelnyxEnvelope<unknown>>('/balance');
+      const response = await req<
+        TelnyxEnvelope<{
+          balance: string;
+          available_credit: string;
+          credit_limit: string;
+          currency: string;
+        }>
+      >('/balance');
+      const d = response.data;
+      return {
+        balanceUsd: Number(d?.balance ?? 0),
+        availableCreditUsd: Number(d?.available_credit ?? 0),
+        creditLimitUsd: Number(d?.credit_limit ?? 0),
+        currency: d?.currency ?? 'USD',
+      };
     },
 
     async dial(args) {

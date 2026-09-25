@@ -9,6 +9,7 @@ import {
   Plus,
   PhoneCall,
   Trophy,
+  AlertTriangle,
 } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
@@ -32,8 +33,10 @@ import {
   getTeamPerformanceChart,
   getUserPreferences,
   saveUserPreferences,
+  getSpendStatus,
   type TeamPerformancePoint,
   type UserPreferences,
+  type SpendStatus,
 } from '@/lib/api';
 
 type PerfRange = '7d' | '30d' | 'custom';
@@ -78,6 +81,19 @@ export function Dashboard({
   } | null>(null);
   const [statsLoading, setStatsLoading] = useState(true);
   const [statsError, setStatsError] = useState<string | null>(null);
+
+  // TASK-SP: manager-only low-balance banner. Fetched once on mount, not polled -- the hourly
+  // cron (spend-alert-check) is the actual alerting mechanism; this is just a passive display
+  // for whoever happens to load the Dashboard, same cadence as every other Dashboard stat here.
+  const [spendStatus, setSpendStatus] = useState<SpendStatus | null>(null);
+  useEffect(() => {
+    if (!isManager) return;
+    getSpendStatus()
+      .then(setSpendStatus)
+      .catch(() => setSpendStatus(null)); // silent -- a passive banner isn't worth an error state
+  }, [isManager]);
+  const isLowBalance =
+    spendStatus?.available && spendStatus.availableCreditUsd < spendStatus.lowBalanceAlertUsd;
 
   const [perfRange, setPerfRange] = useState<PerfRange>('7d');
   const [customStart, setCustomStart] = useState('');
@@ -232,6 +248,14 @@ export function Dashboard({
           </>
         }
       />
+
+      {isLowBalance && spendStatus?.available && (
+        <div className="mb-6 p-4 rounded-app-md bg-warning-soft border border-warning/30 text-warning text-sm flex items-center gap-2">
+          <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+          Telnyx balance is low: ${spendStatus.availableCreditUsd.toFixed(2)} available, below your
+          ${spendStatus.lowBalanceAlertUsd.toFixed(2)} alert threshold. Check Settings → Telephony.
+        </div>
+      )}
 
       {/* Compact stat row -- 2x2 on mobile, 4-across from md up. Shares one shape between the
           loading and loaded states (StatCard renders its own skeleton via `loading`), so nothing

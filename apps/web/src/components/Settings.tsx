@@ -76,7 +76,12 @@ import {
   updateNumberPoolSettings,
   assignPhoneNumber,
   setPhoneNumberStatus,
+  getSpendSettings,
+  updateSpendSettings,
+  getSpendStatus,
   type NumberPoolSettings,
+  type SpendSettings,
+  type SpendStatus,
   type VoicemailDropInfo,
   type OrgMember,
   type GhlIntegrationStatus,
@@ -1963,6 +1968,175 @@ function NumberPoolCard() {
   );
 }
 
+/** TASK-SP: monthly spend cap + low-balance threshold + the current balance/MTD estimate
+ *  display. Same card shape as NumberPoolCard right above it (role-gated inputs, owner/admin
+ *  write via RLS, a shared card-level error banner) -- deliberately a separate card, not folded
+ *  into NumberPoolCard, since it's a distinct settings group (spend/billing vs. the pool
+ *  itself) with its own read (a live Telnyx call, telnyx-spend-status) the pool card doesn't
+ *  need. */
+function SpendSettingsCard() {
+  const { role } = useOrg();
+  const isAdmin = role === 'owner' || role === 'admin';
+  const [settings, setSettings] = useState<SpendSettings | null>(null);
+  const [status, setStatus] = useState<SpendStatus | null>(null);
+  const [statusLoading, setStatusLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const loadStatus = () => {
+    setStatusLoading(true);
+    getSpendStatus()
+      .then(setStatus)
+      .catch((e) => setError(String(e)))
+      .finally(() => setStatusLoading(false));
+  };
+
+  useEffect(() => {
+    getSpendSettings()
+      .then(setSettings)
+      .catch((e) => setError(String(e)));
+    loadStatus();
+    // load once on mount only -- loadStatus/getSpendSettings are stable module-level functions
+  }, []);
+
+  const handleChange = async (next: SpendSettings) => {
+    setSettings(next);
+    setSaving(true);
+    setError(null);
+    try {
+      await updateSpendSettings(next);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const isLow =
+    status?.available && status.availableCreditUsd < status.lowBalanceAlertUsd ? true : false;
+
+  return (
+    <div className="mb-8">
+      <h2 className="text-section-title text-text-primary mb-4">Spend &amp; Billing</h2>
+
+      {error && (
+        <div className="mb-4 p-4 rounded-app-md bg-danger/10 border border-danger/30 text-danger text-sm">
+          {error}
+        </div>
+      )}
+
+      {isLow && (
+        <div className="mb-4 p-4 rounded-app-md bg-warning-soft border border-warning/30 text-warning text-sm">
+          Balance is low: ${status && status.available ? status.availableCreditUsd.toFixed(2) : ''}{' '}
+          available, below your ${settings?.low_balance_alert_usd.toFixed(2)} alert threshold.
+        </div>
+      )}
+
+      <div className="bg-surface-1 rounded-app-lg p-6 border border-border-subtle mb-6">
+        <div className="flex items-center justify-between mb-4">
+          <span className="text-meta text-text-secondary">Current balance</span>
+          <button
+            type="button"
+            onClick={loadStatus}
+            disabled={statusLoading}
+            className="text-meta text-accent-to hover:underline disabled:opacity-50"
+          >
+            {statusLoading ? 'Refreshing…' : 'Refresh'}
+          </button>
+        </div>
+        {statusLoading ? (
+          <ListSkeleton rows={1} />
+        ) : !status?.available ? (
+          <p className="text-text-secondary text-sm">
+            {status?.reason ?? 'Balance is not available right now.'}
+          </p>
+        ) : (
+          <div className="flex flex-wrap gap-8">
+            <div>
+              <div className="text-page-title text-white">
+                ${status.availableCreditUsd.toFixed(2)}
+              </div>
+              <div className="text-meta text-text-muted">Available to spend</div>
+            </div>
+            <div>
+              <div className="text-page-title text-white">
+                ${status.mtdSpendEstimateUsd.toFixed(2)}
+              </div>
+              <div className="text-meta text-text-muted">
+                Estimated spend this month
+                {status.monthlySpendCapUsd !== null &&
+                  ` / $${status.monthlySpendCapUsd.toFixed(2)} cap`}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="bg-surface-1 rounded-app-lg p-6 border border-border-subtle flex flex-wrap gap-6 items-end">
+        <div>
+          <label className="block text-meta text-text-secondary mb-1">Monthly spend cap ($)</label>
+          <input
+            type="number"
+            min={0}
+            step="0.01"
+            placeholder="No cap"
+            value={settings?.monthly_spend_cap_usd ?? ''}
+            disabled={!settings || saving || !isAdmin}
+            onChange={(e) =>
+              settings &&
+              void handleChange({
+                ...settings,
+                monthly_spend_cap_usd: e.target.value === '' ? null : Number(e.target.value),
+              })
+            }
+            className="w-36 bg-surface-2 border border-white/10 rounded-app-md px-3 py-2 text-white focus:outline-none focus:border-accent-to disabled:opacity-60"
+          />
+        </div>
+        <div>
+          <label className="block text-meta text-text-secondary mb-1">Low-balance alert ($)</label>
+          <input
+            type="number"
+            min={0}
+            step="0.01"
+            value={settings?.low_balance_alert_usd ?? ''}
+            disabled={!settings || saving || !isAdmin}
+            onChange={(e) =>
+              settings &&
+              void handleChange({
+                ...settings,
+                low_balance_alert_usd: Math.max(0, Number(e.target.value) || 0),
+              })
+            }
+            className="w-36 bg-surface-2 border border-white/10 rounded-app-md px-3 py-2 text-white focus:outline-none focus:border-accent-to disabled:opacity-60"
+          />
+        </div>
+        <div>
+          <label className="block text-meta text-text-secondary mb-1">Minimum to dial ($)</label>
+          <input
+            type="number"
+            min={0}
+            step="0.01"
+            value={settings?.min_balance_to_dial_usd ?? ''}
+            disabled={!settings || saving || !isAdmin}
+            onChange={(e) =>
+              settings &&
+              void handleChange({
+                ...settings,
+                min_balance_to_dial_usd: Math.max(0, Number(e.target.value) || 0),
+              })
+            }
+            className="w-36 bg-surface-2 border border-white/10 rounded-app-md px-3 py-2 text-white focus:outline-none focus:border-accent-to disabled:opacity-60"
+          />
+        </div>
+      </div>
+      <p className="text-meta text-text-muted mt-2">
+        Monthly spend is estimated from call minutes and number count -- Telnyx has no reliable live
+        month-to-date figure to read instead. Real-time balance above is exact.
+      </p>
+    </div>
+  );
+}
+
 export function Settings() {
   const { refetch: refetchPhoneNumbers } = usePhoneNumbers();
   const { role, loading: orgLoading } = useOrg();
@@ -2278,6 +2452,8 @@ export function Settings() {
                   )}
 
                   <NumberPoolCard />
+
+                  {isTelnyxConnected && <SpendSettingsCard />}
 
                   {!isTelnyxConnected ? (
                     <div className="bg-gradient-to-r from-accent-from/10 to-accent-to/10 rounded-app-lg p-8 border border-accent-from/20 text-center">

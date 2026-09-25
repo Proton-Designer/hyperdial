@@ -371,6 +371,8 @@ verify_jwt = false
 verify_jwt = false
 [functions.telnyx-disconnect]
 verify_jwt = false
+[functions.telnyx-spend-status]
+verify_jwt = false
 
 [functions.dashboard-stats]
 verify_jwt = false
@@ -453,6 +455,11 @@ verify_jwt = false
 [functions.voicemail-upload]
 # Custom auth (requireOrgRole), same pattern as recording-url above -- set from the start
 # (TASK-F-T3), not discovered the hard way this time.
+verify_jwt = false
+
+[functions.spend-alert-check]
+# Triggered by pg_net (a cron job), no Supabase JWT at all -- auth is the X-Cron-Secret header.
+# Set from the start (TASK-SP), same lesson as recording-retention/dialer-sweeper/ghl-sync-worker.
 verify_jwt = false
 
 [edge_runtime]

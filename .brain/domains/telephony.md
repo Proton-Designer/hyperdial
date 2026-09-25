@@ -16,6 +16,8 @@ sources:
   - supabase/migrations/20260924000400_create_org_telephony.sql
   - apps/web/src/lib/useTelnyxCall.ts
   - apps/web/src/contexts/PhoneNumbersContext.tsx
+  - supabase/functions/_shared/spend-gate.ts
+  - supabase/migrations/20260925080200_spend_cap_balance_alert.sql
 related:
   - domain.dialer
   - domain.auth
@@ -29,6 +31,7 @@ answers:
   - "how does a user buy a phone number and where is it stored"
   - "how does the agent's leg join the conference"
   - "what legacy Telnyx env var names are still honoured"
+  - "where does the monthly spend cap / low-balance alert get its numbers from"
 covers: "Telnyx account wiring (API key, the two connection IDs, webhook auth), phone-number search/purchase/listing, and the agent's WebRTC browser leg."
 excludes: "The parallel dial loop itself — batching, AMD, call_logs state machine, Redis session state — see .brain/domains/dialer.md."
 tokens_est: 4711
@@ -69,6 +72,7 @@ HyperDial places and receives real phone calls through Telnyx. This domain cover
 | Number cache (client) | `apps/web/src/contexts/PhoneNumbersContext.tsx` | Preloads once per sign-in; `usePhoneNumbers()` |
 | Schema | `supabase/migrations/20250208000001_create_user_phone_numbers.sql` | `user_phone_numbers`, RLS per `auth.uid()` |
 | Docs | `docs/reference/environment-variables.md`, `docs/guides/telnyx-call-control-setup.md` | Env table; portal walkthrough |
+| Spend cap + balance alert (TASK-SP) | `_shared/spend-gate.ts`, `_shared/spend-estimate.ts`, `telnyx-spend-status/`, `spend-alert-check/` | `GET /balance` (real, stable) for balance; MTD spend is an ESTIMATE from `call_legs`/`user_phone_numbers` (`GET /usage_reports` is BETA with an unverifiable `product` enum -- see decisions.md's TASK-SP entry for the full spec3.json citation) |
 
 ## How it works
 

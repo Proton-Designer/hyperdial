@@ -229,6 +229,33 @@ its own legacy `caller_id_number_id` set keeps dialing from that fixed number ra
 uncapped, untracked, by design (decisions.md's own TASK-N1 entry). Don't re-report this as "the cap
 didn't stop it" unless the campaign has actually cleared its legacy caller ID too.
 
+### B15 — Monthly spend cap + low-balance alert (TASK-SP, SEC-2 + the balance part of SEC-7)
+
+Requires a real, connected BYO Telnyx account (Settings → Telephony) with a real balance. Do not
+run B15.4/B15.5 against the real MyHomeBase org's own Telnyx account — use the QA sandbox org's
+connection.
+
+| #     | Step                                                                                                                                                       | Expected                                                                                                                                                                                                   | ☐   |
+| ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --- |
+| B15.1 | Owner/admin: Settings → Telephony, scroll to "Spend & Billing" (only visible once Telnyx is connected).                                                      | "Current balance" shows a real dollar figure matching the Telnyx dashboard's own balance within the minute (not a placeholder). "Estimated spend this month" shows a number, not an error.               | ☐   |
+| B15.2 | Change "Monthly spend cap" / "Low-balance alert" / "Minimum to dial" and tab away.                                                                            | Values persist on reload (`org_spend_settings`). An agent account opening the same tab does not see this card at all (Telephony stays owner/admin-only, same standing invariant as TASK-N1's pool card). | ☐   |
+| B15.3 | Owner/admin: set "Minimum to dial" above the QA org's real current balance, then have an intern try to Go Ready on any campaign.                             | Go Ready is refused with a clear message citing the balance and the minimum (`LOW_BALANCE`); no session/dial_sessions row is created. Reset the minimum back down afterward.                              | ☐   |
+| B15.4 | Owner/admin: set "Monthly spend cap" to a value below the current "Estimated spend this month" figure from B15.1.                                            | Go Ready AND "Purchase a number" (Settings → Telephony → search/purchase) are both refused (`SPEND_CAP_REACHED`), citing the cap and the estimate. Reset the cap afterward (or clear it back to no cap).  | ☐   |
+| B15.5 | With a session already `dialing`, lower the balance-affecting settings mid-session (or just confirm behavior by reading the code/decisions.md if not safely reproducible live). | The already-running session is **not** killed mid-call — enforcement only runs at Go Ready, not at each refill (documented tradeoff, see decisions.md's TASK-SP entry).                                   | ☐   |
+| B15.6 | Ask the lead to manually invoke the `spend-alert-check` function once (with the real `X-Cron-Secret`) against an org whose balance is below its alert threshold. | A new in-app notification appears for every owner/admin of that org (bell icon, Settings/TopNavigation). Invoking it again within 12h sends no second notification (dedupe).                              | ☐   |
+
+The balance-fetch/gate/alert-dedupe decision logic itself (LOW_BALANCE, SPEND_CAP_REACHED, a null
+cap never blocking, failing OPEN when Telnyx can't be reached at all, and the 12h alert dedupe
+window) is fully covered by deno tests (`spend-estimate.test.ts`, `spend-gate.test.ts`) and the SQL
+schema/RLS/grants by `audit/SP/dryrun-tests.sql` — B15 above only covers what a real Telnyx account
+and a real live request can add on top of that.
+
+**Known open item (not a bug):** MTD spend is always an ESTIMATE (call minutes × a configurable
+per-minute rate + number count × a configurable monthly number price), never a live Telnyx figure —
+Telnyx has no cheap, reliable, non-BETA API for it (see decisions.md's TASK-SP entry for the full
+citation). Don't re-report a mismatch against Telnyx's own billing dashboard as a bug; tune the
+per-minute rate / monthly number price in Settings for a closer estimate instead.
+
 ---
 
 ## C. Evidence to capture

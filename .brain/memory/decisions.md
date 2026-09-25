@@ -794,3 +794,73 @@ rejections could rest a real number for a full rest period with zero actual call
 below 0, and reactivates a resting number only if THIS decrement is what drops it back under cap --
 safe without a race check because a resting number is never selected again by
 `pick_and_reserve_dial_number`, so its counter can't have moved for any other reason in the meantime.
+
+### TASK-SP (monthly spend cap + low-balance alert, SEC-2 + the balance part of SEC-7)
+
+**Context:** the task asked to verify the right Telnyx billing/MTD-spend API against the official
+spec (not WebFetch, which truncates large docs) and cite it, then pick the cheapest accurate call,
+falling back to an estimate only if no reliable API exists.
+
+**Decision 1 -- real-time balance uses `GET /balance` (stable); month-to-date spend is an
+ESTIMATE from our own `call_legs` data, not a live Telnyx number.** Verified against
+`https://raw.githubusercontent.com/team-telnyx/openapi/master/openapi/spec3.json` (2026-09-25,
+curled directly per the task's own instruction -- WebFetch truncates a 7MB file):
+- `GET /balance` (`UserBalance` schema): `balance`/`available_credit`/`credit_limit`/`currency`,
+  every amount a decimal STRING -- exactly matches the task's own description. Stable, not BETA.
+  This is the only endpoint `_shared/spend-gate.ts` actually calls live.
+- `GET /usage_reports` (tag "Usage Reports (BETA)"): supports `product`+`dimensions`+`metrics`
+  (e.g. `cost`) over up to a 31-day range -- looks promising, but (a) it's explicitly BETA, (b)
+  the valid `product` string for voice calls is not enumerated in the spec at all -- only
+  discoverable live via a separate `GET /usage_reports/options` call, so a wrong guess would 400,
+  (c) `dimensions` is `required` with no documented minItems, so whether an empty array yields one
+  clean aggregate row (vs. erroring, vs. needing a specific dimension) is unverified without a
+  live key. Rejected for an hourly cron across every connected org: too much surface area to get
+  silently wrong for something explicitly still BETA.
+- `POST/GET /legacy/reporting/usage_reports/voice` (`CDR Usage Reports`): submit-a-report-request-
+  then-poll-by-id, an async batch-job pattern (`operationId: submitCdrUsageReport` /
+  `getCdrUsageReports`). Not a synchronous per-org call an hourly cron can cheaply make.
+- `GET /detail_records`: real per-call CDRs with a `cost`-like field, but summing a month's worth
+  means paginating every individual call record for every connected org, every hour -- not cheap.
+
+Given none of the above is both reliable and cheap, the task's own fallback applies: MTD spend is
+estimated from `call_legs.duration_seconds` (both `kind='contact'` and `'agent'` -- a parallel-dial
+bridge places two real, separately-billed Telnyx calls per connected contact) × a configurable
+`estimated_per_minute_rate_usd`, plus `user_phone_numbers` count × a configurable
+`estimated_monthly_number_price_usd` (`org_spend_settings`, owner/admin-tunable in Settings). Always
+labelled "estimated" in the UI (`SpendSettingsCard`, `Team.tsx`-adjacent, not the same component).
+
+**Decision 2 -- fail OPEN when the balance can't be read, fail CLOSED (block) only on a CONFIRMED
+low balance/over-cap spend.** Telnyx not connected, the stored key missing, or the `/balance` call
+itself erroring all return "allowed" from `checkSpendGate`, with a `console.warn` only -- per the
+task's own suggested default ("blocking a whole team on a Telnyx API blip is worse"). Every one of
+these branches is deno-tested (`spend-gate.test.ts`).
+
+**Decision 3 -- the spend gate runs at Go Ready and at number purchase, NOT at every refill
+boundary.** `refillSession` (dialer-engine.ts) can run many times per minute during active
+dialing; adding a live `GET /balance` call to that hot loop would add an external HTTP round trip
+to every refill and risk rate-limiting Telnyx's billing endpoint under real multi-org load. A
+running session is never killed mid-call for this -- the task's own explicit permission ("only if
+that's cheap and safe. Otherwise check only at start, and document it"). The hourly alert
+(`spend-alert-check`) plus the Dashboard/Settings banners are the compensating control for a
+balance that drops mid-shift.
+
+**Decision 4 -- both new RPCs `.rpc()` calls... there are none.** Learning directly from the
+lead's own N1-review finding (private-schema functions are unreachable via `supabase.rpc()`,
+PostgREST only resolves `public`/`graphql_public`): `_shared/spend-gate.ts`/`spend-alert-check`
+never call a NEW RPC at all -- every new write/read goes through plain `.from(table)` calls under
+the service-role client (which bypasses RLS, no SECURITY DEFINER indirection needed) or the
+client's own RLS-scoped `.from('org_spend_settings')` reads/writes (same shape as
+`org_number_pool_settings`). The one RPC this code DOES call, `get_org_telnyx_key`, already has a
+verified `public.*` wrapper (`20260924000500_add_org_telephony_service_wrappers.sql`) -- reused
+as-is, not re-implemented.
+
+**Decision 5 -- Email is skipped entirely.** Grepped this whole project for an SMTP/email-sending
+integration (Resend, SendGrid, Postmark, nodemailer, raw SMTP) and found none. The task's own spec:
+"Email only if SMTP/email is already configured in the project. Don't add a provider." In-app
+notification (`notifications` table, one row per owner/admin, `type='low_balance_alert'`) + the
+Dashboard/Settings banners are the only alert surfaces built.
+
+**Do not undo without understanding:** don't add a live Telnyx MTD-spend call without first
+re-verifying `/usage_reports` has graduated out of BETA and confirming the `product` value for
+voice via a real `/usage_reports/options` response -- guessing it risks a 400 on every cron tick
+across every connected org, not just a wrong number.

@@ -136,6 +136,80 @@ export async function setPhoneNumberStatus(
   if (error) throw new Error(error.message);
 }
 
+// --- TASK-SP: monthly spend cap + low-balance alert (SEC-2 + the balance part of SEC-7) ---
+
+export interface SpendSettings {
+  /** Null = no cap, dialing/purchasing is never blocked on spend regardless of amount. */
+  monthly_spend_cap_usd: number | null;
+  low_balance_alert_usd: number;
+  min_balance_to_dial_usd: number;
+  /** Estimate-only knobs -- MTD spend has no cheap, reliable Telnyx API (see
+   *  20260925080200_spend_cap_balance_alert.sql's own header), so it's computed from our own
+   *  call minutes x this rate + number count x this price. Tune these for a closer estimate. */
+  estimated_per_minute_rate_usd: number;
+  estimated_monthly_number_price_usd: number;
+}
+
+/** Same "member read, owner/admin write, direct client upsert against RLS" shape as
+ *  getNumberPoolSettings/updateNumberPoolSettings -- no Edge Function needed for the settings
+ *  themselves (only the live balance/MTD READ needs one, see getSpendStatus below). */
+export async function getSpendSettings(): Promise<SpendSettings> {
+  const orgId = await getActiveOrgId();
+  const { data, error } = await supabase
+    .from('org_spend_settings')
+    .select(
+      'monthly_spend_cap_usd, low_balance_alert_usd, min_balance_to_dial_usd, estimated_per_minute_rate_usd, estimated_monthly_number_price_usd'
+    )
+    .eq('org_id', orgId)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return (
+    (data as SpendSettings | null) ?? {
+      monthly_spend_cap_usd: null,
+      low_balance_alert_usd: 20,
+      min_balance_to_dial_usd: 5,
+      estimated_per_minute_rate_usd: 0.015,
+      estimated_monthly_number_price_usd: 1.15,
+    }
+  );
+}
+
+export async function updateSpendSettings(settings: SpendSettings): Promise<void> {
+  const orgId = await getActiveOrgId();
+  const { error } = await supabase.from('org_spend_settings').upsert({
+    org_id: orgId,
+    ...settings,
+    updated_at: new Date().toISOString(),
+  });
+  if (error) throw new Error(error.message);
+}
+
+export type SpendStatus =
+  | {
+      available: true;
+      balanceUsd: number;
+      availableCreditUsd: number;
+      mtdSpendEstimateUsd: number;
+      isEstimate: true;
+      monthlySpendCapUsd: number | null;
+      lowBalanceAlertUsd: number;
+      minBalanceToDialUsd: number;
+    }
+  | { available: false; reason: string };
+
+/** Owner/admin only. Calls Telnyx live (the client can't read the org's key itself) -- see
+ *  telnyx-spend-status/index.ts. `available: false` is a normal, displayable state (Telnyx not
+ *  connected yet, or a transient API error), not a thrown error. */
+export async function getSpendStatus(): Promise<SpendStatus> {
+  const res = await fetch(`${getFunctionsUrl()}/telnyx-spend-status`, {
+    method: 'GET',
+    headers: await getEdgeFunctionHeaders(),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Failed to load spend status');
+  return data as SpendStatus;
+}
+
 export async function searchPhoneNumbers(areaCode: string, countryCode = 'US') {
   const params = new URLSearchParams({ area_code: areaCode, country_code: countryCode });
   const res = await fetch(`${getFunctionsUrl()}/telnyx-search-numbers?${params}`, {

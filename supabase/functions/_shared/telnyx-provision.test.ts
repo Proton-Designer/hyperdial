@@ -22,7 +22,7 @@ function makeMockClient(overrides: Partial<TelnyxClient> = {}): {
   const client: TelnyxClient = {
     getBalance: async () => {
       record('getBalance', []);
-      return { data: { balance: '10.00' } };
+      return { balanceUsd: 10, availableCreditUsd: 10, creditLimitUsd: 0, currency: 'USD' };
     },
     dial: async () => {
       throw new Error('not used in this test');

@@ -3,6 +3,7 @@ import { corsHeaders, corsPreflightResponse } from '../_shared/cors.ts';
 import { requireTelnyxOrgRole } from '../_shared/telnyx-org-context.ts';
 import { startSession } from '../_shared/dialer-engine.ts';
 import { readJsonBody } from '../_shared/http-json.ts';
+import { checkSpendGate } from '../_shared/spend-gate.ts';
 
 /**
  * Starts a rolling-refill dial session for a campaign (TASK-P2-E2). Rewritten from the
@@ -163,6 +164,17 @@ Deno.serve(async (req) => {
         code: 'ACTIVE_SESSION_EXISTS',
         existingSessionId: existing.id,
       });
+    }
+
+    // TASK-SP: checked here (Go Ready), not on every refill -- a live GET /balance call on
+    // every refill would add an external HTTP round trip to the hot dialing loop and risk
+    // rate-limiting Telnyx's billing endpoint under real load; a session already running is
+    // never killed mid-call for this (see spend-gate.ts's own header + decisions.md). Fails
+    // OPEN (never blocks) when the balance can't be read at all -- only a CONFIRMED low balance
+    // or CONFIRMED over-cap spend blocks Go Ready.
+    const spendGate = await checkSpendGate(supabase, orgId);
+    if (spendGate.blocked) {
+      return jsonResponse(400, { error: spendGate.message, code: spendGate.code });
     }
 
     const { sessionId } = await startSession(supabase, {

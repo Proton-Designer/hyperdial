@@ -14,6 +14,7 @@ import {
   getSupabaseAdmin,
   getConnectedOrgTelnyxContext,
 } from '../_shared/telnyx-org-context.ts';
+import { checkSpendGate } from '../_shared/spend-gate.ts';
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -39,6 +40,15 @@ Deno.serve(async (req: Request) => {
   if (!phoneNumber) return jsonResponse({ error: 'phone_number is required' }, 400);
 
   const supabase = getSupabaseAdmin();
+
+  // TASK-SP: same gate dialer-session-start uses, applied here too (the task's own explicit
+  // ADM-5-adjacent requirement) -- a purchase is a one-time action per request, so the extra
+  // GET /balance round trip is cheap here, unlike a per-refill check would be.
+  const spendGate = await checkSpendGate(supabase, orgId);
+  if (spendGate.blocked) {
+    return jsonResponse({ error: spendGate.message, code: spendGate.code }, 400);
+  }
+
   const {
     client,
     callControlAppId,
