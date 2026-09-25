@@ -7,6 +7,7 @@ import { timezoneForAreaCode } from '../_shared/area-code-tz.ts';
 import { planCampaignQueue, type CampaignQueueCandidate } from '../_shared/campaign-queue.ts';
 import {
   fetchActiveElsewhereContactIds,
+  fetchDncE164Set,
   upsertCampaignLeads,
 } from '../_shared/campaign-queue-io.ts';
 
@@ -123,7 +124,13 @@ Deno.serve(async (req) => {
     // time -- contributes exactly one candidate; an array here would double/triple-count that one
     // contact into skippedDnc/skippedActiveCampaign for every extra repeat, even though only one
     // real contact was ever actually affected.
-    const duplicateContactCandidates = new Map<string, CampaignQueueCandidate>();
+    // TASK-F-T1 (QUE-7): carries an internal-only `phone` field alongside the two real
+    // CampaignQueueCandidate fields, used below to build the org-wide DNC lookup -- never passed
+    // through to planCampaignQueue as a literal, so TS's excess-property check never sees it.
+    const duplicateContactCandidates = new Map<
+      string,
+      CampaignQueueCandidate & { phone: string }
+    >();
 
     for (const row of rows) {
       const contact: Record<string, unknown> = {
@@ -172,6 +179,7 @@ Deno.serve(async (req) => {
           duplicateContactCandidates.set(existingMatch.id, {
             contactId: existingMatch.id,
             dnc: existingMatch.dnc,
+            phone: contact.phone_number as string,
           });
         }
         continue;
@@ -183,12 +191,33 @@ Deno.serve(async (req) => {
       toInsert.push(contact);
     }
 
-    let insertedContactIds: string[] = [];
+    // TASK-F-T1 (QUE-7): the org-wide DNC list, checked in addition to (never synced with) the
+    // per-contact `dnc` flag above. One lookup for every phone number this run touched (fresh
+    // inserts + duplicate matches), then OR'd into each candidate's dnc -- and, for fresh inserts,
+    // persisted directly onto the new contacts.dnc column, not just used to skip the queue below.
+    const dncSet = await fetchDncE164Set(supabase, {
+      orgId,
+      phoneNumbers: [
+        ...toInsert.map((c) => c.phone_number as string),
+        ...[...duplicateContactCandidates.values()].map((c) => c.phone),
+      ],
+    });
+    for (const contact of toInsert) {
+      if (dncSet.has(contact.phone_number as string)) contact.dnc = true;
+    }
+    for (const candidate of duplicateContactCandidates.values()) {
+      if (dncSet.has(candidate.phone)) candidate.dnc = true;
+    }
+
+    // { contactId, dnc } per freshly-inserted row -- dnc now reflects the org-wide DNC check
+    // above, not always false, so this is read straight off the insert's own returned rows
+    // (matched by phone_number) rather than assumed to line up positionally with `toInsert`.
+    let insertedCandidates: { contactId: string; dnc: boolean }[] = [];
     if (toInsert.length > 0) {
       const { data: inserted, error } = await supabase
         .from('contacts')
         .insert(toInsert)
-        .select('id');
+        .select('id, phone_number, dnc');
       if (error) {
         console.error('contacts-import insert error:', error);
         return new Response(JSON.stringify({ error: error.message }), {
@@ -197,15 +226,16 @@ Deno.serve(async (req) => {
         });
       }
       imported = toInsert.length;
-      insertedContactIds = (inserted ?? []).map((r: { id: string }) => r.id);
+      insertedCandidates = (inserted ?? []).map((r: { id: string; dnc: boolean }) => ({
+        contactId: r.id,
+        dnc: r.dnc,
+      }));
     }
 
     let skippedDnc = 0;
     let skippedActiveCampaign = 0;
-    // Every freshly-inserted contact is dnc=false by construction (CSV import never sets it) --
-    // only the duplicate-matched existing contacts can already be DNC.
     const queueCandidates: CampaignQueueCandidate[] = [
-      ...insertedContactIds.map((contactId) => ({ contactId, dnc: false })),
+      ...insertedCandidates,
       ...duplicateContactCandidates.values(),
     ];
 

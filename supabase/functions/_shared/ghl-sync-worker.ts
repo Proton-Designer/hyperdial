@@ -159,6 +159,63 @@ export async function processDispositionJob(
   }
 }
 
+export interface ProcessNurtureTagJobArgs {
+  client: GhlClient;
+  locationId: string;
+  ghlContactId: string | null;
+  contactFields: ContactFields;
+  /** Steps already completed by a prior attempt, same skip-on-retry shape as
+   *  ProcessDispositionJobArgs.progress. */
+  progress: JobProgress;
+}
+
+/** TASK-F-T1 (QUE-3): "max attempts -> nurture tag pushed to GHL." Mirrors
+ *  processDispositionJob's own upsert step exactly (including its progress.upserted guard), then
+ *  tags the contact `nurture` (configurable later by F-P2 -- kept minimal per the task's own
+ *  words) guarded by progress.tag_added. No note/task/dnd steps -- this job kind only ever tags. */
+export async function processNurtureTagJob(
+  args: ProcessNurtureTagJobArgs
+): Promise<ProcessJobResult> {
+  const progress: JobProgress = { ...args.progress };
+  let ghlContactId = args.ghlContactId;
+
+  try {
+    if (!progress.upserted) {
+      if (!ghlContactId) {
+        if (!args.contactFields.phone) {
+          throw new Error('cannot upsert to GHL: contact has no phone number');
+        }
+        const res = await args.client.upsertContact({
+          locationId: args.locationId,
+          firstName: args.contactFields.firstName ?? undefined,
+          lastName: args.contactFields.lastName ?? undefined,
+          phone: args.contactFields.phone,
+          email: args.contactFields.email ?? undefined,
+        });
+        ghlContactId = res.contactId;
+      }
+      progress.upserted = true;
+    }
+    if (!ghlContactId) {
+      throw new Error('no GHL contact id available after the upsert step');
+    }
+
+    if (!progress.tag_added) {
+      await args.client.addTags(ghlContactId, ['nurture']);
+      progress.tag_added = true;
+    }
+
+    return { ok: true, progress, resolvedGhlContactId: ghlContactId };
+  } catch (err) {
+    return {
+      ok: false,
+      progress,
+      resolvedGhlContactId: ghlContactId,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
 export interface ProcessContactUpsertJobArgs {
   client: GhlClient;
   locationId: string;

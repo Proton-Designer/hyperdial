@@ -19,6 +19,7 @@ import {
 import { planCampaignQueue, type CampaignQueueCandidate } from '../_shared/campaign-queue.ts';
 import {
   fetchActiveElsewhereContactIds,
+  fetchDncE164Set,
   upsertCampaignLeads,
 } from '../_shared/campaign-queue-io.ts';
 
@@ -159,6 +160,35 @@ Deno.serve(async (req: Request) => {
   const now = new Date().toISOString();
   const existingById = new Map(existingRows.map((r) => [r.id, r]));
   const queueCandidates: CampaignQueueCandidate[] = [];
+
+  // TASK-F-T1 (QUE-7): the org-wide DNC list, checked in addition to (never synced with) GHL's
+  // own dnd/dialer:dnc-tag signal already folded into `fields.dnc`/`patch.dnc` above by
+  // planGhlImport. One lookup covering every phone number this run touches (a new contact's own
+  // field, or an updated contact's patched-or-existing number), then OR'd directly into
+  // `fields.dnc`/`u.patch.dnc` BEFORE the insert/update calls below, so contacts.dnc itself
+  // reflects the org DNC list for a freshly imported/updated contact, not only the campaign-queue
+  // skip decision.
+  const dncPhoneNumbers = [
+    ...plan.toInsert.map((f) => f.phone_number),
+    ...plan.toUpdate
+      .map((u) => u.patch.phone_number ?? existingById.get(u.id)?.phone_number)
+      .filter((p): p is string => !!p),
+  ];
+  let dncSet: Set<string>;
+  try {
+    dncSet = await fetchDncE164Set(supabase, { orgId, phoneNumbers: dncPhoneNumbers });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error('[ghl-import] dnc lookup failed', message);
+    return jsonResponse({ error: 'Failed to check the do-not-call list' }, 500);
+  }
+  for (const fields of plan.toInsert) {
+    if (dncSet.has(fields.phone_number)) fields.dnc = true;
+  }
+  for (const u of plan.toUpdate) {
+    const phone = u.patch.phone_number ?? existingById.get(u.id)?.phone_number;
+    if (phone && dncSet.has(phone)) u.patch.dnc = true;
+  }
 
   if (plan.toInsert.length > 0) {
     const { data: inserted, error: insertError } = await supabase

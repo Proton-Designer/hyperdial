@@ -4,6 +4,7 @@ import {
   buildDispositionNote,
   processContactUpsertJob,
   processDispositionJob,
+  processNurtureTagJob,
   type DispositionPayload,
 } from './ghl-sync-worker.ts';
 
@@ -397,6 +398,94 @@ Deno.test(
       });
       assertEquals(result.ok, true);
       assertEquals(result.resolvedGhlContactId, 'ghl-fresh');
+    } finally {
+      restore();
+    }
+  }
+);
+
+// ---------------------------------------------------------------------------
+// processNurtureTagJob (TASK-F-T1, QUE-3)
+// ---------------------------------------------------------------------------
+
+Deno.test('processNurtureTagJob: already linked, already tagged is a full no-op', async () => {
+  let calls = 0;
+  const restore = stubFetch(() => {
+    calls++;
+    return Response.json({});
+  });
+  try {
+    const client: GhlClient = createGhlClient('tok');
+    const result = await processNurtureTagJob({
+      client,
+      locationId: 'loc-1',
+      ghlContactId: 'ghl-already',
+      contactFields: { firstName: null, lastName: null, phone: '+14155552671' },
+      progress: { upserted: true, tag_added: true },
+    });
+    assertEquals(result.ok, true);
+    assertEquals(result.resolvedGhlContactId, 'ghl-already');
+    assertEquals(result.progress.tag_added, true);
+    assertEquals(calls, 0);
+  } finally {
+    restore();
+  }
+});
+
+Deno.test('processNurtureTagJob: unlinked contact upserts first, then tags "nurture"', async () => {
+  let taggedWith: string[] | null = null;
+  const restore = stubFetch((url, init) => {
+    if (url.includes('/contacts/upsert'))
+      return Response.json({ new: true, contact: { id: 'ghl-fresh' } });
+    if (url.includes('/tags')) {
+      taggedWith = JSON.parse(String(init?.body)).tags;
+      return Response.json({});
+    }
+    return Response.json({});
+  });
+  try {
+    const client: GhlClient = createGhlClient('tok');
+    const result = await processNurtureTagJob({
+      client,
+      locationId: 'loc-1',
+      ghlContactId: null,
+      contactFields: { firstName: 'Bob', lastName: null, phone: '+14155552672' },
+      progress: {},
+    });
+    assertEquals(result.ok, true);
+    assertEquals(result.resolvedGhlContactId, 'ghl-fresh');
+    assertEquals(result.progress.upserted, true);
+    assertEquals(result.progress.tag_added, true);
+    assertEquals(taggedWith, ['nurture']);
+  } finally {
+    restore();
+  }
+});
+
+Deno.test(
+  'processNurtureTagJob: upsert failure returns ok:false with no contact id and no tag call',
+  async () => {
+    let tagCalls = 0;
+    const restore = stubFetch((url) => {
+      if (url.includes('/tags')) {
+        tagCalls++;
+        return Response.json({});
+      }
+      return new Response('server error', { status: 500 });
+    });
+    try {
+      const client: GhlClient = createGhlClient('tok');
+      const result = await processNurtureTagJob({
+        client,
+        locationId: 'loc-1',
+        ghlContactId: null,
+        contactFields: { firstName: 'Bob', lastName: null, phone: '+14155552673' },
+        progress: {},
+      });
+      assertEquals(result.ok, false);
+      assertEquals(result.resolvedGhlContactId, null);
+      assertEquals(result.progress.upserted, undefined);
+      assertEquals(tagCalls, 0);
     } finally {
       restore();
     }

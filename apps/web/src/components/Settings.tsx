@@ -19,6 +19,7 @@ import {
   Plus,
   Pencil,
   X,
+  PhoneOff,
 } from 'lucide-react';
 import { usePhoneNumbers } from '@/contexts/PhoneNumbersContext';
 import { useAuth } from '@/contexts/AuthContext';
@@ -45,15 +46,21 @@ import {
   createDisposition,
   updateDisposition,
   deleteDisposition,
+  listDncNumbers,
+  addDncNumber,
+  removeDncNumber,
   type OrgMember,
   type GhlIntegrationStatus,
   type CrmSyncJob,
   type TelnyxConnectionStatus,
   type Disposition,
   type DispositionLeadEffect,
+  type DncNumber,
 } from '@/lib/api';
+import { normalizePhoneStrict } from '@/lib/phone-normalize';
 
-type SettingsTab = 'profile' | 'phone' | 'team' | 'integrations' | 'dispositions' | 'security';
+type SettingsTab =
+  'profile' | 'phone' | 'team' | 'integrations' | 'dispositions' | 'dnc' | 'security';
 
 function ProfileTab() {
   const { user } = useAuth();
@@ -985,6 +992,167 @@ function DispositionsTab() {
   );
 }
 
+/** Settings -> Do-not-call list (TASK-F-T1, QUE-7/DSP-6), owner/admin only. Small and functional
+ *  per the task spec -- eng3's polish comes later. Lists the org-wide dnc_numbers table (RLS:
+ *  any member can read, only owner/admin can insert/delete), with search, manual add
+ *  (normalized to E.164 client-side before the insert, matching createContact's own convention),
+ *  and remove. */
+function DncTab() {
+  const { role } = useOrg();
+  const isAdmin = role === 'owner' || role === 'admin';
+
+  const [numbers, setNumbers] = useState<DncNumber[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [search, setSearch] = useState('');
+  const [newNumber, setNewNumber] = useState('');
+  const [newNote, setNewNote] = useState('');
+  const [adding, setAdding] = useState(false);
+  const [removingId, setRemovingId] = useState<string | null>(null);
+
+  const load = useCallback(() => {
+    setLoading(true);
+    listDncNumbers()
+      .then(setNumbers)
+      .catch((e) => setError(String(e)))
+      .finally(() => setLoading(false));
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const handleAdd = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    const normalized = normalizePhoneStrict(newNumber);
+    if (!normalized) {
+      setError('Enter a valid phone number.');
+      return;
+    }
+    setAdding(true);
+    try {
+      await addDncNumber(normalized.e164, newNote.trim() || undefined);
+      setNewNumber('');
+      setNewNote('');
+      load();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setAdding(false);
+    }
+  };
+
+  const handleRemove = async (n: DncNumber) => {
+    setRemovingId(n.id);
+    setError(null);
+    try {
+      await removeDncNumber(n.id);
+      load();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setRemovingId(null);
+    }
+  };
+
+  const filtered = numbers.filter((n) => n.e164.includes(search.trim()));
+
+  return (
+    <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
+      <h1 className="text-3xl font-bold text-white mb-2">Do-not-call list</h1>
+      <p className="text-[#B0BEC5] mb-8">
+        Org-wide numbers excluded from dialing and from CSV/GHL imports, in addition to each
+        contact's own DNC flag.
+      </p>
+
+      {error && (
+        <div className="mb-6 p-4 rounded-xl bg-red-500/10 border border-red-500/30 text-red-400 text-sm">
+          {error}
+        </div>
+      )}
+
+      {!isAdmin ? (
+        <p className="text-sm text-[#B0BEC5]">
+          Only an owner or admin can manage the do-not-call list.
+        </p>
+      ) : loading ? (
+        <div className="flex items-center justify-center py-12">
+          <Loader2 className="w-8 h-8 text-[#00D9FF] animate-spin" />
+        </div>
+      ) : (
+        <div className="bg-[#1A2332]/60 backdrop-blur-xl rounded-2xl p-6 border border-white/5 max-w-2xl">
+          <form onSubmit={handleAdd} className="flex gap-2 mb-4">
+            <input
+              type="text"
+              value={newNumber}
+              onChange={(e) => setNewNumber(e.target.value)}
+              required
+              className="flex-1 bg-[#1E2A3A] border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-[#00D9FF]"
+              placeholder="Phone number"
+            />
+            <input
+              type="text"
+              value={newNote}
+              onChange={(e) => setNewNote(e.target.value)}
+              className="flex-1 bg-[#1E2A3A] border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-[#00D9FF]"
+              placeholder="Note (optional)"
+            />
+            <button
+              type="submit"
+              disabled={adding}
+              className="px-4 py-2 bg-gradient-to-r from-[#00D9FF] to-[#0066FF] rounded-lg text-white text-sm font-medium disabled:opacity-50 flex items-center gap-2 flex-shrink-0"
+            >
+              {adding ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+              Add
+            </button>
+          </form>
+
+          <div className="relative mb-4">
+            <Search className="w-4 h-4 text-[#B0BEC5] absolute left-3 top-1/2 -translate-y-1/2" />
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="w-full bg-[#1E2A3A] border border-white/10 rounded-lg pl-9 pr-3 py-2 text-sm text-white focus:outline-none focus:border-[#00D9FF]"
+              placeholder="Search"
+            />
+          </div>
+
+          {filtered.length === 0 ? (
+            <p className="text-sm text-[#B0BEC5] py-4 text-center">No numbers on the list.</p>
+          ) : (
+            <div className="space-y-2">
+              {filtered.map((n) => (
+                <div
+                  key={n.id}
+                  className="flex items-center justify-between gap-3 py-3 border-b border-white/5 last:border-0"
+                >
+                  <div className="min-w-0">
+                    <div className="text-sm font-medium text-white">{n.e164}</div>
+                    <div className="text-xs text-[#B0BEC5] mt-0.5">
+                      {n.source}
+                      {n.note ? ` · ${n.note}` : ''}
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => handleRemove(n)}
+                    disabled={removingId === n.id}
+                    className="p-1.5 text-[#B0BEC5] hover:text-red-400 disabled:opacity-50 flex-shrink-0"
+                    title="Remove"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </motion.div>
+  );
+}
+
 export function Settings() {
   const {
     numbers: phoneNumbers,
@@ -1071,6 +1239,7 @@ export function Settings() {
     ...(!isAgent
       ? [{ id: 'dispositions' as SettingsTab, label: 'Dispositions', icon: ListChecks }]
       : []),
+    ...(!isAgent ? [{ id: 'dnc' as SettingsTab, label: 'Do-not-call list', icon: PhoneOff }] : []),
     { id: 'security' as SettingsTab, label: 'Security', icon: Shield },
   ];
 
@@ -1080,7 +1249,8 @@ export function Settings() {
       (activeTab === 'phone' ||
         activeTab === 'team' ||
         activeTab === 'integrations' ||
-        activeTab === 'dispositions')
+        activeTab === 'dispositions' ||
+        activeTab === 'dnc')
     ) {
       setActiveTab('profile');
     }
@@ -1395,6 +1565,8 @@ export function Settings() {
               {activeTab === 'integrations' && !isAgent && <IntegrationsTab />}
 
               {activeTab === 'dispositions' && !isAgent && <DispositionsTab />}
+
+              {activeTab === 'dnc' && !isAgent && <DncTab />}
 
               {activeTab === 'security' ? (
                 <motion.div

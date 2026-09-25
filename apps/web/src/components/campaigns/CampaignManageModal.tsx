@@ -12,6 +12,7 @@ import {
   Loader2,
   Settings as SettingsIcon,
   Save,
+  RotateCw,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import {
@@ -27,11 +28,15 @@ import {
   removeLeadFromCampaign,
   removeLeadsFromCampaign,
   listContacts,
+  listCampaignRetryRules,
+  upsertCampaignRetryRules,
   type CampaignWithStats,
   type CampaignSettingsInput,
   type CampaignLead,
   type Contact,
   type OrgMember,
+  type CampaignRetryRule,
+  type RetryRuleAction,
 } from '../../lib/api';
 import { ImportContactsModal } from '../contacts/ImportContactsModal';
 import { AddContactModal } from '../contacts/AddContactModal';
@@ -63,6 +68,134 @@ interface CampaignManageModalProps {
   onNavigateToDialer: () => void;
   onStartParallelDial: (ctx: { sessionId: string; campaignId: string }) => void;
   onOpenDialerWithSession?: (ctx: { sessionId: string; campaignId: string }) => void;
+}
+
+const RETRY_RULE_LABEL: Record<string, string> = {
+  no_answer: 'No answer',
+  voicemail: 'Voicemail',
+  callback: 'Callback',
+  interested: 'Interested',
+  not_interested: 'Not interested',
+  wrong_number: 'Wrong number',
+  dnc: 'Do not call',
+};
+
+/** Campaign settings -> Retry Rules (TASK-F-T1, QUE-2/QUE-3/QUE-5), admin+ only. Small and
+ *  functional per the task spec -- one row per seeded disposition_key, own fetch-on-mount/save
+ *  lifecycle (independent of settingsForm's single Save button since this is a list of rows, not
+ *  one flat form). delay_minutes is edited here as days (this build's two seeded retry rules are
+ *  both "4 days"), converted at the save boundary. */
+function RetryRulesCard({ campaignId }: { campaignId: string }) {
+  const [rules, setRules] = useState<CampaignRetryRule[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    setLoading(true);
+    listCampaignRetryRules(campaignId)
+      .then((r) =>
+        setRules([...r].sort((a, b) => a.disposition_key.localeCompare(b.disposition_key)))
+      )
+      .catch((e) => toast.error(e instanceof Error ? e.message : 'Failed to load retry rules'))
+      .finally(() => setLoading(false));
+  }, [campaignId]);
+
+  const updateRule = (id: string, patch: Partial<CampaignRetryRule>) => {
+    setRules((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)));
+  };
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      await upsertCampaignRetryRules(
+        campaignId,
+        rules.map((r) => ({
+          disposition_key: r.disposition_key,
+          action: r.action,
+          delay_minutes: r.action === 'retry' ? (r.delay_minutes ?? 1440) : null,
+          rotate_block: r.action === 'retry' ? r.rotate_block : false,
+        }))
+      );
+      toast.success('Retry rules saved');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to save retry rules');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="bg-[#1E2A3A]/60 rounded-2xl border border-white/5 p-6 mb-6">
+        <Loader2 className="w-5 h-5 text-[#00D9FF] animate-spin" />
+      </div>
+    );
+  }
+  if (rules.length === 0) return null;
+
+  return (
+    <div className="bg-[#1E2A3A]/60 rounded-2xl border border-white/5 p-6 mb-6">
+      <div className="flex items-center justify-between mb-4">
+        <h3 className="text-lg font-bold text-white flex items-center gap-2">
+          <RotateCw className="w-5 h-5" />
+          Retry Rules
+        </h3>
+        <button
+          type="button"
+          onClick={handleSave}
+          disabled={saving}
+          className="flex items-center gap-2 px-3 py-2 bg-gradient-to-r from-[#00D9FF] to-[#0066FF] rounded-lg text-white text-sm font-semibold disabled:opacity-60"
+        >
+          {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+          Save Rules
+        </button>
+      </div>
+      <div className="space-y-3">
+        {rules.map((r) => (
+          <div key={r.id} className="flex flex-wrap items-center gap-3">
+            <div className="w-36 text-sm text-white flex-shrink-0">
+              {RETRY_RULE_LABEL[r.disposition_key] ?? r.disposition_key}
+            </div>
+            <select
+              value={r.action}
+              onChange={(e) => updateRule(r.id, { action: e.target.value as RetryRuleAction })}
+              className="bg-[#1A2332] border border-white/10 rounded-lg px-3 py-2 text-sm text-white"
+            >
+              <option value="retry">Retry</option>
+              <option value="out">Out (exhaust)</option>
+              <option value="exact_time">Exact time</option>
+            </select>
+            {r.action === 'retry' && (
+              <>
+                <div className="flex items-center gap-1">
+                  <input
+                    type="number"
+                    min={1}
+                    value={Math.max(1, Math.round((r.delay_minutes ?? 1440) / 1440))}
+                    onChange={(e) =>
+                      updateRule(r.id, {
+                        delay_minutes: Math.max(1, Number(e.target.value)) * 1440,
+                      })
+                    }
+                    className="w-20 bg-[#1A2332] border border-white/10 rounded-lg px-2 py-2 text-sm text-white"
+                  />
+                  <span className="text-xs text-[#B0BEC5]">days</span>
+                </div>
+                <label className="flex items-center gap-2 text-xs text-[#B0BEC5]">
+                  <input
+                    type="checkbox"
+                    checked={r.rotate_block}
+                    onChange={(e) => updateRule(r.id, { rotate_block: e.target.checked })}
+                  />
+                  Rotate time block
+                </label>
+              </>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 export function CampaignManageModal({
@@ -680,6 +813,8 @@ export function CampaignManageModal({
                   </div>
                 </div>
               )}
+
+              {canManage && campaignId && <RetryRulesCard campaignId={campaignId} />}
 
               {/* Agent assignment (admin+ only). RLS on campaign_agents already scopes agents
                   to their assigned campaigns (TASK-P1-01); this is that assignment's UI. */}

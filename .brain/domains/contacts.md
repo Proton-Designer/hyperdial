@@ -133,6 +133,29 @@ shared gate both paths call before that upsert, so the same rules apply everywhe
 - Every skip is counted and returned to the caller (`skippedDnc`, `skippedPaused` (GHL only), `skippedActiveCampaign`) so the UI can report what happened, not just
   silently drop contacts from the campaign.
 
+## Org-wide DNC table (TASK-F-T1, QUE-7/DSP-6)
+
+`dnc_numbers` (migration `20260925030000_queue_v2_retry_dnc.sql`) is a second, org-wide DNC
+signal, keyed on E.164 rather than a contact row — a number can be on this list without any
+`contacts` row existing for it yet (a manual add, or a number that stopped a campaign via an SMS
+STOP reply before ever being imported). It is backfilled once from every existing `contacts.dnc
+= true` row at migration time, and is written by: `submit_disposition`'s `'dnc'` lead_effect
+(alongside the existing `contacts.dnc = true` write — DSP-6's literal "sets the contact's DNC
+flag AND writes the global DNC table"), a manual Settings-UI add (`addDncNumber`, `api.ts`), and
+CSV/GHL import checks it (see below) though import itself only ever *reads* it, never writes to
+it.
+
+**Deliberately NOT kept in sync with `contacts.dnc` by any trigger** — `claim_next_leads` checks
+both independently (`not ct.dnc` and `not exists (select 1 from dnc_numbers ...)`), and CSV/GHL
+import OR's an org DNC-list hit into the same per-candidate `dnc` boolean `planCampaignQueue`
+already gates on, alongside the pre-existing `contacts.dnc`/GHL-`dnd`/`dialer:dnc`-tag checks
+(`_shared/campaign-queue-io.ts`'s `fetchDncE164Set`). A number added to `dnc_numbers` via
+'manual'/'import'/'sms_stop' does **not** retroactively flip every matching contact's own `dnc`
+flag, and a contact's own `dnc` flag flipped some other way does not retroactively add a
+`dnc_numbers` row — known, intentionally-scoped gap (see `mem.known-issues`), not a silent one:
+building a sync trigger wasn't asked for by either task and would have coupled two signals this
+task's own design deliberately keeps independent.
+
 ## Enums
 
 `category` has 5 allowed values and `contact_status` 2. **Neither has a DB CHECK**, and **nothing ever writes `'Contacted'`**.

@@ -429,3 +429,78 @@ version the task file described.
 **Do not undo without understanding:** if a FUTURE task wants an org-wide Conversations/hr for owner/admin, that's a new capability on `team-performance` (or a
 new endpoint), not a scoping change to this one — changing `dashboard-stats` itself to vary by role would also change the three EXISTING fields' behavior for
 every current caller of this endpoint.
+
+### `campaign_retry_rules` is a real table, not a jsonb column on `campaigns`
+
+**Status:** Active · **Decided by:** eng2 (TASK-F-T1, 2026-09-25)
+
+**Context:** the task's own design section offered either shape and asked for the choice to be documented. Every other per-campaign/per-org config in this schema
+(`dispositions`, the dial-settings columns on `campaigns` itself) is flat columns or a dedicated table, never a jsonb blob.
+
+**Decision:** a table, one row per `(campaign_id, disposition_key)`. Gives the Settings/campaign-settings editor UI a normal row-per-disposition shape to list/edit
+without JSON-path plumbing, and RLS-scopes cleanly per row via the existing `private.campaign_org_id` helper the same way every other campaign-scoped table does — a
+jsonb column on `campaigns` would inherit `campaigns`' own row-level RLS instead of anything finer, and would need application-level validation for shape/uniqueness
+that a `unique (campaign_id, disposition_key)` constraint gives for free here.
+
+**Do not undo without understanding:** a future "make retry rules bulk-editable per org, not per campaign" ask is still cheap from a table (a second table, or a
+nullable `campaign_id` with an org-level default row) — collapsing to jsonb now would make that harder, not easier.
+
+### `campaign_retry_rules` is seeded against this build's REAL disposition keys, not QUE-2's literal PDF names
+
+**Status:** Active · **Decided by:** eng2 (TASK-F-T1, 2026-09-25)
+
+**Context:** QUE-2's own requirements table names `voicemail_left`, `do_not_call`, `gatekeeper`, and `already_on_platform`. Grepping `private.seed_default_dispositions`
+(`20260924002200_dispositions.sql`) shows this build actually seeded a simpler 7-key set: `interested`/`callback`/`not_interested`/`wrong_number`/`dnc`/`voicemail`/
+`no_answer`. CLAUDE.md's own standing instruction: when a summary/spec and the code disagree, the code is right.
+
+**Decision:** mapped `voicemail_left → voicemail` and `do_not_call → dnc` (same disposition, different name), and deliberately did NOT fabricate rule rows for
+`gatekeeper`/`already_on_platform` — no matching disposition exists in this build at all, and dispositions are org-editable, so an org that adds a real "Gatekeeper"
+disposition later gets its own retry rule row seeded through the normal `disposition_key` lookup path with no schema change needed.
+
+**Do not undo without understanding:** if `gatekeeper`/`already_on_platform` are ever added to the seeded set, they'll silently start participating in retry-rule
+lookups the moment a matching `campaign_retry_rules` row is added — no code change needed on the consuming side, this was already designed for that.
+
+### `dnc_numbers` and `contacts.dnc` are two independent signals, with no sync trigger between them
+
+**Status:** Active · **Decided by:** eng2 (TASK-F-T1, 2026-09-25)
+
+**Context:** QUE-7 says "checked at dial time... plus the existing flag" — read as endorsing two independent checks, not one flag driving the other. Neither this
+task nor TASK-P2-P1 (which added `contacts.dnc`) asked for a sync trigger.
+
+**Decision:** `claim_next_leads` and the import DNC-skip path both check `dnc_numbers` and `contacts.dnc`/GHL's `dnd`/`dialer:dnc` tag independently, with no trigger
+keeping them in sync in either direction. See `.brain/domains/contacts.md`'s new DNC section for the full detail.
+
+**Do not undo without understanding:** a future task that wants "adding a number to the DNC list also flips every matching contact's flag" (or the reverse) is a
+new, explicit trigger — not a bug in this one. Don't add one silently as a "fix" without confirming which direction (or both) is actually wanted.
+
+### `_shared/queue-retry-rules.ts` exists purely for testability — it is never called by runtime code
+
+**Status:** Active · **Decided by:** eng2 (TASK-F-T1, 2026-09-25)
+
+**Context:** the task asked for "a pure SQL helper, plus a TS twin in dialer-core if the engine needs it, with unit tests." Tracing every leg-creation and
+disposition/outcome-write path confirmed each one already executes its retry/time-block decision atomically inside one SQL function call (`claim_next_leads`,
+`apply_leg_outcome`, `submit_disposition`) — there's no "TS decides, then SQL enacts" step for this the way `dialer-core.ts`'s `legTransition` precedes
+`transition_leg` for the dialer's other state transitions.
+
+**Decision:** built the TS twin anyway (`supabase/functions/_shared/queue-retry-rules.ts`), purely so the block-rotation/retry-decision algorithm is deno-testable —
+local Docker is retired, so the SQL side can only be verified via the live dry-run script, and the task's own verification section explicitly asked for unit tests
+on this exact algorithm. Documented in the file's own header that it is never imported by runtime code.
+
+**Do not undo without understanding:** the SQL functions (`private.time_block_for`/`private.rotated_retry_schedule`) are the only versions of this logic that ever
+actually run. If the block boundaries or rotation order ever change, both copies need the same edit by hand — there is no single source of truth to update once.
+
+### `campaign_retry_rules` RLS: member-read, admin-write (not admin-only-read)
+
+**Status:** Active · **Decided by:** eng2 (TASK-F-T1, 2026-09-25)
+
+**Context:** the task's own verification section describes the RLS assertion to write as "a member can read, an agent cannot delete" — the same member-read/
+admin-write shape `dispositions` and the new `dnc_numbers` table both already use. A first draft of this migration made `campaign_retry_rules` admin-only for
+SELECT too, reasoning that no agent-facing UI reads it directly.
+
+**Decision:** changed the SELECT policy to `private.is_org_member(...)` before this migration was ever applied, matching the task's literal verification wording
+and keeping the RLS shape consistent across all three per-org config tables this task and its neighbors touch (`dispositions`, `dnc_numbers`, `campaign_retry_rules`).
+Every RPC that consults this table runs SECURITY DEFINER regardless, so the narrower admin-only-read would have bought nothing beyond a purely theoretical
+tightening — not worth diverging from the established shape for.
+
+**Do not undo without understanding:** if a future task genuinely wants retry rules hidden from non-admin members (e.g. a UI ever surfaces them to agents and
+that turns out to be undesirable), that's a deliberate re-tightening decision to make explicitly, not something to "notice" and quietly revert.

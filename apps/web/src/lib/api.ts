@@ -1567,3 +1567,103 @@ export async function submitDisposition(
   if (!res.ok) throw new Error(data.error || 'Failed to submit disposition');
   return data as SubmitDispositionResult;
 }
+
+// --- Org-wide DNC list (TASK-F-T1, QUE-7/DSP-6) ---
+
+export interface DncNumber {
+  id: string;
+  org_id: string;
+  e164: string;
+  source: 'disposition' | 'sms_stop' | 'manual' | 'import';
+  added_by: string | null;
+  note: string | null;
+  created_at: string;
+}
+
+/** Owner/admin only (RLS-enforced) -- a straight table read, no edge function, same "a simple
+ *  list edit is fine" pattern as listDispositions. */
+export async function listDncNumbers(): Promise<DncNumber[]> {
+  const orgId = await getActiveOrgId();
+  const { data, error } = await supabase
+    .from('dnc_numbers')
+    .select('id, org_id, e164, source, added_by, note, created_at')
+    .eq('org_id', orgId)
+    .order('created_at', { ascending: false });
+  if (error) throw new Error(error.message);
+  return (data ?? []) as DncNumber[];
+}
+
+/** `e164` must already be normalized client-side (phone-normalize.ts's normalizePhoneStrict) --
+ *  this function does not re-normalize, matching createDisposition's own "no server-side
+ *  normalization" shape. */
+export async function addDncNumber(e164: string, note?: string): Promise<DncNumber> {
+  const orgId = await getActiveOrgId();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  const { data, error } = await supabase
+    .from('dnc_numbers')
+    .insert({
+      org_id: orgId,
+      e164,
+      source: 'manual',
+      added_by: user?.id ?? null,
+      note: note ?? null,
+    })
+    .select('id, org_id, e164, source, added_by, note, created_at')
+    .single();
+  if (error) throw new Error(error.message);
+  return data as DncNumber;
+}
+
+export async function removeDncNumber(id: string): Promise<void> {
+  const { error } = await supabase.from('dnc_numbers').delete().eq('id', id);
+  if (error) throw new Error(error.message);
+}
+
+// --- Campaign retry rules (TASK-F-T1, QUE-2/QUE-3/QUE-5) ---
+
+export type RetryRuleAction = 'retry' | 'out' | 'exact_time';
+
+export interface CampaignRetryRule {
+  id: string;
+  campaign_id: string;
+  disposition_key: string;
+  action: RetryRuleAction;
+  delay_minutes: number | null;
+  rotate_block: boolean;
+}
+
+/** Org members can read (RLS), campaign settings only shows this to owner/admin in practice.
+ *  Every campaign gets its seeded default rows via a DB trigger on insert, so this list is never
+ *  empty for a real campaign. */
+export async function listCampaignRetryRules(campaignId: string): Promise<CampaignRetryRule[]> {
+  const { data, error } = await supabase
+    .from('campaign_retry_rules')
+    .select('id, campaign_id, disposition_key, action, delay_minutes, rotate_block')
+    .eq('campaign_id', campaignId);
+  if (error) throw new Error(error.message);
+  return (data ?? []) as CampaignRetryRule[];
+}
+
+export interface UpsertCampaignRetryRuleInput {
+  disposition_key: string;
+  action: RetryRuleAction;
+  delay_minutes: number | null;
+  rotate_block: boolean;
+}
+
+/** Admin+ only (RLS-enforced). Bulk-upserts on the table's own unique (campaign_id,
+ *  disposition_key) constraint -- every row already exists (seeded on campaign creation), so
+ *  this is always an update in practice, never a real insert, but upsert keeps the editor's own
+ *  save button simple (no per-row dirty tracking needed). */
+export async function upsertCampaignRetryRules(
+  campaignId: string,
+  rules: UpsertCampaignRetryRuleInput[]
+): Promise<void> {
+  const { error } = await supabase.from('campaign_retry_rules').upsert(
+    rules.map((r) => ({ campaign_id: campaignId, ...r })),
+    { onConflict: 'campaign_id,disposition_key' }
+  );
+  if (error) throw new Error(error.message);
+}

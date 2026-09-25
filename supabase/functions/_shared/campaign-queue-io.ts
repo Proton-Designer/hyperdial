@@ -38,6 +38,34 @@ export async function fetchActiveElsewhereContactIds(
   return result;
 }
 
+/** TASK-F-T1 (QUE-7): every E.164 in `phoneNumbers` that is on the org-wide `dnc_numbers` list.
+ * Same chunking/error-throwing discipline as `fetchActiveElsewhereContactIds` above -- a failed
+ * lookup must fail the import, not silently import DNC numbers as if the list were empty. Callers
+ * OR this into a per-candidate `dnc` boolean alongside the existing `contacts.dnc` flag check;
+ * `planCampaignQueue` itself only ever takes an externally-computed boolean, so this is purely a
+ * caller-side concern. */
+export async function fetchDncE164Set(
+  supabase: SupabaseAny,
+  args: { orgId: string; phoneNumbers: string[] }
+): Promise<Set<string>> {
+  const result = new Set<string>();
+  for (const batch of chunk(args.phoneNumbers, 200)) {
+    if (batch.length === 0) continue;
+    const { data, error } = await supabase
+      .from('dnc_numbers')
+      .select('e164')
+      .eq('org_id', args.orgId)
+      .in('e164', batch);
+    if (error) {
+      throw new Error(`dnc lookup failed: ${error.message}`);
+    }
+    for (const row of (data ?? []) as { e164: string }[]) {
+      result.add(row.e164);
+    }
+  }
+  return result;
+}
+
 /** Upserts `contactIds` onto `campaignId` as `status`, chunked (~200/batch) and error-checked
  * (previously the upsert's result wasn't even captured, so a failure silently queued nothing
  * while the import still reported success). `planCampaignQueue`'s caller has already filtered out

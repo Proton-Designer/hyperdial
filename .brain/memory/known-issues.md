@@ -1026,6 +1026,27 @@ genuinely separate browser processes/machines).
   migration (`20260925020000_call_legs_duration_conversations.sql`) is committed but not yet
   applied anywhere.
 
+## 26. ~~`apply_leg_outcome` incremented `attempts` for an `abandoned` losing leg exactly like a real no-answer~~ -- FIXED by TASK-F-T1 (2026-09-25)
+
+- **The bug**: the live `apply_leg_outcome`'s attempts formula only excluded the `'dropped'`
+  outcome from the `+1` increment (`case when v_outcome = 'dropped' then 0 else 1 end`).
+  `'abandoned'` — the OTHER losing-leg outcome (a leg that had answered, then lost the race to
+  another leg in the same batch and was hung up with the abandon message) — fell into the
+  `else` branch and was incremented every time, silently burning a real attempt on a lead that
+  never actually got a chance to answer or not-answer. This is a genuine BUG-3 instance found
+  by cross-referencing `hangupOutcome`'s (`dialer-core.ts`) full outcome vocabulary against the
+  live SQL's `case` list, not by guessing — `dropped` and `abandoned` are both losing-leg
+  outcomes per BUG-3's own wording ("losing legs... attempts unchanged"), and only one of the
+  two was ever handled.
+- **Fix**: `case when v_outcome in ('dropped', 'abandoned') then 0 else 1 end`. Also gave losing
+  legs `next_attempt_at = now()` (was `+15 minutes`) and a new `priority_requeue` flag (QUE-4's
+  "front of the queue," not just "soon") — see `.brain/domains/dialer.md`'s Queue v2 section.
+- Checks: `deno test` 247 -> 265 (0 failed, +15 `queue-retry-rules.test.ts`, +3
+  `ghl-sync-worker.test.ts` nurture_tag tests); `npm run check`/`npm run build` clean. The SQL
+  half (this fix, DNC exclusion, retry rules, block rotation) is NEEDS-LIVE-VERIFY via
+  `audit/FT1/dryrun.sql` — local Docker is retired, same as every other high-risk SQL task this
+  session.
+
 ---
 
 ## Not issues — deliberate, documented elsewhere
@@ -1034,3 +1055,7 @@ genuinely separate browser processes/machines).
 - `telnyx-webhook` unauthenticated at the gateway → `mem.decisions`, `domain.auth`
 - the generated UI primitives left unformatted → `mem.decisions`
 - No router / no URLs for app state → `mem.decisions`
+- `dnc_numbers` and `contacts.dnc` are two independent DNC signals with no sync trigger between
+  them → `mem.decisions`, `domain.contacts`
+- `campaign_retry_rules` has no seeded row for `gatekeeper`/`already_on_platform` (QUE-2's PDF
+  names) -- this build never seeded matching dispositions for either → `mem.decisions`

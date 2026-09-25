@@ -17,6 +17,7 @@ import { createGhlClient, type GhlClient } from '../_shared/ghl-client.ts';
 import {
   processContactUpsertJob,
   processDispositionJob,
+  processNurtureTagJob,
   type ContactFields,
   type DispositionPayload,
   type JobProgress,
@@ -51,7 +52,7 @@ interface CrmSyncJobRow {
   id: string;
   org_id: string;
   provider: string;
-  kind: 'disposition' | 'contact_upsert';
+  kind: 'disposition' | 'contact_upsert' | 'nurture_tag';
   contact_id: string | null;
   call_leg_id: string | null;
   payload: Record<string, unknown>;
@@ -137,22 +138,33 @@ async function processJob(
     return;
   }
 
-  const result =
-    job.kind === 'disposition'
-      ? await processDispositionJob({
-          client: ctx.client,
-          locationId: ctx.locationId,
-          ghlContactId: contact.ghlContactId,
-          contactFields: contact.fields,
-          payload: job.payload as unknown as DispositionPayload,
-          progress: job.progress ?? {},
-        })
-      : await processContactUpsertJob({
-          client: ctx.client,
-          locationId: ctx.locationId,
-          ghlContactId: contact.ghlContactId,
-          contactFields: contact.fields,
-        });
+  let result: Awaited<ReturnType<typeof processDispositionJob>>;
+  if (job.kind === 'disposition') {
+    result = await processDispositionJob({
+      client: ctx.client,
+      locationId: ctx.locationId,
+      ghlContactId: contact.ghlContactId,
+      contactFields: contact.fields,
+      payload: job.payload as unknown as DispositionPayload,
+      progress: job.progress ?? {},
+    });
+  } else if (job.kind === 'nurture_tag') {
+    // TASK-F-T1 (QUE-3): "max attempts -> nurture tag pushed to GHL."
+    result = await processNurtureTagJob({
+      client: ctx.client,
+      locationId: ctx.locationId,
+      ghlContactId: contact.ghlContactId,
+      contactFields: contact.fields,
+      progress: job.progress ?? {},
+    });
+  } else {
+    result = await processContactUpsertJob({
+      client: ctx.client,
+      locationId: ctx.locationId,
+      ghlContactId: contact.ghlContactId,
+      contactFields: contact.fields,
+    });
+  }
 
   if (result.resolvedGhlContactId && !contact.ghlContactId) {
     await persistGhlContactId(supabase, job.contact_id, result.resolvedGhlContactId);

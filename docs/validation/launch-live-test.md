@@ -108,6 +108,21 @@ There's no reliable way to force a genuinely lost webhook from the UI side, so t
 best-effort, lead-only probe of the safety net — not a launch blocker if skipped. See
 `.brain/domains/dialer.md`'s own dialer-sweeper section for exactly what it reconciles.
 
+### B9 — Queue v2 retry rules / time blocks / org-wide DNC (TASK-F-T1)
+
+| #    | Step                                                                                                                                                                                                                  | Expected                                                                                                                                                                   | ☐   |
+| ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --- |
+| B9.1 | As owner/admin, Settings → Do-not-call list → add a number NOT already a contact in this org.                                                                                                                         | The number appears in the list with source "manual."                                                                                                                       | ☐   |
+| B9.2 | Add that same number as a contact and queue it onto the campaign (CSV import or "Add existing contact").                                                                                                              | The import/queue response reports it skipped (`skippedDnc` count increments), and it is never dialed if a session starts.                                                  | ☐   |
+| B9.3 | Campaign Manage → Retry Rules card loads with the seeded defaults (no_answer/voicemail = Retry, 4 days, Rotate time block checked; callback = Exact time; the rest = Out). Edit one delay and Save, reload the modal. | The edited value persists.                                                                                                                                                 | ☐   |
+| B9.4 | Let (or force, via a real short call) a contact hit `no_answer` on this campaign. Check `call_legs.time_block` and the lead's new `next_attempt_at`/status.                                                           | `time_block` is set to the block the call landed in; on retry, the lead's `next_attempt_at` lands ~4 days out in a **different** time block, status stays `queued`.        | ☐   |
+| B9.5 | Drive a lead's attempts to `max_attempts` via repeated `no_answer`s.                                                                                                                                                  | Lead status becomes `exhausted`; if the org has a connected GHL integration, a `nurture_tag` job appears in `crm_sync_jobs` and the GHL contact gets tagged `nurture`.     | ☐   |
+| B9.6 | During a multi-line session, cause a losing leg (another line wins first — AMD off, more than one line dialing the same batch).                                                                                       | The losing lead's `attempts` is unchanged, `next_attempt_at` is ~now, and it's the next lead claimed on that session (front of the queue), not a same-attempts fresh lead. | ☐   |
+
+The lead runs `audit/FT1/dryrun.sql` against a rolled-back live transaction for the parts of this
+that are impractical to force through the UI (exhaustion timing, exact block rotation, RLS). B9
+above covers what a real click-through can actually exercise.
+
 ---
 
 ## C. Evidence to capture

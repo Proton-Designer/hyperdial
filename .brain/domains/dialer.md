@@ -169,6 +169,57 @@ them anymore — see "Not covered here" for what's actually dead versus still re
    (`paused` → `dialing`, the Resume button): there was previously no way back from a manually
    `paused` session at all.
 
+## Queue v2 (TASK-F-T1): retry rules, time blocks, loser requeue
+
+Migration `20260925030000_queue_v2_retry_dnc.sql`. `claim_next_leads`/`apply_leg_outcome`/
+`submit_disposition` are all `create or replace`d in place (same signatures as their prior
+fix-forward versions) rather than a fresh migration adding new RPCs, since the retry/requeue
+logic has to live inside the exact same atomic writes those functions already do.
+
+- **`campaign_retry_rules`** (a real table, not a jsonb column — see `mem.decisions`): one row
+  per `(campaign_id, disposition_key)`, seeded on campaign creation (a trigger, mirroring
+  `private.seed_default_dispositions`'s own shape) with `action` one of `retry`/`out`/
+  `exact_time`. Both `apply_leg_outcome` (keyed on the raw engine outcome string, e.g.
+  `no_answer`) and `submit_disposition`'s `'queued'` lead_effect branch (keyed on the
+  disposition's own `key`) look up this table before falling back to the campaign's flat
+  `retry_interval_minutes` — a lookup miss (any outcome/disposition with no seeded row) is a
+  silent no-op, so nothing about the pre-existing flat-interval behavior changed for those. In
+  both functions, `max_attempts` is checked and can force `exhausted` BEFORE a `'retry'` rule is
+  ever consulted — a rule can never override the hard attempt ceiling.
+- **Time blocks (QUE-5)**: `call_legs.time_block` is stamped by `claim_next_leads` at dial time
+  (`private.time_block_for(now(), contact.timezone)` — the same five-slot cascade as
+  `private.safe_timezone`'s own tz-fallback-to-America/Chicago convention). A rotating retry
+  (`rotate_block=true`) computes its next slot via `private.rotated_retry_schedule`, which always
+  lands in the block immediately AFTER the leg's last one in the fixed cycle morning → lunch →
+  afternoon → drive → evening → morning, at that block's start hour, `delay_minutes/1440` (floored
+  to at least 1) days out. `supabase/functions/_shared/queue-retry-rules.ts` is a deno-tested TS
+  twin of both SQL helpers — it exists purely because the algorithm needed to be unit-testable
+  (local Docker is retired); it is never imported or called by any runtime code. Keep both in
+  sync by hand if the block boundaries or rotation order ever change.
+- **QUE-3 (max attempts → nurture tag)**: `private.enqueue_nurture_tag_if_exhausted` is the one
+  place every write site that can set `campaign_leads.status='exhausted'` calls into
+  (`apply_leg_outcome`'s failed/max-attempts/rule-out branches, `submit_disposition`'s
+  `'exhausted'` lead_effect, and its `'queued'`-branch max-attempts path) — it re-reads the
+  lead's own just-written status and, if `'exhausted'`, enqueues a `crm_sync_jobs` row of the new
+  `kind='nurture_tag'`. `ghl-sync-worker/index.ts`'s `processJob` dispatches that kind to
+  `processNurtureTagJob` (`_shared/ghl-sync-worker.ts`), which mirrors `processDispositionJob`'s
+  own upsert step exactly, then tags the GHL contact `nurture` (a hardcoded string, deliberately
+  not configurable yet — "keep it minimal" per the task's own words; F-P2 is expected to make it
+  editable).
+- **BUG-3/QUE-4 (loser requeue)**: `apply_leg_outcome`'s `dropped`/`abandoned` branch (legs that
+  lost the claim race to another leg in the same batch, or were abandoned after `handleWin`) now
+  sets `next_attempt_at = now()` (was `+15 minutes`) and a new `campaign_leads.priority_requeue`
+  boolean to true — consulted by `claim_next_leads`' own `ORDER BY` as a tier right after
+  `is_priority_callback desc` and before `attempts asc`, so a requeued loser is picked ahead of a
+  same-attempts fresh lead rather than merely tying with it on `next_attempt_at`. Attempts are
+  NOT incremented for either outcome (the live version before this task only excluded `dropped`
+  — `abandoned` fell into the generic +1 branch and was incremented exactly like a real
+  no-answer; this was the actual bug, not just a QUE-4 feature gap). `priority_requeue` is reset
+  to false the moment `claim_next_leads` claims the row again.
+- **QUE-7 (org-wide DNC)**: `claim_next_leads`' `picked` CTE excludes a contact whose E.164 is in
+  `dnc_numbers` for the org, in addition to (never merged with) the existing `not ct.dnc` check —
+  see `.brain/domains/contacts.md` for why the two signals are deliberately independent.
+
 ## Integration points
 
 | Direction | With | Via |
