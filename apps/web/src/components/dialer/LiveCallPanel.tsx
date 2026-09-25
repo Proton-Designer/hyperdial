@@ -11,6 +11,10 @@ interface LiveCallPanelProps {
    *  screen at the same time: the two would visibly disagree). `null` shows "0:00" rather than
    *  guessing. */
   answeredAt: string | null;
+  /** TASK-I1: set to "Inbound call" while this panel is showing a caller bridged in via
+   *  inbound routing (`pause_reason: 'inbound_call'`), not a contact leg the batch dialed --
+   *  the task's own explicit ask ("The Dialer shows the contact card flagged 'Inbound call'"). */
+  flagLabel?: string;
   onToggleMute: (muted: boolean) => void;
   onEndCall: () => void;
 }
@@ -19,6 +23,7 @@ export function LiveCallPanel({
   contactName,
   phone,
   answeredAt,
+  flagLabel,
   onToggleMute,
   onEndCall,
 }: LiveCallPanelProps) {
@@ -46,6 +51,11 @@ export function LiveCallPanel({
         <div className="w-16 h-16 rounded-full bg-success-soft flex items-center justify-center mb-4">
           <User className="w-7 h-7 text-success" />
         </div>
+        {flagLabel && (
+          <span className="mb-2 px-2 py-0.5 rounded-full text-xs border border-accent-to/30 bg-accent-to/10 text-accent-to">
+            {flagLabel}
+          </span>
+        )}
         <h3 className="text-page-title text-text-primary">{contactName}</h3>
         <p className="text-body text-text-secondary mt-0.5">{phone}</p>
         <p className="text-metric text-4xl font-semibold text-text-primary mt-4 tabular-nums">

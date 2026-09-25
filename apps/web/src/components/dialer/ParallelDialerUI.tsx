@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { cn } from '@/components/ui/utils';
 import { useFocusTrap } from '@/hooks/useFocusTrap';
 import type { BatchContactPreview } from '@/hooks/useDialerSession';
-import type { DialSessionState } from '@/lib/api';
+import type { DialSessionState, InboundCallInfo } from '@/lib/api';
 
 interface ParallelDialerUIProps {
   sessionState: DialSessionState;
@@ -24,6 +24,11 @@ interface ParallelDialerUIProps {
   answeredContactId: string | null;
   connectedContactId: string | null;
   connectedAnsweredAt: string | null;
+  /** TASK-I1: the session's current bridged inbound call, if any -- see LiveCallPanel's own
+   *  `flagLabel` comment. Mutually exclusive with `connectedContactId` in practice (an inbound
+   *  bridge pauses the batch, `pause_reason: 'inbound_call'`, so no contact leg is live at the
+   *  same time), but rendered independently rather than assumed. */
+  inboundCall: InboundCallInfo | null;
   onPause: () => void;
   onResume: () => void;
   /** BUG-11: `force` is only ever passed `true` from the confirm dialog's "Hang up and stop"
@@ -134,6 +139,7 @@ export function ParallelDialerUI({
   answeredContactId,
   connectedContactId,
   connectedAnsweredAt,
+  inboundCall,
   onPause,
   onResume,
   onStop,
@@ -141,6 +147,13 @@ export function ParallelDialerUI({
   onEndLiveCall,
 }: ParallelDialerUIProps) {
   const connectedContact = batchContacts.find((c) => c.id === connectedContactId) ?? null;
+  const inboundContactName = inboundCall
+    ? inboundCall.contact
+      ? inboundCall.contact.business_name ||
+        `${inboundCall.contact.first_name ?? ''} ${inboundCall.contact.last_name ?? ''}`.trim() ||
+        'Unknown caller'
+      : 'Unknown caller'
+    : null;
   const elapsed = useElapsed(sessionState === 'on_call' ? connectedAnsweredAt : null);
   const chip = STATUS_CHIP[sessionState];
 
@@ -245,6 +258,17 @@ export function ParallelDialerUI({
           contactName={connectedContact.name}
           phone={connectedContact.phone}
           answeredAt={connectedAnsweredAt}
+          onToggleMute={onMuteChange}
+          onEndCall={onEndLiveCall}
+        />
+      )}
+
+      {inboundCall && (
+        <LiveCallPanel
+          contactName={inboundContactName ?? 'Unknown caller'}
+          phone={inboundCall.contact?.phone_number ?? inboundCall.from_e164}
+          answeredAt={inboundCall.answered_at}
+          flagLabel="Inbound call"
           onToggleMute={onMuteChange}
           onEndCall={onEndLiveCall}
         />

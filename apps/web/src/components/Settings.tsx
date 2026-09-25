@@ -79,9 +79,14 @@ import {
   getSpendSettings,
   updateSpendSettings,
   getSpendStatus,
+  getInboundSettings,
+  updateInboundSettings,
+  getMyForwardNumber,
+  setMyForwardNumber,
   type NumberPoolSettings,
   type SpendSettings,
   type SpendStatus,
+  type InboundSettings,
   type VoicemailDropInfo,
   type OrgMember,
   type GhlIntegrationStatus,
@@ -103,6 +108,7 @@ function ProfileTab() {
   const { firstName: ctxFirstName, lastName: ctxLastName, refetch: refetchOrg } = useOrg();
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
+  const [forwardNumber, setForwardNumber] = useState('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -116,6 +122,12 @@ function ProfileTab() {
       })
       .catch((e) => setError(String(e)))
       .finally(() => setLoading(false));
+    // TASK-I1 (INB-3): every role's own optional cell fallback, self-service via
+    // org_members' "member can update own heartbeat and forward number" RLS policy --
+    // not owner/admin gated, unlike the org-level InboundSettingsCard on the Telephony tab.
+    getMyForwardNumber()
+      .then((n) => setForwardNumber(n ?? ''))
+      .catch((e) => setError(String(e)));
   }, []);
 
   const initials =
@@ -127,6 +139,7 @@ function ProfileTab() {
     setSaved(false);
     try {
       await updateMyProfile({ first_name: firstName, last_name: lastName });
+      await setMyForwardNumber(forwardNumber.trim() || null);
       await refetchOrg();
       setSaved(true);
       setTimeout(() => setSaved(false), 2500);
@@ -204,6 +217,26 @@ function ProfileTab() {
                   readOnly
                   className="w-full bg-surface-2/60 border border-white/10 rounded-app-md px-4 py-3 text-text-secondary cursor-not-allowed"
                 />
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <h4 className="text-section-title text-text-primary mb-4">Call Forwarding</h4>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm text-text-secondary mb-2">Your cell number</label>
+                <input
+                  type="tel"
+                  value={forwardNumber}
+                  onChange={(e) => setForwardNumber(e.target.value)}
+                  placeholder="+15551234567"
+                  className="w-full bg-surface-2 border border-white/10 rounded-app-md px-4 py-3 text-white placeholder-text-muted focus:outline-none focus:border-accent-to transition-colors"
+                />
+                <p className="text-xs text-text-muted mt-1.5">
+                  Optional. If you don't answer an inbound call in your browser, it rings this
+                  number next, before the org's shared line and voicemail.
+                </p>
               </div>
             </div>
           </div>
@@ -2137,6 +2170,90 @@ function SpendSettingsCard() {
   );
 }
 
+/** TASK-I1 (INB-3): the org-level fallback destination + voicemail greeting, once an inbound
+ *  call's assigned intern doesn't answer (their own cell, set on the Profile tab, is tried
+ *  first). Owner/admin only, same disabled-input-when-not-admin shape as SpendSettingsCard right
+ *  above it -- there's no per-row gating to do here, just two org-wide fields. */
+function InboundSettingsCard() {
+  const { role } = useOrg();
+  const isAdmin = role === 'owner' || role === 'admin';
+  const [settings, setSettings] = useState<InboundSettings | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    getInboundSettings()
+      .then(setSettings)
+      .catch((e) => setError(String(e)));
+  }, []);
+
+  const handleChange = async (next: InboundSettings) => {
+    setSettings(next);
+    setSaving(true);
+    setError(null);
+    try {
+      await updateInboundSettings(next);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="mb-8">
+      <h2 className="text-section-title text-text-primary mb-4">Inbound Calls</h2>
+
+      {error && (
+        <div className="mb-4 p-4 rounded-app-md bg-danger/10 border border-danger/30 text-danger text-sm">
+          {error}
+        </div>
+      )}
+
+      <div className="bg-surface-1 rounded-app-lg p-6 border border-border-subtle space-y-4">
+        <div>
+          <label className="block text-meta text-text-secondary mb-1">
+            Shared destination number
+          </label>
+          <input
+            type="tel"
+            placeholder="Not set -- falls straight to voicemail"
+            value={settings?.shared_destination_number ?? ''}
+            disabled={!settings || saving || !isAdmin}
+            onChange={(e) =>
+              settings &&
+              void handleChange({
+                ...settings,
+                shared_destination_number: e.target.value.trim() || null,
+              })
+            }
+            className="w-full max-w-sm bg-surface-2 border border-white/10 rounded-app-md px-3 py-2 text-white placeholder-text-muted focus:outline-none focus:border-accent-to disabled:opacity-60"
+          />
+          <p className="text-meta text-text-muted mt-1">
+            Tried after the assigned intern's own cell number, before voicemail.
+          </p>
+        </div>
+        <div>
+          <label className="block text-meta text-text-secondary mb-1">Voicemail greeting</label>
+          <textarea
+            rows={2}
+            value={settings?.voicemail_greeting_text ?? ''}
+            disabled={!settings || saving || !isAdmin}
+            onChange={(e) =>
+              settings &&
+              void handleChange({ ...settings, voicemail_greeting_text: e.target.value })
+            }
+            className="w-full max-w-lg bg-surface-2 border border-white/10 rounded-app-md px-3 py-2 text-white focus:outline-none focus:border-accent-to disabled:opacity-60"
+          />
+          <p className="text-meta text-text-muted mt-1">
+            Read aloud (text-to-speech) before recording. Use {'{org_name}'} for your org's name.
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function Settings() {
   const { refetch: refetchPhoneNumbers } = usePhoneNumbers();
   const { role, loading: orgLoading } = useOrg();
@@ -2454,6 +2571,8 @@ export function Settings() {
                   <NumberPoolCard />
 
                   {isTelnyxConnected && <SpendSettingsCard />}
+
+                  {isTelnyxConnected && <InboundSettingsCard />}
 
                   {!isTelnyxConnected ? (
                     <div className="bg-gradient-to-r from-accent-from/10 to-accent-to/10 rounded-app-lg p-8 border border-accent-from/20 text-center">

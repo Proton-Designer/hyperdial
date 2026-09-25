@@ -886,3 +886,105 @@ Dashboard/Settings banners are the only alert surfaces built.
 re-verifying `/usage_reports` has graduated out of BETA and confirming the `product` value for
 voice via a real `/usage_reports/options` response -- guessing it risks a 400 on every cron tick
 across every connected org, not just a wrong number.
+
+## TASK-I1 -- Inbound callback routing (INB-1..4, CID-6), 2026-09-25
+
+**Decision 1 -- a NEW `inbound_calls` table, not a repurposed `call_legs` row.**
+`call_legs.session_id`/`campaign_id` are both `NOT NULL` and deeply assumed throughout the
+existing outbound engine -- widening them for the common "no session, no campaign" inbound case
+would touch a shared, heavily-relied-on table for an unrelated flow. `inbound_calls.
+dial_session_id` (nullable) links it to a session ONLY when the caller is actually bridged into
+one (the "intern is mid-batch" case), reusing `dial_sessions.conference_id`/`pauseSession`
+directly rather than duplicating any session logic.
+
+**Decision 2 -- two correlation mechanisms for inbound webhook events.** The ORIGINAL inbound leg
+(the caller, `inbound_calls.call_control_id`, stable for the whole call -- matched by direct
+lookup) vs. a fallback step's own NEW leg or a per-command webhook with no `call_control_id` at
+all (`call.recording.saved/error`) -- matched by decoding a NEW `InboundClientState` (`{org,
+inbound, step}`, distinct shape from the existing `DialClientState`, `client-state.ts`).
+
+**Decision 3 -- the routing plan is recomputed fresh every time, never persisted.**
+`inbound-core.ts`'s `planInboundSteps`/`nextInboundStep` take the CURRENT step plus a fresh read
+of `org_members`/`org_inbound_settings`/`dial_sessions` and derive "what's next" -- nothing about
+the inputs changes mid-call, so recomputation is always self-consistent; there is no
+plan-drift-vs-reality bug class to worry about.
+
+**Decision 4 -- `transfer`, not answer-then-dial-then-bridge, for every fallback step (intern/
+cell/shared).** Verified against a freshly-fetched `spec3.json`'s `TransferCallRequest`
+(`raw.githubusercontent.com/team-telnyx/openapi/master/openapi/spec3.json`): does NOT require the
+original leg to be answered first ("the original call will remain active" on a failed transfer),
+creates a brand-new Leg B with its own `call.initiated`, and supports `target_leg_client_state`
+(tags Leg B's own webhooks) + `timeout_secs` (the ring window) + `from` (caller ID shown to the
+destination) directly. Materially simpler than answer+dial+bridge and matches the fallback-chain
+shape exactly: a failed transfer leaves the original leg live, ready for the next attempt.
+`from` is always the REAL caller's E.164 (`TransferCallRequest.from`: "the caller id presented to
+the destination"), never the org's own number -- matches real call-forwarding UX and lets
+`useTelnyxCall.ts`'s `remoteCallerNumber` (confirmed by reading `@telnyx/webrtc`'s compiled
+bundle) show who is actually calling.
+
+**Decision 5 -- `answer` (not `transfer`) for the voicemail sub-flow and for `bridging_session`.**
+Both need to issue MORE commands on the SAME leg afterward (`speak`/`record_start`, or
+`joinConference`) -- `AnswerRequest`'s own docs ("You must issue this command before executing
+subsequent commands on an incoming call") make `answer` the right choice there, distinct from the
+fallback steps which hand off to a brand-new leg instead.
+
+**Decision 6 -- a bridged inbound call PAUSES the session (`pause_reason: 'inbound_call'`), it
+does not literally drive `on_call`/`wrap_up`.** Reusing the outbound wrap-up/disposition state
+machine for an inbound call would require the exact `call_legs` widening decision 1 already ruled
+out. The agent manually resumes dialing afterward via the existing pause/resume UI -- the task's
+own "it goes to wrap-up like a normal call" wording is read as describing the AGENT'S experience
+(finish the call, then resume), not a literal requirement to reuse that DB state.
+`pauseSession` (`dialer-engine.ts`) gained an optional `reason` param (backward compatible,
+defaults to `null`) rather than a parallel pause function.
+
+**Decision 7 -- a cheap `org_members.last_seen_at` heartbeat is the ONLY presence signal.** There
+is no server-visible WebRTC-registration status anywhere in this schema, and querying Telnyx per
+routing decision would add real latency to every inbound call. `INBOUND_PRESENCE_WINDOW_MS` is 2
+minutes; `Dialer.tsx` calls `updateMyPresenceHeartbeat()` every 60s while mounted. The WebRTC
+client itself (`useTelnyxCall`, owned by `Dialer.tsx`) was widened to connect whenever the tab
+owns the agent line, not only during an active dialing session -- otherwise the heartbeat would
+say "online" while the SIP client was actually unregistered, and `ringing_intern` would ring out
+against nothing.
+
+**Decision 8 -- the GHL note job reuses the existing `crm_sync_jobs`/`ghl-sync-worker` outbox
+(`kind = 'inbound_call_note'`), not a parallel mechanism.** `call_leg_id` is documented as an
+opaque reference with no FK (`20260924000900_ghl_integration_outbox.sql`'s own comment) --
+`inbound_calls.id` passed through it is exactly what that column is for. Only enqueued when
+`contact_id` resolves (an unrecognized caller has no GHL contact to note against).
+
+**Decision 9 -- both new RPCs (`pick_inbound_route`, `transition_inbound_call`) were written as
+`public.*` from the start, never `private.*`-only.** Direct application of the N1 fix-forward's
+own lesson the same session (PostgREST's `supabase.rpc()` only resolves against `public`/
+`graphql_public` per `config.toml`) -- verified clean against `rpc-schema-guard.test.ts`, the
+guard test that same fix-forward added.
+
+**Security fix-forward (2026-09-25, caught by a background review before the lead's own dry-run/
+deploy step): `org_members`'s new self-service UPDATE policy was a privilege-escalation hole.**
+"member can update own heartbeat and forward number" (070100) restricts WHICH ROW an unprivileged
+member may touch (`user_id = auth.uid()`) but nothing restricted WHICH COLUMNS -- and RLS policies
+for the same command combine with OR, so this was a second, independent path into `org_members`
+alongside the existing, correctly-scoped "owner or admin can update non-owner members" policy.
+Any authenticated member (agent, not just admin/owner) could `PATCH /rest/v1/org_members?
+user_id=eq.<self>` with `{"role": "owner"}` (or flip their own `status`, or overwrite
+`telnyx_credential_id`) and it would pass this policy's own check -- a full compromise of the
+tenancy model, not a narrow bug. Fixed in a new migration, `20260925070101_org_members_self_
+update_scope.sql` (append-only -- not by editing 070100 in place, matching the N1 fix-forward's
+own precedent), with a BEFORE UPDATE trigger mirroring the ALREADY-REVIEWED, identical-shape fix
+for exactly this problem class: `private.enforce_agent_contact_update_scope()`
+(`20260924001300_contacts_e164_tz_dnc.sql`) locks an unprivileged actor to an explicit allowlist
+of columns via `to_jsonb(new) - <allowed> is distinct from to_jsonb(old) - <allowed>` (a future
+`org_members` column is column-locked by default, not silently member-writable), the same
+`auth.role() is distinct from 'authenticated'` exemption for service-role/backend writes
+(`telnyx_credential_id` is written by `_shared/agent-webrtc-credential.ts` via the service-role
+client), and the same owner/admin exemption so the pre-existing "owner or admin can update
+non-owner members" policy's own legitimate role/status changes are completely unaffected. Covered
+by `audit/I1/dryrun-tests.sql` section 7 (the escalation attempt itself, a mixed-column update
+rejected wholesale, and the legitimate admin path proven still working).
+
+**Do not undo without understanding:** any FUTURE self-service column added to `org_members`
+(another per-user preference, say) needs its name added to the trigger's allowlist explicitly --
+the allowlist-via-denylist shape means a new column is column-LOCKED by default until then, which
+is the safe failure direction, but it also means "the field won't save" is the expected symptom
+to look for, not a mystery bug. And never add a second broad, role-unscoped self-row UPDATE
+policy to any table without re-deriving whether every column it exposes is meant to be
+self-writable -- that is exactly the mistake this entry fixes.

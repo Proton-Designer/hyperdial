@@ -9,6 +9,7 @@ import {
   stopDialerSession,
   type CallLegRecord,
   type DialSessionRecord,
+  type InboundCallInfo,
 } from '@/lib/api';
 
 /**
@@ -41,6 +42,9 @@ interface DialerHookState {
   session: DialSessionRecord | null;
   sessionId: string | null;
   legs: CallLegRecord[];
+  /** TASK-I1: the session's current bridged inbound call, if any -- see InboundCallInfo's own
+   *  comment (api.ts) for the exact "current" scoping. */
+  inboundCall: InboundCallInfo | null;
   loading: boolean;
   error: string | null;
 }
@@ -83,6 +87,7 @@ export function useDialerSession(initialSessionId: string | null = null) {
     session: null,
     sessionId: initialSessionId,
     legs: [],
+    inboundCall: null,
     loading: false,
     error: null,
   });
@@ -91,8 +96,8 @@ export function useDialerSession(initialSessionId: string | null = null) {
   const loadSession = useCallback(async (sessionId: string) => {
     setState((prev) => ({ ...prev, loading: true, error: null }));
     try {
-      const { session, legs } = await getDialerSession(sessionId);
-      setState((prev) => ({ ...prev, session, sessionId, legs }));
+      const { session, legs, inboundCall } = await getDialerSession(sessionId);
+      setState((prev) => ({ ...prev, session, sessionId, legs, inboundCall }));
     } catch (e) {
       setState((prev) => ({
         ...prev,

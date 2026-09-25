@@ -6,6 +6,7 @@ import { CampaignStats } from './dialer/CampaignStats';
 import { useDialerSession } from '@/hooks/useDialerSession';
 import { ParallelDialerUI } from './dialer/ParallelDialerUI';
 import { DialerStateBanner } from './dialer/DialerStateBanner';
+import { IncomingCallBanner } from './dialer/IncomingCallBanner';
 import { WrapUpModal } from './dialer/WrapUpModal';
 import { StartSessionPanel } from './dialer/StartSessionPanel';
 import { ManualDialPanel } from './dialer/ManualDialPanel';
@@ -14,6 +15,7 @@ import {
   getDialerSession,
   listCampaigns,
   startDialerSession,
+  updateMyPresenceHeartbeat,
   ActiveSessionExistsError,
   ReconnectAlreadyInFlightError,
   LiveCallInProgressError,
@@ -147,27 +149,50 @@ function DialerBody({
     isConnecting: agentLineConnecting,
     beginAgentLegExpectation,
     endAgentLegExpectation,
+    pendingInboundCall,
+    answerPendingInboundCall,
+    declinePendingInboundCall,
   } = useTelnyxCall({
     remoteElementId: REMOTE_AUDIO_ID,
     sessionId: effectiveSessionId ?? undefined,
   });
 
-  // Proactively register the WebRTC client the moment there's a parallel session to serve --
-  // the agent leg's inbound call has nowhere to be auto-answered until this has run. Covers
+  // Proactively register the WebRTC client whenever this tab owns the agent line -- not just
+  // when there's a parallel session to serve. Originally gated on `effectiveSessionId` (the
+  // agent leg's inbound call has nowhere to be auto-answered until this has run, covering
   // restoring an already-active session on mount/refresh; a fresh Start already registers
   // (mic check -> connect -> Go Ready) inside handleStartSessionForCampaign below before this
-  // effect would ever need to. dialer-engine.ts's agentSipUri no longer has a registration
-  // backstop to fall back on -- it's self-healing (get-or-create) regardless of whether the
-  // browser has connected yet, so this effect running promptly is what makes the agent leg's
-  // inbound call actually answerable, not just a nice-to-have.
+  // effect would ever need to).
+  // TASK-I1 (INB-2): widened to drop the session gate entirely. An intern who is online but not
+  // mid-batch still needs a live, registered SIP client for an inbound call's `ringing_intern`
+  // transfer to reach -- `isAgentOnline` (the presence heartbeat below) being true is otherwise a
+  // lie: it would say the browser is reachable while the WebRTC client itself is unregistered,
+  // and the transfer would just ring out against a SIP URI nothing is listening on.
+  // dialer-engine.ts's agentSipUri no longer has a registration backstop to fall back on --
+  // it's self-healing (get-or-create) regardless of whether the browser has connected yet, so
+  // this effect running promptly (session or not) is what makes an intern actually reachable.
   useEffect(() => {
-    if (!effectiveSessionId) return;
     if (!isAgentLineOwner) return;
     if (agentLineReady || agentLineConnecting) return;
     connectAgentLine().catch(() => {
       // Surfaced via useTelnyxCall's own `error` state; DialerStateBanner renders it.
     });
-  }, [effectiveSessionId, isAgentLineOwner, agentLineReady, agentLineConnecting, connectAgentLine]);
+  }, [isAgentLineOwner, agentLineReady, agentLineConnecting, connectAgentLine]);
+
+  // TASK-I1 (INB-3): presence heartbeat, the only server-visible "seen recently" signal
+  // (`isAgentOnline`, inbound-core.ts) -- there's no server-visible WebRTC-registration status
+  // anywhere in this schema. 60s is comfortably under `INBOUND_PRESENCE_WINDOW_MS` (2 min), so a
+  // single missed tick (a slow network, a background tab throttled by the browser) doesn't flip
+  // an online intern to "offline" for a routing decision. Fire-and-forget by design (see the
+  // function's own header comment) -- never surfaced as an error here.
+  useEffect(() => {
+    if (!isAgentLineOwner) return;
+    void updateMyPresenceHeartbeat();
+    const interval = setInterval(() => {
+      void updateMyPresenceHeartbeat();
+    }, 60_000);
+    return () => clearInterval(interval);
+  }, [isAgentLineOwner]);
 
   const handleReconnectAgentLine = useCallback(async () => {
     try {
@@ -498,16 +523,25 @@ function DialerBody({
     setOutboundNumber('');
   };
 
-  /** In parallel mode, end the live contact call via backend; otherwise end the browser call. */
+  /** In parallel mode, end the live contact call via backend; otherwise end the browser call.
+   *  TASK-I1: also covers hanging up a caller bridged in via inbound routing (no contact leg,
+   *  `parallelSession.inboundCall` instead of `connectedContactId`) -- dialer-session-hangup-
+   *  live's own new branch handles that server-side. */
   const handleEndLiveCallParallel = useCallback(async () => {
-    if (!effectiveSessionId || !parallelSession.connectedContactId) return;
+    if (!effectiveSessionId) return;
+    if (!parallelSession.connectedContactId && !parallelSession.inboundCall) return;
     try {
       await parallelSession.endLiveCall();
       toast.success('Call ended');
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Failed to end call');
     }
-  }, [effectiveSessionId, parallelSession.connectedContactId, parallelSession.endLiveCall]);
+  }, [
+    effectiveSessionId,
+    parallelSession.connectedContactId,
+    parallelSession.inboundCall,
+    parallelSession.endLiveCall,
+  ]);
 
   const dialerStatus: DialerStatus =
     callState === 'idle' || callState === 'ended'
@@ -577,6 +611,13 @@ function DialerBody({
 
       {/* Center Panel - Dialing Interface */}
       <div className="flex-1 bg-surface-0 p-4 sm:p-8 overflow-y-auto">
+        {pendingInboundCall && (
+          <IncomingCallBanner
+            fromE164={pendingInboundCall.fromE164}
+            onAnswer={answerPendingInboundCall}
+            onDecline={declinePendingInboundCall}
+          />
+        )}
         {isParallelMode && parallelSession.error && (
           <div className="max-w-2xl mx-auto rounded-app-lg border border-danger/30 bg-surface-1 p-6 mb-6">
             <p className="text-danger font-medium mb-2">Could not load parallel session</p>
@@ -626,6 +667,7 @@ function DialerBody({
                 answeredContactId={parallelSession.answeredContactId}
                 connectedContactId={parallelSession.connectedContactId}
                 connectedAnsweredAt={parallelSession.connectedAnsweredAt}
+                inboundCall={parallelSession.inboundCall}
                 onPause={handleParallelPause}
                 onResume={() => void handleParallelResume()}
                 onStop={(opts) => void handleParallelStop(opts)}

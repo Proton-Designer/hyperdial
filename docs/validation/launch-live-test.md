@@ -256,6 +256,37 @@ Telnyx has no cheap, reliable, non-BETA API for it (see decisions.md's TASK-SP e
 citation). Don't re-report a mismatch against Telnyx's own billing dashboard as a bug; tune the
 per-minute rate / monthly number price in Settings for a closer estimate instead.
 
+### B16 — Inbound callback routing (TASK-I1, INB-1..4, CID-6) — **needs a real inbound call from a cell phone**
+
+Requires a real, connected BYO Telnyx account with at least one purchased/assigned number
+(CID-6 -- confirm via B14 first that the number's own Telnyx-side connection is the org's Call
+Control app, not left on the default). Call the org's own number from a personal cell for every
+row below; hang up and redial fresh for each one so no prior step's state leaks into the next.
+
+| #     | Step                                                                                                                                                                                                           | Expected                                                                                                                                                                                                                                                                         | ☐   |
+| ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --- |
+| B16.1 | As the intern assigned that number: open the Dialer tab (idle, no session started) and leave it open. Call the number from your cell.                                                                          | Within ~20s, an "Incoming call" banner appears in the Dialer with your cell's number shown, Answer/Decline buttons. No page refresh needed.                                                                                                                                      | ☐   |
+| B16.2 | Click Answer on B16.1's banner.                                                                                                                                                                                | The call connects in-browser (you hear yourself on the cell once you speak). The banner clears. `inbound_calls.outcome` for that call shows `answered_by_agent` (Supabase dashboard or ask the lead to check).                                                                   | ☐   |
+| B16.3 | Same setup as B16.1, but click Decline instead (or just let the ~20s ring window elapse without answering).                                                                                                    | The call is NOT dropped -- it continues to the next fallback step. If you set a personal cell forward number (Profile tab), your own cell rings next.                                                                                                                            | ☐   |
+| B16.4 | Set a forward number (Profile tab → Call Forwarding) for the assigned intern, then close their Dialer tab entirely (so no WebRTC client is registered) and call the org number.                                | The browser is never rung (nothing registered to ring) -- the call goes straight to the intern's cell after the initial routing. Answering the cell connects the call.                                                                                                           | ☐   |
+| B16.5 | Clear that intern's forward number, set an org shared destination number (Settings → Telephony → "Inbound Calls" card, owner/admin only), then repeat B16.4 (still no Dialer tab open, no forward number).     | The call rings the org's shared destination number next (skipping the cleared personal forward step) and connects there when answered.                                                                                                                                           | ☐   |
+| B16.6 | Clear the shared destination number too (or let a call go fully unanswered through every step: intern browser declined, no cell, no shared line), and let this call ring out.                                  | The caller hears the org's voicemail greeting (Settings → Telephony → "Inbound Calls" → "Voicemail greeting" text, spoken via TTS), then a beep, then can leave a message. `inbound_calls.outcome` shows `voicemail`, with a `recording_path` once Telnyx finishes uploading it. | ☐   |
+| B16.7 | Start a parallel dialing session as the assigned intern (any campaign, `dialing`/`ready`), then call that intern's number from your cell while the batch is actively ringing other contacts.                   | The batch dialing pauses (Pause/Resume banner shows a paused state); your call bridges directly into the intern's existing WebRTC line. The Dialer's contact-card area shows an "Inbound call" flag with your cell number, a live timer, and a working Hang up button.           | ☐   |
+| B16.8 | End the call from B16.7 (hang up on your cell, or click the Dialer's Hang up on the inbound card).                                                                                                             | The Dialer session stays paused (does not auto-resume) -- click Resume to continue the batch. `inbound_calls.outcome` shows `answered_by_agent`, `dial_session_id` pointing at that session.                                                                                     | ☐   |
+| B16.9 | Ask the lead to confirm a `crm_sync_jobs` row with `kind = 'inbound_call_note'` was enqueued for any of the above calls where the caller's number matched an existing GHL contact, and that it reached `done`. | A note appears on that contact in GHL: "Inbound call from `<number>` — `<outcome>`", with agent name/duration/recording link where applicable.                                                                                                                                   | ☐   |
+
+The full routing decision tree (free/busy/offline/no-forward-number branches, the fallback
+chain's ordering, webhook-redelivery idempotency, and every RLS policy including the
+`org_members` self-update-scope security fix) is covered by `inbound-engine.test.ts`/
+`inbound-core.test.ts` (deno) and `audit/I1/dryrun-tests.sql` (SQL, rolled-back live transaction)
+-- B16 above only covers what a real Telnyx call and a real browser can add on top of that.
+
+**Known open items (not bugs, disclosed in RESUME_PLAN-eng2.md/decisions.md):** missed-call
+auto-text (INB-5) and voicemail transcription (INB-6) are explicitly out of scope for this task.
+A bridged inbound call pauses the session rather than literally reusing the outbound wrap-up
+disposition flow -- the agent resumes manually via the existing Resume button, same as any other
+pause (see decisions.md's TASK-I1 entry, decision 7).
+
 ---
 
 ## C. Evidence to capture

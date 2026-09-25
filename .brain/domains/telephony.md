@@ -73,6 +73,7 @@ HyperDial places and receives real phone calls through Telnyx. This domain cover
 | Schema | `supabase/migrations/20250208000001_create_user_phone_numbers.sql` | `user_phone_numbers`, RLS per `auth.uid()` |
 | Docs | `docs/reference/environment-variables.md`, `docs/guides/telnyx-call-control-setup.md` | Env table; portal walkthrough |
 | Spend cap + balance alert (TASK-SP) | `_shared/spend-gate.ts`, `_shared/spend-estimate.ts`, `telnyx-spend-status/`, `spend-alert-check/` | `GET /balance` (real, stable) for balance; MTD spend is an ESTIMATE from `call_legs`/`user_phone_numbers` (`GET /usage_reports` is BETA with an unverifiable `product` enum -- see decisions.md's TASK-SP entry for the full spec3.json citation) |
+| Inbound routing (TASK-I1) | `_shared/inbound-core.ts` (pure), `_shared/inbound-engine.ts` (I/O), `inbound_calls` table | Routes `call.initiated`/direction:incoming through intern browser -> cell -> shared line -> voicemail; see `.brain/domains/dialer.md`'s inbound section (if present) and decisions.md's TASK-I1 entry for the full design |
 
 ## How it works
 
@@ -91,6 +92,15 @@ HyperDial places and receives real phone calls through Telnyx. This domain cover
    (`supabase/functions/_shared/telnyx.ts:115-148`, `supabase/functions/dialer-session-start/index.ts:252`). TASK-P2-E2 is expected to switch this to the org-scoped client too.
 7. **Webhook returns** — `telnyx-webhook` verifies the signature, ACKs `200` immediately and processes in a `queueMicrotask` (`:376-384`). An answered agent-callback leg is joined to the
    session's `conference_name` (`:142-186`), or hung up if the conference is unknown.
+8. **Inbound calls route through a separate state machine (TASK-I1).** `call.initiated` with `direction: "incoming"` (the Call Control App's own webhook URL is already tagged
+   `?org=<orgId>` at provisioning time, `telnyx-provision.ts`'s `webhookUrlForOrg` -- no new org-identification mechanism was needed) is matched by `to` against `user_phone_numbers`
+   (`private.pick_inbound_route`). `_shared/inbound-core.ts`'s pure `planInboundSteps`/`nextInboundStep` decide, from a fresh read of `org_members`/`org_inbound_settings`/
+   `dial_sessions` every time: join an already-dialing intern's session conference (pausing it, `pause_reason: 'inbound_call'`); else `transfer` to the intern's WebRTC SIP URI if
+   online (`INBOUND_RING_TIMEOUT_SECS` = 20s); else `transfer` to their personal cell (`org_members.forward_phone_number`, self-service); else the org's shared destination
+   (`org_inbound_settings.shared_destination_number`); else `answer` + `speak` the org greeting + `record_start` (voicemail). State lives on a new `inbound_calls` row (not a
+   `call_legs` row -- see decisions.md's TASK-I1 entry, decision 1), transitioned via `public.transition_inbound_call`'s CAS, idempotent under Telnyx's at-least-once webhook
+   redelivery. `useTelnyxCall.ts`'s WebRTC client now connects whenever the Dialer tab owns the agent line, not only during an active session (decision 7) -- otherwise an
+   "online" intern's browser would never actually be reachable.
 
 ## Integration points
 

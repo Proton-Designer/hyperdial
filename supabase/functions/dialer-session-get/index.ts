@@ -81,9 +81,37 @@ Deno.serve(async (req) => {
       });
     }
 
-    return new Response(JSON.stringify({ session, legs: legs ?? [] }), {
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    });
+    // TASK-I1: surface the session's CURRENT bridged inbound call (if any), so the Dialer's
+    // contact-card area can flag it "Inbound call" during `bridging_session` -- the task's own
+    // explicit ask. `dial_session_id` is set once, entering `bridging_session`
+    // (inbound-engine.ts's `enterStep`), and never cleared afterward, so it's scoped to
+    // `state = 'bridging_session' and ended_at is null` here rather than by presence alone --
+    // otherwise a long-past inbound call that once bridged into this same session would show as
+    // "Inbound call" forever after the fact.
+    const { data: inboundCall, error: inboundError } = await supabase
+      .from('inbound_calls')
+      .select(
+        'id, from_e164, contact_id, state, answered_at, contact:contacts(business_name, first_name, last_name, phone_number)'
+      )
+      .eq('dial_session_id', sessionId)
+      .eq('state', 'bridging_session')
+      .is('ended_at', null)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (inboundError) {
+      return new Response(JSON.stringify({ error: inboundError.message }), {
+        status: 500,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    return new Response(
+      JSON.stringify({ session, legs: legs ?? [], inboundCall: inboundCall ?? null }),
+      {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      }
+    );
   } catch (err) {
     console.error('dialer-session-get error:', err);
     return new Response(JSON.stringify({ error: String(err) }), {

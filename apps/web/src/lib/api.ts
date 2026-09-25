@@ -1485,6 +1485,23 @@ export interface CallLegRecord {
   } | null;
 }
 
+/** TASK-I1: the session's CURRENT bridged inbound call, if any (`dialer-session-get`'s own
+ *  `bridging_session`-and-not-yet-ended scoping) -- lets the Dialer flag the contact card
+ *  "Inbound call" per the task's own explicit ask. Null the rest of the time, including after
+ *  the inbound call ends (even though `inbound_calls.dial_session_id` itself is never cleared). */
+export interface InboundCallInfo {
+  id: string;
+  from_e164: string;
+  contact_id: string | null;
+  answered_at: string | null;
+  contact: {
+    business_name: string | null;
+    first_name: string | null;
+    last_name: string | null;
+    phone_number: string | null;
+  } | null;
+}
+
 /** Thrown when startDialerSession returns 409 because an active session already exists for the campaign. */
 export class ActiveSessionExistsError extends Error {
   constructor(
@@ -1630,6 +1647,7 @@ export async function hangupLiveCall(sessionId: string): Promise<void> {
 export async function getDialerSession(sessionId: string): Promise<{
   session: DialSessionRecord;
   legs: CallLegRecord[];
+  inboundCall: InboundCallInfo | null;
 }> {
   const res = await fetch(
     `${getFunctionsUrl()}/dialer-session-get?sessionId=${encodeURIComponent(sessionId)}`,
@@ -1640,7 +1658,11 @@ export async function getDialerSession(sessionId: string): Promise<{
   );
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || 'Failed to load dialer session');
-  return data as { session: DialSessionRecord; legs: CallLegRecord[] };
+  return data as {
+    session: DialSessionRecord;
+    legs: CallLegRecord[];
+    inboundCall: InboundCallInfo | null;
+  };
 }
 
 /** Returns the current user's active parallel dialer session (if any) in the active org. Use

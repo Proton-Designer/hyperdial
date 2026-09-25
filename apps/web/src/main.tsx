@@ -26,6 +26,12 @@ if (devHarness?.has('dev_wrapup')) {
   import('./dev/StartSessionHarness.tsx').then(({ StartSessionHarness }) => {
     root.render(<StartSessionHarness />);
   });
+} else if (devHarness?.has('dev_incoming_call')) {
+  // TASK-I1 (INB-2): IncomingCallBanner in isolation, fixture caller, no live WebRTC/DB.
+  // `?dev_incoming_call=1`.
+  import('./dev/IncomingCallHarness.tsx').then(({ IncomingCallHarness }) => {
+    root.render(<IncomingCallHarness />);
+  });
 } else {
   root.render(<App />);
 }
