@@ -160,7 +160,7 @@ export function DialerStatesHarness() {
         <ParallelDialerUI
           sessionState={selectedState}
           lines={3}
-          amdMode="on"
+          amdMode="premium"
           callsMade={7}
           connected={2}
           voicemail={1}

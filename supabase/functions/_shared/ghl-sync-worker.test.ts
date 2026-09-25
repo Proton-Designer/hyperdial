@@ -5,6 +5,7 @@ import {
   processContactUpsertJob,
   processDispositionJob,
   processNurtureTagJob,
+  processTagJob,
   type DispositionPayload,
 } from './ghl-sync-worker.ts';
 
@@ -512,6 +513,96 @@ Deno.test(
       assertEquals(result.ok, false);
       assertEquals(result.resolvedGhlContactId, null);
       assertEquals(result.progress.upserted, undefined);
+      assertEquals(tagCalls, 0);
+    } finally {
+      restore();
+    }
+  }
+);
+
+// ---------------------------------------------------------------------------
+// processTagJob (TASK-F-T3, VMD-3/GHL-9) -- same shape as processNurtureTagJob, tag from payload
+// ---------------------------------------------------------------------------
+
+Deno.test('processTagJob: already linked, already tagged is a full no-op', async () => {
+  let calls = 0;
+  const restore = stubFetch(() => {
+    calls++;
+    return Response.json({});
+  });
+  try {
+    const client: GhlClient = createGhlClient('tok');
+    const result = await processTagJob({
+      client,
+      locationId: 'loc-1',
+      ghlContactId: 'ghl-already',
+      contactFields: { firstName: null, lastName: null, phone: '+14155552671' },
+      tag: 'call:voicemail-1',
+      progress: { upserted: true, tag_added: true },
+    });
+    assertEquals(result.ok, true);
+    assertEquals(result.resolvedGhlContactId, 'ghl-already');
+    assertEquals(calls, 0);
+  } finally {
+    restore();
+  }
+});
+
+Deno.test(
+  'processTagJob: unlinked contact upserts first, then pushes the EXACT tag from the payload',
+  async () => {
+    let taggedWith: string[] | null = null;
+    const restore = stubFetch((url, init) => {
+      if (url.includes('/contacts/upsert'))
+        return Response.json({ new: true, contact: { id: 'ghl-fresh' } });
+      if (url.includes('/tags')) {
+        taggedWith = JSON.parse(String(init?.body)).tags;
+        return Response.json({});
+      }
+      return Response.json({});
+    });
+    try {
+      const client: GhlClient = createGhlClient('tok');
+      const result = await processTagJob({
+        client,
+        locationId: 'loc-1',
+        ghlContactId: null,
+        contactFields: { firstName: 'Bob', lastName: null, phone: '+14155552672' },
+        tag: 'call:no-answer-3',
+        progress: {},
+      });
+      assertEquals(result.ok, true);
+      assertEquals(result.resolvedGhlContactId, 'ghl-fresh');
+      assertEquals(taggedWith, ['call:no-answer-3']);
+    } finally {
+      restore();
+    }
+  }
+);
+
+Deno.test(
+  'processTagJob: upsert failure returns ok:false, never calls the tag endpoint',
+  async () => {
+    let tagCalls = 0;
+    const restore = stubFetch((url) => {
+      if (url.includes('/tags')) {
+        tagCalls++;
+        return Response.json({});
+      }
+      return new Response('server error', { status: 500 });
+    });
+    try {
+      const client: GhlClient = createGhlClient('tok');
+      const result = await processTagJob({
+        client,
+        locationId: 'loc-1',
+        ghlContactId: null,
+        contactFields: { firstName: 'Bob', lastName: null, phone: '+14155552673' },
+        tag: 'call:voicemail-1',
+        progress: {},
+      });
+      assertEquals(result.ok, false);
+      assertEquals(result.resolvedGhlContactId, null);
       assertEquals(tagCalls, 0);
     } finally {
       restore();
