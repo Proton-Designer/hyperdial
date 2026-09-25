@@ -5,12 +5,13 @@ Human-facing documentation. For AI-agent context, start at
 
 ## Guides — task-oriented walkthroughs
 
-| Guide                                                               | Read it when                                                      |
-| ------------------------------------------------------------------- | ----------------------------------------------------------------- |
-| [deploy-parallel-dialer.md](guides/deploy-parallel-dialer.md)       | Standing the whole backend up: migrations, functions, secrets     |
-| [deploy-edge-functions.md](guides/deploy-edge-functions.md)         | Deploying or redeploying Supabase Edge Functions                  |
-| [telnyx-call-control-setup.md](guides/telnyx-call-control-setup.md) | Configuring Telnyx — **read this before touching connection IDs** |
-| [csv-import.md](guides/csv-import.md)                               | Working on contact import and column mapping                      |
+| Guide                                                                         | Read it when                                                              |
+| ----------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| [deploy-parallel-dialer.md](guides/deploy-parallel-dialer.md)                 | Standing the whole backend up: migrations, functions, secrets             |
+| [deploy-edge-functions.md](guides/deploy-edge-functions.md)                   | Deploying or redeploying Supabase Edge Functions                          |
+| [telnyx-call-control-setup.md](guides/telnyx-call-control-setup.md)           | Configuring Telnyx — **read this before touching connection IDs**         |
+| [csv-import.md](guides/csv-import.md)                                         | Working on contact import and column mapping                              |
+| [inviting-and-assigning-interns.md](guides/inviting-and-assigning-interns.md) | Inviting an intern and setting up their per-campaign caller ID/assignment |
 
 ## Reference — lookup material
 

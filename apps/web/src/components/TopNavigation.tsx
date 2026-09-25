@@ -60,7 +60,7 @@ function formatNotificationDate(created_at: string): string {
 
 export function TopNavigation({ activeTab = 'dashboard', onTabChange }: TopNavigationProps) {
   const { user, signOut } = useAuth();
-  const { orgId, orgs, switchOrg } = useOrg();
+  const { orgId, orgs, switchOrg, role } = useOrg();
   const [searchFocused, setSearchFocused] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
@@ -149,7 +149,9 @@ export function TopNavigation({ activeTab = 'dashboard', onTabChange }: TopNavig
         <div className="flex items-center gap-2 text-sm text-[#B0BEC5]">
           <span className="hover:text-white cursor-pointer transition-colors">Home</span>
           <span>/</span>
-          <span className="text-white">{TAB_LABELS[activeTab]}</span>
+          <span className="text-white">
+            {activeTab === 'dashboard' && role === 'agent' ? 'My stats' : TAB_LABELS[activeTab]}
+          </span>
         </div>
 
         {/* Org switcher: only shown when the user actually belongs to more than one org. */}

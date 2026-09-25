@@ -45,7 +45,7 @@ source_hash: b8d3fd311248f16889b10f531365423ec36488c32179946d09361fb21c5ce0c5
 
 **RLS helpers**, schema `private` (not API-exposed — `authenticated` needs an explicit `GRANT USAGE ON SCHEMA private`; a non-`public` schema does not inherit `public`'s default grant, see `mem.lessons`): `private.is_org_member(org)`, `private.has_org_role(org, roles[])`, plus single-purpose cross-table lookups (`campaign_org_id`, `contact_org_id`, `agent_assigned_to_campaign`, `agent_has_contact_access`) used *inside other tables'* policies. All SECURITY DEFINER, STABLE, `search_path = ''`. **Every one exists to avoid RLS recursion**: an inline subquery on another RLS-protected table, used inside a policy, can cycle with that table's own policy (`infinite recursion detected in policy for relation ...`) — reproduced building the RLS test suite, see `mem.decisions`/`mem.lessons`. **Never write an inline cross-table `EXISTS` in a new policy** — add a `private.*` helper.
 
-**New-signup trigger** `public.handle_new_user()`: no `invite_token` in signup metadata → `private.ensure_org_for_user()` creates an org (named from `company_name`, else the email domain, else `'My Team'`), an owner membership, and the profile. `invite_token` present → only the profile is created; `org-invite-accept` (TASK-P1-03) adds the `org_members` row and sets `active_org_id`. As of TASK-P1-03, `private.ensure_org_for_user`'s `EXECUTE` is revoked from `public`/`authenticated` (`20260924000600`) — it only ever runs from inside the SECURITY DEFINER trigger, which calls it as the owning role regardless of the grant; leaving it open let any signed-in user invoke it directly via `.rpc()`.
+**New-signup trigger** `public.handle_new_user()` — **invite-only as of TASK-L4** (`20260925000300`, closes ADM-3). No `invite_token`, an unresolvable/garbage token, an expired invite, an already-accepted invite, or an email that doesn't match the invite → the trigger `raise exception`s and the whole `auth.users` insert (and therefore the signup) fails; there is no more self-serve "no token → create a new org" path — `private.ensure_org_for_user()` is now dead code from the trigger's perspective (still called by the one-time `20260924000200` backfill, left in place so that migration still replays against a fresh database). A valid, matching invite → only the profile is created, same as before; `org-invite-accept` still does the `org_members` insert and sets `active_org_id`, unchanged. **Any direct `insert into auth.users` fixture** (every `supabase/tests/*.sql` file, `scripts/dev/dialer-sim.ts`) now needs either a real matching `org_invites` row or `alter table auth.users disable/enable trigger on_auth_user_created` around the insert plus hand-built org/profile/membership rows — see `20260925000300`'s own header and `supabase/tests/rls_org_matrix.sql`/`invite_only_signup.sql` for the pattern. Only `rls_org_matrix.sql` has been updated for this so far; the rest are known-broken for re-runs, see `mem.known-issues`.
 
 ## Key concepts
 
@@ -64,9 +64,11 @@ source_hash: b8d3fd311248f16889b10f531365423ec36488c32179946d09361fb21c5ce0c5
 | CORS headers | `supabase/functions/_shared/cors.ts` — `Allow-Origin: '*'` (`:2`) |
 | Gateway config | `supabase/config.toml` — `verify_jwt` `:360-396`, `[auth]` from `:150` |
 | Browser session | `apps/web/src/contexts/AuthContext.tsx` — `getSession` + `onAuthStateChange` (`:34-50`) |
-| Sign-up UI | `apps/web/src/components/AuthScreen.tsx` — collects `first_name`, `last_name`, `company_name` into `auth.users.raw_user_meta_data` (no profiles table) (`:45-58`) |
+| Sign-in UI | `apps/web/src/components/AuthScreen.tsx` — sign-in + password reset only as of TASK-L4; no signup form here at all |
+| Invite-signup UI | `apps/web/src/components/InviteLanding.tsx` — the only place `supabase.auth.signUp` is ever called with `invite_token` in metadata; reached only via `?invite=<token>` (`App.tsx`) |
 | Header attachment | `apps/web/src/lib/api.ts:36-49` — `getEdgeFunctionHeaders()`, also sets `X-Org-Id` via `getActiveOrgId()` (`:20-30`) · org+role check: `_shared/auth.ts:71` `requireOrgRole` |
 | Invite/team functions | `supabase/functions/org-invite-create`, `org-invite-accept`, `org-members` (TASK-P1-03) |
+| Role-based nav (TASK-L4 / UI-4) | `MainApp.tsx` (`AGENT_ALLOWED_TABS`, guards every tab switch, not just the sidebar), `Sidebar.tsx` (filters the tab list + relabels Dashboard "My stats" for agents), `Contacts.tsx` (`canManage` hides import/add/edit/delete/bulk, row click into `ContactDetailModal` stays view+DNC-toggle only, unchanged from TASK-P2-P1) |
 
 ## How it works
 
@@ -134,7 +136,7 @@ are the deliberate exceptions: personal, not org-shared (see `20260924000300`'s 
 - **Service-role clients bypass RLS entirely** — the guard is hand-written scoping, and omitting it is a silent cross-tenant read with no second layer to catch it.
 - **`notifications` UPDATE has `USING` but no `WITH CHECK`; verified fine** (Postgres falls back to `USING`). No INSERT policy by design — writes come only from `ensure-week-summary`'s service-role client.
 - **`Access-Control-Allow-Origin: '*'`** (`supabase/functions/_shared/cors.ts:2`) — safe only because identity is a bearer token, not a cookie.
-- **Email confirmation is off; password floor is 6 characters** (`supabase/config.toml:210`, `:175`) and the strength meter never blocks a weak one — anyone can create an account and immediately dial.
+- **Email confirmation is off; password floor is 6 characters** (`supabase/config.toml:210`, `:175`) and the strength meter never blocks a weak one — but as of TASK-L4 an account can only be created from a real invite in the first place, so this now bounds what an *invited* user's password can be, not "anyone."
 - **`raw_user_meta_data` is user-writable via the client SDK** — display-only, never an input to an authorization decision.
 
 ## Not covered here

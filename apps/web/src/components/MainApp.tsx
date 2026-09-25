@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { TopNavigation } from './TopNavigation';
 import { Sidebar } from './Sidebar';
 import { Dashboard } from './Dashboard';
@@ -7,6 +7,7 @@ import { Contacts } from './Contacts';
 import { Campaigns } from './Campaigns';
 import { Analytics } from './Analytics';
 import { Settings } from './Settings';
+import { useOrg } from '@/contexts/OrgContext';
 
 export type TabType = 'dashboard' | 'dialer' | 'contacts' | 'campaigns' | 'analytics' | 'settings';
 
@@ -15,12 +16,30 @@ export interface ParallelDialLaunchContext {
   campaignId: string;
 }
 
+// TASK-L4 / UI-4: interns (role 'agent') only get Dashboard/Dialer/Contacts. Campaigns,
+// Analytics, and Settings are for owner/admin. Enforced here (not just in Sidebar's tab list) so
+// every entry point -- the sidebar, a quick-action button, a future deep link -- falls back to
+// Dialer instead of rendering a hidden tab.
+export const AGENT_ALLOWED_TABS: readonly TabType[] = ['dashboard', 'dialer', 'contacts'];
+
 export function MainApp() {
-  const [activeTab, setActiveTab] = useState<TabType>('dashboard');
+  const { role } = useOrg();
+  const isAgent = role === 'agent';
+  const [activeTab, setActiveTabState] = useState<TabType>('dashboard');
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [parallelDialContext, setParallelDialContext] = useState<ParallelDialLaunchContext | null>(
     null
   );
+
+  const setActiveTab = (tab: TabType) => {
+    setActiveTabState(isAgent && !AGENT_ALLOWED_TABS.includes(tab) ? 'dialer' : tab);
+  };
+
+  // Guards against role loading in after a hidden tab was already selected (e.g. `role` starts
+  // null while OrgContext's own fetch is still in flight) -- not just new navigation attempts.
+  useEffect(() => {
+    if (isAgent && !AGENT_ALLOWED_TABS.includes(activeTab)) setActiveTabState('dialer');
+  }, [isAgent, activeTab]);
 
   const topBarHeight = 72;
 

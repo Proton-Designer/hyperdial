@@ -96,6 +96,15 @@ end;
 $$;
 
 -- Fixtures (as postgres; table owner bypasses RLS) --------------------------
+--
+-- TASK-L4 (20260925000300_invite_only_signup.sql) made the on_auth_user_created trigger reject
+-- any signup without a REAL, matching org_invites token -- this file's old shortcut (no token for
+-- "self-serve" owners, a fake literal token for "already invited" admin/agent) no longer runs the
+-- trigger's org/profile side effects at all, it just errors. Disable the trigger for this
+-- direct-SQL fixture insert and build org/profile/membership rows by hand instead, the same way
+-- org-invite-accept does after a real invited signup.
+
+alter table auth.users disable trigger on_auth_user_created;
 
 insert into auth.users (
   instance_id, id, aud, role, email, encrypted_password, email_confirmed_at,
@@ -103,21 +112,30 @@ insert into auth.users (
   confirmation_token, recovery_token, is_sso_user, is_anonymous
 ) values
   ('00000000-0000-0000-0000-000000000000', '9c1f7a11-a000-4000-8000-00000000000a', 'authenticated', 'authenticated', 'owner-a@example.com', crypt('x', gen_salt('bf')), now(), '{}', '{}', now(), now(), '', '', false, false),
-  ('00000000-0000-0000-0000-000000000000', '9c1f7a11-a000-4000-8000-00000000000b', 'authenticated', 'authenticated', 'admin-a@example.com', crypt('x', gen_salt('bf')), now(), '{}', '{"invite_token":"test"}', now(), now(), '', '', false, false),
-  ('00000000-0000-0000-0000-000000000000', '9c1f7a11-a000-4000-8000-00000000000c', 'authenticated', 'authenticated', 'agent-a@example.com', crypt('x', gen_salt('bf')), now(), '{}', '{"invite_token":"test"}', now(), now(), '', '', false, false),
+  ('00000000-0000-0000-0000-000000000000', '9c1f7a11-a000-4000-8000-00000000000b', 'authenticated', 'authenticated', 'admin-a@example.com', crypt('x', gen_salt('bf')), now(), '{}', '{}', now(), now(), '', '', false, false),
+  ('00000000-0000-0000-0000-000000000000', '9c1f7a11-a000-4000-8000-00000000000c', 'authenticated', 'authenticated', 'agent-a@example.com', crypt('x', gen_salt('bf')), now(), '{}', '{}', now(), now(), '', '', false, false),
   ('00000000-0000-0000-0000-000000000000', '9c1f7a11-b000-4000-8000-00000000000a', 'authenticated', 'authenticated', 'owner-b@example.com', crypt('x', gen_salt('bf')), now(), '{}', '{}', now(), now(), '', '', false, false);
 
--- owner-a and owner-b get an org from the signup trigger (no invite_token); admin-a/agent-a only
--- got a profile (invite_token present), so add their org A membership by hand, as accept-invite
--- would.
+alter table auth.users enable trigger on_auth_user_created;
 
-select active_org_id as org_a from public.profiles where user_id = '9c1f7a11-a000-4000-8000-00000000000a' \gset
-select active_org_id as org_b from public.profiles where user_id = '9c1f7a11-b000-4000-8000-00000000000a' \gset
+insert into public.orgs (id, name, created_by) values
+  ('9c1f7a11-c000-4000-8000-00000000000a', 'Org A', '9c1f7a11-a000-4000-8000-00000000000a'),
+  ('9c1f7a11-c000-4000-8000-00000000000b', 'Org B', '9c1f7a11-b000-4000-8000-00000000000a');
 
-insert into public.org_members (org_id, user_id, role, status) values (:'org_a', '9c1f7a11-a000-4000-8000-00000000000b', 'admin', 'active');
-update public.profiles set active_org_id = :'org_a' where user_id = '9c1f7a11-a000-4000-8000-00000000000b';
-insert into public.org_members (org_id, user_id, role, status) values (:'org_a', '9c1f7a11-a000-4000-8000-00000000000c', 'agent', 'active');
-update public.profiles set active_org_id = :'org_a' where user_id = '9c1f7a11-a000-4000-8000-00000000000c';
+select '9c1f7a11-c000-4000-8000-00000000000a' as org_a \gset
+select '9c1f7a11-c000-4000-8000-00000000000b' as org_b \gset
+
+insert into public.profiles (user_id, active_org_id) values
+  ('9c1f7a11-a000-4000-8000-00000000000a', :'org_a'),
+  ('9c1f7a11-a000-4000-8000-00000000000b', :'org_a'),
+  ('9c1f7a11-a000-4000-8000-00000000000c', :'org_a'),
+  ('9c1f7a11-b000-4000-8000-00000000000a', :'org_b');
+
+insert into public.org_members (org_id, user_id, role, status) values
+  (:'org_a', '9c1f7a11-a000-4000-8000-00000000000a', 'owner', 'active'),
+  (:'org_a', '9c1f7a11-a000-4000-8000-00000000000b', 'admin', 'active'),
+  (:'org_a', '9c1f7a11-a000-4000-8000-00000000000c', 'agent', 'active'),
+  (:'org_b', '9c1f7a11-b000-4000-8000-00000000000a', 'owner', 'active');
 
 -- Business data: org A (owned by owner-a, agent-a assigned to campaign-a only)
 

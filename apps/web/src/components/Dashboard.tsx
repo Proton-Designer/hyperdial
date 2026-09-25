@@ -21,6 +21,7 @@ import {
   Legend,
 } from 'recharts';
 import { useAuth } from '@/contexts/AuthContext';
+import { useOrg } from '@/contexts/OrgContext';
 import {
   getDashboardStats,
   getTeamPerformanceChart,
@@ -44,6 +45,8 @@ export function Dashboard({
   onNavigateToCampaigns,
 }: DashboardProps = {}) {
   const { user } = useAuth();
+  const { role } = useOrg();
+  const isAgent = role === 'agent';
   const [stats, setStats] = useState<{
     callsToday: number;
     connectRate: number;
@@ -207,7 +210,9 @@ export function Dashboard({
           className="bg-[#1A2332]/60 backdrop-blur-xl rounded-2xl p-6 border border-white/5 shadow-[0_4px_24px_rgba(0,102,255,0.15)]"
         >
           <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
-            <h2 className="text-xl font-bold text-white">Team Performance</h2>
+            <h2 className="text-xl font-bold text-white">
+              {isAgent ? 'My Performance' : 'Team Performance'}
+            </h2>
             <div className="flex items-center gap-2 flex-wrap">
               <button
                 type="button"
@@ -340,27 +345,33 @@ export function Dashboard({
             Start Power Dialing
           </motion.button>
 
-          <motion.button
-            whileHover={{ scale: 1.05 }}
-            whileTap={{ scale: 0.95 }}
-            type="button"
-            onClick={onNavigateToContacts}
-            className="flex items-center gap-3 px-6 py-4 bg-transparent border-2 border-[#00D9FF] rounded-xl text-[#00D9FF] font-semibold hover:bg-[#00D9FF]/10 transition-all"
-          >
-            <Upload className="w-5 h-5" />
-            Upload Contacts
-          </motion.button>
+          {/* Agents get a read-only Contacts UI and no Campaigns tab (TASK-L4 / UI-4) -- these
+              two quick actions would just bounce them back to the dialer. */}
+          {!isAgent && (
+            <>
+              <motion.button
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
+                type="button"
+                onClick={onNavigateToContacts}
+                className="flex items-center gap-3 px-6 py-4 bg-transparent border-2 border-[#00D9FF] rounded-xl text-[#00D9FF] font-semibold hover:bg-[#00D9FF]/10 transition-all"
+              >
+                <Upload className="w-5 h-5" />
+                Upload Contacts
+              </motion.button>
 
-          <motion.button
-            whileHover={{ scale: 1.05 }}
-            whileTap={{ scale: 0.95 }}
-            type="button"
-            onClick={onNavigateToCampaigns}
-            className="flex items-center gap-3 px-6 py-4 bg-transparent border-2 border-[#00D9FF] rounded-xl text-[#00D9FF] font-semibold hover:bg-[#00D9FF]/10 transition-all"
-          >
-            <Plus className="w-5 h-5" />
-            Create Campaign
-          </motion.button>
+              <motion.button
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
+                type="button"
+                onClick={onNavigateToCampaigns}
+                className="flex items-center gap-3 px-6 py-4 bg-transparent border-2 border-[#00D9FF] rounded-xl text-[#00D9FF] font-semibold hover:bg-[#00D9FF]/10 transition-all"
+              >
+                <Plus className="w-5 h-5" />
+                Create Campaign
+              </motion.button>
+            </>
+          )}
         </div>
       </motion.div>
     </div>

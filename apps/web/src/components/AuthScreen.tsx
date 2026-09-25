@@ -1,66 +1,30 @@
 import { useState } from 'react';
 import { motion } from 'motion/react';
-import { Mail, Lock, User, Building2, ArrowRight, Eye, EyeOff, CheckCircle } from 'lucide-react';
+import { Mail, Lock, ArrowRight, Eye, EyeOff, CheckCircle } from 'lucide-react';
 import { AnimatedBackground } from './AnimatedBackground';
 import { useAuth } from '@/contexts/AuthContext';
 
-interface AuthScreenProps {
-  mode: 'signin' | 'signup';
-  onToggleMode: () => void;
-}
-
-export function AuthScreen({ mode, onToggleMode }: AuthScreenProps) {
-  const { signUp, signIn, requestPasswordReset, error, clearError, loading } = useAuth();
+// Invite-only (TASK-L4 / ADM-3): this screen is sign-in + password reset only. The only way to
+// create an account is via an invite link (?invite=<token>), which routes to InviteLanding.tsx
+// instead of here -- see App.tsx. The on_auth_user_created trigger enforces this server-side
+// (20260925000300_invite_only_signup.sql) regardless of what this UI does or doesn't expose.
+export function AuthScreen() {
+  const { signIn, requestPasswordReset, error, clearError, loading } = useAuth();
   const [showForgotPassword, setShowForgotPassword] = useState(false);
   const [forgotEmail, setForgotEmail] = useState('');
   const [forgotSent, setForgotSent] = useState(false);
   const [forgotSubmitting, setForgotSubmitting] = useState(false);
-  const [firstName, setFirstName] = useState('');
-  const [lastName, setLastName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [companyName, setCompanyName] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  const [passwordStrength, setPasswordStrength] = useState(0);
   const [submitting, setSubmitting] = useState(false);
-  const [showConfirmationMessage, setShowConfirmationMessage] = useState(false);
-  const [confirmationSentEmail, setConfirmationSentEmail] = useState('');
-  const [pendingCredentials, setPendingCredentials] = useState<{
-    email: string;
-    password: string;
-  } | null>(null);
-
-  const handlePasswordChange = (value: string) => {
-    setPassword(value);
-    let strength = 0;
-    if (value.length > 6) strength += 25;
-    if (value.length > 10) strength += 25;
-    if (/[A-Z]/.test(value)) strength += 25;
-    if (/[0-9]/.test(value)) strength += 25;
-    setPasswordStrength(strength);
-  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     clearError();
     setSubmitting(true);
     try {
-      if (mode === 'signup') {
-        const { emailConfirmationSent } = await signUp({
-          email,
-          password,
-          firstName,
-          lastName,
-          companyName,
-        });
-        if (emailConfirmationSent) {
-          setConfirmationSentEmail(email);
-          setPendingCredentials({ email, password });
-          setShowConfirmationMessage(true);
-        }
-      } else {
-        await signIn(email, password);
-      }
+      await signIn(email, password);
     } catch {
       // Error is set in AuthContext
     } finally {
@@ -80,30 +44,6 @@ export function AuthScreen({ mode, onToggleMode }: AuthScreenProps) {
     } finally {
       setForgotSubmitting(false);
     }
-  };
-
-  const handleContinueToSignIn = () => {
-    if (pendingCredentials) {
-      setEmail(pendingCredentials.email);
-      setPassword(pendingCredentials.password);
-      setPendingCredentials(null);
-    }
-    setShowConfirmationMessage(false);
-    onToggleMode();
-  };
-
-  const getStrengthColor = () => {
-    if (passwordStrength < 25) return '#FF3D00';
-    if (passwordStrength < 50) return '#FFB300';
-    if (passwordStrength < 75) return '#00D9FF';
-    return '#00E676';
-  };
-
-  const getStrengthLabel = () => {
-    if (passwordStrength < 25) return 'Weak';
-    if (passwordStrength < 50) return 'Fair';
-    if (passwordStrength < 75) return 'Good';
-    return 'Strong';
   };
 
   return (
@@ -133,21 +73,6 @@ export function AuthScreen({ mode, onToggleMode }: AuthScreenProps) {
             <p className="text-xl text-[#B0BEC5] mb-12 max-w-lg">
               Power dialing platform trusted by high-velocity sales teams to crush quota every month
             </p>
-
-            <div className="flex gap-12">
-              <div>
-                <div className="text-5xl font-bold text-[#00D9FF] mb-2">2,000+</div>
-                <div className="text-[#B0BEC5]">Active Teams</div>
-              </div>
-              <div>
-                <div className="text-5xl font-bold text-[#00E676] mb-2">10M+</div>
-                <div className="text-[#B0BEC5]">Calls Connected</div>
-              </div>
-              <div>
-                <div className="text-5xl font-bold text-[#0066FF] mb-2">38%</div>
-                <div className="text-[#B0BEC5]">Avg Connect Rate</div>
-              </div>
-            </div>
           </motion.div>
         </div>
 
@@ -250,40 +175,10 @@ export function AuthScreen({ mode, onToggleMode }: AuthScreenProps) {
                   </div>
                 </>
               )
-            ) : showConfirmationMessage ? (
-              <>
-                <div className="flex justify-center mb-6">
-                  <div className="w-14 h-14 rounded-full bg-[#00E676]/20 flex items-center justify-center">
-                    <CheckCircle className="w-8 h-8 text-[#00E676]" />
-                  </div>
-                </div>
-                <h2 className="text-2xl font-bold text-white mb-2 text-center">Check your email</h2>
-                <p className="text-sm text-[#B0BEC5] mb-8 text-center">
-                  A confirmation email has been sent to{' '}
-                  <span className="text-white font-medium">{confirmationSentEmail}</span>. Please
-                  check your inbox and click the confirmation link to activate your account.
-                </p>
-                <motion.button
-                  type="button"
-                  onClick={handleContinueToSignIn}
-                  className="w-full h-12 bg-gradient-to-r from-[#00D9FF] to-[#0066FF] rounded-xl text-white font-semibold flex items-center justify-center gap-2 shadow-[0_4px_24px_rgba(0,217,255,0.3)] hover:shadow-[0_6px_32px_rgba(0,217,255,0.4)] transition-all"
-                  whileHover={{ scale: 1.02 }}
-                  whileTap={{ scale: 0.98 }}
-                >
-                  <span>Continue to Sign In</span>
-                  <ArrowRight className="w-5 h-5" />
-                </motion.button>
-              </>
             ) : (
               <>
-                <h2 className="text-3xl font-bold text-white mb-2">
-                  {mode === 'signup' ? 'Start Crushing Quota' : 'Welcome Back'}
-                </h2>
-                <p className="text-sm text-[#B0BEC5] mb-8">
-                  {mode === 'signup'
-                    ? 'Join 2,000+ teams closing faster'
-                    : 'Sign in to continue dialing'}
-                </p>
+                <h2 className="text-3xl font-bold text-white mb-2">Welcome Back</h2>
+                <p className="text-sm text-[#B0BEC5] mb-8">Sign in to continue dialing</p>
 
                 {error && (
                   <div className="mb-5 p-3 rounded-xl bg-red-500/10 border border-red-500/30 text-red-400 text-sm">
@@ -292,66 +187,8 @@ export function AuthScreen({ mode, onToggleMode }: AuthScreenProps) {
                 )}
 
                 <form onSubmit={handleSubmit} className="space-y-5">
-                  {mode === 'signup' && (
-                    <>
-                      <div className="grid grid-cols-2 gap-3">
-                        <div>
-                          <label className="block text-xs text-[#B0BEC5] mb-2 ml-1">
-                            First name
-                          </label>
-                          <div className="relative">
-                            <User className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-[#B0BEC5]" />
-                            <input
-                              type="text"
-                              value={firstName}
-                              onChange={(e) => setFirstName(e.target.value)}
-                              className="w-full bg-[#1E2A3A] border border-white/10 rounded-xl pl-12 pr-4 py-3.5 text-white placeholder-[#B0BEC5]/50 focus:outline-none focus:border-[#00D9FF] transition-colors"
-                              placeholder="John"
-                              required
-                            />
-                          </div>
-                        </div>
-                        <div>
-                          <label className="block text-xs text-[#B0BEC5] mb-2 ml-1">
-                            Last name
-                          </label>
-                          <div className="relative">
-                            <User className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-[#B0BEC5]" />
-                            <input
-                              type="text"
-                              value={lastName}
-                              onChange={(e) => setLastName(e.target.value)}
-                              className="w-full bg-[#1E2A3A] border border-white/10 rounded-xl pl-12 pr-4 py-3.5 text-white placeholder-[#B0BEC5]/50 focus:outline-none focus:border-[#00D9FF] transition-colors"
-                              placeholder="Doe"
-                              required
-                            />
-                          </div>
-                        </div>
-                      </div>
-
-                      <div>
-                        <label className="block text-xs text-[#B0BEC5] mb-2 ml-1">
-                          Company name
-                        </label>
-                        <div className="relative">
-                          <Building2 className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-[#B0BEC5]" />
-                          <input
-                            type="text"
-                            value={companyName}
-                            onChange={(e) => setCompanyName(e.target.value)}
-                            className="w-full bg-[#1E2A3A] border border-white/10 rounded-xl pl-12 pr-4 py-3.5 text-white placeholder-[#B0BEC5]/50 focus:outline-none focus:border-[#00D9FF] transition-colors"
-                            placeholder="Acme Inc."
-                            required
-                          />
-                        </div>
-                      </div>
-                    </>
-                  )}
-
                   <div>
-                    <label className="block text-xs text-[#B0BEC5] mb-2 ml-1">
-                      {mode === 'signup' ? 'Company email' : 'Email'}
-                    </label>
+                    <label className="block text-xs text-[#B0BEC5] mb-2 ml-1">Email</label>
                     <div className="relative">
                       <Mail className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-[#B0BEC5]" />
                       <input
@@ -366,15 +203,13 @@ export function AuthScreen({ mode, onToggleMode }: AuthScreenProps) {
                   </div>
 
                   <div>
-                    <label className="block text-xs text-[#B0BEC5] mb-2 ml-1">
-                      {mode === 'signup' ? 'Account password' : 'Password'}
-                    </label>
+                    <label className="block text-xs text-[#B0BEC5] mb-2 ml-1">Password</label>
                     <div className="relative">
                       <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-[#B0BEC5]" />
                       <input
                         type={showPassword ? 'text' : 'password'}
                         value={password}
-                        onChange={(e) => handlePasswordChange(e.target.value)}
+                        onChange={(e) => setPassword(e.target.value)}
                         className="w-full bg-[#1E2A3A] border border-white/10 rounded-xl pl-12 pr-12 py-3.5 text-white placeholder-[#B0BEC5]/50 focus:outline-none focus:border-[#00D9FF] transition-colors"
                         placeholder="••••••••"
                         required
@@ -391,51 +226,30 @@ export function AuthScreen({ mode, onToggleMode }: AuthScreenProps) {
                         )}
                       </button>
                     </div>
-                    {mode === 'signup' && password && (
-                      <div className="mt-2">
-                        <div className="flex items-center justify-between mb-1">
-                          <span className="text-xs text-[#B0BEC5]">Password strength</span>
-                          <span className="text-xs" style={{ color: getStrengthColor() }}>
-                            {getStrengthLabel()}
-                          </span>
-                        </div>
-                        <div className="h-1.5 bg-[#1E2A3A] rounded-full overflow-hidden">
-                          <motion.div
-                            className="h-full rounded-full"
-                            style={{ backgroundColor: getStrengthColor() }}
-                            initial={{ width: 0 }}
-                            animate={{ width: `${passwordStrength}%` }}
-                            transition={{ duration: 0.3 }}
-                          />
-                        </div>
-                      </div>
-                    )}
                   </div>
 
-                  {mode === 'signin' && (
-                    <div className="flex items-center justify-between">
-                      <label className="flex items-center gap-2 cursor-pointer group">
-                        <input
-                          type="checkbox"
-                          className="w-4 h-4 rounded border-white/10 bg-[#1E2A3A] text-[#00D9FF] focus:ring-[#00D9FF] focus:ring-offset-0"
-                        />
-                        <span className="text-sm text-[#B0BEC5] group-hover:text-white transition-colors">
-                          Remember me
-                        </span>
-                      </label>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          clearError();
-                          setForgotEmail(email);
-                          setShowForgotPassword(true);
-                        }}
-                        className="text-sm text-[#00D9FF] hover:underline"
-                      >
-                        Forgot password?
-                      </button>
-                    </div>
-                  )}
+                  <div className="flex items-center justify-between">
+                    <label className="flex items-center gap-2 cursor-pointer group">
+                      <input
+                        type="checkbox"
+                        className="w-4 h-4 rounded border-white/10 bg-[#1E2A3A] text-[#00D9FF] focus:ring-[#00D9FF] focus:ring-offset-0"
+                      />
+                      <span className="text-sm text-[#B0BEC5] group-hover:text-white transition-colors">
+                        Remember me
+                      </span>
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        clearError();
+                        setForgotEmail(email);
+                        setShowForgotPassword(true);
+                      }}
+                      className="text-sm text-[#00D9FF] hover:underline"
+                    >
+                      Forgot password?
+                    </button>
+                  </div>
 
                   <motion.button
                     type="submit"
@@ -444,13 +258,7 @@ export function AuthScreen({ mode, onToggleMode }: AuthScreenProps) {
                     whileHover={!(loading || submitting) ? { scale: 1.02 } : undefined}
                     whileTap={!(loading || submitting) ? { scale: 0.98 } : undefined}
                   >
-                    <span>
-                      {submitting
-                        ? 'Please wait…'
-                        : mode === 'signup'
-                          ? 'Get Started Free'
-                          : 'Sign In'}
-                    </span>
+                    <span>{submitting ? 'Please wait…' : 'Sign In'}</span>
                     {!submitting && (
                       <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
                     )}
@@ -459,15 +267,8 @@ export function AuthScreen({ mode, onToggleMode }: AuthScreenProps) {
 
                 <div className="mt-6 text-center">
                   <span className="text-sm text-[#B0BEC5]">
-                    {mode === 'signup' ? 'Already have an account?' : 'New here?'}
-                  </span>{' '}
-                  <button
-                    type="button"
-                    onClick={onToggleMode}
-                    className="text-sm text-[#00D9FF] hover:underline font-semibold"
-                  >
-                    {mode === 'signup' ? 'Sign In' : 'Create Account'}
-                  </button>
+                    New here? Ask your team owner or admin for an invite link.
+                  </span>
                 </div>
               </>
             )}

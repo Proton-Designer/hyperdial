@@ -34,6 +34,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { useOrg } from '@/contexts/OrgContext';
 
 const CATEGORIES = ['All', 'Cold', 'Warm', 'Follow Up', 'Voicemail', 'Booked'] as const;
 const CONTACT_STATUSES = ['All', 'No Contact', 'Contacted'] as const;
@@ -45,6 +46,11 @@ function contactDisplayName(c: Contact): string {
 }
 
 export function Contacts() {
+  const { role } = useOrg();
+  // TASK-L4 / UI-4: agents get a read-only contacts UI -- import/add/edit/delete/bulk actions are
+  // owner/admin only. Row-level RLS already scopes which contacts an agent sees; this only hides
+  // the management affordances for whichever contacts they can see.
+  const canManage = role === 'owner' || role === 'admin';
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
@@ -161,56 +167,58 @@ export function Contacts() {
           <p className="text-[#B0BEC5]">Manage your contact database</p>
         </div>
 
-        <div className="flex gap-3">
-          {lastGhlImport && (
+        {canManage && (
+          <div className="flex gap-3">
+            {lastGhlImport && (
+              <motion.button
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
+                onClick={() => {
+                  setGhlModalAutoSubmit(true);
+                  setGhlModalOpen(true);
+                }}
+                title={`Re-sync "${lastGhlImport.value}" (${lastGhlImport.mode === 'tag' ? 'by tag' : 'by search'})`}
+                className="flex items-center gap-2 px-5 py-3 bg-transparent border-2 border-white/10 rounded-xl text-[#B0BEC5] font-semibold hover:bg-white/5 transition-all"
+              >
+                <RefreshCw className="w-5 h-5" />
+                Re-sync
+              </motion.button>
+            )}
+
             <motion.button
               whileHover={{ scale: 1.05 }}
               whileTap={{ scale: 0.95 }}
               onClick={() => {
-                setGhlModalAutoSubmit(true);
+                setGhlModalAutoSubmit(false);
                 setGhlModalOpen(true);
               }}
-              title={`Re-sync "${lastGhlImport.value}" (${lastGhlImport.mode === 'tag' ? 'by tag' : 'by search'})`}
-              className="flex items-center gap-2 px-5 py-3 bg-transparent border-2 border-white/10 rounded-xl text-[#B0BEC5] font-semibold hover:bg-white/5 transition-all"
+              className="flex items-center gap-2 px-5 py-3 bg-transparent border-2 border-[#00D9FF] rounded-xl text-[#00D9FF] font-semibold hover:bg-[#00D9FF]/10 transition-all"
             >
-              <RefreshCw className="w-5 h-5" />
-              Re-sync
+              <Download className="w-5 h-5" />
+              Import from GHL
             </motion.button>
-          )}
 
-          <motion.button
-            whileHover={{ scale: 1.05 }}
-            whileTap={{ scale: 0.95 }}
-            onClick={() => {
-              setGhlModalAutoSubmit(false);
-              setGhlModalOpen(true);
-            }}
-            className="flex items-center gap-2 px-5 py-3 bg-transparent border-2 border-[#00D9FF] rounded-xl text-[#00D9FF] font-semibold hover:bg-[#00D9FF]/10 transition-all"
-          >
-            <Download className="w-5 h-5" />
-            Import from GHL
-          </motion.button>
+            <motion.button
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+              onClick={() => setImportModalOpen(true)}
+              className="flex items-center gap-2 px-5 py-3 bg-transparent border-2 border-[#00D9FF] rounded-xl text-[#00D9FF] font-semibold hover:bg-[#00D9FF]/10 transition-all"
+            >
+              <Upload className="w-5 h-5" />
+              Import
+            </motion.button>
 
-          <motion.button
-            whileHover={{ scale: 1.05 }}
-            whileTap={{ scale: 0.95 }}
-            onClick={() => setImportModalOpen(true)}
-            className="flex items-center gap-2 px-5 py-3 bg-transparent border-2 border-[#00D9FF] rounded-xl text-[#00D9FF] font-semibold hover:bg-[#00D9FF]/10 transition-all"
-          >
-            <Upload className="w-5 h-5" />
-            Import
-          </motion.button>
-
-          <motion.button
-            whileHover={{ scale: 1.05 }}
-            whileTap={{ scale: 0.95 }}
-            onClick={() => setAddModalOpen(true)}
-            className="flex items-center gap-2 px-5 py-3 bg-gradient-to-r from-[#00D9FF] to-[#0066FF] rounded-xl text-white font-semibold shadow-[0_4px_24px_rgba(0,217,255,0.3)] hover:shadow-[0_6px_32px_rgba(0,217,255,0.4)] transition-all"
-          >
-            <Plus className="w-5 h-5" />
-            Add Contact
-          </motion.button>
-        </div>
+            <motion.button
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+              onClick={() => setAddModalOpen(true)}
+              className="flex items-center gap-2 px-5 py-3 bg-gradient-to-r from-[#00D9FF] to-[#0066FF] rounded-xl text-white font-semibold shadow-[0_4px_24px_rgba(0,217,255,0.3)] hover:shadow-[0_6px_32px_rgba(0,217,255,0.4)] transition-all"
+            >
+              <Plus className="w-5 h-5" />
+              Add Contact
+            </motion.button>
+          </div>
+        )}
       </div>
 
       {/* Filters */}
@@ -262,7 +270,7 @@ export function Contacts() {
         </div>
       </div>
 
-      {selectedIds.size > 0 && (
+      {canManage && selectedIds.size > 0 && (
         <div className="flex items-center gap-4 mb-4 px-2 py-2 rounded-xl bg-[#1E2A3A]/80 border border-white/10">
           <span className="text-[#B0BEC5] text-sm">{selectedIds.size} selected</span>
           <button
@@ -291,7 +299,7 @@ export function Contacts() {
         </div>
       ) : (
         <div className="space-y-3">
-          {paginatedContacts.length > 0 && (
+          {canManage && paginatedContacts.length > 0 && (
             <div className="flex items-center gap-3 px-2 pb-1">
               <label className="flex items-center gap-2 cursor-pointer text-sm text-[#B0BEC5]">
                 <input
@@ -335,13 +343,15 @@ export function Contacts() {
                 className="bg-[#1A2332]/60 backdrop-blur-xl rounded-2xl p-6 border border-white/5 hover:border-[#00D9FF]/30 shadow-[0_4px_24px_rgba(0,102,255,0.15)] hover:shadow-[0_8px_32px_rgba(0,102,255,0.25)] transition-all group cursor-pointer"
               >
                 <div className="flex items-center gap-4">
-                  <input
-                    type="checkbox"
-                    checked={isSelected}
-                    onChange={() => toggleSelect(contact.id)}
-                    onClick={(e) => e.stopPropagation()}
-                    className="rounded border-white/20 bg-[#1E2A3A] text-[#00D9FF] focus:ring-[#00D9FF] flex-shrink-0"
-                  />
+                  {canManage && (
+                    <input
+                      type="checkbox"
+                      checked={isSelected}
+                      onChange={() => toggleSelect(contact.id)}
+                      onClick={(e) => e.stopPropagation()}
+                      className="rounded border-white/20 bg-[#1E2A3A] text-[#00D9FF] focus:ring-[#00D9FF] flex-shrink-0"
+                    />
+                  )}
                   <div className="relative flex-shrink-0">
                     <div className="w-16 h-16 rounded-full bg-gradient-to-br from-[#00D9FF] to-[#0066FF] flex items-center justify-center text-white text-xl font-bold">
                       {initials}
@@ -431,32 +441,34 @@ export function Contacts() {
                         <Phone className="w-4 h-4" />
                         Call
                       </motion.button>
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <button
-                            onClick={(e) => e.stopPropagation()}
-                            className="w-10 h-10 rounded-lg bg-[#1E2A3A] hover:bg-[#252F3E] flex items-center justify-center text-[#B0BEC5] hover:text-white transition-all"
+                      {canManage && (
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <button
+                              onClick={(e) => e.stopPropagation()}
+                              className="w-10 h-10 rounded-lg bg-[#1E2A3A] hover:bg-[#252F3E] flex items-center justify-center text-[#B0BEC5] hover:text-white transition-all"
+                            >
+                              <MoreVertical className="w-5 h-5" />
+                            </button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent
+                            align="end"
+                            className="bg-[#1E2A3A] border-white/10 text-white"
                           >
-                            <MoreVertical className="w-5 h-5" />
-                          </button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent
-                          align="end"
-                          className="bg-[#1E2A3A] border-white/10 text-white"
-                        >
-                          <DropdownMenuItem
-                            variant="destructive"
-                            onClick={(e) =>
-                              handleDeleteOne(e as unknown as React.MouseEvent, contact.id)
-                            }
-                            disabled={deleting}
-                            className="focus:bg-red-500/20 focus:text-red-400"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                            Delete
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
+                            <DropdownMenuItem
+                              variant="destructive"
+                              onClick={(e) =>
+                                handleDeleteOne(e as unknown as React.MouseEvent, contact.id)
+                              }
+                              disabled={deleting}
+                              className="focus:bg-red-500/20 focus:text-red-400"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                              Delete
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      )}
                     </div>
                   </div>
                 </div>

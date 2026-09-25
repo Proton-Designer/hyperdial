@@ -19,7 +19,6 @@ function clearInviteTokenFromUrl() {
 
 function AppContent() {
   const { user, loading, passwordRecovery } = useAuth();
-  const [authMode, setAuthMode] = useState<'signin' | 'signup'>('signup');
   const [inviteToken, setInviteToken] = useState<string | null>(() => getInviteTokenFromUrl());
 
   if (loading) {
@@ -48,18 +47,7 @@ function AppContent() {
     );
   }
 
-  return (
-    <PhoneNumbersProvider>
-      {!user ? (
-        <AuthScreen
-          mode={authMode}
-          onToggleMode={() => setAuthMode((m) => (m === 'signin' ? 'signup' : 'signin'))}
-        />
-      ) : (
-        <MainApp />
-      )}
-    </PhoneNumbersProvider>
-  );
+  return <PhoneNumbersProvider>{!user ? <AuthScreen /> : <MainApp />}</PhoneNumbersProvider>;
 }
 
 export default function App() {
