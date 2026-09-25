@@ -34,6 +34,7 @@ import {
   startSession,
   reconnectAgentLeg,
   processTelnyxDialerEvent,
+  pauseSession,
   type RawTelnyxEvent,
 } from './dialer-engine.ts';
 import type { DialClientStateKind } from './client-state.ts';
@@ -160,6 +161,17 @@ class FakeQuery implements PromiseLike<{ data: unknown; error: null }> {
 
 const FAKE_TELNYX_KEY = 'fake-telnyx-key';
 
+/** Must track exactly the case-when arms in transition_session's real SQL definition
+ *  (20260924000800_dialer_rpcs.sql + the 20260925005200 fix-forward for
+ *  paused_agent_lost_from). See the M4 comment at this constant's one use site below. */
+const TRANSITION_SESSION_FIELDS = [
+  'agent_leg_id',
+  'active_leg_id',
+  'conference_id',
+  'ended_at',
+  'paused_agent_lost_from',
+];
+
 function rpc(
   db: FakeDb,
   name: string,
@@ -251,7 +263,26 @@ function rpc(
       const from = session.state as string;
       const to = args.p_new_state as string;
       session.state = to;
-      Object.assign(session, (args.p_fields as Row | undefined) ?? {});
+      // Review fix (M4): the real SQL function (20260924000800 + the 20260925005200
+      // fix-forward) only ever writes this exact allowlist of columns -- anything else in
+      // p_fields is silently ignored by Postgres's `case when p_fields ? 'x' then ...`. The
+      // old blind `Object.assign` here accepted ANY key, which is exactly how M4 (engine code
+      // sending paused_agent_lost_from before the SQL function knew about it) went unnoticed
+      // by every test in this file. Throwing on an unrecognized key means a future field added
+      // to the engine's p_fields without a matching SQL migration + allowlist update fails a
+      // test immediately instead of silently no-op'ing in prod.
+      const fields = (args.p_fields as Row | undefined) ?? {};
+      for (const key of Object.keys(fields)) {
+        if (!TRANSITION_SESSION_FIELDS.includes(key)) {
+          throw new Error(
+            `fake transition_session: unrecognized p_fields key '${key}' -- the real SQL ` +
+              `function does not write it either; add it to both if that's intentional`
+          );
+        }
+      }
+      for (const key of TRANSITION_SESSION_FIELDS) {
+        if (key in fields) session[key] = fields[key];
+      }
       db.sessionTransitions.push({ from, to });
       return { data: true, error: null };
     }
@@ -940,6 +971,206 @@ Deno.test(
         createConferenceRequests.length,
         2,
         'Go Readys own conference, plus exactly one fallback create after the failed join'
+      );
+    } finally {
+      restoreFetch();
+    }
+  }
+);
+
+Deno.test(
+  'dialer-engine re-review fix M4: paused_agent_lost_from actually persists through the real transition_session field list, so Reconnect from a manual pause returns to paused',
+  async () => {
+    const db = new FakeDb();
+    const server = new FakeTelnyxServer();
+    const restoreFetch = stubTelnyxFetch(server);
+    const supabase = createFakeSupabase(db);
+    const { orgId, campaignId, agentId } = seedFixtures(db);
+    try {
+      const { sessionId } = await startSession(supabase, {
+        orgId,
+        campaignId,
+        agentId,
+        lines: 3,
+        amdMode: 'off',
+      });
+      const agentLeg1 = [...db.table('call_legs').values()].find((l) => l.kind === 'agent')!;
+      await processTelnyxDialerEvent(
+        supabase,
+        agentEvent(
+          orgId,
+          sessionId,
+          agentLeg1.id as string,
+          agentLeg1.call_control_id as string,
+          'call.answered'
+        )
+      );
+      assertEquals(db.table('dial_sessions').get(sessionId)!.state, 'dialing');
+
+      const paused = await pauseSession(supabase, orgId, sessionId);
+      assertEquals(paused, true);
+      assertEquals(db.table('dial_sessions').get(sessionId)!.state, 'paused');
+
+      await processTelnyxDialerEvent(
+        supabase,
+        agentEvent(
+          orgId,
+          sessionId,
+          agentLeg1.id as string,
+          agentLeg1.call_control_id as string,
+          'call.hangup',
+          { hangup_cause: 'normal_clearing' }
+        )
+      );
+      const sessionAfterLost = db.table('dial_sessions').get(sessionId)!;
+      assertEquals(sessionAfterLost.state, 'paused_agent_lost');
+      // The bug: before the migration + fake fix, this was always silently dropped (null).
+      assertEquals(
+        sessionAfterLost.paused_agent_lost_from,
+        'paused',
+        'the pre-loss state must actually be persisted, not silently dropped'
+      );
+
+      const reconnectResult = await reconnectAgentLeg(supabase, orgId, sessionId);
+      assertEquals(reconnectResult.ok, true);
+      const agentLeg2 = [...db.table('call_legs').values()].find(
+        (l) => l.kind === 'agent' && l.id !== agentLeg1.id
+      )!;
+      await processTelnyxDialerEvent(
+        supabase,
+        agentEvent(
+          orgId,
+          sessionId,
+          agentLeg2.id as string,
+          agentLeg2.call_control_id as string,
+          'call.answered'
+        )
+      );
+
+      // Without the fix this resumes dialing (overriding the intern's own Pause) -- the exact
+      // regression the re-reviewer flagged as "not effective in prod".
+      assertEquals(
+        db.table('dial_sessions').get(sessionId)!.state,
+        'paused',
+        'Reconnect must restore the manual pause, not silently resume dialing'
+      );
+      assertEquals(db.table('dial_sessions').get(sessionId)!.paused_agent_lost_from, null);
+    } finally {
+      restoreFetch();
+    }
+  }
+);
+
+Deno.test(
+  'dialer-engine re-review fix (minor): a failed conference join with a live claimed contact does NOT fork a second conference',
+  async () => {
+    const db = new FakeDb();
+    const server = new FakeTelnyxServer();
+    const restoreFetch = stubTelnyxFetch(server);
+    const supabase = createFakeSupabase(db);
+    const { orgId, campaignId, agentId } = seedFixtures(db);
+    try {
+      const { sessionId } = await startSession(supabase, {
+        orgId,
+        campaignId,
+        agentId,
+        lines: 1,
+        amdMode: 'off',
+      });
+      const agentLeg1 = [...db.table('call_legs').values()].find((l) => l.kind === 'agent')!;
+      await processTelnyxDialerEvent(
+        supabase,
+        agentEvent(
+          orgId,
+          sessionId,
+          agentLeg1.id as string,
+          agentLeg1.call_control_id as string,
+          'call.answered'
+        )
+      );
+      const contactLeg = [...db.table('call_legs').values()].find((l) => l.kind === 'contact')!;
+      await processTelnyxDialerEvent(
+        supabase,
+        contactEvent(
+          orgId,
+          sessionId,
+          contactLeg.id as string,
+          contactLeg.call_control_id as string,
+          'call.answered'
+        )
+      );
+      const sessionOnCall = db.table('dial_sessions').get(sessionId)!;
+      assertEquals(sessionOnCall.state, 'on_call');
+      assertEquals(sessionOnCall.active_leg_id, contactLeg.id);
+      const firstConferenceId = sessionOnCall.conference_id as string;
+      assertExists(firstConferenceId);
+
+      await processTelnyxDialerEvent(
+        supabase,
+        agentEvent(
+          orgId,
+          sessionId,
+          agentLeg1.id as string,
+          agentLeg1.call_control_id as string,
+          'call.hangup',
+          { hangup_cause: 'normal_clearing' }
+        )
+      );
+      assertEquals(db.table('dial_sessions').get(sessionId)!.state, 'paused_agent_lost');
+      // The task's own explicit invariant, unaffected by this fix: the live claimed contact
+      // is never touched by an agent-leg problem.
+      assertEquals(db.table('call_legs').get(contactLeg.id as string)!.state, 'claimed');
+
+      const reconnectResult = await reconnectAgentLeg(supabase, orgId, sessionId);
+      assertEquals(reconnectResult.ok, true);
+      const agentLeg2 = [...db.table('call_legs').values()].find(
+        (l) => l.kind === 'agent' && l.id !== agentLeg1.id
+      )!;
+
+      server.requests.length = 0;
+      server.failNextConferenceJoin = true;
+      await processTelnyxDialerEvent(
+        supabase,
+        agentEvent(
+          orgId,
+          sessionId,
+          agentLeg2.id as string,
+          agentLeg2.call_control_id as string,
+          'call.answered'
+        )
+      );
+
+      const sessionAfter = db.table('dial_sessions').get(sessionId)!;
+      assertEquals(
+        sessionAfter.state,
+        'paused_agent_lost',
+        'must NOT cascade past paused_agent_lost -- there is nothing confirmed to cascade into'
+      );
+      assertEquals(
+        sessionAfter.conference_id,
+        firstConferenceId,
+        'must not fork a second conference while the customer is still live in the first'
+      );
+      assertEquals(
+        server.requests.some((r) => r.path === '/v2/conferences'),
+        false,
+        'no fallback conference create when a claimed contact is still live'
+      );
+      // hangupLeg only issues the Telnyx command (the leg's own row only flips to 'ended' once
+      // a real call.hangup webhook comes back, which this test doesn't need to simulate) --
+      // assert the command was actually sent, same technique as the existing B2 test's own
+      // hangup-command assertions elsewhere in this file.
+      assertEquals(
+        server.requests.some(
+          (r) => r.path === `/v2/calls/${agentLeg2.call_control_id}/actions/hangup`
+        ),
+        true,
+        'the reconnecting agent leg that could not confirm a conference must be hung up'
+      );
+      assertEquals(
+        db.table('call_legs').get(contactLeg.id as string)!.state,
+        'claimed',
+        'the live claimed contact must still be untouched after the aborted reconnect'
       );
     } finally {
       restoreFetch();

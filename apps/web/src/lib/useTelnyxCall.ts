@@ -97,6 +97,15 @@ export function useTelnyxCall(options: UseTelnyxCallOptions = {}) {
    *  auto-answer for" from "when the WebSocket connection was first established". */
   const optionsRef = useRef(options);
   optionsRef.current = options;
+  /** TASK-L1 re-review (L1×L5 blocker): closes the race where the server dials the agent leg
+   *  (synchronously, inside `dialer-session-start`, before the HTTP response returns) before
+   *  this hook's caller has learned the real `sessionId` to pass in. Set true for the narrow
+   *  window between "about to call startDialerSession" and "got the session id back"; while
+   *  true, ANY inbound `kind:'agent'` call is answered regardless of session match (nothing
+   *  else can plausibly be inviting this member's WebRTC credential to an agent-kind call in
+   *  that window except the start this hook's own caller just issued). Cleared as soon as the
+   *  real sessionId is known -- from then on the normal exact-match path above covers it. */
+  const expectingAgentLegRef = useRef(false);
 
   const persistAgentCallControlId = useCallback((maybeCall: unknown) => {
     if (typeof window === 'undefined') return;
@@ -142,7 +151,7 @@ export function useTelnyxCall(options: UseTelnyxCallOptions = {}) {
                 direction?: string;
                 options?: { clientState?: string; customHeaders?: unknown };
                 hangup: () => void;
-                answer: (params?: { remoteElement?: string }) => void;
+                answer: (params?: { remoteElement?: string }) => void | Promise<void>;
               };
             }) => {
               if (notification.type !== 'callUpdate' || !notification.call) return;
@@ -156,16 +165,28 @@ export function useTelnyxCall(options: UseTelnyxCallOptions = {}) {
                   const decoded = decodeAgentClientState(call.options?.clientState);
                   const headerSessionId = customHeaderSessionId(call.options?.customHeaders);
                   const matchesThisSession =
-                    Boolean(currentOptions.sessionId) &&
-                    ((decoded?.kind === 'agent' && decoded.session === currentOptions.sessionId) ||
-                      headerSessionId === currentOptions.sessionId);
+                    (Boolean(currentOptions.sessionId) &&
+                      ((decoded?.kind === 'agent' &&
+                        decoded.session === currentOptions.sessionId) ||
+                        headerSessionId === currentOptions.sessionId)) ||
+                    (decoded?.kind === 'agent' && expectingAgentLegRef.current);
                   if (matchesThisSession) {
                     inboundCallDecisionsRef.current.set(call.id, 'answered');
-                    call.answer(
-                      currentOptions.remoteElementId
-                        ? { remoteElement: currentOptions.remoteElementId }
-                        : undefined
-                    );
+                    // Review fix (mic-permission/answer gap): the SDK's answer() returns a
+                    // promise that rejects on a denied/unavailable mic -- previously neither
+                    // awaited nor caught, so a mic denial surfaced as nothing but a silent
+                    // 25s ring followed by agent-lost. Reject the call so the caller sees a
+                    // clean hangup instead of a hung invite.
+                    Promise.resolve(
+                      call.answer(
+                        currentOptions.remoteElementId
+                          ? { remoteElement: currentOptions.remoteElementId }
+                          : undefined
+                      )
+                    ).catch((err: unknown) => {
+                      setError(err instanceof Error ? err.message : String(err));
+                      call.hangup();
+                    });
                   } else {
                     // Not this session (or this hook wasn't told to expect one at all, e.g.
                     // the legacy manual dialer) -- reject. Never auto-answer a call this hook
@@ -285,6 +306,16 @@ export function useTelnyxCall(options: UseTelnyxCallOptions = {}) {
     return () => disconnect();
   }, [disconnect]);
 
+  /** See `expectingAgentLegRef`'s own comment above. Call right before `startDialerSession`;
+   *  call `endAgentLegExpectation` once the real sessionId is known (success or failure) --
+   *  the normal exact-session-match path takes over from there. */
+  const beginAgentLegExpectation = useCallback(() => {
+    expectingAgentLegRef.current = true;
+  }, []);
+  const endAgentLegExpectation = useCallback(() => {
+    expectingAgentLegRef.current = false;
+  }, []);
+
   return {
     callState,
     error,
@@ -295,5 +326,7 @@ export function useTelnyxCall(options: UseTelnyxCallOptions = {}) {
     dial,
     hangup,
     setMuted,
+    beginAgentLegExpectation,
+    endAgentLegExpectation,
   };
 }

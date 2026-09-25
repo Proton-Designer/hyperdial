@@ -1195,8 +1195,21 @@ async function ensureAgentConference(
         conferenceId: existingConferenceId,
         error: String(err),
       });
-      // Fall through: the existing conference is presumably dead. Create a fresh one rather
-      // than proceed with a stale id nothing will ever bridge into.
+      // Review fix (r2 minor): if a contact is actually claimed/live right now, it is in
+      // THIS (now presumably dead) conference -- creating a fresh one would bridge the agent
+      // into an empty conference while the customer waits alone in the old one. Fail the
+      // attempt instead (the caller hangs up the reconnecting agent leg and leaves the
+      // session recoverable) rather than splitting agent and customer across two conferences.
+      // Only safe to fall through to a fresh create when there is no live contact to strand.
+      if (session.active_leg_id) {
+        dialerLog('agent_leg_conference_fallback_skipped_live_contact', {
+          sessionId: session.id,
+          conferenceId: existingConferenceId,
+        });
+        return null;
+      }
+      // Fall through: the existing conference is presumably dead and nothing is live in it.
+      // Create a fresh one rather than proceed with a stale id nothing will ever bridge into.
     }
   }
   try {

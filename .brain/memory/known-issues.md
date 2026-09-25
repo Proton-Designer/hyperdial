@@ -628,6 +628,44 @@ agent leg existed doesn't know a new kind of row can appear, or a new state can 
 now that it does." When a task makes a previously-impossible case real, grep every consumer of
 the affected data, not just the one call site the task itself is building.
 
+## 19. TASK-L1 re-review round 2 (engine/migration/test half): 1 blocker (shared with #20), 1 major, 1 minor — fixed (2026-09-25)
+
+The SAME reviewer re-reviewed #18's fixes (`5df7d97`+`55da3ab`) and FAILed again:
+`audit/L1/review-notes-r2.md`. That review's blocker (the L1×L5 client-ownership redesign) and
+its own third MAJOR (mic-permission check) are covered under #20 (TASK-L7, the commit that
+actually redesigns the Start flow) — this entry is the engine/migration/test half, fixed and
+committed separately per the lead's "commit L1 and L7 separately if practical":
+
+- **MAJOR (M4 was not actually effective in prod)**: `transition_session`
+  (`20260924000800_dialer_rpcs.sql`) only ever wrote
+  `agent_leg_id`/`active_leg_id`/`conference_id`/`ended_at` — the `paused_agent_lost_from` key
+  #18's own M4 fix started sending in `p_fields` was silently dropped by Postgres's own
+  `case when p_fields ? 'x' then ... else x end`, so the column stayed permanently null and
+  Reconnect from a manual `paused` always resumed dialing instead. The bug went unnoticed by
+  every existing test because the FAKE Supabase client's `transition_session` used a blind
+  `Object.assign(session, p_fields)`, which happily accepted the field the real SQL function
+  didn't know about. Fixed: new migration `20260925005200` (`create or replace function`, same
+  signature/grants) adds the missing case-when arm; the fake's `Object.assign` is replaced with
+  an explicit allowlist (`TRANSITION_SESSION_FIELDS`) that throws on any unrecognized key, so a
+  future field added to the engine without a matching SQL migration fails a test immediately
+  instead of silently no-op'ing in prod. New regression test: pause → agent-lost → Reconnect →
+  still `paused` (not `dialing`).
+- **minor (`ensureAgentConference` fallback)**: a failed join against the existing conference
+  unconditionally created a fresh one, even when a contact was still `claimed`/live in the old
+  (now presumably dead) conference — splitting agent and customer across two conferences while
+  the session shows `on_call`. Fixed: the fallback-create now only runs when
+  `session.active_leg_id` is null; otherwise it fails the attempt (the caller hangs up the
+  reconnecting agent leg and leaves the session recoverable) rather than stranding the live
+  customer. New regression test confirms no second `/v2/conferences` POST and the live claimed
+  leg stays untouched.
+- **MAJOR, answer()-half only (the mic-permission-check half is #20)**: `useTelnyxCall.ts`'s
+  inbound handler called `call.answer(...)` without awaiting or catching it — a denied/
+  unavailable mic surfaced as nothing but a silent ~25s ring, then agent-lost. Fixed: the
+  promise is now awaited and any rejection hangs the call up cleanly instead.
+
+Checks: `npm run test:functions` 220 passed / 0 failed / 1 pre-existing ignored (up from 208 at
+#18); `npm run check`/`npm run build` clean.
+
 ---
 
 ## Not issues — deliberate, documented elsewhere
