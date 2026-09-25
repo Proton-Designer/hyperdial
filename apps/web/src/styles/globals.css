@@ -33,7 +33,12 @@
   --chart-3: #00e676;
   --chart-4: #ffb300;
   --chart-5: #ff3d00;
-  --radius: 0.75rem;
+  /* 6/10/14 radius scale (FE-A tokens): sm=6, md=10, lg=14. --radius stays the base every
+     shadcn rounded-sm/md/lg/xl utility derives from (see the @theme block below), so this one
+     change retunes every existing primitive (Button/Card/Input/Dialog/...) app-wide without
+     touching each file individually. rounded-2xl and other hand-written radii elsewhere in the
+     app are Tailwind's own defaults, untouched by this -- that's Part B's screen-by-screen job. */
+  --radius: 10px;
   --sidebar: #1a2332;
   --sidebar-foreground: #ffffff;
   --sidebar-primary: #0066ff;
@@ -42,6 +47,46 @@
   --sidebar-accent-foreground: #ffffff;
   --sidebar-border: rgba(255, 255, 255, 0.05);
   --sidebar-ring: #00d9ff;
+
+  /* TASK-FE-A design foundations. Additive: the shadcn tokens above are untouched (every existing
+     ui/* primitive keeps working exactly as before); these are the new semantic layer the app
+     shell and new primitives (PageHeader/StatCard/EmptyState/Button variants) are built on.
+     Screen-by-screen adoption of these is Part B's job, not this task's. */
+  --surface-0: #0a1628;
+  --surface-1: #1a2332;
+  --surface-2: #1e2a3a;
+  --surface-3: #263449;
+  --border-subtle: rgba(255, 255, 255, 0.06);
+  --border-strong: rgba(255, 255, 255, 0.14);
+  --text-primary: #ffffff;
+  --text-secondary: #b0bec5;
+  --text-muted: rgba(176, 190, 197, 0.6);
+  --accent-from: #0066ff;
+  --accent-to: #00d9ff;
+  --success: #00e676;
+  --success-soft: rgba(0, 230, 118, 0.12);
+  --warning: #ffb300;
+  --warning-soft: rgba(255, 179, 0, 0.12);
+  --danger: #ff3d00;
+  --danger-soft: rgba(255, 61, 0, 0.12);
+  --radius-app-sm: 6px;
+  --radius-app-md: 10px;
+  --radius-app-lg: 14px;
+  --shadow-app-sm: 0 1px 2px rgba(0, 0, 0, 0.24);
+  --shadow-app-md: 0 4px 16px rgba(0, 0, 0, 0.28);
+  --focus-ring: 0 0 0 2px var(--surface-0), 0 0 0 4px var(--accent-to);
+  --motion-fast: 120ms;
+  --motion-base: 200ms;
+  --motion-slow: 320ms;
+  --motion-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --motion-fast: 0ms;
+    --motion-base: 0ms;
+    --motion-slow: 0ms;
+  }
 }
 
 @theme inline {
@@ -71,10 +116,12 @@
   --color-chart-3: var(--chart-3);
   --color-chart-4: var(--chart-4);
   --color-chart-5: var(--chart-5);
-  --radius-sm: calc(var(--radius) - 4px);
-  --radius-md: calc(var(--radius) - 2px);
-  --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) + 4px);
+  /* 6/10/14, matching --radius-app-sm/md/lg above -- kept as separate literal values (not
+     calc() offsets from --radius) so they land on the exact numbers the token spec asks for. */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 18px;
   --color-sidebar: var(--sidebar);
   --color-sidebar-foreground: var(--sidebar-foreground);
   --color-sidebar-primary: var(--sidebar-primary);
@@ -83,6 +130,28 @@
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
+
+  --color-surface-0: var(--surface-0);
+  --color-surface-1: var(--surface-1);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-border-subtle: var(--border-subtle);
+  --color-border-strong: var(--border-strong);
+  --color-text-primary: var(--text-primary);
+  --color-text-secondary: var(--text-secondary);
+  --color-text-muted: var(--text-muted);
+  --color-accent-from: var(--accent-from);
+  --color-accent-to: var(--accent-to);
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --radius-app-sm: var(--radius-app-sm);
+  --radius-app-md: var(--radius-app-md);
+  --radius-app-lg: var(--radius-app-lg);
+  --ease-app: var(--motion-ease);
 }
 
 @layer base {
@@ -162,24 +231,24 @@ html {
   font-size: var(--font-size);
 }
 
-/* Custom scrollbar styles */
+/* Thin, subtle, neutral scrollbar (FE-A: the old 8px cyan-thumb scrollbar read as a template
+   accent applied to chrome, not content -- scrollbars aren't a brand surface). */
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
 }
 
 ::-webkit-scrollbar-track {
-  background: rgba(255, 255, 255, 0.05);
-  border-radius: 4px;
+  background: transparent;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #00d9ff;
-  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.14);
+  border-radius: 999px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #0066ff;
+  background: rgba(255, 255, 255, 0.24);
 }
 
 /* Selection color */
@@ -190,11 +259,56 @@ html {
 
 /* Smooth transitions */
 * {
-  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  transition-timing-function: var(--motion-ease);
 }
 
-/* Focus visible styles */
+/* Focus visible styles: 2px accent ring + an offset so it reads on any surface, not just a
+   hairline outline. */
 :focus-visible {
-  outline: 2px solid #00d9ff;
+  outline: 2px solid var(--accent-to);
   outline-offset: 2px;
+  border-radius: var(--radius-app-sm);
+}
+
+/* FE-A type scale: page title 24/600, section 16/600, body 14, meta 12 -- opt-in utility
+   classes for the new shell/primitives; existing screens' own text-* Tailwind classes are
+   untouched (Part B adopts these screen by screen). */
+.text-page-title {
+  font-size: 1.5rem; /* 24px */
+  font-weight: 600;
+  line-height: 1.25;
+  letter-spacing: -0.01em;
+}
+.text-section-title {
+  font-size: 1rem; /* 16px */
+  font-weight: 600;
+  line-height: 1.4;
+}
+.text-body {
+  font-size: 0.875rem; /* 14px */
+  line-height: 1.5;
+}
+.text-meta {
+  font-size: 0.75rem; /* 12px */
+  line-height: 1.4;
+}
+.text-metric {
+  font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Safe-area insets for the mobile bottom tab bar (FE-A). */
+.pb-safe {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+.h-safe-bottom {
+  height: env(safe-area-inset-bottom, 0px);
 }
