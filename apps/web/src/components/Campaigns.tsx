@@ -245,8 +245,14 @@ export function Campaigns({
             exit={{ opacity: 0 }}
             onClick={() => !creating && setNewCampaignOpen(false)}
             className="fixed inset-0 z-[9999] flex items-center justify-center p-4 sm:p-6 bg-black/60 backdrop-blur-sm"
-            aria-hidden
           >
+            {/* B1: `aria-hidden` used to sit on THIS wrapper, which is an ANCESTOR of the
+                `role="dialog"` panel below, not a sibling backdrop like every other modal in
+                this app -- that hid the whole dialog (despite its own aria-modal="true") from
+                every assistive technology while it was visually open and interactive. Every
+                other modal's backdrop is a sibling div, not a wrapper, which is why none of
+                them had this bug; removed here instead of restructuring, since this wrapper
+                carries no meaningful content of its own beyond positioning the dialog. */}
             <motion.div
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
