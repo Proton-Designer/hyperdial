@@ -204,11 +204,23 @@ export function TopNavigation({ activeTab = 'dashboard', onTabChange }: TopNavig
             <AnimatePresence>
               {showOrgSwitcher && (
                 <>
-                  <div
-                    className="fixed inset-0 z-40"
-                    onClick={() => setShowOrgSwitcher(false)}
-                    aria-hidden="true"
-                  />
+                  {createPortal(
+                    // Portaled to document.body, not a sibling div here: `nav` has
+                    // `backdrop-blur-xl` (a backdrop-filter), which makes it the CSS containing
+                    // block for any `position: fixed` descendant -- `inset-0` on a backdrop
+                    // nested inside `nav` resolves against nav's OWN 72px-tall box, not the
+                    // viewport, so it only ever covered the top nav strip and silently never
+                    // caught a click anywhere else in the app. Found live (B1 Phase 1): the
+                    // click-away-to-close never worked outside that strip. The sign-out confirm
+                    // dialog below already portals to document.body for the same reason (it
+                    // predates this fix) -- same technique, applied to the other 3 backdrops.
+                    <div
+                      className="fixed inset-0 z-40"
+                      onClick={() => setShowOrgSwitcher(false)}
+                      aria-hidden="true"
+                    />,
+                    document.body
+                  )}
                   <motion.div
                     initial={{ opacity: 0, y: -10 }}
                     animate={{ opacity: 1, y: 0 }}
@@ -287,11 +299,16 @@ export function TopNavigation({ activeTab = 'dashboard', onTabChange }: TopNavig
           <AnimatePresence>
             {showNotifications && (
               <>
-                <div
-                  className="fixed inset-0 z-40"
-                  onClick={() => setShowNotifications(false)}
-                  aria-hidden="true"
-                />
+                {createPortal(
+                  // See the org-switcher backdrop above for why this is portaled to
+                  // document.body rather than a plain sibling div.
+                  <div
+                    className="fixed inset-0 z-40"
+                    onClick={() => setShowNotifications(false)}
+                    aria-hidden="true"
+                  />,
+                  document.body
+                )}
                 <motion.div
                   initial={{ opacity: 0, y: -10 }}
                   animate={{ opacity: 1, y: 0 }}
@@ -380,7 +397,12 @@ export function TopNavigation({ activeTab = 'dashboard', onTabChange }: TopNavig
           <AnimatePresence>
             {showUserMenu && (
               <>
-                <div className="fixed inset-0 z-40" onClick={() => setShowUserMenu(false)} />
+                {createPortal(
+                  // See the org-switcher backdrop above for why this is portaled to
+                  // document.body rather than a plain sibling div.
+                  <div className="fixed inset-0 z-40" onClick={() => setShowUserMenu(false)} />,
+                  document.body
+                )}
                 <motion.div
                   initial={{ opacity: 0, y: -10 }}
                   animate={{ opacity: 1, y: 0 }}
