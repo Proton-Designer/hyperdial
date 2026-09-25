@@ -1175,6 +1175,17 @@ export class ActiveSessionExistsError extends Error {
   }
 }
 
+/** TASK-L1r4 round 5 (review-notes-r4.md, MAJOR): thrown when reconnectDialerSession returns
+ *  409 RECONNECT_ALREADY_IN_FLIGHT -- the caller's own auto-reconnect budget already fired once
+ *  for this drop and a reconnect for it is still in flight server-side. Callers should treat
+ *  this one specifically as expected/silent, not an error to show the intern. */
+export class ReconnectAlreadyInFlightError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ReconnectAlreadyInFlightError';
+  }
+}
+
 export async function startDialerSession(args: {
   campaignId: string;
   /** Overrides the campaign's own default `lines` (1-7) for this session only. */
@@ -1238,7 +1249,14 @@ export async function reconnectDialerSession(
     body: JSON.stringify({ sessionId }),
   });
   const data = (await res.json()) as { error?: string; code?: string; status?: string };
-  if (!res.ok) throw new Error(data.error || 'Failed to reconnect dialer session');
+  if (!res.ok) {
+    if (data.code === 'RECONNECT_ALREADY_IN_FLIGHT') {
+      throw new ReconnectAlreadyInFlightError(
+        data.error || 'A reconnect is already in progress for this session.'
+      );
+    }
+    throw new Error(data.error || 'Failed to reconnect dialer session');
+  }
   return data as { status: 'reconnecting' };
 }
 

@@ -840,6 +840,64 @@ SQL-level test in this run -- could not be executed; local Docker is retired) an
 Telnyx `GET /calls/{id}` response shape against a real call (only verified against spec3.json's
 schema, never a live request).
 
+## 23. TASK-L1r4 round 4 review (review-notes-r4.md): 1 major + 2 required minors -- fixed (2026-09-25, round 5, eng1)
+
+Round-4 review of `ca0e705` (#21) PASSed with nits: campaign-403, Open-it, and the always-mounted
+Dialer were all confirmed correct, but found one new MAJOR the always-mounted-Dialer fix itself
+exposed, plus 2 minors it upgraded from deferred to required.
+
+- **MAJOR (auto-reconnect double-fires)**: `reconnectAgentLeg` (`dialer-engine.ts`) relinks
+  `dial_sessions.agent_leg_id` to the NEW leg at INSERT time, not once it answers -- #21's own
+  fix comment had this backwards. So the poll right after calling reconnect still reads
+  `state === 'paused_agent_lost'` (that only flips once the new leg answers) but a DIFFERENT
+  `agent_leg_id`, and the id-keyed once-guard saw a "new" id and fired a SECOND reconnect
+  immediately -- hitting the server's own re-entrancy guard (409
+  `RECONNECT_ALREADY_IN_FLIGHT`, an error toast on every single drop), or dialing a genuine
+  third leg if the second failed fast enough (a ring loop bounded only by leg-failure speed).
+  Fixed with two independent changes in `Dialer.tsx`: (1) only auto-fire when the CURRENTLY
+  referenced agent leg's own `state` is `'ended'` (true for the just-lost leg, false for one
+  this same effect just redialed, regardless of its different id); (2) a per-drop attempt
+  budget (`autoReconnectAttemptedRef`, a plain boolean cleared only when the session actually
+  LEAVES `paused_agent_lost`) instead of a per-leg-id one -- exactly one automatic attempt per
+  drop, the manual Reconnect button is the only way to retry after that. `reconnectDialerSession`
+  (`api.ts`) also now throws a typed `ReconnectAlreadyInFlightError` for the 409 specifically, so
+  `handleReconnectAgentLine` can swallow that one case silently instead of alarming the intern
+  for an expected race.
+- **minor (`useTelnyxCall.ts` connect() error cleanup + timeout)**: the error path nulled
+  `clientRef` without calling `client.disconnect()` first -- if the failed client's socket
+  somehow survived (e.g. an error right as the WebSocket was still negotiating), a retry left
+  TWO registered clients sharing one notification handler. Also had no timeout at all: a client
+  that never fires `telnyx.ready` OR `telnyx.error` pinned `connectPromiseRef` forever, hanging
+  every later `connect()` (including a fresh Start). Fixed: `pendingClient?.disconnect()` before
+  clearing the ref; a 15s connect timeout (`CONNECT_TIMEOUT_MS`) with a `settled` guard so a
+  late `telnyx.ready`/`telnyx.error` after the timeout already fired is a no-op, not a stale
+  state update.
+- **Multi-tab lock, deferred in #21, now REQUIRED**: the always-mounted Dialer (#21's own M3 fix)
+  means EVERY open browser tab now proactively registers the agent's WebRTC line whenever a
+  parallel session is active, not just the one the intern happens to be looking at -- a second
+  tab could answer the same agent-kind inbound call. New `apps/web/src/lib/useSingleTabLock.ts`:
+  a BroadcastChannel (near-instant handoff) + localStorage-heartbeat (durable source of truth
+  for a late-joining tab, and the fallback that lets a new tab reclaim the lock if the owner
+  tab's process crashed without running its `beforeunload` cleanup) single-owner election.
+  `Dialer.tsx` gates the proactive-connect effect, the auto-reconnect effect, `handleDial`, and
+  `handleStartSessionForCampaign` on `isOwner`, and replaces its ENTIRE render with a "HyperDial
+  is open in another tab" message when another tab already holds the lock -- the non-owner tab
+  never even renders the Start button or manual dialer, not just guards their handlers.
+  Hands-on verified in a temporary (not committed) Playwright session with two real tabs against
+  the same origin: tab 1 claimed ownership immediately; tab 2 opened to the same URL correctly
+  read `isOwner:false, otherTabOpen:true`; closing tab 1 (firing its real `beforeunload`)
+  handed ownership to tab 2 within one heartbeat tick.
+- **Decided by the lead, no change**: the `WrapUpModal` portal covering every tab during
+  `wrap_up` is intentional (wrap-up is mandatory); the Dialer registering the line at app load
+  (before the intern ever opens the Dialer tab) is acceptable.
+
+Checks: `npm run check`/`npm run build` clean (0 errors; only pre-existing warnings).
+`npm run test:functions`/`deno test --allow-all supabase/functions/_shared`: unaffected, this
+round touched no `_shared`/Deno files at all (frontend + `api.ts` only). NEEDS-LIVE-VERIFY (no
+real Telnyx/multi-machine test in this environment): the reconnect fix against a real
+agent-lost-while-reconnecting sequence, and the tab lock against two genuinely separate browser
+processes/machines rather than two tabs of the same automated browser session.
+
 ---
 
 ## Not issues — deliberate, documented elsewhere

@@ -18,10 +18,12 @@ import {
   listCampaigns,
   startDialerSession,
   ActiveSessionExistsError,
+  ReconnectAlreadyInFlightError,
   type CampaignWithStats,
 } from '@/lib/api';
 import { playConnectChime } from '@/lib/dialerSoundCue';
 import { consumePendingStartCampaignId } from '@/lib/dialerLaunchIntent';
+import { useSingleTabLock } from '@/lib/useSingleTabLock';
 
 const REMOTE_AUDIO_ID = 'telnyx-remote-audio';
 
@@ -69,6 +71,12 @@ export function Dialer({
   const effectiveCampaignId = parallelCampaignId ?? restoredParallelContext?.campaignId ?? null;
   const parallelSession = useDialerSession(effectiveSessionId);
 
+  // Review fix (L1r4 round 5, review-notes-r4.md, now REQUIRED): Dialer is permanently mounted
+  // (TASK-L1r4 M3), so a second open browser tab would otherwise ALSO register a WebRTC client
+  // for the same agent -- see useSingleTabLock's own header comment. Every place below that
+  // registers the client or could trigger a real call must check `isOwner`.
+  const { isOwner: isAgentLineOwner, otherTabOpen } = useSingleTabLock();
+
   // TASK-L1: sessionId (when a parallel session exists) makes this SAME hook instance also
   // auto-answer the agent leg's inbound call for that session -- see useTelnyxCall.ts's own
   // header comment. Outside parallel mode (manual single-line dialer), sessionId is undefined
@@ -99,17 +107,23 @@ export function Dialer({
   // inbound call actually answerable, not just a nice-to-have.
   useEffect(() => {
     if (!effectiveSessionId) return;
+    if (!isAgentLineOwner) return;
     if (agentLineReady || agentLineConnecting) return;
     connectAgentLine().catch(() => {
       // Surfaced via useTelnyxCall's own `error` state; DialerStateBanner renders it.
     });
-  }, [effectiveSessionId, agentLineReady, agentLineConnecting, connectAgentLine]);
+  }, [effectiveSessionId, isAgentLineOwner, agentLineReady, agentLineConnecting, connectAgentLine]);
 
   const handleReconnectAgentLine = useCallback(async () => {
     try {
       await parallelSession.reconnect();
       toast.success('Reconnecting your line…');
     } catch (e) {
+      // Review fix (L1r4 round 5, review-notes-r4.md): a reconnect the auto-reconnect effect
+      // below already fired for this same drop is expected to race the poll and occasionally
+      // get a 409 here -- not a real failure, so don't alarm the intern with an error toast for
+      // it specifically. Any OTHER failure still surfaces normally.
+      if (e instanceof ReconnectAlreadyInFlightError) return;
       toast.error(e instanceof Error ? e.message : 'Failed to reconnect');
     }
   }, [parallelSession.reconnect]);
@@ -153,31 +167,53 @@ export function Dialer({
   // automatically instead of waiting for the intern to notice and click the manual Reconnect
   // button (still rendered by DialerStateBanner as the fallback/retry path).
   //
-  // Review fix (L1 round-3 review-notes-r3.md, MAJOR 2): this used to fire as soon as the
+  // Review fix (L1 round-3, review-notes-r3.md, MAJOR 2): this used to fire as soon as the
   // polled session read paused_agent_lost, with no check that the WebRTC client was actually
-  // registered yet -- right after a page refresh the connect effect above is still in flight,
-  // so the reconnect's INVITE went to a not-yet-registered credential and the new leg failed
-  // immediately. Now gated on `agentLineReady`: the effect still runs on every session/readiness
-  // change, but does nothing until the line is actually up, and re-fires the moment it becomes
-  // ready if the session is still (or newly) in paused_agent_lost at that point.
+  // registered yet. Now gated on `agentLineReady`.
   //
-  // Also: the once-guard is now keyed on the LOST agent leg's own id (`session.agent_leg_id`,
-  // which still points at the just-lost leg while paused_agent_lost -- a successful Reconnect
-  // relinks it to the new leg once that leg answers), not the session id. Keying on session id
-  // meant a SECOND agent-leg drop later in the same page visit (same session, same id) was
-  // silently ignored forever -- the ref already "remembered" this session from the first drop.
-  // Keying on the leg id instead means each distinct drop gets exactly one auto-reconnect.
-  const autoReconnectAttemptedLegIdRef = useRef<string | null>(null);
+  // Review fix (L1r4 round 5, review-notes-r4.md, MAJOR): the round-3 fix's once-guard was
+  // keyed on `session.agent_leg_id` alone -- but `reconnectAgentLeg` (dialer-engine.ts) relinks
+  // `agent_leg_id` to the NEW leg at INSERT time, not once it answers (the round-3 fix's own
+  // comment had this backwards). So the very next poll after calling reconnect still reads
+  // `state === 'paused_agent_lost'` (that only changes once the new leg answers) but a DIFFERENT
+  // `agent_leg_id` (the new leg) -- the old guard saw a "new" id and fired a SECOND reconnect
+  // immediately, hitting the server's own re-entrancy check (409 RECONNECT_ALREADY_IN_FLIGHT,
+  // an error toast on every single drop), or worse, actually dialing a real third leg if the
+  // second one failed fast enough (a ring loop bounded only by how fast legs fail).
+  //
+  // Fixed with two independent changes:
+  // 1. Only auto-fire when the CURRENTLY-referenced agent leg's own state is 'ended' -- true for
+  //    the just-lost leg (that's what "lost" means), but false for a leg this same effect just
+  //    redialed (which starts 'initiated'/dialing, not 'ended') even though its DIFFERENT id
+  //    would have fooled the old id-keyed guard.
+  // 2. A per-drop attempt budget, not a per-leg-id one: `autoReconnectAttemptedRef` is set once
+  //    an attempt fires and only clears when the session actually LEAVES paused_agent_lost
+  //    (rearming for the next genuinely new drop) -- so even a leg that ends quickly after a
+  //    failed reconnect attempt does not trigger a second automatic retry; the manual Reconnect
+  //    button (still rendered by DialerStateBanner) is the only way to try again after that.
+  const autoReconnectAttemptedRef = useRef(false);
   useEffect(() => {
     const session = parallelSession.session;
-    if (!session || session.state !== 'paused_agent_lost') return;
+    if (!session || session.state !== 'paused_agent_lost') {
+      autoReconnectAttemptedRef.current = false;
+      return;
+    }
+    if (!isAgentLineOwner) return;
     if (!agentLineReady) return;
-    const lostAgentLegId = session.agent_leg_id;
-    if (!lostAgentLegId) return;
-    if (autoReconnectAttemptedLegIdRef.current === lostAgentLegId) return;
-    autoReconnectAttemptedLegIdRef.current = lostAgentLegId;
+    if (autoReconnectAttemptedRef.current) return;
+    const currentAgentLeg = parallelSession.legs.find(
+      (l) => l.kind === 'agent' && l.id === session.agent_leg_id
+    );
+    if (currentAgentLeg?.state !== 'ended') return;
+    autoReconnectAttemptedRef.current = true;
     void handleReconnectAgentLine();
-  }, [parallelSession.session, agentLineReady, handleReconnectAgentLine]);
+  }, [
+    parallelSession.session,
+    parallelSession.legs,
+    isAgentLineOwner,
+    agentLineReady,
+    handleReconnectAgentLine,
+  ]);
 
   // Runs after `effectiveSessionId` (and therefore this hook's own `sessionId` option) has
   // actually committed in a render -- the point at which the exact-match path in
@@ -222,6 +258,13 @@ export function Dialer({
     async (campaign: CampaignWithStats) => {
       if (campaign.total_contacts === 0) {
         toast.error('Add contacts before starting a session');
+        return;
+      }
+      // Defense-in-depth (the Start button itself is not rendered for a non-owner tab, see the
+      // early return in this component's JSX below) -- never register a client or dial from a
+      // tab that isn't the single-tab-lock owner, even if this were somehow reached anyway.
+      if (!isAgentLineOwner) {
+        setStartError('HyperDial is open in another tab. Close it there first, then try again.');
         return;
       }
       setStartError(null);
@@ -299,6 +342,7 @@ export function Dialer({
       }
     },
     [
+      isAgentLineOwner,
       agentLineReady,
       connectAgentLine,
       beginAgentLegExpectation,
@@ -380,6 +424,12 @@ export function Dialer({
 
   const handleDial = async (phoneNumber: string) => {
     if (!selectedFromNumber) return;
+    // Defense-in-depth, see handleStartSessionForCampaign's own comment -- the manual dialer UI
+    // is not rendered at all for a non-owner tab.
+    if (!isAgentLineOwner) {
+      toast.error('HyperDial is open in another tab. Close it there first, then try again.');
+      return;
+    }
     setOutboundNumber(phoneNumber);
     try {
       await dial(phoneNumber, selectedFromNumber);
@@ -448,6 +498,27 @@ export function Dialer({
       toast.error(e instanceof Error ? e.message : 'Failed to stop session');
     }
   }, [parallelSession.sessionId, parallelSession.stop, onClearParallelContext]);
+
+  // Review fix (L1r4 round 5, review-notes-r4.md, now REQUIRED): a non-owner tab must not
+  // register a WebRTC client or auto-answer anything -- the simplest way to guarantee that is
+  // to never render anything that could trigger it (the Start button, the manual dialer) at
+  // all, rather than trust every call site's own individual guard alone. `otherTabOpen` only
+  // becomes true once useSingleTabLock's own effect has actually run and found a live owner
+  // elsewhere -- on the very first render of the one-and-only real tab, both this and `isOwner`
+  // start false, so this deliberately does NOT block on `!isAgentLineOwner` alone.
+  if (otherTabOpen && !isAgentLineOwner) {
+    return (
+      <div className="flex h-[calc(100vh-72px)] items-center justify-center p-8">
+        <div className="max-w-md text-center rounded-2xl border border-[#FFB300]/30 bg-[#FFB300]/10 p-8">
+          <p className="text-white font-semibold text-lg mb-2">HyperDial is open in another tab</p>
+          <p className="text-[#B0BEC5] text-sm">
+            Your phone line can only be registered in one browser tab at a time. Close this tab, or
+            close the other one and refresh this page.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-[calc(100vh-72px)]">

@@ -20,6 +20,11 @@ interface UseTelnyxCallOptions {
 }
 
 const ACTIVE_AGENT_CALL_CONTROL_ID_KEY = 'hyperdial_active_agent_call_control_id';
+/** TASK-L1r4 round 5 (review-notes-r4.md, minor): without this, a TelnyxRTC client that never
+ *  fires telnyx.ready OR telnyx.error (a genuinely hung WebSocket, not just a slow one) pins
+ *  `connectPromiseRef` forever -- every later `connect()` call (including a fresh Start attempt)
+ *  just awaits the same permanently-unsettled promise. */
+const CONNECT_TIMEOUT_MS = 15000;
 
 /**
  * Browser-safe port of `supabase/functions/_shared/client-state.ts`'s decode logic -- kept as
@@ -136,23 +141,45 @@ export function useTelnyxCall(options: UseTelnyxCallOptions = {}) {
     setIsConnecting(true);
     setError(null);
 
+    // Review fix (L1r4 round 5, minor): captured outside the IIFE so the outer .catch below can
+    // disconnect THIS specific client's own socket on failure, not just drop the reference.
+    let pendingClient: TelnyxRTC | null = null;
+
     const promise = (async () => {
       const { token } = await getWebrtcCredentials();
       if (!token) throw new Error('No token received');
 
       const client = new TelnyxRTC({ login_token: token });
+      pendingClient = client;
       if (optionsRef.current.remoteElementId) {
         client.remoteElement = optionsRef.current.remoteElementId;
       }
 
       return new Promise<void>((resolve, reject) => {
+        // Guards against a stale telnyx.ready/telnyx.error firing AFTER the timeout below has
+        // already rejected (or vice versa) -- only the first outcome should ever take effect.
+        let settled = false;
+        const timeoutId = setTimeout(() => {
+          if (settled) return;
+          settled = true;
+          reject(new Error('Timed out connecting to your phone line. Please try again.'));
+        }, CONNECT_TIMEOUT_MS);
+
         client
           .on('telnyx.ready', () => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timeoutId);
             setIsReady(true);
             setIsConnecting(false);
             resolve();
           })
-          .on('telnyx.error', reject)
+          .on('telnyx.error', (err: unknown) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timeoutId);
+            reject(err);
+          })
           .on(
             'telnyx.notification',
             (notification: {
@@ -241,8 +268,12 @@ export function useTelnyxCall(options: UseTelnyxCallOptions = {}) {
       .catch((err: unknown) => {
         setError(err instanceof Error ? err.message : String(err));
         setIsConnecting(false);
-        // Clear the dead client so the NEXT connect() call actually retries instead of
-        // resolving immediately against a client that never reached telnyx.ready.
+        // Review fix (L1r4 round 5, minor): disconnect the failed client's own socket BEFORE
+        // dropping the reference -- nulling clientRef alone left its underlying connection
+        // running if it somehow survived past the point of failure (e.g. the connect timeout
+        // fired while the WebSocket was still trying), so a retried connect() would end up with
+        // TWO registered clients sharing this hook's one notification handler.
+        pendingClient?.disconnect();
         clientRef.current = null;
         throw err;
       })
