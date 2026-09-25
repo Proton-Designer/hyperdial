@@ -47,27 +47,26 @@ export async function getOrgSpendSettings(
   return data ? { ...DEFAULT_ORG_SPEND_SETTINGS, ...data } : DEFAULT_ORG_SPEND_SETTINGS;
 }
 
-function monthStartUtc(now: Date = new Date()): Date {
-  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1, 0, 0, 0));
-}
-
 /** Sum of `duration_seconds` across every call_leg (both kind='contact' and 'agent' -- see
  *  spend-estimate.ts's own doc comment) created this UTC calendar month -- no per-org timezone
- *  column exists (same fact `dialing_hours_today`/team_view's own comments already document). */
+ *  column exists (same fact `dialing_hours_today`/team_view's own comments already document).
+ *
+ *  Done via a SQL aggregate RPC (`public.org_mtd_billed_seconds`, migration 20260925080201), not
+ *  a client-side `.select()` + reduce -- PostgREST caps an unpaginated select at `max-rows`
+ *  (1000 rows), which silently undercounts a real team's month once it has more legs than that
+ *  and lets the spend cap never fire. The RPC sums server-side, so there's no row cap to hit. */
 export async function getMonthToDateBilledSeconds(
   supabase: SupabaseClient,
   orgId: string
 ): Promise<number> {
-  const { data } = await supabase
-    .from('call_legs')
-    .select('duration_seconds')
-    .eq('org_id', orgId)
-    .not('duration_seconds', 'is', null)
-    .gte('created_at', monthStartUtc().toISOString());
-  return (data ?? []).reduce(
-    (sum: number, r: { duration_seconds: number | null }) => sum + (r.duration_seconds ?? 0),
-    0
-  );
+  const { data, error } = await supabase.rpc('org_mtd_billed_seconds', { p_org: orgId });
+  if (error) {
+    console.warn(
+      `[spend-gate] org_mtd_billed_seconds RPC failed for org ${orgId}: ${error.message}`
+    );
+    return 0;
+  }
+  return Number(data ?? 0);
 }
 
 /** Every number currently on the org's account, any status -- Telnyx bills the monthly fee per

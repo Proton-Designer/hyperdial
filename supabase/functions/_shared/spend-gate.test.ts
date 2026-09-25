@@ -1,12 +1,15 @@
 import { assertEquals, assertExists } from 'jsr:@std/assert@1';
-import { checkSpendGate, getOrgSpendSnapshot } from './spend-gate.ts';
+import { checkSpendGate, getMonthToDateBilledSeconds, getOrgSpendSnapshot } from './spend-gate.ts';
 
 // ---------------------------------------------------------------------------
 // A minimal fake supabase client -- just the `.from()`/`.rpc()` chains
 // getConnectedOrgTelnyxContext + spend-gate.ts's own queries actually use.
-// Every chain method returns a thenable, so both `.select().eq().maybeSingle()`
-// and `.select().eq().not().gte()` (no `.maybeSingle()`) resolve correctly,
-// matching real supabase-js's own {data, error}/{count, error} shapes.
+// Every chain method returns a thenable, so `.select().eq().maybeSingle()` and
+// `.select().eq({count:'exact',head:true})` resolve correctly, matching real
+// supabase-js's own {data, error}/{count, error} shapes. MTD billed seconds is
+// no longer a `call_legs` table select (fix-forward, TASK-SP review) -- it's
+// the `org_mtd_billed_seconds` RPC, so the fake models it as an rpc() branch,
+// not a `from('call_legs')` chain.
 // ---------------------------------------------------------------------------
 
 function chain(result: unknown) {
@@ -30,7 +33,7 @@ interface FakeOpts {
   } | null;
   apiKey: string | null;
   spendSettings: Record<string, unknown> | null;
-  callLegsRows: { duration_seconds: number | null }[];
+  mtdBilledSeconds: number | { error: string };
   numberCount: number;
 }
 
@@ -39,12 +42,17 @@ function makeFakeSupabase(opts: FakeOpts) {
     from(table: string) {
       if (table === 'org_telephony') return chain({ data: opts.telephony, error: null });
       if (table === 'org_spend_settings') return chain({ data: opts.spendSettings, error: null });
-      if (table === 'call_legs') return chain({ data: opts.callLegsRows, error: null });
       if (table === 'user_phone_numbers') return chain({ count: opts.numberCount, error: null });
       throw new Error(`fake supabase: unexpected table ${table}`);
     },
     rpc(name: string) {
       if (name === 'get_org_telnyx_key') return Promise.resolve({ data: opts.apiKey, error: null });
+      if (name === 'org_mtd_billed_seconds') {
+        if (typeof opts.mtdBilledSeconds === 'object') {
+          return Promise.resolve({ data: null, error: { message: opts.mtdBilledSeconds.error } });
+        }
+        return Promise.resolve({ data: opts.mtdBilledSeconds, error: null });
+      }
       throw new Error(`fake supabase: unexpected rpc ${name}`);
     },
   };
@@ -79,7 +87,7 @@ Deno.test('checkSpendGate: fails OPEN when Telnyx is not connected for the org',
     telephony: null, // no row at all -- "not connected"
     apiKey: null,
     spendSettings: null,
-    callLegsRows: [],
+    mtdBilledSeconds: 0,
     numberCount: 0,
   });
   const result = await checkSpendGate(supabase as any, 'org-1');
@@ -93,7 +101,7 @@ Deno.test(
       telephony: CONNECTED_TELEPHONY,
       apiKey: null, // get_org_telnyx_key returned null
       spendSettings: null,
-      callLegsRows: [],
+      mtdBilledSeconds: 0,
       numberCount: 0,
     });
     const result = await checkSpendGate(supabase as any, 'org-1');
@@ -108,7 +116,7 @@ Deno.test('checkSpendGate: fails OPEN when the Telnyx balance API itself errors'
       telephony: CONNECTED_TELEPHONY,
       apiKey: 'key-1',
       spendSettings: null,
-      callLegsRows: [],
+      mtdBilledSeconds: 0,
       numberCount: 0,
     });
     const result = await checkSpendGate(supabase as any, 'org-1');
@@ -127,7 +135,7 @@ Deno.test(
         telephony: CONNECTED_TELEPHONY,
         apiKey: 'key-1',
         spendSettings: { min_balance_to_dial_usd: 5, monthly_spend_cap_usd: null },
-        callLegsRows: [],
+        mtdBilledSeconds: 0,
         numberCount: 0,
       });
       const result = await checkSpendGate(supabase as any, 'org-1');
@@ -154,7 +162,7 @@ Deno.test(
           estimated_per_minute_rate_usd: 1, // 10 minutes -> $10 exactly, at the cap
           estimated_monthly_number_price_usd: 0,
         },
-        callLegsRows: [{ duration_seconds: 600 }],
+        mtdBilledSeconds: 600,
         numberCount: 0,
       });
       const result = await checkSpendGate(supabase as any, 'org-1');
@@ -178,7 +186,7 @@ Deno.test('checkSpendGate: a null cap never blocks no matter how high MTD spend 
         estimated_per_minute_rate_usd: 100,
         estimated_monthly_number_price_usd: 100,
       },
-      callLegsRows: [{ duration_seconds: 6000 }],
+      mtdBilledSeconds: 6000,
       numberCount: 5,
     });
     const result = await checkSpendGate(supabase as any, 'org-1');
@@ -195,7 +203,7 @@ Deno.test('checkSpendGate: allows dialing when balance and spend are both health
       telephony: CONNECTED_TELEPHONY,
       apiKey: 'key-1',
       spendSettings: { min_balance_to_dial_usd: 5, monthly_spend_cap_usd: 1000 },
-      callLegsRows: [{ duration_seconds: 60 }],
+      mtdBilledSeconds: 60,
       numberCount: 1,
     });
     const result = await checkSpendGate(supabase as any, 'org-1');
@@ -203,6 +211,38 @@ Deno.test('checkSpendGate: allows dialing when balance and spend are both health
   } finally {
     restore();
   }
+});
+
+Deno.test(
+  'getMonthToDateBilledSeconds: reads the SQL-aggregate RPC result directly, not a row cap',
+  async () => {
+    // The RPC sums server-side -- unlike the old `.select('duration_seconds')` this fixture
+    // stands in for, there is no PostgREST max-rows (1000) to hit even though the number below
+    // implies far more than 1000 legs' worth of seconds. See the SQL-level proof (1500 fixture
+    // legs, exact sum) in audit/SP/dryrun-tests.sql -- this test only proves the TS side forwards
+    // the RPC's own returned total untouched.
+    const supabase = makeFakeSupabase({
+      telephony: null,
+      apiKey: null,
+      spendSettings: null,
+      mtdBilledSeconds: 1_500_000,
+      numberCount: 0,
+    });
+    const seconds = await getMonthToDateBilledSeconds(supabase as any, 'org-1');
+    assertEquals(seconds, 1_500_000);
+  }
+);
+
+Deno.test('getMonthToDateBilledSeconds: an RPC error is treated as zero, not thrown', async () => {
+  const supabase = makeFakeSupabase({
+    telephony: null,
+    apiKey: null,
+    spendSettings: null,
+    mtdBilledSeconds: { error: 'function org_mtd_billed_seconds(uuid) does not exist' },
+    numberCount: 0,
+  });
+  const seconds = await getMonthToDateBilledSeconds(supabase as any, 'org-1');
+  assertEquals(seconds, 0);
 });
 
 Deno.test(
@@ -214,7 +254,7 @@ Deno.test(
         telephony: CONNECTED_TELEPHONY,
         apiKey: 'key-1',
         spendSettings: null,
-        callLegsRows: [],
+        mtdBilledSeconds: 0,
         numberCount: 0,
       });
       const snapshot = await getOrgSpendSnapshot(supabase as any, 'org-1');

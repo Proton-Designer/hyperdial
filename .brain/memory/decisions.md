@@ -844,15 +844,37 @@ that's cheap and safe. Otherwise check only at start, and document it"). The hou
 (`spend-alert-check`) plus the Dashboard/Settings banners are the compensating control for a
 balance that drops mid-shift.
 
-**Decision 4 -- both new RPCs `.rpc()` calls... there are none.** Learning directly from the
+**Decision 4 -- both new RPCs `.rpc()` calls... there are none.** ~~Learning directly from the
 lead's own N1-review finding (private-schema functions are unreachable via `supabase.rpc()`,
 PostgREST only resolves `public`/`graphql_public`): `_shared/spend-gate.ts`/`spend-alert-check`
-never call a NEW RPC at all -- every new write/read goes through plain `.from(table)` calls under
-the service-role client (which bypasses RLS, no SECURITY DEFINER indirection needed) or the
-client's own RLS-scoped `.from('org_spend_settings')` reads/writes (same shape as
-`org_number_pool_settings`). The one RPC this code DOES call, `get_org_telnyx_key`, already has a
-verified `public.*` wrapper (`20260924000500_add_org_telephony_service_wrappers.sql`) -- reused
-as-is, not re-implemented.
+never call a NEW RPC at all~~ -- **stale as of the fix-forward below (2026-09-25): there is now
+one, `public.org_mtd_billed_seconds`.** Every OTHER new write/read still goes through plain
+`.from(table)` calls under the service-role client (which bypasses RLS, no SECURITY DEFINER
+indirection needed) or the client's own RLS-scoped `.from('org_spend_settings')` reads/writes
+(same shape as `org_number_pool_settings`). `get_org_telnyx_key` already had a verified
+`public.*` wrapper (`20260924000500_add_org_telephony_service_wrappers.sql`) -- reused as-is, not
+re-implemented.
+
+**Fix-forward (2026-09-25, lead review of `1ec95bb`, HIGH): `getMonthToDateBilledSeconds` moved
+from a client-side `.select('duration_seconds')` + reduce to a SQL aggregate RPC.** The original
+implementation did `supabase.from('call_legs').select('duration_seconds').eq(...).gte(...)` with
+no pagination -- PostgREST caps an unpaginated select at its `max-rows` config (1000 rows). A real
+team's month can produce far more than 1000 billed legs, at which point the sum silently
+undercounts and `SPEND_CAP_REACHED` never fires for exactly the busy orgs the cap most needs to
+protect. New migration `20260925080201_org_mtd_billed_seconds.sql`:
+`public.org_mtd_billed_seconds(p_org uuid) returns bigint`, `security definer`,
+`set search_path = ''`, sums `duration_seconds` in SQL (no row cap), revoked from
+`public`/`anon`/`authenticated`, granted to `service_role` only -- same "no existing `private.*`
+function to forward to, so define the aggregate directly in `public`" shape as every other
+service-role-only RPC in this task, not the `org_telephony` wrapper-forwarding shape (there's
+nothing in `private` for this one to wrap). `getOrgNumberCount` was NOT changed -- it was already
+a `head:true` count query, which has no row-data payload for `max-rows` to truncate; only a
+row-returning `.select()` has this failure mode. Covered by the `rpc-schema-guard.test.ts`
+filesystem check (every literal `.rpc('<name>', ...)` call needs a matching
+`create function public.<name>(` in a migration), 2 new `spend-gate.test.ts` unit tests (RPC
+result forwarded untouched; RPC error treated as zero, not thrown), and a SQL-level proof in
+`audit/SP/dryrun-tests.sql` (1500 fixture `call_legs` this month, 60s each -> exact sum 90,000;
+plus a null-duration leg and a last-month leg that must NOT be counted).
 
 **Decision 5 -- Email is skipped entirely.** Grepped this whole project for an SMTP/email-sending
 integration (Resend, SendGrid, Postmark, nodemailer, raw SMTP) and found none. The task's own spec:
