@@ -62,7 +62,7 @@ export function Dialer({
   // alone (that would also block the normal single-tab case for one render).
   if (otherTabOpen && !isAgentLineOwner) {
     return (
-      <div className="flex h-[calc(100vh-72px)] items-center justify-center p-8">
+      <div className="flex h-full items-center justify-center p-8">
         <div className="max-w-md text-center rounded-2xl border border-[#FFB300]/30 bg-[#FFB300]/10 p-8">
           <p className="text-white font-semibold text-lg mb-2">HyperDial is open in another tab</p>
           <p className="text-[#B0BEC5] text-sm">
@@ -551,7 +551,7 @@ function DialerBody({
   }, [parallelSession.sessionId, parallelSession.stop, onClearParallelContext]);
 
   return (
-    <div className="flex h-[calc(100vh-72px)]">
+    <div className="flex h-full">
       {/* Remote audio is created in useEffect (outside React tree) to avoid circular ref in Telnyx SDK */}
 
       {/* Center Panel - Dialing Interface */}

@@ -8,9 +8,9 @@ import {
   Phone as PhoneIcon,
   Upload,
   Plus,
-  Loader2,
   Info,
 } from 'lucide-react';
+import { Skeleton } from '@/components/ui/skeleton';
 import {
   AreaChart,
   Area,
@@ -198,42 +198,55 @@ export function Dashboard({
 
   return (
     <div className="p-8 max-w-[1440px] mx-auto">
-      {/* Hero Metrics */}
+      {/* Hero Metrics -- a skeleton grid on first load (FE-A), not a spinner buried inside an
+          otherwise-empty card, so nothing shifts once the real values arrive. */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-        {metricsFromBackend.map((metric, index) => {
-          const Icon = metric.icon;
-          return (
-            <motion.div
-              key={metric.label}
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: index * 0.1 }}
-              className={`bg-[#1A2332]/60 backdrop-blur-xl rounded-2xl p-6 border ${metric.borderColor} shadow-[0_4px_24px_rgba(0,102,255,0.15)] hover:shadow-[0_8px_32px_rgba(0,102,255,0.25)] transition-all hover:-translate-y-1`}
-            >
-              <div className="flex items-start justify-between mb-4">
-                <div
-                  className={`w-12 h-12 rounded-xl ${metric.bgColor} flex items-center justify-center`}
-                  style={{ boxShadow: `0 4px 16px ${metric.color}40` }}
-                >
-                  <Icon className="w-6 h-6" style={{ color: metric.color }} />
+        {statsLoading
+          ? Array.from({ length: 4 }).map((_, i) => (
+              <div
+                key={i}
+                className="bg-[#1A2332]/60 backdrop-blur-xl rounded-2xl p-6 border border-white/5"
+              >
+                <div className="flex items-start justify-between mb-4">
+                  <Skeleton className="w-12 h-12 rounded-xl" />
                 </div>
-                {metric.loading && <Loader2 className="w-5 h-5 text-[#B0BEC5] animate-spin" />}
+                <Skeleton className="h-9 w-20 mb-2" />
+                <Skeleton className="h-4 w-28" />
               </div>
-              <div className="text-4xl font-bold text-white mb-1">{metric.value}</div>
-              <div className="text-sm text-[#B0BEC5] flex items-center gap-1.5">
-                {metric.label}
-                {'tooltip' in metric && metric.tooltip && (
-                  <span title={metric.tooltip}>
-                    <Info className="w-3.5 h-3.5 text-[#B0BEC5]/70 cursor-help" />
-                  </span>
-                )}
-              </div>
-              {'subtext' in metric && metric.subtext && (
-                <div className="text-xs text-[#B0BEC5]/70 mt-1">{metric.subtext}</div>
-              )}
-            </motion.div>
-          );
-        })}
+            ))
+          : metricsFromBackend.map((metric, index) => {
+              const Icon = metric.icon;
+              return (
+                <motion.div
+                  key={metric.label}
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: index * 0.1 }}
+                  className={`bg-[#1A2332]/60 backdrop-blur-xl rounded-2xl p-6 border ${metric.borderColor} shadow-[0_4px_24px_rgba(0,102,255,0.15)] hover:shadow-[0_8px_32px_rgba(0,102,255,0.25)] transition-all hover:-translate-y-1`}
+                >
+                  <div className="flex items-start justify-between mb-4">
+                    <div
+                      className={`w-12 h-12 rounded-xl ${metric.bgColor} flex items-center justify-center`}
+                      style={{ boxShadow: `0 4px 16px ${metric.color}40` }}
+                    >
+                      <Icon className="w-6 h-6" style={{ color: metric.color }} />
+                    </div>
+                  </div>
+                  <div className="text-4xl font-bold text-white mb-1">{metric.value}</div>
+                  <div className="text-sm text-[#B0BEC5] flex items-center gap-1.5">
+                    {metric.label}
+                    {'tooltip' in metric && metric.tooltip && (
+                      <span title={metric.tooltip}>
+                        <Info className="w-3.5 h-3.5 text-[#B0BEC5]/70 cursor-help" />
+                      </span>
+                    )}
+                  </div>
+                  {'subtext' in metric && metric.subtext && (
+                    <div className="text-xs text-[#B0BEC5]/70 mt-1">{metric.subtext}</div>
+                  )}
+                </motion.div>
+              );
+            })}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-1 gap-8">
@@ -298,9 +311,7 @@ export function Dashboard({
           </div>
 
           {chartLoading ? (
-            <div className="h-[320px] flex items-center justify-center">
-              <Loader2 className="w-8 h-8 text-[#00D9FF] animate-spin" />
-            </div>
+            <Skeleton className="h-[320px] w-full rounded-xl" />
           ) : (
             <ResponsiveContainer width="100%" height={320}>
               <AreaChart data={chartData}>

@@ -1,9 +1,13 @@
-import { useState, useEffect, type ReactNode } from 'react';
+import { useState, useEffect, useRef, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { Search, Bell, ChevronDown, Settings, LogOut, User, Building2, Check } from 'lucide-react';
+import { Search, Bell, ChevronDown, LogOut, User, Building2, Check, Settings } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useOrg } from '@/contexts/OrgContext';
+import { useFocusTrap } from '@/hooks/useFocusTrap';
+import { useBreakpoint } from '@/hooks/useBreakpoint';
+import { Logo, LogoMark } from '@/components/brand/Logo';
+import { CommandPalette, useCommandPaletteShortcut } from '@/components/app/CommandPalette';
 import {
   listNotifications,
   getUnreadNotificationCount,
@@ -13,6 +17,8 @@ import {
   type AppNotification,
 } from '@/lib/api';
 import type { TabType } from './MainApp';
+
+export const TOP_NAV_HEIGHT = 56;
 
 const TAB_LABELS: Record<TabType, string> = {
   dashboard: 'Dashboard',
@@ -61,6 +67,8 @@ function formatNotificationDate(created_at: string): string {
 export function TopNavigation({ activeTab = 'dashboard', onTabChange }: TopNavigationProps) {
   const { user, signOut } = useAuth();
   const { orgId, orgs, switchOrg, role } = useOrg();
+  const breakpoint = useBreakpoint();
+  const isMobile = breakpoint === 'mobile';
   // Fail CLOSED, matching MainApp.tsx/Sidebar.tsx/Dashboard.tsx: the Settings tab is manager-only,
   // so this menu's Profile/Settings entries (both just navigate there) must not be shown until
   // role is CONFIRMED owner/admin. NOT also gated on OrgContext's `loading` -- see MainApp.tsx's
@@ -68,7 +76,6 @@ export function TopNavigation({ activeTab = 'dashboard', onTabChange }: TopNavig
   // triggers themselves), but `role` alone already fails closed without hiding this menu from a
   // manager on every unrelated refetch.
   const isManager = role === 'owner' || role === 'admin';
-  const [searchFocused, setSearchFocused] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
   const [showSignOutConfirm, setShowSignOutConfirm] = useState(false);
@@ -76,6 +83,17 @@ export function TopNavigation({ activeTab = 'dashboard', onTabChange }: TopNavig
   const [switchingOrgId, setSwitchingOrgId] = useState<string | null>(null);
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  // Radix Dialog's own focus-restore only reliably tracks a <DialogTrigger>-wrapped trigger;
+  // ours is a fully custom button (⌘K can open it too, with no "trigger" in the tree at all), so
+  // its default restore-on-close falls back to <body> instead. Track it ourselves and restore
+  // explicitly -- closes the "focus returns to the trigger" requirement for real.
+  const paletteTriggerRef = useRef<HTMLButtonElement>(null);
+  const openPalette = () => setPaletteOpen(true);
+  const handlePaletteOpenChange = (open: boolean) => {
+    setPaletteOpen(open);
+    if (!open) requestAnimationFrame(() => paletteTriggerRef.current?.focus());
+  };
 
   // B1 Phase 1: backdrop-click already closes each popover/dialog below, but Escape did nothing
   // -- only the click-outside div was wired. Topmost-open wins on a given press (the sign-out
@@ -92,6 +110,20 @@ export function TopNavigation({ activeTab = 'dashboard', onTabChange }: TopNavig
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [showSignOutConfirm, showUserMenu, showNotifications, showOrgSwitcher]);
+
+  useCommandPaletteShortcut(openPalette);
+
+  // FE-A / closes B1-004: trap + restore focus for every top-nav popover and the sign-out
+  // confirm dialog. Doesn't replace the Escape handler above (that closes; this only traps Tab
+  // and returns focus to the trigger on close) -- see useFocusTrap's own doc comment.
+  const orgSwitcherRef = useRef<HTMLDivElement>(null);
+  const notificationsRef = useRef<HTMLDivElement>(null);
+  const userMenuRef = useRef<HTMLDivElement>(null);
+  const signOutRef = useRef<HTMLDivElement>(null);
+  useFocusTrap(orgSwitcherRef, showOrgSwitcher);
+  useFocusTrap(notificationsRef, showNotifications);
+  useFocusTrap(userMenuRef, showUserMenu);
+  useFocusTrap(signOutRef, showSignOutConfirm);
 
   useEffect(() => {
     ensureWeekSummary().catch(() => {});
@@ -159,47 +191,49 @@ export function TopNavigation({ activeTab = 'dashboard', onTabChange }: TopNavig
   };
 
   return (
-    <nav className="fixed top-0 left-0 right-0 h-[72px] bg-[#1A2332]/60 backdrop-blur-xl border-b border-white/5 flex items-center px-6 z-50">
+    <nav
+      className="fixed top-0 left-0 right-0 z-50 flex items-center gap-3 border-b border-border-subtle bg-surface-1/60 px-3 backdrop-blur-xl sm:px-4"
+      style={{ height: TOP_NAV_HEIGHT }}
+    >
       {/* Left Section */}
-      <div className="flex items-center gap-8">
+      <div className="flex min-w-0 items-center gap-4">
         <button
           type="button"
           onClick={() => onTabChange?.('dashboard')}
           aria-label="Go to dashboard"
-          className="flex items-center gap-3 rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-[#00D9FF]"
+          className="flex items-center rounded-app-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-to"
         >
-          <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-[#00D9FF] to-[#0066FF] flex items-center justify-center">
-            <div className="w-6 h-6 border-2 border-white rounded-full" />
-          </div>
-          <span className="text-xl font-bold text-white">HyperDial</span>
+          {isMobile ? <LogoMark size={28} /> : <Logo size={28} wordmarkClassName="text-base" />}
         </button>
 
-        <div className="flex items-center gap-2 text-sm text-[#B0BEC5]">
-          <button
-            type="button"
-            onClick={() => onTabChange?.('dashboard')}
-            aria-label="Go to dashboard"
-            className="hover:text-white transition-colors rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-[#00D9FF]"
-          >
-            Home
-          </button>
-          <span>/</span>
-          <span className="text-white">
-            {activeTab === 'dashboard' && role === 'agent' ? 'My stats' : TAB_LABELS[activeTab]}
-          </span>
-        </div>
+        {!isMobile && (
+          <div className="flex items-center gap-2 text-sm text-text-secondary">
+            <button
+              type="button"
+              onClick={() => onTabChange?.('dashboard')}
+              aria-label="Go to dashboard"
+              className="rounded transition-colors hover:text-text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-to"
+            >
+              Home
+            </button>
+            <span>/</span>
+            <span className="text-text-primary">
+              {activeTab === 'dashboard' && role === 'agent' ? 'My stats' : TAB_LABELS[activeTab]}
+            </span>
+          </div>
+        )}
 
         {/* Org switcher: only shown when the user actually belongs to more than one org. */}
-        {orgs.length > 1 && (
+        {!isMobile && orgs.length > 1 && (
           <div className="relative">
             <button
               type="button"
               onClick={() => setShowOrgSwitcher((v) => !v)}
-              className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-sm text-white transition-colors"
+              className="flex items-center gap-2 rounded-app-md bg-white/5 px-3 py-1.5 text-sm text-text-primary transition-colors hover:bg-white/10"
             >
-              <Building2 className="w-4 h-4 text-[#B0BEC5]" />
+              <Building2 className="w-4 h-4 text-text-secondary" />
               <span className="max-w-[140px] truncate">{currentOrgName}</span>
-              <ChevronDown className="w-3.5 h-3.5 text-[#B0BEC5]" />
+              <ChevronDown className="w-3.5 h-3.5 text-text-secondary" />
             </button>
             <AnimatePresence>
               {showOrgSwitcher && (
@@ -208,12 +242,10 @@ export function TopNavigation({ activeTab = 'dashboard', onTabChange }: TopNavig
                     // Portaled to document.body, not a sibling div here: `nav` has
                     // `backdrop-blur-xl` (a backdrop-filter), which makes it the CSS containing
                     // block for any `position: fixed` descendant -- `inset-0` on a backdrop
-                    // nested inside `nav` resolves against nav's OWN 72px-tall box, not the
-                    // viewport, so it only ever covered the top nav strip and silently never
-                    // caught a click anywhere else in the app. Found live (B1 Phase 1): the
-                    // click-away-to-close never worked outside that strip. The sign-out confirm
-                    // dialog below already portals to document.body for the same reason (it
-                    // predates this fix) -- same technique, applied to the other 3 backdrops.
+                    // nested inside `nav` resolves against nav's OWN box, not the viewport, so
+                    // it only ever covered the nav strip and silently never caught a click
+                    // anywhere else in the app (B1-005). The sign-out confirm dialog below
+                    // already portals to document.body for the same reason.
                     <div
                       className="fixed inset-0 z-40"
                       onClick={() => setShowOrgSwitcher(false)}
@@ -222,11 +254,13 @@ export function TopNavigation({ activeTab = 'dashboard', onTabChange }: TopNavig
                     document.body
                   )}
                   <motion.div
+                    ref={orgSwitcherRef}
+                    tabIndex={-1}
                     initial={{ opacity: 0, y: -10 }}
                     animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0, y: -10 }}
                     transition={{ duration: 0.2 }}
-                    className="absolute left-0 top-full mt-2 w-64 bg-[#1A2332]/95 backdrop-blur-xl border border-white/10 rounded-xl shadow-xl z-50 overflow-hidden p-2"
+                    className="absolute left-0 top-full mt-2 w-64 overflow-hidden rounded-app-lg border border-border-strong bg-surface-1/95 p-2 shadow-app-md backdrop-blur-xl z-50"
                   >
                     {orgs.map((o) => (
                       <button
@@ -234,13 +268,13 @@ export function TopNavigation({ activeTab = 'dashboard', onTabChange }: TopNavig
                         type="button"
                         onClick={() => handleSwitchOrg(o.orgId)}
                         disabled={switchingOrgId !== null}
-                        className="w-full flex items-center justify-between gap-2 px-3 py-2.5 rounded-lg hover:bg-white/5 text-left text-white text-sm disabled:opacity-60"
+                        className="flex w-full items-center justify-between gap-2 rounded-app-md px-3 py-2.5 text-left text-sm text-text-primary hover:bg-white/5 disabled:opacity-60"
                       >
                         <span className="truncate">{o.orgName}</span>
                         {switchingOrgId === o.orgId ? (
-                          <span className="text-xs text-[#B0BEC5]">Switching…</span>
+                          <span className="text-xs text-text-secondary">Switching…</span>
                         ) : o.orgId === orgId ? (
-                          <Check className="w-4 h-4 text-[#00D9FF] flex-shrink-0" />
+                          <Check className="w-4 h-4 text-accent-to flex-shrink-0" />
                         ) : null}
                       </button>
                     ))}
@@ -252,33 +286,46 @@ export function TopNavigation({ activeTab = 'dashboard', onTabChange }: TopNavig
         )}
       </div>
 
-      {/* Center Section - Search */}
-      <div className="flex-1 flex justify-center px-8">
-        <motion.div
-          className="relative"
-          animate={{ width: searchFocused ? 580 : 520 }}
-          transition={{ duration: 0.2 }}
-        >
-          <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-[#B0BEC5]" />
-          <input
-            type="text"
-            placeholder="Search contacts, campaigns, calls..."
-            className="w-full bg-[#1E2A3A]/60 backdrop-blur-sm border border-white/10 rounded-xl pl-12 pr-4 py-3 text-white placeholder-[#B0BEC5]/50 focus:outline-none focus:border-[#00D9FF] transition-colors"
-            onFocus={() => setSearchFocused(true)}
-            onBlur={() => setSearchFocused(false)}
-          />
-        </motion.div>
+      {/* Center Section - Command palette trigger (closes B1-006: the old search box had no
+          value/onChange at all). */}
+      <div className="flex min-w-0 flex-1 justify-center px-2 sm:px-8">
+        {isMobile ? (
+          <button
+            ref={paletteTriggerRef}
+            type="button"
+            onClick={openPalette}
+            aria-label="Search"
+            className="ml-auto rounded-app-md p-2 text-text-secondary transition-colors hover:bg-white/5 hover:text-text-primary"
+          >
+            <Search className="w-5 h-5" />
+          </button>
+        ) : (
+          <button
+            ref={paletteTriggerRef}
+            type="button"
+            onClick={openPalette}
+            className="flex w-full max-w-[520px] items-center gap-3 rounded-app-md border border-border-subtle bg-surface-2/60 px-4 py-2 text-left text-sm text-text-muted transition-colors hover:border-border-strong"
+          >
+            <Search className="w-4 h-4 flex-shrink-0" />
+            <span className="flex-1 truncate">
+              Search contacts, campaigns, or jump to a screen…
+            </span>
+            <kbd className="hidden flex-shrink-0 rounded border border-border-strong bg-surface-1 px-1.5 py-0.5 text-[10px] text-text-muted sm:inline-block">
+              ⌘K
+            </kbd>
+          </button>
+        )}
       </div>
 
       {/* Right Section */}
-      <div className="flex items-center gap-4">
+      <div className="flex items-center gap-2 sm:gap-3">
         {/* Live call indicator */}
-        <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-[#00E676]/10 border border-[#00E676]/20">
+        <div className="hidden items-center gap-2 rounded-app-md border border-success/20 bg-success-soft px-3 py-1.5 sm:flex">
           <div className="relative">
-            <div className="w-2 h-2 bg-[#00E676] rounded-full" />
-            <div className="absolute inset-0 w-2 h-2 bg-[#00E676] rounded-full animate-ping" />
+            <div className="w-2 h-2 rounded-full bg-success" />
+            <div className="absolute inset-0 h-2 w-2 animate-ping rounded-full bg-success" />
           </div>
-          <span className="text-sm text-[#00E676] font-medium">Ready</span>
+          <span className="text-sm font-medium text-success">Ready</span>
         </div>
 
         {/* Notifications */}
@@ -286,12 +333,12 @@ export function TopNavigation({ activeTab = 'dashboard', onTabChange }: TopNavig
           <button
             type="button"
             onClick={() => setShowNotifications(!showNotifications)}
-            className="relative p-2 hover:bg-white/5 rounded-lg transition-colors"
+            className="relative rounded-app-md p-2 transition-colors hover:bg-white/5"
             aria-label="Notifications"
           >
-            <Bell className="w-5 h-5 text-[#B0BEC5]" />
+            <Bell className="w-5 h-5 text-text-secondary" />
             {unreadCount > 0 && (
-              <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 bg-[#FF3D00] rounded-full flex items-center justify-center text-xs text-white font-semibold">
+              <span className="absolute -top-0.5 -right-0.5 flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-danger px-1 text-xs font-semibold text-white">
                 {unreadCount > 99 ? '99+' : unreadCount}
               </span>
             )}
@@ -300,8 +347,6 @@ export function TopNavigation({ activeTab = 'dashboard', onTabChange }: TopNavig
             {showNotifications && (
               <>
                 {createPortal(
-                  // See the org-switcher backdrop above for why this is portaled to
-                  // document.body rather than a plain sibling div.
                   <div
                     className="fixed inset-0 z-40"
                     onClick={() => setShowNotifications(false)}
@@ -310,29 +355,33 @@ export function TopNavigation({ activeTab = 'dashboard', onTabChange }: TopNavig
                   document.body
                 )}
                 <motion.div
+                  ref={notificationsRef}
+                  tabIndex={-1}
                   initial={{ opacity: 0, y: -10 }}
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: -10 }}
                   transition={{ duration: 0.2 }}
-                  className="absolute right-0 top-full mt-2 w-[360px] max-h-[420px] flex flex-col bg-[#1A2332]/95 backdrop-blur-xl border border-white/10 rounded-xl shadow-xl z-50 overflow-hidden"
+                  className="absolute right-0 top-full mt-2 flex max-h-[420px] w-[92vw] max-w-[360px] flex-col overflow-hidden rounded-app-lg border border-border-strong bg-surface-1/95 shadow-app-md backdrop-blur-xl z-50"
                 >
-                  <div className="p-3 border-b border-white/10 flex items-center justify-between">
-                    <span className="font-semibold text-white">Notifications</span>
+                  <div className="flex items-center justify-between border-b border-border-subtle p-3">
+                    <span className="font-semibold text-text-primary">Notifications</span>
                     {unreadCount > 0 && (
                       <button
                         type="button"
                         onClick={handleMarkAllRead}
-                        className="text-xs text-[#00D9FF] hover:underline"
+                        className="text-xs text-accent-to hover:underline"
                       >
                         Mark all read
                       </button>
                     )}
                   </div>
-                  <div className="overflow-y-auto flex-1 custom-scrollbar">
+                  <div className="flex-1 overflow-y-auto">
                     {notifications.length === 0 ? (
-                      <p className="p-4 text-sm text-[#B0BEC5] text-center">No notifications</p>
+                      <p className="p-4 text-center text-sm text-text-secondary">
+                        No notifications
+                      </p>
                     ) : (
-                      <ul className="p-2 space-y-1">
+                      <ul className="space-y-1 p-2">
                         {notifications.map((n) => {
                           let bodyContent: ReactNode = n.body;
                           if (n.type === 'week_summary' && n.body) {
@@ -345,7 +394,7 @@ export function TopNavigation({ activeTab = 'dashboard', onTabChange }: TopNavig
                                 talk_time_formatted?: string;
                               };
                               bodyContent = (
-                                <span className="text-xs text-[#B0BEC5] block mt-1">
+                                <span className="mt-1 block text-xs text-text-secondary">
                                   Calls: {data.calls ?? 0} · Connect rate: {data.connect_rate ?? 0}%
                                   · Talk time: {data.talk_time_formatted ?? '0m'}
                                 </span>
@@ -359,11 +408,13 @@ export function TopNavigation({ activeTab = 'dashboard', onTabChange }: TopNavig
                               <button
                                 type="button"
                                 onClick={() => handleOpenNotification(n)}
-                                className={`w-full text-left p-3 rounded-lg transition-colors ${n.read_at ? 'bg-transparent hover:bg-white/5' : 'bg-[#0066FF]/10'}`}
+                                className={`w-full rounded-app-md p-3 text-left transition-colors ${n.read_at ? 'bg-transparent hover:bg-white/5' : 'bg-accent-to/10'}`}
                               >
-                                <div className="font-medium text-white text-sm">{n.title}</div>
+                                <div className="text-sm font-medium text-text-primary">
+                                  {n.title}
+                                </div>
                                 {bodyContent && <div className="mt-0.5">{bodyContent}</div>}
-                                <div className="text-xs text-[#B0BEC5] mt-1">
+                                <div className="mt-1 text-xs text-text-secondary">
                                   {formatNotificationDate(n.created_at)}
                                 </div>
                               </button>
@@ -383,36 +434,38 @@ export function TopNavigation({ activeTab = 'dashboard', onTabChange }: TopNavig
         <div className="relative">
           <button
             onClick={() => setShowUserMenu(!showUserMenu)}
-            className="flex items-center gap-3 px-3 py-2 hover:bg-white/5 rounded-xl transition-colors"
+            className="flex items-center gap-2 rounded-app-md p-1 transition-colors hover:bg-white/5 sm:gap-3 sm:px-2 sm:py-1.5"
           >
             <div className="relative">
-              <div className="w-9 h-9 rounded-full bg-gradient-to-br from-[#00D9FF] to-[#0066FF] flex items-center justify-center text-white font-semibold text-sm">
+              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-accent-from to-accent-to text-sm font-semibold text-white">
                 {initials}
               </div>
-              <div className="absolute bottom-0 right-0 w-3 h-3 bg-[#00E676] rounded-full border-2 border-[#1A2332]" />
+              <div className="absolute bottom-0 right-0 h-2.5 w-2.5 rounded-full border-2 border-surface-1 bg-success" />
             </div>
-            <ChevronDown className="w-4 h-4 text-[#B0BEC5]" />
+            {!isMobile && <ChevronDown className="hidden h-4 w-4 text-text-secondary sm:block" />}
           </button>
 
           <AnimatePresence>
             {showUserMenu && (
               <>
                 {createPortal(
-                  // See the org-switcher backdrop above for why this is portaled to
-                  // document.body rather than a plain sibling div.
                   <div className="fixed inset-0 z-40" onClick={() => setShowUserMenu(false)} />,
                   document.body
                 )}
                 <motion.div
+                  ref={userMenuRef}
+                  tabIndex={-1}
                   initial={{ opacity: 0, y: -10 }}
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: -10 }}
                   transition={{ duration: 0.2 }}
-                  className="absolute right-0 top-full mt-2 w-64 bg-[#1A2332]/95 backdrop-blur-xl border border-white/10 rounded-xl shadow-[0_8px_32px_rgba(0,0,0,0.4)] overflow-hidden z-50"
+                  className="absolute right-0 top-full mt-2 w-64 overflow-hidden rounded-app-lg border border-border-strong bg-surface-1/95 shadow-app-md z-50"
                 >
-                  <div className="p-4 border-b border-white/10">
-                    <div className="font-semibold text-white">{displayName}</div>
-                    <div className="text-sm text-[#B0BEC5] truncate">{email || 'No email'}</div>
+                  <div className="border-b border-border-subtle p-4">
+                    <div className="font-semibold text-text-primary">{displayName}</div>
+                    <div className="truncate text-sm text-text-secondary">
+                      {email || 'No email'}
+                    </div>
                   </div>
 
                   {isManager && (
@@ -423,9 +476,9 @@ export function TopNavigation({ activeTab = 'dashboard', onTabChange }: TopNavig
                           setShowUserMenu(false);
                           onTabChange?.('settings');
                         }}
-                        className="w-full flex items-center gap-3 px-3 py-2.5 hover:bg-white/5 rounded-lg transition-colors text-white"
+                        className="flex w-full items-center gap-3 rounded-app-md px-3 py-2.5 text-text-primary transition-colors hover:bg-white/5"
                       >
-                        <User className="w-4 h-4 text-[#B0BEC5]" />
+                        <User className="w-4 h-4 text-text-secondary" />
                         Profile
                       </button>
                       <button
@@ -434,19 +487,19 @@ export function TopNavigation({ activeTab = 'dashboard', onTabChange }: TopNavig
                           setShowUserMenu(false);
                           onTabChange?.('settings');
                         }}
-                        className="w-full flex items-center gap-3 px-3 py-2.5 hover:bg-white/5 rounded-lg transition-colors text-white"
+                        className="flex w-full items-center gap-3 rounded-app-md px-3 py-2.5 text-text-primary transition-colors hover:bg-white/5"
                       >
-                        <Settings className="w-4 h-4 text-[#B0BEC5]" />
+                        <Settings className="w-4 h-4 text-text-secondary" />
                         Settings
                       </button>
                     </div>
                   )}
 
-                  <div className="p-2 border-t border-white/10">
+                  <div className="border-t border-border-subtle p-2">
                     <button
                       type="button"
                       onClick={() => setShowSignOutConfirm(true)}
-                      className="w-full flex items-center gap-3 px-3 py-2.5 hover:bg-white/5 rounded-lg transition-colors text-[#FF3D00]"
+                      className="flex w-full items-center gap-3 rounded-app-md px-3 py-2.5 text-danger transition-colors hover:bg-white/5"
                     >
                       <LogOut className="w-4 h-4" />
                       Sign Out
@@ -473,13 +526,15 @@ export function TopNavigation({ activeTab = 'dashboard', onTabChange }: TopNavig
               aria-hidden="true"
             />
             <div
-              className="relative z-[101] flex h-72 w-72 flex-col rounded-xl border border-white/10 bg-[#1A2332] p-5 shadow-xl"
+              ref={signOutRef}
+              tabIndex={-1}
+              className="relative z-[101] flex h-72 w-72 flex-col rounded-app-lg border border-border-strong bg-surface-1 p-5 shadow-app-md"
               onClick={(e) => e.stopPropagation()}
             >
-              <h2 id="signout-title" className="text-base font-semibold text-white">
+              <h2 id="signout-title" className="text-base font-semibold text-text-primary">
                 Sign out?
               </h2>
-              <p className="mt-2 flex-1 text-xs leading-snug text-[#B0BEC5]">
+              <p className="mt-2 flex-1 text-xs leading-snug text-text-secondary">
                 Are you sure you want to sign out? You will need to sign in again to access your
                 account.
               </p>
@@ -487,14 +542,14 @@ export function TopNavigation({ activeTab = 'dashboard', onTabChange }: TopNavig
                 <button
                   type="button"
                   onClick={() => setShowSignOutConfirm(false)}
-                  className="flex-1 rounded-lg border border-white/10 bg-white/10 px-3 py-2 text-xs font-medium text-white hover:bg-white/20"
+                  className="flex-1 rounded-app-md border border-border-strong bg-white/10 px-3 py-2 text-xs font-medium text-text-primary hover:bg-white/20"
                 >
                   Cancel
                 </button>
                 <button
                   type="button"
                   onClick={handleSignOutConfirm}
-                  className="flex-1 rounded-lg bg-[#FF3D00] px-3 py-2 text-xs font-medium text-white hover:bg-[#FF3D00]/90"
+                  className="flex-1 rounded-app-md bg-danger px-3 py-2 text-xs font-medium text-white hover:bg-danger/90"
                 >
                   Sign out
                 </button>
@@ -503,6 +558,13 @@ export function TopNavigation({ activeTab = 'dashboard', onTabChange }: TopNavig
           </div>,
           document.body
         )}
+
+      <CommandPalette
+        open={paletteOpen}
+        onOpenChange={handlePaletteOpenChange}
+        onTabChange={(tab) => onTabChange?.(tab)}
+        isManager={isManager}
+      />
     </nav>
   );
 }

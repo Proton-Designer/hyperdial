@@ -9,7 +9,6 @@ import {
   Mail,
   Building2,
   MapPin,
-  Loader2,
   Trash2,
   ChevronLeft,
   ChevronRight,
@@ -34,6 +33,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { ListSkeleton } from '@/components/app/skeletons';
 import { useOrg } from '@/contexts/OrgContext';
 
 const CATEGORIES = ['All', 'Cold', 'Warm', 'Follow Up', 'Voicemail', 'Booked'] as const;
@@ -302,9 +302,7 @@ export function Contacts() {
 
       {/* Contact List */}
       {loading ? (
-        <div className="flex items-center justify-center py-20">
-          <Loader2 className="w-10 h-10 text-[#00D9FF] animate-spin" />
-        </div>
+        <ListSkeleton rows={8} />
       ) : (
         <div className="space-y-3">
           {canManage && paginatedContacts.length > 0 && (

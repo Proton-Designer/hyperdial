@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { motion } from 'motion/react';
-import { TrendingUp, TrendingDown, Phone, Clock, Target, Gauge, Loader2 } from 'lucide-react';
+import { TrendingUp, TrendingDown, Phone, Clock, Target, Gauge } from 'lucide-react';
 import {
   BarChart,
   Bar,
@@ -15,6 +15,7 @@ import {
   ResponsiveContainer,
 } from 'recharts';
 import { getAnalyticsSummary, type AnalyticsSummary } from '@/lib/api';
+import { Skeleton } from '@/components/ui/skeleton';
 
 type Range = '7d' | '30d';
 
@@ -88,9 +89,18 @@ export function Analytics() {
       )}
 
       {loading ? (
-        <div className="flex items-center justify-center py-24">
-          <Loader2 className="w-8 h-8 text-[#00D9FF] animate-spin" />
-        </div>
+        <>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <Skeleton key={i} className="h-[126px] rounded-2xl" />
+            ))}
+          </div>
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 mb-8">
+            <Skeleton className="lg:col-span-2 h-[380px] rounded-2xl" />
+            <Skeleton className="h-[380px] rounded-2xl" />
+          </div>
+          <Skeleton className="h-[240px] rounded-2xl" />
+        </>
       ) : !hasData ? (
         <div className="bg-[#1A2332]/60 backdrop-blur-xl rounded-2xl p-12 border border-white/5 text-center">
           <Phone className="w-10 h-10 text-[#B0BEC5] mx-auto mb-4" />

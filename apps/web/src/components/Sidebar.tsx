@@ -6,10 +6,12 @@ import {
   Target,
   BarChart3,
   Settings,
-  Menu,
+  ChevronsLeft,
+  ChevronsRight,
   type LucideIcon,
 } from 'lucide-react';
 import { TabType } from './MainApp';
+import { LogoMark } from '@/components/brand/Logo';
 import { useOrg } from '@/contexts/OrgContext';
 
 interface SidebarProps {
@@ -17,6 +19,8 @@ interface SidebarProps {
   onTabChange: (tab: TabType) => void;
   collapsed: boolean;
   onToggleCollapse: () => void;
+  /** 56px on desktop/tablet (FE-A shell), matching TopNavigation's new height. */
+  topOffset: number;
 }
 
 interface NavTab {
@@ -35,9 +39,13 @@ const tabs: NavTab[] = [
   { id: 'analytics', icon: BarChart3, label: 'Analytics', ownerAdminOnly: true },
 ];
 
-const TOP_NAV_HEIGHT = 72;
-
-export function Sidebar({ activeTab, onTabChange, collapsed, onToggleCollapse }: SidebarProps) {
+export function Sidebar({
+  activeTab,
+  onTabChange,
+  collapsed,
+  onToggleCollapse,
+  topOffset,
+}: SidebarProps) {
   const { role } = useOrg();
   // Fail CLOSED: an owner/admin-only tab is visible only once role is CONFIRMED owner/admin, not
   // merely "not confirmed agent" -- role null (loading, or right after an invite accept that
@@ -50,96 +58,75 @@ export function Sidebar({ activeTab, onTabChange, collapsed, onToggleCollapse }:
   const isAgent = role === 'agent';
   const visibleTabs = tabs.filter((tab) => isManager || !tab.ownerAdminOnly);
 
+  const renderItem = (tab: NavTab, extraOnClick?: () => void) => {
+    const Icon = tab.icon;
+    const isActive = activeTab === tab.id;
+    const label = isAgent && tab.agentLabel ? tab.agentLabel : tab.label;
+
+    return (
+      <button
+        key={tab.id}
+        onClick={() => {
+          onTabChange(tab.id);
+          extraOnClick?.();
+        }}
+        aria-current={isActive ? 'page' : undefined}
+        className={`
+          relative flex w-full items-center gap-3 rounded-app-md px-3 py-2.5 text-sm transition-colors group
+          ${isActive ? 'bg-accent-to/10 text-text-primary font-medium' : 'text-text-secondary hover:bg-white/5 hover:text-text-primary'}
+        `}
+      >
+        {isActive && (
+          <motion.div
+            layoutId="sidebar-active-bar"
+            className="absolute left-0 top-1 bottom-1 w-[2px] rounded-r-full bg-accent-to"
+            transition={{ type: 'spring', stiffness: 500, damping: 32 }}
+          />
+        )}
+        <Icon className={`w-[18px] h-[18px] flex-shrink-0 ${isActive ? 'text-accent-to' : ''}`} />
+        {!collapsed && <span className="truncate">{label}</span>}
+        {collapsed && (
+          <div className="pointer-events-none absolute left-full ml-2 whitespace-nowrap rounded-app-sm border border-border-strong bg-surface-1 px-2.5 py-1.5 text-xs text-text-primary opacity-0 shadow-app-md transition-opacity group-hover:opacity-100 z-50">
+            {label}
+          </div>
+        )}
+      </button>
+    );
+  };
+
   return (
     <motion.aside
-      className="fixed left-0 bottom-0 z-40 bg-[#1A2332]/60 backdrop-blur-xl border-r border-white/5 flex flex-col overflow-hidden"
-      style={{ top: TOP_NAV_HEIGHT }}
-      animate={{ width: collapsed ? 64 : 280 }}
-      transition={{ duration: 0.25, ease: [0.4, 0, 0.2, 1] }}
+      className="fixed left-0 bottom-0 z-40 flex flex-col overflow-hidden border-r border-border-subtle bg-surface-1/60 backdrop-blur-xl"
+      style={{ top: topOffset }}
+      animate={{ width: collapsed ? 64 : 240 }}
+      transition={{ duration: 0.2, ease: [0.2, 0.8, 0.2, 1] }}
     >
-      {/* Navigation Items */}
-      <nav className="flex-1 p-3 space-y-1">
-        {visibleTabs.map((tab) => {
-          const Icon = tab.icon;
-          const isActive = activeTab === tab.id;
-          const label = isAgent && tab.agentLabel ? tab.agentLabel : tab.label;
+      {/* FE-A: the logo lives in the top bar when the sidebar is expanded (no need to repeat it);
+          collapsed to a 64px icon rail, the wordmark no longer fits, so the mark alone anchors
+          the rail the same way a collapsed sidebar does in most desktop apps. */}
+      {collapsed && (
+        <div className="flex items-center justify-center py-3">
+          <LogoMark size={28} />
+        </div>
+      )}
 
-          return (
-            <button
-              key={tab.id}
-              onClick={() => onTabChange(tab.id)}
-              className={`
-                w-full flex items-center gap-3 px-4 py-3.5 rounded-xl transition-all relative group
-                ${
-                  isActive
-                    ? 'bg-[#0066FF]/10 text-white'
-                    : 'text-[#B0BEC5] hover:bg-white/5 hover:text-white'
-                }
-              `}
-            >
-              {isActive && (
-                <motion.div
-                  layoutId="activeTab"
-                  className="absolute left-0 top-0 bottom-0 w-1 bg-[#00D9FF] rounded-r-full"
-                  transition={{ type: 'spring', stiffness: 500, damping: 30 }}
-                />
-              )}
-
-              <Icon className={`w-5 h-5 flex-shrink-0 ${isActive ? 'text-[#00D9FF]' : ''}`} />
-
-              {!collapsed && <span className="font-medium">{label}</span>}
-
-              {collapsed && (
-                <div className="absolute left-full ml-2 px-3 py-2 bg-[#1A2332] rounded-lg shadow-lg border border-white/10 opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity whitespace-nowrap z-50">
-                  <span className="text-sm text-white">{label}</span>
-                </div>
-              )}
-            </button>
-          );
-        })}
+      <nav className="flex-1 space-y-1 p-2.5 overflow-y-auto">
+        {visibleTabs.map((tab) => renderItem(tab))}
       </nav>
 
-      {/* Settings at bottom -- owner/admin only, same as Campaigns/Analytics above */}
-      <div className="p-3 border-t border-white/5">
-        {isManager && (
-          <button
-            onClick={() => onTabChange('settings')}
-            className={`
-              w-full flex items-center gap-3 px-4 py-3.5 rounded-xl transition-all relative group
-              ${
-                activeTab === 'settings'
-                  ? 'bg-[#0066FF]/10 text-white'
-                  : 'text-[#B0BEC5] hover:bg-white/5 hover:text-white'
-              }
-            `}
-          >
-            {activeTab === 'settings' && (
-              <motion.div
-                layoutId="activeTab"
-                className="absolute left-0 top-0 bottom-0 w-1 bg-[#00D9FF] rounded-r-full"
-                transition={{ type: 'spring', stiffness: 500, damping: 30 }}
-              />
-            )}
-
-            <Settings
-              className={`w-5 h-5 flex-shrink-0 ${activeTab === 'settings' ? 'text-[#00D9FF]' : ''}`}
-            />
-
-            {!collapsed && <span className="font-medium">Settings</span>}
-
-            {collapsed && (
-              <div className="absolute left-full ml-2 px-3 py-2 bg-[#1A2332] rounded-lg shadow-lg border border-white/10 opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity whitespace-nowrap z-50">
-                <span className="text-sm text-white">Settings</span>
-              </div>
-            )}
-          </button>
-        )}
+      <div className="space-y-1 border-t border-border-subtle p-2.5">
+        {isManager && renderItem({ id: 'settings', icon: Settings, label: 'Settings' })}
 
         <button
           onClick={onToggleCollapse}
-          className="w-full flex items-center justify-center gap-3 px-4 py-3 rounded-xl transition-all text-[#B0BEC5] hover:bg-white/5 hover:text-white mt-2"
+          className="flex w-full items-center justify-center gap-2 rounded-app-md px-3 py-2 text-text-secondary transition-colors hover:bg-white/5 hover:text-text-primary"
+          aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
         >
-          <Menu className="w-5 h-5" />
+          {collapsed ? (
+            <ChevronsRight className="w-[18px] h-[18px]" />
+          ) : (
+            <ChevronsLeft className="w-[18px] h-[18px]" />
+          )}
         </button>
       </div>
     </motion.aside>

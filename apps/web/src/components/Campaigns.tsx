@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { Search, Plus, Target, Loader2 } from 'lucide-react';
 import { listCampaigns, createCampaign, type CampaignWithStats } from '../lib/api';
 import { CampaignManageModal } from './campaigns/CampaignManageModal';
+import { Skeleton } from '@/components/ui/skeleton';
 
 function formatDate(s: string | null): string {
   if (!s) return '—';
@@ -73,7 +74,7 @@ export function Campaigns({
   };
 
   return (
-    <div className="h-[calc(100vh-72px)] bg-[#0A1628]">
+    <div className="h-full bg-[#0A1628]">
       <div className="p-8 max-w-[1600px] mx-auto">
         <div className="flex items-center justify-between mb-8">
           <div>
@@ -131,8 +132,10 @@ export function Campaigns({
         </div>
 
         {loading ? (
-          <div className="flex items-center justify-center py-20 text-[#B0BEC5]">
-            <Loader2 className="w-8 h-8 animate-spin" />
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+            {Array.from({ length: 8 }).map((_, i) => (
+              <Skeleton key={i} className="h-[180px] rounded-2xl" />
+            ))}
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">

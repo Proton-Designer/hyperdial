@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { TopNavigation } from './TopNavigation';
+import { TopNavigation, TOP_NAV_HEIGHT } from './TopNavigation';
 import { Sidebar } from './Sidebar';
 import { Dashboard } from './Dashboard';
 import { Dialer } from './Dialer';
@@ -7,6 +7,9 @@ import { Contacts } from './Contacts';
 import { Campaigns } from './Campaigns';
 import { Analytics } from './Analytics';
 import { Settings } from './Settings';
+import { BottomTabBar } from './app/BottomTabBar';
+import { PageTransition } from './app/PageTransition';
+import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { useOrg } from '@/contexts/OrgContext';
 
 export type TabType = 'dashboard' | 'dialer' | 'contacts' | 'campaigns' | 'analytics' | 'settings';
@@ -70,15 +73,32 @@ export function MainApp() {
     pendingDeepLinkTabRef.current = urlTab;
     return 'dialer';
   });
-  // B1 Phase 2: on a narrow (mobile) viewport, an expanded 280px sidebar left only ~110px for
-  // the main content at 390px wide -- cards were clipped, not reflowed (confirmed live, no
-  // horizontal scroll, just genuinely cut off). Default to the existing 64px-collapsed state
-  // (the manual toggle already handles the rest) below the same breakpoint Tailwind's own `md`
-  // utilities use elsewhere in this app, checked once at mount -- not a live resize listener,
-  // matching this component's existing one-shot-at-mount pattern for the URL-driven initial tab.
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(
-    () => typeof window !== 'undefined' && window.matchMedia('(max-width: 768px)').matches
-  );
+  // TASK-FE-A: mobile (<768) drops the sidebar entirely for a fixed bottom tab bar instead (no
+  // amount of collapsing fixed B1-007 properly -- a 64px rail plus its own top bar was still
+  // cramped on a 390px screen, and a bottom tab bar is the platform-native pattern). Desktop
+  // (>=1024) defaults expanded; tablet (768-1023) defaults collapsed. A live resize listener
+  // (useBreakpoint), replacing the old one-shot mount-time matchMedia check -- the shell now
+  // needs to actually react to a resize/rotate, not just pick a starting value.
+  const breakpoint = useBreakpoint();
+  const isMobile = breakpoint === 'mobile';
+  const [sidebarCollapsed, setSidebarCollapsedState] = useState(() => {
+    try {
+      const stored = typeof window !== 'undefined' && localStorage.getItem('hd_sidebar_collapsed');
+      if (stored === 'true') return true;
+      if (stored === 'false') return false;
+    } catch {
+      // localStorage unavailable (private mode, blocked) -- fall through to the breakpoint default.
+    }
+    return typeof window !== 'undefined' && window.matchMedia('(max-width: 1023px)').matches;
+  });
+  const setSidebarCollapsed = (value: boolean) => {
+    setSidebarCollapsedState(value);
+    try {
+      localStorage.setItem('hd_sidebar_collapsed', String(value));
+    } catch {
+      // Best-effort only -- not persisting the preference isn't worth surfacing an error for.
+    }
+  };
   const [parallelDialContext, setParallelDialContext] = useState<ParallelDialLaunchContext | null>(
     null
   );
@@ -159,30 +179,38 @@ export function MainApp() {
     return () => window.removeEventListener('popstate', onPopState);
   }, [restrictToAgentTabs]);
 
-  const topBarHeight = 72;
-
   return (
-    <div className="h-screen bg-[#0A1628] flex flex-col overflow-hidden">
+    <div className="h-screen bg-surface-0 flex flex-col overflow-hidden">
       <TopNavigation activeTab={activeTab} onTabChange={setActiveTab} />
       {/* Spacer reserves space so content starts below the fixed top bar */}
-      <div aria-hidden className="flex-shrink-0" style={{ height: topBarHeight }} />
+      <div aria-hidden className="flex-shrink-0" style={{ height: TOP_NAV_HEIGHT }} />
       <div className="flex flex-1 min-h-0 overflow-hidden">
-        <Sidebar
-          activeTab={activeTab}
-          onTabChange={setActiveTab}
-          collapsed={sidebarCollapsed}
-          onToggleCollapse={() => setSidebarCollapsed(!sidebarCollapsed)}
-        />
+        {!isMobile && (
+          <Sidebar
+            activeTab={activeTab}
+            onTabChange={setActiveTab}
+            collapsed={sidebarCollapsed}
+            onToggleCollapse={() => setSidebarCollapsed(!sidebarCollapsed)}
+            topOffset={TOP_NAV_HEIGHT}
+          />
+        )}
         <main
-          className="flex-1 min-h-0 overflow-auto transition-[margin-left] duration-250 ease-out"
-          style={{ marginLeft: sidebarCollapsed ? 64 : 280 }}
+          className="flex-1 min-h-0 overflow-auto transition-[margin-left] duration-200 ease-out"
+          style={{
+            marginLeft: isMobile ? 0 : sidebarCollapsed ? 64 : 240,
+            // Mobile: clear the fixed bottom tab bar (56px + the device's own safe-area inset)
+            // so the last row of content is never hidden behind it.
+            paddingBottom: isMobile ? 'calc(56px + env(safe-area-inset-bottom, 0px))' : undefined,
+          }}
         >
           {activeTab === 'dashboard' && (
-            <Dashboard
-              onNavigateToDialer={() => setActiveTab('dialer')}
-              onNavigateToContacts={() => setActiveTab('contacts')}
-              onNavigateToCampaigns={() => setActiveTab('campaigns')}
-            />
+            <PageTransition>
+              <Dashboard
+                onNavigateToDialer={() => setActiveTab('dialer')}
+                onNavigateToContacts={() => setActiveTab('contacts')}
+                onNavigateToCampaigns={() => setActiveTab('campaigns')}
+              />
+            </PageTransition>
           )}
           {/* Review fix (L1 round-3 review-notes-r3.md, MAJOR 3): the Dialer used to only render
               (and its useTelnyxCall client only exist) while activeTab === 'dialer', so leaving
@@ -192,7 +220,8 @@ export function MainApp() {
               Dialer permanently mounted and only CSS-hiding it when another tab is active keeps
               the SAME TelnyxRTC client (and the "exactly one client per tab" invariant) alive
               across every tab switch; `display: none` also removes it from the tab order/a11y
-              tree while hidden, same as not rendering it at all. */}
+              tree while hidden, same as not rendering it at all. NOT wrapped in PageTransition
+              (FE-A) -- that component keys/re-renders on mount, and this div must never unmount. */}
           <div style={activeTab === 'dialer' ? undefined : { display: 'none' }}>
             <Dialer
               parallelSessionId={parallelDialContext?.sessionId ?? null}
@@ -200,24 +229,41 @@ export function MainApp() {
               onClearParallelContext={() => setParallelDialContext(null)}
             />
           </div>
-          {activeTab === 'contacts' && <Contacts />}
-          {activeTab === 'campaigns' && (
-            <Campaigns
-              onNavigateToDialer={() => setActiveTab('dialer')}
-              onStartParallelDial={(ctx) => {
-                setParallelDialContext(ctx);
-                setActiveTab('dialer');
-              }}
-              onOpenDialerWithSession={(ctx) => {
-                setParallelDialContext(ctx);
-                setActiveTab('dialer');
-              }}
-            />
+          {activeTab === 'contacts' && (
+            <PageTransition>
+              <Contacts />
+            </PageTransition>
           )}
-          {activeTab === 'analytics' && <Analytics />}
-          {activeTab === 'settings' && <Settings />}
+          {activeTab === 'campaigns' && (
+            <PageTransition>
+              <Campaigns
+                onNavigateToDialer={() => setActiveTab('dialer')}
+                onStartParallelDial={(ctx) => {
+                  setParallelDialContext(ctx);
+                  setActiveTab('dialer');
+                }}
+                onOpenDialerWithSession={(ctx) => {
+                  setParallelDialContext(ctx);
+                  setActiveTab('dialer');
+                }}
+              />
+            </PageTransition>
+          )}
+          {activeTab === 'analytics' && (
+            <PageTransition>
+              <Analytics />
+            </PageTransition>
+          )}
+          {activeTab === 'settings' && (
+            <PageTransition>
+              <Settings />
+            </PageTransition>
+          )}
         </main>
       </div>
+      {isMobile && (
+        <BottomTabBar activeTab={activeTab} onTabChange={setActiveTab} isManager={isManager} />
+      )}
     </div>
   );
 }

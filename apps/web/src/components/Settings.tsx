@@ -57,6 +57,8 @@ import {
   type DispositionLeadEffect,
   type DncNumber,
 } from '@/lib/api';
+import { Skeleton } from '@/components/ui/skeleton';
+import { ListSkeleton } from '@/components/app/skeletons';
 import { normalizePhoneStrict } from '@/lib/phone-normalize';
 
 type SettingsTab =
@@ -103,8 +105,14 @@ function ProfileTab() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center py-20">
-        <Loader2 className="w-8 h-8 text-[#00D9FF] animate-spin" />
+      <div>
+        <Skeleton className="h-8 w-56 mb-8" />
+        <div className="space-y-4 max-w-xl">
+          <Skeleton className="h-12 w-full rounded-xl" />
+          <Skeleton className="h-12 w-full rounded-xl" />
+          <Skeleton className="h-12 w-full rounded-xl" />
+          <Skeleton className="h-10 w-32 rounded-xl" />
+        </div>
       </div>
     );
   }
@@ -345,9 +353,7 @@ function TeamTab() {
       )}
 
       {loading ? (
-        <div className="flex items-center justify-center py-12">
-          <Loader2 className="w-8 h-8 text-[#00D9FF] animate-spin" />
-        </div>
+        <ListSkeleton rows={4} />
       ) : (
         <div className="space-y-3">
           {members.map((m) => {
@@ -513,9 +519,7 @@ function IntegrationsTab() {
       )}
 
       {loading ? (
-        <div className="flex items-center justify-center py-12">
-          <Loader2 className="w-8 h-8 text-[#00D9FF] animate-spin" />
-        </div>
+        <Skeleton className="h-[140px] w-full max-w-xl rounded-2xl" />
       ) : (
         <div className="bg-[#1A2332]/60 backdrop-blur-xl rounded-2xl p-6 border border-white/5 max-w-xl">
           <div className="flex items-center justify-between mb-4">
@@ -630,8 +634,9 @@ function SyncStatusList() {
     <div className="mt-6 bg-[#1A2332]/60 backdrop-blur-xl rounded-2xl p-6 border border-white/5 max-w-xl">
       <h3 className="text-white font-medium mb-4">Sync status</h3>
       {loading ? (
-        <div className="flex items-center justify-center py-6">
-          <Loader2 className="w-6 h-6 text-[#00D9FF] animate-spin" />
+        <div className="space-y-2">
+          <Skeleton className="h-10 w-full rounded-lg" />
+          <Skeleton className="h-10 w-full rounded-lg" />
         </div>
       ) : jobs.length === 0 ? (
         <p className="text-sm text-[#B0BEC5]">No sync activity yet.</p>
@@ -809,9 +814,7 @@ function DispositionsTab() {
       {!isAdmin ? (
         <p className="text-sm text-[#B0BEC5]">Only an owner or admin can manage dispositions.</p>
       ) : loading ? (
-        <div className="flex items-center justify-center py-12">
-          <Loader2 className="w-8 h-8 text-[#00D9FF] animate-spin" />
-        </div>
+        <Skeleton className="h-[320px] w-full max-w-2xl rounded-2xl" />
       ) : (
         <div className="bg-[#1A2332]/60 backdrop-blur-xl rounded-2xl p-6 border border-white/5 max-w-2xl">
           <div className="space-y-2 mb-4">
@@ -1077,9 +1080,7 @@ function DncTab() {
           Only an owner or admin can manage the do-not-call list.
         </p>
       ) : loading ? (
-        <div className="flex items-center justify-center py-12">
-          <Loader2 className="w-8 h-8 text-[#00D9FF] animate-spin" />
-        </div>
+        <Skeleton className="h-[220px] w-full max-w-2xl rounded-2xl" />
       ) : (
         <div className="bg-[#1A2332]/60 backdrop-blur-xl rounded-2xl p-6 border border-white/5 max-w-2xl">
           <form onSubmit={handleAdd} className="flex gap-2 mb-4">
@@ -1287,7 +1288,7 @@ export function Settings() {
   };
 
   return (
-    <div className="flex h-[calc(100vh-72px)]">
+    <div className="flex h-full">
       {/* Sidebar Navigation */}
       <div className="w-64 bg-[#1A2332]/60 backdrop-blur-xl border-r border-white/5 p-6">
         <h2 className="text-white font-bold text-lg mb-6">Settings</h2>
@@ -1316,8 +1317,10 @@ export function Settings() {
       <div className="flex-1 overflow-y-auto p-8">
         <div className="max-w-4xl">
           {orgLoading ? (
-            <div className="flex items-center justify-center py-20">
-              <Loader2 className="w-8 h-8 text-[#00D9FF] animate-spin" />
+            <div>
+              <Skeleton className="h-8 w-40 mb-8" />
+              <Skeleton className="h-[140px] w-full rounded-2xl mb-4" />
+              <Skeleton className="h-[140px] w-full rounded-2xl" />
             </div>
           ) : (
             <>
@@ -1338,9 +1341,7 @@ export function Settings() {
                   )}
 
                   {telnyxStatusLoading ? (
-                    <div className="flex items-center justify-center py-12">
-                      <Loader2 className="w-8 h-8 text-[#00D9FF] animate-spin" />
-                    </div>
+                    <Skeleton className="h-[104px] w-full rounded-2xl mb-8" />
                   ) : (
                     <div className="bg-[#1A2332]/60 backdrop-blur-xl rounded-2xl p-6 border border-white/5 mb-8">
                       <div className="flex items-center justify-between mb-4">
@@ -1448,9 +1449,7 @@ export function Settings() {
 
                   <div className="space-y-4 mb-8">
                     {phoneNumbersLoading ? (
-                      <div className="flex items-center justify-center py-12">
-                        <Loader2 className="w-8 h-8 text-[#00D9FF] animate-spin" />
-                      </div>
+                      <ListSkeleton rows={2} />
                     ) : phoneNumbers.length === 0 ? (
                       <div className="bg-[#1A2332]/60 backdrop-blur-xl rounded-2xl p-8 border border-white/5 text-center">
                         <p className="text-[#B0BEC5]">
