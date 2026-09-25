@@ -20,7 +20,7 @@ export function AuthSplitLayout({ children }: { children: ReactNode }) {
             Every live conversation.
           </h1>
           <p className="text-body text-text-secondary max-w-md">
-            Dial multiple lines at once -- the first human answer connects you, the rest hang up
+            Dial multiple lines at once — the first human answer connects you, the rest hang up
             automatically.
           </p>
         </div>

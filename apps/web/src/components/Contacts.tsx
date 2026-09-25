@@ -293,12 +293,15 @@ export function Contacts() {
             />
           </div>
           <div className="flex flex-wrap gap-1.5 items-center">
+            <span className="text-[11px] uppercase tracking-wide text-text-muted mr-0.5">
+              Category
+            </span>
             {CATEGORIES.map((cat) => (
               <button
                 key={cat}
                 onClick={() => setCategoryFilter(cat)}
                 className={cn(
-                  'px-2.5 py-1.5 rounded-app-sm text-meta font-medium transition-colors',
+                  'px-2.5 py-1.5 rounded-app-sm text-[13px] font-medium transition-colors',
                   categoryFilter === cat
                     ? 'bg-accent-from/20 text-accent-to'
                     : 'bg-surface-2 text-text-secondary hover:bg-surface-3'
@@ -309,12 +312,15 @@ export function Contacts() {
             ))}
           </div>
           <div className="flex flex-wrap gap-1.5 items-center">
+            <span className="text-[11px] uppercase tracking-wide text-text-muted mr-0.5">
+              Status
+            </span>
             {CONTACT_STATUSES.map((status) => (
               <button
                 key={status}
                 onClick={() => setContactStatusFilter(status)}
                 className={cn(
-                  'px-2.5 py-1.5 rounded-app-sm text-meta font-medium transition-colors',
+                  'px-2.5 py-1.5 rounded-app-sm text-[13px] font-medium transition-colors',
                   contactStatusFilter === status
                     ? 'bg-accent-from/20 text-accent-to'
                     : 'bg-surface-2 text-text-secondary hover:bg-surface-3'
@@ -424,15 +430,19 @@ export function Contacts() {
                         {new Date(contact.created_at).toLocaleDateString()}
                       </TableCell>
                       <TableCell onClick={(e) => e.stopPropagation()}>
-                        <div className="flex items-center justify-end gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                          <Button variant="fe-secondary" size="sm">
+                        <div className="flex items-center justify-end gap-1.5">
+                          <Button
+                            variant="fe-secondary"
+                            size="sm"
+                            className="opacity-0 group-hover:opacity-100 transition-opacity"
+                          >
                             <Phone className="w-3.5 h-3.5" />
                             Call
                           </Button>
                           {canManage && (
                             <DropdownMenu>
                               <DropdownMenuTrigger asChild>
-                                <button className="w-8 h-8 rounded-app-sm bg-surface-2 hover:bg-surface-3 flex items-center justify-center text-text-secondary hover:text-text-primary transition-colors">
+                                <button className="w-8 h-8 rounded-app-sm bg-surface-2 hover:bg-surface-3 flex items-center justify-center text-text-secondary/70 hover:text-text-primary transition-colors">
                                   <MoreVertical className="w-4 h-4" />
                                 </button>
                               </DropdownMenuTrigger>

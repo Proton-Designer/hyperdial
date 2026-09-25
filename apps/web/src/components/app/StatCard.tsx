@@ -36,7 +36,7 @@ export function StatCard({
     <div
       className={cn(
         'rounded-app-lg border border-border-subtle bg-surface-1 p-4 shadow-app-sm',
-        'flex flex-col justify-between gap-2 max-h-[110px]',
+        'flex flex-col justify-between gap-2 h-full max-h-[110px]',
         className
       )}
     >

@@ -224,11 +224,12 @@ export function Dashboard({
         {metrics.map((metric, index) => (
           <motion.div
             key={metric.label}
+            className="h-full"
             initial={statsLoading || reduceMotion ? false : { opacity: 0, y: 6 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: index * 0.04, duration: 0.12, ease: [0.2, 0.8, 0.2, 1] }}
           >
-            <StatCard loading={statsLoading} {...metric} />
+            <StatCard loading={statsLoading} {...metric} className="h-full" />
           </motion.div>
         ))}
       </div>

@@ -1075,6 +1075,27 @@ genuinely separate browser processes/machines).
   (`call_legs.recording_path is not null`) already exists; F-P4 just needs to select it, no new
   column or API required. See `.brain/memory/decisions.md`.
 
+## 29. `cn()`/twMerge silently drops a custom `text-meta`/`text-body`/`text-page-title`/`text-section-title`
+class whenever it's combined in the SAME `cn()` call with a `text-text-*`/`text-accent-*`/etc colour class
+
+- Found live (TASK-F-P1's FE-B nits): Contacts' filter chips rendered at 16px/600-weight instead of
+  the intended 12px `.text-meta`, confirmed via `getComputedStyle` in a headless Playwright check —
+  the `text-meta` token was missing from the DOM entirely. Root cause: twMerge pattern-matches any
+  `text-XXX` class as belonging to Tailwind's built-in "text color" class group unless XXX is a
+  recognized font-size keyword; `.text-meta` (a plain custom CSS class defined directly in
+  `globals.css`, not a Tailwind-generated utility) doesn't match that keyword list, so twMerge
+  treats `text-meta` and `text-text-secondary` as two conflicting color utilities and keeps only
+  whichever comes later in the `cn()` argument list, silently dropping the other. A plain
+  `className="text-meta text-text-secondary"` (no `cn()`) is unaffected -- the properties don't
+  actually collide (font-size vs color) -- only a `cn()`/twMerge merge is at risk.
+  `grep -rn "text-meta\|text-body\|text-page-title\|text-section-title" apps/web/src/components
+  --include="*.tsx" | grep -E "text-text-|text-accent-|text-danger|text-success|text-warning"`
+  found ~150 occurrences repo-wide; NOT all are inside a `cn()` call (many are plain className
+  strings, unaffected) and this wasn't audited call-by-call -- only the Contacts chip instance was
+  confirmed broken and fixed (switched to `text-[13px]`, a Tailwind arbitrary-value font-size util,
+  which twMerge groups separately from color and never conflicts with `text-text-*`). Worth a
+  dedicated sweep before trusting any other `cn(...'text-meta'...'text-text-*'...)` combination.
+
 ---
 
 ## Not issues — deliberate, documented elsewhere
