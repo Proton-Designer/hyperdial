@@ -27,6 +27,10 @@ async function fetchAllContactRows(
       .from('contacts')
       .select('id, phone_number, dnc')
       .eq('org_id', orgId)
+      // TASK-L8 review nit: .range() paging with no explicit order isn't guaranteed stable
+      // across separate requests -- a row could be skipped or repeated across pages. .order('id')
+      // (a unique column) makes the page boundaries deterministic.
+      .order('id')
       .range(offset, offset + PAGE_SIZE - 1);
     if (error) throw new Error(`existing-contacts lookup failed: ${error.message}`);
     const page = (data ?? []) as { id: string; phone_number: string | null; dnc: boolean }[];
@@ -223,12 +227,15 @@ Deno.serve(async (req) => {
         skippedActiveCampaign = plan.skippedActiveElsewhere;
 
         if (plan.toQueue.length > 0) {
-          await upsertCampaignLeads(supabase, {
+          const { raceDropped } = await upsertCampaignLeads(supabase, {
             campaignId,
             orgId,
             contactIds: plan.toQueue,
             status: 'queued',
           });
+          // TASK-L8 review nit: a contact that lost the race for "active elsewhere" between the
+          // check above and this write was not queued -- count it, don't silently under-report.
+          skippedActiveCampaign += raceDropped.length;
         }
       }
     }

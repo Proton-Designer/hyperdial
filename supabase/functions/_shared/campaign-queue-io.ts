@@ -44,19 +44,21 @@ export async function fetchActiveElsewhereContactIds(
  * every contact known to be DNC/paused/active-elsewhere as of its own point-in-time check, so a
  * 23505 here should be rare -- only a genuine race (a second request queueing the same contact
  * elsewhere between that check and this write). On a 23505, retries that one batch's rows
- * one-at-a-time so the rest of the batch still lands, silently dropping just the row(s) that lost
- * the race rather than failing every contact in the batch for one collision. Any other error
- * still throws. */
+ * one-at-a-time so the rest of the batch still lands; a row that ALSO 23505s on its own individual
+ * retry genuinely lost the race and is returned in `raceDropped` (TASK-L8 review nit: previously
+ * silently dropped with no way for the caller to count it in a skip total, so the response could
+ * claim more contacts were queued than actually were). Any other error still throws. */
 export async function upsertCampaignLeads(
   supabase: SupabaseAny,
   args: { campaignId: string; orgId: string; contactIds: string[]; status: string }
-): Promise<void> {
+): Promise<{ raceDropped: string[] }> {
   const toRow = (contactId: string) => ({
     campaign_id: args.campaignId,
     contact_id: contactId,
     org_id: args.orgId,
     status: args.status,
   });
+  const raceDropped: string[] = [];
   for (const batch of chunk(args.contactIds, 200)) {
     if (batch.length === 0) continue;
     const { error } = await supabase
@@ -71,9 +73,13 @@ export async function upsertCampaignLeads(
         onConflict: 'campaign_id,contact_id',
         ignoreDuplicates: true,
       });
-      if (rowError && rowError.code !== '23505') {
-        throw new Error(`campaign_leads upsert failed: ${rowError.message}`);
+      if (rowError) {
+        if (rowError.code !== '23505') {
+          throw new Error(`campaign_leads upsert failed: ${rowError.message}`);
+        }
+        raceDropped.push(contactId);
       }
     }
   }
+  return { raceDropped };
 }

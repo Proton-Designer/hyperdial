@@ -43,23 +43,81 @@ $$;
 -- the owner) and an agent, so the crm_sync_jobs "owner or admin" SELECT policy has both a
 -- positive (admin) and negative (agent) case in the same org.
 
+-- TASK-L8: 20260925000300_invite_only_signup.sql's on_auth_user_created trigger now validates a
+-- real org_invites token -- swap the trigger FUNCTION to a no-op (postgres owns it; live-runnable
+-- technique, same as audit/L4/dryrun.sql), build org/profile/membership by hand, then restore it.
+create or replace function public.handle_new_user()
+returns trigger language plpgsql security definer set search_path = '' as $l8fx$
+begin
+  return new;
+end;
+$l8fx$;
+
 insert into auth.users (
   instance_id, id, aud, role, email, encrypted_password, email_confirmed_at,
   raw_app_meta_data, raw_user_meta_data, created_at, updated_at,
   confirmation_token, recovery_token, is_sso_user, is_anonymous
 ) values
   ('00000000-0000-0000-0000-000000000000', '9c1f9000-a000-4000-8000-00000000000a', 'authenticated', 'authenticated', 'p3p1-owner-a@example.com', crypt('x', gen_salt('bf')), now(), '{}', '{}', now(), now(), '', '', false, false),
-  ('00000000-0000-0000-0000-000000000000', '9c1f9000-a000-4000-8000-00000000000b', 'authenticated', 'authenticated', 'p3p1-admin-a@example.com', crypt('x', gen_salt('bf')), now(), '{}', '{"invite_token":"test"}', now(), now(), '', '', false, false),
-  ('00000000-0000-0000-0000-000000000000', '9c1f9000-a000-4000-8000-00000000000c', 'authenticated', 'authenticated', 'p3p1-agent-a@example.com', crypt('x', gen_salt('bf')), now(), '{}', '{"invite_token":"test"}', now(), now(), '', '', false, false),
+  ('00000000-0000-0000-0000-000000000000', '9c1f9000-a000-4000-8000-00000000000b', 'authenticated', 'authenticated', 'p3p1-admin-a@example.com', crypt('x', gen_salt('bf')), now(), '{}', '{}', now(), now(), '', '', false, false),
+  ('00000000-0000-0000-0000-000000000000', '9c1f9000-a000-4000-8000-00000000000c', 'authenticated', 'authenticated', 'p3p1-agent-a@example.com', crypt('x', gen_salt('bf')), now(), '{}', '{}', now(), now(), '', '', false, false),
   ('00000000-0000-0000-0000-000000000000', '9c1f9000-b000-4000-8000-00000000000a', 'authenticated', 'authenticated', 'p3p1-owner-b@example.com', crypt('x', gen_salt('bf')), now(), '{}', '{}', now(), now(), '', '', false, false);
 
-select active_org_id as org_a from public.profiles where user_id = '9c1f9000-a000-4000-8000-00000000000a' \gset
-select active_org_id as org_b from public.profiles where user_id = '9c1f9000-b000-4000-8000-00000000000a' \gset
+create or replace function public.handle_new_user()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_token text;
+  v_invite record;
+begin
+  v_token := new.raw_user_meta_data ->> 'invite_token';
+  if v_token is null or btrim(v_token) = '' then
+    raise exception 'Sign-up is invite-only. Ask your team owner or admin for an invite link.';
+  end if;
+  select id, email, expires_at, accepted_at
+    into v_invite
+    from public.org_invites
+   where token_hash = encode(extensions.digest(v_token, 'sha256'), 'hex');
+  if not found then
+    raise exception 'This invite link is not valid.';
+  end if;
+  if v_invite.accepted_at is not null then
+    raise exception 'This invite has already been used.';
+  end if;
+  if v_invite.expires_at < now() then
+    raise exception 'This invite has expired. Ask your team to send a new one.';
+  end if;
+  if lower(new.email) is distinct from lower(v_invite.email) then
+    raise exception 'This invite was sent to a different email address.';
+  end if;
+  insert into public.profiles (user_id, first_name, last_name)
+  values (new.id, nullif(new.raw_user_meta_data ->> 'first_name', ''), nullif(new.raw_user_meta_data ->> 'last_name', ''))
+  on conflict (user_id) do nothing;
+  return new;
+end;
+$$;
+
+insert into public.orgs (id, name, created_by) values
+  ('9c1f9000-a000-4000-8000-0000000000aa', 'P3P1 Org A', '9c1f9000-a000-4000-8000-00000000000a'),
+  ('9c1f9000-b000-4000-8000-0000000000aa', 'P3P1 Org B', '9c1f9000-b000-4000-8000-00000000000a');
+
+select '9c1f9000-a000-4000-8000-0000000000aa' as org_a \gset
+select '9c1f9000-b000-4000-8000-0000000000aa' as org_b \gset
+
+insert into public.profiles (user_id, active_org_id) values
+  ('9c1f9000-a000-4000-8000-00000000000a', :'org_a'),
+  ('9c1f9000-a000-4000-8000-00000000000b', :'org_a'),
+  ('9c1f9000-a000-4000-8000-00000000000c', :'org_a'),
+  ('9c1f9000-b000-4000-8000-00000000000a', :'org_b');
+
 insert into public.org_members (org_id, user_id, role, status) values
+  (:'org_a', '9c1f9000-a000-4000-8000-00000000000a', 'owner', 'active'),
   (:'org_a', '9c1f9000-a000-4000-8000-00000000000b', 'admin', 'active'),
-  (:'org_a', '9c1f9000-a000-4000-8000-00000000000c', 'agent', 'active');
-update public.profiles set active_org_id = :'org_a'
-  where user_id in ('9c1f9000-a000-4000-8000-00000000000b', '9c1f9000-a000-4000-8000-00000000000c');
+  (:'org_a', '9c1f9000-a000-4000-8000-00000000000c', 'agent', 'active'),
+  (:'org_b', '9c1f9000-b000-4000-8000-00000000000a', 'owner', 'active');
 
 -- ===============================================================================================
 -- 1. enqueue_crm_job no-ops (returns null, writes nothing) without a connected integration

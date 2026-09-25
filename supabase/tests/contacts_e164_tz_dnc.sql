@@ -77,6 +77,21 @@ $$;
 
 -- Fixtures: org A (owner, admin, agent; agent assigned to campaign A -> contact A1 only),
 -- org B (owner, one contact) -----------------------------------------------------------
+--
+-- TASK-L8: 20260925000300_invite_only_signup.sql's on_auth_user_created trigger now validates a
+-- real org_invites token -- this file's old "no token = self-serve org" / "any non-null token =
+-- already invited" shortcuts no longer run those side effects, they just error. `postgres` is not
+-- the owner of auth.users on live (only supabase_auth_admin is, so `alter table ... disable
+-- trigger` fails there), but it DOES own the trigger FUNCTION -- swap that to a no-op instead,
+-- same live-runnable technique as audit/L4/dryrun.sql, then build org/profile/membership by hand
+-- (what org-invite-accept would have done after a real invited signup), then restore the real
+-- function so anything later in this file that inserts into auth.users still gets real behavior.
+create or replace function public.handle_new_user()
+returns trigger language plpgsql security definer set search_path = '' as $l8fx$
+begin
+  return new;
+end;
+$l8fx$;
 
 insert into auth.users (
   instance_id, id, aud, role, email, encrypted_password, email_confirmed_at,
@@ -84,17 +99,65 @@ insert into auth.users (
   confirmation_token, recovery_token, is_sso_user, is_anonymous
 ) values
   ('00000000-0000-0000-0000-000000000000', '9c1fee00-a000-4000-8000-00000000000a', 'authenticated', 'authenticated', 'p2p1-owner-a@example.com', crypt('x', gen_salt('bf')), now(), '{}', '{}', now(), now(), '', '', false, false),
-  ('00000000-0000-0000-0000-000000000000', '9c1fee00-a000-4000-8000-00000000000b', 'authenticated', 'authenticated', 'p2p1-admin-a@example.com', crypt('x', gen_salt('bf')), now(), '{}', '{"invite_token":"t"}', now(), now(), '', '', false, false),
-  ('00000000-0000-0000-0000-000000000000', '9c1fee00-a000-4000-8000-00000000000c', 'authenticated', 'authenticated', 'p2p1-agent-a@example.com', crypt('x', gen_salt('bf')), now(), '{}', '{"invite_token":"t"}', now(), now(), '', '', false, false),
+  ('00000000-0000-0000-0000-000000000000', '9c1fee00-a000-4000-8000-00000000000b', 'authenticated', 'authenticated', 'p2p1-admin-a@example.com', crypt('x', gen_salt('bf')), now(), '{}', '{}', now(), now(), '', '', false, false),
+  ('00000000-0000-0000-0000-000000000000', '9c1fee00-a000-4000-8000-00000000000c', 'authenticated', 'authenticated', 'p2p1-agent-a@example.com', crypt('x', gen_salt('bf')), now(), '{}', '{}', now(), now(), '', '', false, false),
   ('00000000-0000-0000-0000-000000000000', '9c1fee00-b000-4000-8000-00000000000a', 'authenticated', 'authenticated', 'p2p1-owner-b@example.com', crypt('x', gen_salt('bf')), now(), '{}', '{}', now(), now(), '', '', false, false);
 
-select active_org_id as org_a from public.profiles where user_id = '9c1fee00-a000-4000-8000-00000000000a' \gset
-select active_org_id as org_b from public.profiles where user_id = '9c1fee00-b000-4000-8000-00000000000a' \gset
+create or replace function public.handle_new_user()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_token text;
+  v_invite record;
+begin
+  v_token := new.raw_user_meta_data ->> 'invite_token';
+  if v_token is null or btrim(v_token) = '' then
+    raise exception 'Sign-up is invite-only. Ask your team owner or admin for an invite link.';
+  end if;
+  select id, email, expires_at, accepted_at
+    into v_invite
+    from public.org_invites
+   where token_hash = encode(extensions.digest(v_token, 'sha256'), 'hex');
+  if not found then
+    raise exception 'This invite link is not valid.';
+  end if;
+  if v_invite.accepted_at is not null then
+    raise exception 'This invite has already been used.';
+  end if;
+  if v_invite.expires_at < now() then
+    raise exception 'This invite has expired. Ask your team to send a new one.';
+  end if;
+  if lower(new.email) is distinct from lower(v_invite.email) then
+    raise exception 'This invite was sent to a different email address.';
+  end if;
+  insert into public.profiles (user_id, first_name, last_name)
+  values (new.id, nullif(new.raw_user_meta_data ->> 'first_name', ''), nullif(new.raw_user_meta_data ->> 'last_name', ''))
+  on conflict (user_id) do nothing;
+  return new;
+end;
+$$;
 
-insert into public.org_members (org_id, user_id, role, status) values (:'org_a', '9c1fee00-a000-4000-8000-00000000000b', 'admin', 'active');
-update public.profiles set active_org_id = :'org_a' where user_id = '9c1fee00-a000-4000-8000-00000000000b';
-insert into public.org_members (org_id, user_id, role, status) values (:'org_a', '9c1fee00-a000-4000-8000-00000000000c', 'agent', 'active');
-update public.profiles set active_org_id = :'org_a' where user_id = '9c1fee00-a000-4000-8000-00000000000c';
+insert into public.orgs (id, name, created_by) values
+  ('9c1fee00-a000-4000-8000-0000000000aa', 'P2P1 Org A', '9c1fee00-a000-4000-8000-00000000000a'),
+  ('9c1fee00-b000-4000-8000-0000000000aa', 'P2P1 Org B', '9c1fee00-b000-4000-8000-00000000000a');
+
+select '9c1fee00-a000-4000-8000-0000000000aa' as org_a \gset
+select '9c1fee00-b000-4000-8000-0000000000aa' as org_b \gset
+
+insert into public.profiles (user_id, active_org_id) values
+  ('9c1fee00-a000-4000-8000-00000000000a', :'org_a'),
+  ('9c1fee00-a000-4000-8000-00000000000b', :'org_a'),
+  ('9c1fee00-a000-4000-8000-00000000000c', :'org_a'),
+  ('9c1fee00-b000-4000-8000-00000000000a', :'org_b');
+
+insert into public.org_members (org_id, user_id, role, status) values
+  (:'org_a', '9c1fee00-a000-4000-8000-00000000000a', 'owner', 'active'),
+  (:'org_a', '9c1fee00-a000-4000-8000-00000000000b', 'admin', 'active'),
+  (:'org_a', '9c1fee00-a000-4000-8000-00000000000c', 'agent', 'active'),
+  (:'org_b', '9c1fee00-b000-4000-8000-00000000000a', 'owner', 'active');
 
 insert into public.contacts (id, org_id, user_id, first_name, phone_number, notes) values
   ('9c1fee01-a000-4000-8000-00000000000a', :'org_a', '9c1fee00-a000-4000-8000-00000000000a', 'Assigned Contact', '+14155551111', 'orig notes'),

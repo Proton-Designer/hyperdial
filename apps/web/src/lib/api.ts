@@ -1009,6 +1009,11 @@ export async function addLeadsToCampaign(
 
   const candidateIds = contactIds.filter((id) => !dncIds.has(id));
   const activeElsewhereIds = new Set<string>();
+  // TASK-L8 review nit: this same query already returns a candidate's row in THIS campaign too
+  // (its `status` is one of the active ones checked below) -- track those separately so
+  // re-adding a contact already a lead here doesn't get counted as newly `added` below, even
+  // though the upsert itself is a harmless no-op for it (ON CONFLICT DO NOTHING).
+  const alreadyPresentIds = new Set<string>();
   for (const batch of chunk(candidateIds)) {
     if (batch.length === 0) continue;
     const { data, error } = await supabase
@@ -1019,10 +1024,13 @@ export async function addLeadsToCampaign(
     if (error) throw new Error(error.message);
     for (const row of (data ?? []) as { contact_id: string; campaign_id: string }[]) {
       if (row.campaign_id !== campaignId) activeElsewhereIds.add(row.contact_id);
+      else alreadyPresentIds.add(row.contact_id);
     }
   }
 
-  const toAdd = candidateIds.filter((id) => !activeElsewhereIds.has(id));
+  const toAdd = candidateIds.filter(
+    (id) => !activeElsewhereIds.has(id) && !alreadyPresentIds.has(id)
+  );
   if (toAdd.length > 0) {
     for (const batch of chunk(toAdd)) {
       const rows = batch.map((contact_id) => ({

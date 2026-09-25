@@ -48,6 +48,9 @@ async function fetchAllExistingContactRows(
       .from('contacts')
       .select('id, phone_number, ghl_contact_id, dnc')
       .eq('org_id', orgId)
+      // TASK-L8 review nit: same as contacts-import's own fetchAllContactRows -- .range() paging
+      // with no explicit order isn't guaranteed stable across separate requests.
+      .order('id')
       .range(offset, offset + PAGE_SIZE - 1);
     if (error) throw new Error(`existing contacts lookup failed: ${error.message}`);
     const page = (data ?? []) as ExistingContactRow[];
@@ -238,12 +241,15 @@ Deno.serve(async (req: Request) => {
 
     if (queuePlan.toQueue.length > 0) {
       try {
-        await upsertCampaignLeads(supabase, {
+        const { raceDropped } = await upsertCampaignLeads(supabase, {
           campaignId,
           orgId,
           contactIds: queuePlan.toQueue,
           status: 'queued',
         });
+        // TASK-L8 review nit: same as contacts-import -- count a contact that lost the race for
+        // "active elsewhere" between the check above and this write, don't silently under-report.
+        skippedActiveCampaign += raceDropped.length;
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         console.error('[ghl-import] campaign_leads upsert failed', message);

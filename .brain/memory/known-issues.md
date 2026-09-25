@@ -405,6 +405,19 @@ clearly-correct default (a deleted/paused campaign has no business holding a con
 handling a stuck `in_flight` row without a disposition is closer to `dialer-sweeper`'s territory
 (known-issues #11 is the same family of gap).
 
+**TASK-L8 also closed 4 L3 re-review nits**: `idx_contacts_org_phone_unique`'s WHERE clause only
+excluded a NULL `phone_number`, not junk/non-E.164 values -- inconsistent with the merge
+migration's own `phone_number ~ '^\+'` dedupe criteria (fixed by a new migration,
+`20260925000400_contacts_phone_unique_index_fix.sql`, since `20260925000100` is already applied
+to live and append-only from here); `contacts-import`/`ghl-import`'s paginated existing-contacts
+lookup had no explicit `.order()`, so `.range()` paging across separate requests wasn't guaranteed
+stable (added `.order('id')` to both); `_shared/campaign-queue-io.ts`'s `upsertCampaignLeads`
+silently dropped a contact that lost an "active elsewhere" race during the upsert itself without
+telling the caller, so the response could under-report what was actually skipped (now returns
+`raceDropped`, added to `skippedActiveCampaign` by both callers); `api.ts`'s `addLeadsToCampaign`
+counted a contact already active in the target campaign as newly `added` (harmless no-op via
+`ON CONFLICT DO NOTHING`, but a wrong count) -- now tracked separately and excluded.
+
 ---
 
 ## 14. ~~The agent audio path was 0% built — `DIALER_DEV_SKIP_AGENT_GATE` was the only reason the dialer could dial at all~~ — FIXED by TASK-L1 (2026-09-25)
@@ -510,19 +523,26 @@ Analytics/Settings out for `agent` and relabels Dashboard "My stats"; `Contacts.
 import/add/edit/delete/bulk actions for agents (row-click-through to `ContactDetailModal` was
 already view+DNC-toggle-only for non-owner/admin roles since TASK-P2-P1, untouched).
 
-**Real, cross-cutting consequence, only partly fixed**: every `supabase/tests/*.sql` fixture
-that bootstraps a test user via a direct `insert into auth.users` now either needs a real
-matching `org_invites` row, or `alter table auth.users disable/enable trigger
-on_auth_user_created` around the insert plus hand-built `orgs`/`profiles`/`org_members` rows
-(the old "no token = self-serve" and "any non-null token = already invited" fixture shortcuts
-both silently relied on behavior this migration removes). Fixed in `rls_org_matrix.sql` only
-(it is the tenancy RLS regression suite, most likely to be re-run soon) and in the new
-`invite_only_signup.sql`. **Not fixed**: `contacts_e164_tz_dnc.sql`, `dispositions.sql`,
-`ghl_integration_outbox.sql`, `campaign_settings_agents.sql`, `analytics_real_data.sql`,
-`tenancy_backfill_assertions.sql` (all eng1's own), and eng2's `dialer_schema_rpcs.sql`/
-`dialer_sweeper.sql` — these will error on their very first fixture insert if re-run as-is
-post-deploy. `scripts/dev/dialer-sim.ts` is unaffected in practice; it is already unrunnable
-dead code for an unrelated reason (#14 above, local Docker retired).
+**Real, cross-cutting consequence** — ~~was only partly fixed~~ **FIXED by TASK-L8 (2026-09-25)**:
+every `supabase/tests/*.sql` fixture that bootstraps a test user via a direct `insert into
+auth.users` needed either a real matching `org_invites` row, or a way to bypass the trigger's new
+validation for the fixture insert (the old "no token = self-serve" and "any non-null token =
+already invited" shortcuts both silently relied on behavior this migration removes). `alter table
+auth.users disable trigger ...` (used in `rls_org_matrix.sql`/`invite_only_signup.sql`) works
+locally but **fails on live** -- `postgres` is not the owner of `auth.users` there (owner is
+`supabase_auth_admin`), only of the trigger *function*. TASK-L8 fixed the remaining 7 files
+(`contacts_e164_tz_dnc.sql`, `dispositions.sql`, `ghl_integration_outbox.sql`,
+`campaign_settings_agents.sql`, `analytics_real_data.sql`, `dialer_schema_rpcs.sql`,
+`dialer_sweeper.sql`) with the live-runnable technique instead (first used in the L4 reviewer's
+own `audit/L4/dryrun.sql`): temporarily `create or replace function public.handle_new_user()` with
+a no-op pass-through (`postgres` DOES own that), insert the fixture users with no trigger side
+effects, build `orgs`/`profiles`/`org_members` by hand (what `org-invite-accept` would have done
+after a real invited signup -- inserting into `orgs` directly still fires that table's own
+unrelated AFTER INSERT triggers, e.g. TASK-P3-E1's dispositions auto-seed, exactly as a real
+signup would), then restore the real trigger function. `scripts/dev/dialer-sim.ts` was never
+affected in practice; it's already unrunnable dead code for an unrelated reason (#14 above, local
+Docker retired). `tenancy_backfill_assertions.sql` never needed fixing -- it asserts against
+already-applied backfill data and contains no `auth.users` insert of its own.
 
 **Also found, not fixed here — a real gap in the "per-intern setup" flow (design intent, not
 literally in TASK-L4's own acceptance criteria)**: `dialer-session-start` sets the new
