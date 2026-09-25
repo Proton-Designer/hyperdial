@@ -536,6 +536,80 @@ under the *owner's* `agent_id`, not the intern's, so it never shows up in the in
 
 ---
 
+## 18. TASK-L1 stage-03 review: 2 blockers, 6 majors — all fixed (2026-09-25)
+
+A fresh Opus reviewer FAILed TASK-L1 (#14 above) with 2 blockers and 6 majors before it could
+merge. Full findings: `audit/L1/review-notes.md` (this run's own folder). All fixed in the
+same task, before TASK-L1 closed for real — summary here, not repeated in full:
+
+- **B1**: `dialAgentLegInternal` threw OUTSIDE its own try/catch on 5 different failure
+  points (Telnyx context, campaign/caller-ID lookup, the credential lookup, the leg insert),
+  stranding the session in `ready_pending` forever -- and with SEC-8's unique index live,
+  every later Start for that agent then 409'd against a session that could never recover.
+  Root cause of "first Start always fails for a new member": `agentSipUri` only ever READ
+  `org_members.telnyx_credential_id`, which only the BROWSER's own connect call ever sets --
+  but the browser can't connect until it knows a session exists, i.e. after `dialer-session-
+  start` (which dials the agent) already returned. Fixed by extracting the credential get-or-
+  create into `_shared/agent-webrtc-credential.ts` so the server creates it too, and wrapping
+  the whole function body in one try/catch that terminates the leg and stops the session.
+- **B2**: a failed conference join/create was swallowed and the session still cascaded to
+  ready/dialing with NOTHING confirmed bridged (Telnyx conferences expire once every
+  participant leaves). Fixed: `ensureAgentConference` now falls back to creating a fresh
+  conference on a failed join and only returns success once one is actually confirmed.
+  **Caught a second bug while writing this fix's own regression test**: the fallback-create's
+  own CAS used `AGENT_ACTIVE_SESSION_STATES`, which deliberately excludes `paused_agent_lost`
+  (the very state Reconnect runs in) -- the CAS silently failed every time, so `conference_id`
+  was logged as "created" but never actually persisted. Fixed to CAS on the exact current
+  state instead.
+- **M1**: `dial_sessions.agent_leg_id` used to link AFTER dialing, racing a fast auto-answer
+  two ways (refill saw no agent leg; a race-lost link hung up the agent's own live leg as an
+  "orphan"). Fixed: link at INSERT time, before dialing. Conference calls also now use the raw
+  webhook event's own `call_control_id`, not the DB row's (which can still be the
+  `pending-agent-*` placeholder if found via the clientState fallback).
+- **M2**: no check that an event's leg was still `dial_sessions.agent_leg_id`; Reconnect had
+  no guard against a double-click/two-tab double-dial. Fixed: `processAgentLegEvent` ignores
+  any non-current agent leg; `reconnectAgentLeg` refuses if the existing agent leg isn't
+  `ended` yet (not a perfect atomic CAS, said plainly).
+- **M3**: agent-lost hung up an already-answered human SILENTLY (no abandon message -- a TCPA
+  safe-harbor gap) and could cut off an already-in-progress abandon message. Fixed: reuses
+  `loserActions` (the same speak_then_hangup/hangup split `handleWin` already uses), skipping
+  legs already `abandoned`/`dropped`/`machine`.
+- **M4**: Reconnect only ever checked `active_leg_id` to decide on_call-vs-dialing, so
+  reconnecting from a manually `paused` session (or one where `wrap_up` was entered AFTER the
+  agent already dropped) resumed dialing anyway -- overriding Pause / skipping the mandatory
+  disposition. Fixed: a new `dial_sessions.paused_agent_lost_from` column disambiguates
+  `paused`; an undispositioned-connected-leg check (not the remembered field) catches `wrap_up`
+  in BOTH orderings. Migration `20260925005100`.
+- **M5**: `useTelnyxCall.ts`'s inbound-call handler closed over `options.sessionId` from
+  whichever `connect()` call first established the WebSocket -- a second session in the same
+  mount never got its own INVITEs auto-answered. Fixed: a ref updated every render, read
+  inside the handler instead of the closure.
+- **m2/m3/n1/n2 (minor)**: SEC-8's 409 now detects Postgres SQLSTATE `23505` (not a message
+  substring) and includes `existingSessionId`; `useTelnyxCall`'s docstring now matches its own
+  behavior (rejects, doesn't "leave alone", when no session is expected); the
+  `inboundCallDecisionsRef` Map is pruned on call end.
+- **A third, unrelated-but-same-root-cause bug found while regression-testing B2**:
+  `refillSession`'s fast-path capacity hint counted the agent leg itself (kind-agnostic
+  `loadActiveLegs().length`) as if it were a dialed contact -- with `lines===1`, this made the
+  hint compute exactly 0 the instant the agent leg answered, so a single-line session could
+  NEVER dial a single contact (the hint skipped before ever calling `claim_next_leads`, whose
+  own RPC-level capacity check IS correctly `kind='contact'`-scoped). Same root cause as
+  `handleWin`'s and `useDialerSession.ts`'s own kind-agnostic bugs (#14) -- a fourth instance
+  of the same class, in a fourth place. Fixed with the same one-line filter.
+- Not fixed, disclosed as-is: m1 (Telnyx `sip_uri_calling_preference`, NEEDS-LIVE-VERIFY only),
+  m4 (Telnyx's own 4h hard caps -- already degrades gracefully via the existing agent-lost/
+  Reconnect path, not a new mechanism), n1 (a shared-file commit-attribution quirk, nothing to
+  fix).
+
+**Pattern worth remembering across this whole task and its review**: every real bug found in
+TASK-L1 and its review, across FOUR separate call sites (`handleWin`, `useDialerSession.ts`,
+`refillSession`, `ensureAgentConference`'s CAS), was some variant of "code written before the
+agent leg existed doesn't know a new kind of row can appear, or a new state can be entered,
+now that it does." When a task makes a previously-impossible case real, grep every consumer of
+the affected data, not just the one call site the task itself is building.
+
+---
+
 ## Not issues — deliberate, documented elsewhere
 
 - Redis alongside Postgres → `mem.decisions`

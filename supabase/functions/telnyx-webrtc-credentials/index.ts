@@ -12,6 +12,10 @@
  * bookkeeping write itself can't fail after the side effect it's supposed to record
  * (LANE-eng2.md, TASK-P1-05 fix), so the same defense applies here even though the
  * failure window is per-member rather than per-org.
+ *
+ * `getOrCreateMemberCredentialId` moved to `_shared/agent-webrtc-credential.ts` (TASK-L1
+ * review fix B1) so `dialer-engine.ts`'s `agentSipUri` can create the same credential
+ * server-side instead of requiring the browser to have called this endpoint first.
  */
 import { corsHeaders, corsPreflightResponse } from '../_shared/cors.ts';
 import {
@@ -19,81 +23,13 @@ import {
   getSupabaseAdmin,
   getConnectedOrgTelnyxContext,
 } from '../_shared/telnyx-org-context.ts';
-import type { TelnyxClient } from '../_shared/telnyx-client.ts';
+import { getOrCreateMemberCredentialId } from '../_shared/agent-webrtc-credential.ts';
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
     headers: { ...corsHeaders, 'Content-Type': 'application/json' },
   });
-}
-
-function memberCredentialName(orgId: string, userId: string): string {
-  return `hyperdial-member-${orgId}-${userId}`;
-}
-
-async function getOrCreateMemberCredentialId(
-  client: TelnyxClient,
-  supabase: ReturnType<typeof getSupabaseAdmin>,
-  orgId: string,
-  userId: string,
-  connectionId: string
-): Promise<string> {
-  const { data: member, error: memberError } = await supabase
-    .from('org_members')
-    .select('telnyx_credential_id')
-    .eq('org_id', orgId)
-    .eq('user_id', userId)
-    .maybeSingle();
-  if (memberError) {
-    throw new Error(`org_members lookup failed: ${memberError.message}`);
-  }
-
-  const storedId: string | null = member?.telnyx_credential_id ?? null;
-  let credentialId = storedId;
-
-  if (credentialId) {
-    try {
-      await client.getTelephonyCredential(credentialId);
-    } catch {
-      // Stale id (deleted on Telnyx's side, or from a stale/wrong environment) -- fall
-      // through to find-or-create instead of failing the whole request.
-      credentialId = null;
-    }
-  }
-
-  if (!credentialId) {
-    const name = memberCredentialName(orgId, userId);
-    const found = await client.findTelephonyCredentialByName(name);
-    credentialId = typeof found?.id === 'string' ? found.id : null;
-
-    if (!credentialId) {
-      const created = await client.createTelephonyCredential({ connectionId, name });
-      credentialId = typeof created.id === 'string' ? created.id : null;
-      if (!credentialId) {
-        throw new Error('Telnyx did not return an id for the telephony credential');
-      }
-    }
-  }
-
-  if (credentialId !== storedId) {
-    const { error: updateError } = await supabase
-      .from('org_members')
-      .update({ telnyx_credential_id: credentialId })
-      .eq('org_id', orgId)
-      .eq('user_id', userId);
-    if (updateError) {
-      console.error(
-        '[telnyx-webrtc-credentials] failed to persist telnyx_credential_id',
-        updateError.message
-      );
-      // Not fatal to this request (the caller still gets a working token) -- but the next
-      // call will re-find-or-create rather than reuse, same window telnyx-provision.ts
-      // documents for the org-level resources.
-    }
-  }
-
-  return credentialId;
 }
 
 Deno.serve(async (req: Request) => {

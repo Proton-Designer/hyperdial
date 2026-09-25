@@ -11,10 +11,10 @@ interface UseTelnyxCallOptions {
    * decodes to `{kind:'agent', session: sessionId}` -- the parallel dialer's own agent leg,
    * dialed server-side (dialer-engine.ts's dialAgentLeg/reconnectAgentLeg) from the org's Call
    * Control app into this member's WebRTC credential SIP URI. Every OTHER inbound call
-   * (anything that doesn't decode to this exact session) is rejected (hung up before
+   * (anything that doesn't decode to this exact session) is REJECTED (hung up before
    * answering) -- this hook must never auto-answer a call it wasn't told to expect. Omitted
-   * (the legacy single-line manual dialer's usage): inbound calls are left entirely alone,
-   * same as before this task.
+   * (the legacy single-line manual dialer's usage): every inbound call is rejected the same
+   * way, since this usage never expects one at all -- it is not left alone/ignored.
    */
   sessionId?: string;
 }
@@ -85,6 +85,18 @@ export function useTelnyxCall(options: UseTelnyxCallOptions = {}) {
    *  notifications (e.g. its own eventual hangup/destroy) never fall through to the normal
    *  state-tracking below and get mistaken for this hook's own active call. */
   const inboundCallDecisionsRef = useRef<Map<string, 'answered' | 'rejected'>>(new Map());
+  /** Review fix (M5): `connect()` only ever runs its OWN `telnyx.notification` handler setup
+   *  once per underlying TelnyxRTC client (it early-returns if `clientRef.current` already
+   *  exists) -- that handler used to read `options.sessionId` directly, closing over
+   *  whatever session was passed to THE `connect()` CALL that happened to establish the
+   *  connection. A second session in the same mount (or a client first connected with no
+   *  sessionId at all, e.g. the manual dialer) never re-ran `connect()` once already
+   *  `isReady`, so every later agent-leg INVITE was rejected against a stale/absent session
+   *  id. This ref is updated on every render (no dependency array), and the handler reads
+   *  `optionsRef.current` instead of closing over `options` -- decoupling "which session to
+   *  auto-answer for" from "when the WebSocket connection was first established". */
+  const optionsRef = useRef(options);
+  optionsRef.current = options;
 
   const persistAgentCallControlId = useCallback((maybeCall: unknown) => {
     if (typeof window === 'undefined') return;
@@ -108,8 +120,8 @@ export function useTelnyxCall(options: UseTelnyxCallOptions = {}) {
       if (!token) throw new Error('No token received');
 
       const client = new TelnyxRTC({ login_token: token });
-      if (options.remoteElementId) {
-        client.remoteElement = options.remoteElementId;
+      if (optionsRef.current.remoteElementId) {
+        client.remoteElement = optionsRef.current.remoteElementId;
       }
 
       return new Promise<void>((resolve, reject) => {
@@ -140,17 +152,18 @@ export function useTelnyxCall(options: UseTelnyxCallOptions = {}) {
                 const priorDecision = inboundCallDecisionsRef.current.get(call.id);
                 if (priorDecision === 'rejected') return;
                 if (!priorDecision) {
+                  const currentOptions = optionsRef.current;
                   const decoded = decodeAgentClientState(call.options?.clientState);
                   const headerSessionId = customHeaderSessionId(call.options?.customHeaders);
                   const matchesThisSession =
-                    Boolean(options.sessionId) &&
-                    ((decoded?.kind === 'agent' && decoded.session === options.sessionId) ||
-                      headerSessionId === options.sessionId);
+                    Boolean(currentOptions.sessionId) &&
+                    ((decoded?.kind === 'agent' && decoded.session === currentOptions.sessionId) ||
+                      headerSessionId === currentOptions.sessionId);
                   if (matchesThisSession) {
                     inboundCallDecisionsRef.current.set(call.id, 'answered');
                     call.answer(
-                      options.remoteElementId
-                        ? { remoteElement: options.remoteElementId }
+                      currentOptions.remoteElementId
+                        ? { remoteElement: currentOptions.remoteElementId }
                         : undefined
                     );
                   } else {
@@ -179,6 +192,10 @@ export function useTelnyxCall(options: UseTelnyxCallOptions = {}) {
                 if (typeof window !== 'undefined') {
                   window.localStorage.removeItem(ACTIVE_AGENT_CALL_CONTROL_ID_KEY);
                 }
+                // Review fix (n2): prune the decision this call was recorded under -- an
+                // unbounded Map growing for the lifetime of the WebSocket connection is a
+                // real (if slow) leak over a long shift with many inbound attempts.
+                if (call.id) inboundCallDecisionsRef.current.delete(call.id);
                 setTimeout(() => setCallState('idle'), 500);
               }
             }
@@ -192,7 +209,11 @@ export function useTelnyxCall(options: UseTelnyxCallOptions = {}) {
       setIsConnecting(false);
       throw err;
     });
-  }, [options.remoteElementId, options.sessionId, persistAgentCallControlId]);
+    // Review fix (M5) follow-on: this body now reads `optionsRef.current` exclusively (never
+    // closes over `options` directly), so `options.remoteElementId`/`options.sessionId` are no
+    // longer real dependencies -- keeping them just churned `connect`'s own identity (and the
+    // effect that calls it) on every options change for no functional reason.
+  }, [persistAgentCallControlId]);
 
   const disconnect = useCallback(() => {
     if (clientRef.current) {

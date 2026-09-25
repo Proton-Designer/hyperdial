@@ -152,19 +152,38 @@ Deno.serve(async (req) => {
     }
     // SEC-8 TOCTOU fallback: another request inserted a session for this same agent between
     // the proactive check above and this INSERT. startSession (dialer-engine.ts) maps the live
-    // partial unique index's violation to this exact message.
+    // partial unique index's violation (detected by Postgres SQLSTATE 23505, review fix m2)
+    // to this exact message.
     if (msg.includes('ACTIVE_SESSION_EXISTS_FOR_AGENT')) {
+      // Review fix (m2): look up the id of the session that won the race so the client's
+      // ActiveSessionExistsError actually gets thrown (api.ts only throws it when
+      // existingSessionId is present) -- the proactive check above already does this same
+      // lookup for the common case; this is just that same query for the rare TOCTOU one.
+      // `supabase` itself is block-scoped inside the try above, so a fresh client is needed.
+      const supabaseForLookup = createClient(
+        Deno.env.get('SUPABASE_URL')!,
+        Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
+      );
+      const { data: winner } = await supabaseForLookup
+        .from('dial_sessions')
+        .select('id')
+        .eq('agent_id', user.id)
+        .in('state', [
+          'ready_pending',
+          'ready',
+          'dialing',
+          'connecting',
+          'on_call',
+          'wrap_up',
+          'paused',
+          'paused_agent_lost',
+        ])
+        .maybeSingle();
       return jsonResponse(409, {
         error:
           'You already have an active dialer session. Stop or reconnect it before starting another.',
         code: 'ACTIVE_SESSION_EXISTS',
-      });
-    }
-    if (msg.includes('AGENT_NOT_REGISTERED')) {
-      return jsonResponse(400, {
-        error:
-          'Your WebRTC client is not registered yet. Connect it (mic permission + WebRTC token) before starting.',
-        code: 'AGENT_NOT_REGISTERED',
+        existingSessionId: winner?.id,
       });
     }
     console.error('dialer-session-start error:', err);

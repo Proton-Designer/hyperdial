@@ -108,6 +108,7 @@ import {
 import { encodeDialClientState, type DialClientState } from './client-state.ts';
 import { getConnectedOrgTelnyxContext } from './telnyx-org-context.ts';
 import { webhookUrlForOrg } from './telnyx-provision.ts';
+import { getOrCreateMemberCredentialId } from './agent-webrtc-credential.ts';
 import type { TelnyxClient } from './telnyx-client.ts';
 
 function dialerLog(step: string, meta: Record<string, unknown> = {}): void {
@@ -152,6 +153,10 @@ interface DialSessionRow {
   agent_leg_id: string | null;
   active_leg_id: string | null;
   conference_id: string | null;
+  /** TASK-L1 review fix M4: the session state right before an agent-lost transition, so
+   *  Reconnect's cascade can tell "was manually paused" apart from "was rolling dialing" --
+   *  see the migration's own header for why this is only used for the `paused` case. */
+  paused_agent_lost_from: string | null;
 }
 
 interface CampaignRow {
@@ -175,7 +180,7 @@ interface CallLegRow {
 }
 
 const SESSION_COLUMNS =
-  'id, org_id, campaign_id, agent_id, state, lines, amd_mode, agent_leg_id, active_leg_id, conference_id';
+  'id, org_id, campaign_id, agent_id, state, lines, amd_mode, agent_leg_id, active_leg_id, conference_id, paused_agent_lost_from';
 const LEG_COLUMNS =
   'id, org_id, session_id, campaign_id, contact_id, lead_id, kind, call_control_id, state';
 
@@ -282,35 +287,41 @@ function toTelnyxAmdMode(mode: CoreAmdMode): 'off' | 'premium' {
 
 /** TASK-L1: the agent's own WebRTC credential SIP URI, per design's own text ("dial the
  *  member's WebRTC credential SIP URI... sip:<credential sip_username>@sip.telnyx.com").
- *  On-demand credentials register a real SIP endpoint the instant the browser connects with
- *  its minted token (telnyx-webrtc-credentials/index.ts) -- this only ever reads that
- *  already-provisioned credential, it never creates one (AUD-7's pre-flight check, UI-side,
- *  is what actually enforces "the browser is registered before Go Ready runs"; this is the
- *  server-side consequence of skipping that check: a clear error, not a silent hang). */
+ *
+ *  Review fix (B1): this used to only READ `org_members.telnyx_credential_id` and throw
+ *  `AGENT_NOT_REGISTERED` if it was still null -- but that column is only ever set by the
+ *  BROWSER's own `getWebrtcCredentials` call, and the browser only starts trying to connect
+ *  after it learns a session exists, i.e. after `dialer-session-start` (which calls this)
+ *  already returned. There was no possible ordering where a first-time member's credential
+ *  already existed -- every first Start failed. Now uses the same get-or-create
+ *  (`_shared/agent-webrtc-credential.ts`) the browser's own endpoint uses, so the credential
+ *  and the dial no longer depend on the browser having connected first. The browser still
+ *  needs to actually be listening for the auto-answer itself to work -- that remains a
+ *  disclosed, separate timing gap (NOT-done in the task log), not something this function can
+ *  fix on its own. */
 async function agentSipUri(
   supabase: SupabaseClient,
   client: TelnyxClient,
   orgId: string,
-  agentId: string
+  agentId: string,
+  credentialConnectionId: string | null
 ): Promise<string> {
-  const { data: member, error } = await supabase
-    .from('org_members')
-    .select('telnyx_credential_id')
-    .eq('org_id', orgId)
-    .eq('user_id', agentId)
-    .maybeSingle();
-  if (error) throw new Error(`agentSipUri: org_members lookup failed: ${error.message}`);
-  const credentialId = member?.telnyx_credential_id as string | null | undefined;
-  if (!credentialId) {
+  if (!credentialConnectionId) {
     throw new Error(
-      'AGENT_NOT_REGISTERED: no WebRTC credential on record for this member. Connect the ' +
-        'WebRTC client (getWebrtcCredentials) before starting a dial session.'
+      'Telnyx is connected but has no WebRTC credential connection on record for this org.'
     );
   }
+  const credentialId = await getOrCreateMemberCredentialId(
+    client,
+    supabase,
+    orgId,
+    agentId,
+    credentialConnectionId
+  );
   const credential = await client.getTelephonyCredential(credentialId);
   const sipUsername = credential.sip_username as string | undefined;
   if (!sipUsername) {
-    throw new Error('AGENT_NOT_REGISTERED: Telnyx returned no sip_username for the credential.');
+    throw new Error('Telnyx returned no sip_username for the agent credential.');
   }
   return `sip:${sipUsername}@sip.telnyx.com`;
 }
@@ -343,7 +354,10 @@ export async function startSession(
     // SEC-8: dial_sessions_one_active_per_agent (partial unique index on agent_id, live
     // migration) -- the caller (dialer-session-start) maps this specific error to a 409, the
     // same TOCTOU-fallback shape as the pre-existing "deleted campaign" mapping just below.
-    if (error.message.includes('dial_sessions_one_active_per_agent')) {
+    // Review fix (m2): detect by the Postgres SQLSTATE (`23505` unique_violation) via
+    // PostgrestError's own `.code`, not a message substring -- the message's exact wording/
+    // constraint-name inclusion isn't a contract, the error code is.
+    if (error.code === '23505') {
       throw new Error('ACTIVE_SESSION_EXISTS_FOR_AGENT');
     }
     throw new Error(`startSession: ${error.message}`);
@@ -393,55 +407,116 @@ export async function reconnectAgentLeg(
   if (session.state !== 'paused_agent_lost') {
     return { ok: false, reason: 'not_paused_agent_lost' };
   }
+  // Review fix (M2, partial): `transition_session`'s CAS is on `state`, which stays
+  // 'paused_agent_lost' for the ENTIRE reconnect attempt (it only changes once the new leg
+  // answers) -- it cannot by itself stop two concurrent Reconnect clicks (or two open tabs)
+  // from both passing the check above and each dialing a fresh agent leg. This closes the
+  // common case by refusing outright if the session's own (old) agent leg is still non-
+  // terminal -- i.e. a reconnect is already in flight. Not a perfect atomic CAS (a narrow
+  // TOCTOU window remains between this check and the new leg's own insert+link), said
+  // plainly rather than silently assumed fixed.
+  if (session.agent_leg_id) {
+    const { data: currentAgentLeg } = await supabase
+      .from('call_legs')
+      .select('state')
+      .eq('id', session.agent_leg_id)
+      .maybeSingle();
+    if (currentAgentLeg && currentAgentLeg.state !== 'ended') {
+      return { ok: false, reason: 'reconnect_already_in_flight' };
+    }
+  }
   await dialAgentLegInternal(supabase, orgId, session);
   return { ok: true };
 }
 
+/**
+ * Review fix (B1): every step here used to throw OUTSIDE any catch except the final
+ * `client.dial()` call -- a failure in the Telnyx-context lookup, the campaign/caller-ID
+ * lookup, `agentSipUri`, or even the leg INSERT itself propagated straight up with no
+ * cleanup, leaving the session stranded in `ready_pending` forever (and, with SEC-8's unique
+ * index live, every later Start for that agent then hit a 409 against a session that could
+ * never be recovered). The whole body is now one try/catch; ANY failure terminates whatever
+ * leg row exists and, if this was the initial Go Ready, stops the session outright so the
+ * agent can retry from a clean state instead of being stuck.
+ *
+ * Review fix (M1): `dial_sessions.agent_leg_id` is now linked in the SAME step as the leg
+ * INSERT, before `client.dial()` ever runs -- not after, with a CAS on the pre-dial session
+ * state. The old post-dial link raced a fast `call.answered` webhook two ways: (1)
+ * `refillSession` reading `agent_leg_id` (still null) saw no agent leg and refilled zero; (2)
+ * if the session's OWN state had already moved on by the time the post-dial link ran (because
+ * `handleAgentLegAnswered` doesn't check `agent_leg_id` linkage before cascading -- see M2), the
+ * link's CAS lost the race and the code hung up the agent's own live, just-answered leg as an
+ * "orphan". Linking before dialing removes the window entirely -- by the time Telnyx could
+ * possibly deliver any webhook for this leg, `agent_leg_id` already points at it.
+ */
 async function dialAgentLegInternal(
   supabase: SupabaseClient,
   orgId: string,
   session: DialSessionRow
 ): Promise<void> {
-  const { client, callControlAppId, error } = await getConnectedOrgTelnyxContext(supabase, orgId);
-  if (error || !client || !callControlAppId) {
-    dialerLog('dial_agent_leg_not_connected', { sessionId: session.id, orgId });
-    throw new Error('Telnyx is not connected for this org.');
-  }
-
-  const campaign = await loadCampaign(supabase, session.campaign_id);
-  if (!campaign) throw new Error(`dialAgentLeg: campaign ${session.campaign_id} not found`);
-  const fromNumber = await resolvedFromNumber(supabase, orgId, campaign);
-  if (!fromNumber) throw new Error('dialAgentLeg: campaign has no caller ID number set');
-
-  const sipUri = await agentSipUri(supabase, client, orgId, session.agent_id);
-
-  const { data: legRow, error: insertError } = await supabase
-    .from('call_legs')
-    .insert({
-      org_id: orgId,
-      session_id: session.id,
-      campaign_id: session.campaign_id,
-      kind: 'agent',
-      call_control_id: `pending-agent-${crypto.randomUUID()}`,
-      state: 'initiated',
-    })
-    .select('id, call_control_id')
-    .single();
-  if (insertError || !legRow) {
-    throw new Error(`dialAgentLeg: agent leg insert failed: ${insertError?.message}`);
-  }
-  const legId = legRow.id as string;
-  const placeholderCallControlId = legRow.call_control_id as string;
-
-  const clientState = encodeDialClientState({
-    org: orgId,
-    session: session.id,
-    leg: legId,
-    kind: 'agent',
-  });
-  const webhookUrl = webhookUrlForOrg(webhookBaseUrl(), orgId);
-
+  let legId: string | null = null;
+  let placeholderCallControlId: string | null = null;
+  let dialedCallControlId: string | null = null;
   try {
+    const { client, callControlAppId, credentialConnectionId, error } =
+      await getConnectedOrgTelnyxContext(supabase, orgId);
+    if (error || !client || !callControlAppId) {
+      throw new Error('Telnyx is not connected for this org.');
+    }
+
+    const campaign = await loadCampaign(supabase, session.campaign_id);
+    if (!campaign) throw new Error(`dialAgentLeg: campaign ${session.campaign_id} not found`);
+    const fromNumber = await resolvedFromNumber(supabase, orgId, campaign);
+    if (!fromNumber) throw new Error('dialAgentLeg: campaign has no caller ID number set');
+
+    const sipUri = await agentSipUri(
+      supabase,
+      client,
+      orgId,
+      session.agent_id,
+      credentialConnectionId
+    );
+
+    const { data: legRow, error: insertError } = await supabase
+      .from('call_legs')
+      .insert({
+        org_id: orgId,
+        session_id: session.id,
+        campaign_id: session.campaign_id,
+        kind: 'agent',
+        call_control_id: `pending-agent-${crypto.randomUUID()}`,
+        state: 'initiated',
+      })
+      .select('id, call_control_id')
+      .single();
+    if (insertError || !legRow) {
+      throw new Error(`dialAgentLeg: agent leg insert failed: ${insertError?.message}`);
+    }
+    legId = legRow.id as string;
+    placeholderCallControlId = legRow.call_control_id as string;
+
+    const { data: linked, error: linkError } = await supabase.rpc('transition_session', {
+      p_session: session.id,
+      p_expected_states: [session.state],
+      p_new_state: session.state,
+      p_fields: { agent_leg_id: legId },
+    });
+    if (linkError) throw new Error(`dialAgentLeg link: ${linkError.message}`);
+    if (!linked) {
+      // The session moved on (e.g. an explicit Stop) between load and here -- never dial at
+      // all; nothing will ever process this leg's events since agent_leg_id never pointed at
+      // it. The catch block below terminates the (never-dialed) placeholder leg.
+      throw new Error('dialAgentLeg: session moved on before the agent leg could be linked');
+    }
+
+    const clientState = encodeDialClientState({
+      org: orgId,
+      session: session.id,
+      leg: legId,
+      kind: 'agent',
+    });
+    const webhookUrl = webhookUrlForOrg(webhookBaseUrl(), orgId);
+
     const { callControlId } = await client.dial({
       connectionId: callControlAppId,
       to: sipUri,
@@ -452,44 +527,52 @@ async function dialAgentLegInternal(
       amdMode: 'off',
       customHeaders: [{ name: AGENT_SESSION_HEADER_NAME, value: session.id }],
     });
+    dialedCallControlId = callControlId;
     const { error: updateError } = await supabase
       .from('call_legs')
       .update({ call_control_id: callControlId })
       .eq('id', legId);
     if (updateError) throw new Error(`dialAgentLeg update: ${updateError.message}`);
-    const { data: linked, error: linkError } = await supabase.rpc('transition_session', {
-      p_session: session.id,
-      p_expected_states: [session.state],
-      p_new_state: session.state,
-      p_fields: { agent_leg_id: legId },
-    });
-    if (linkError) throw new Error(`dialAgentLeg link: ${linkError.message}`);
-    if (!linked) {
-      // The session moved on (e.g. an explicit Stop) in the window between load and dial --
-      // nothing will ever process this leg's events since dial_sessions.agent_leg_id never
-      // got set to it. Hang it up now rather than leave a live, orphaned SIP call ringing the
-      // agent's browser forever.
-      dialerLog('dial_agent_leg_orphaned_hangup', { sessionId: session.id, legId, callControlId });
-      await hangupLeg(supabase, orgId, callControlId, 'dial_agent_leg_orphaned_hangup_failed');
-      return;
-    }
     dialerLog('dial_agent_leg_success', { sessionId: session.id, legId, callControlId });
   } catch (err) {
-    dialerLog('dial_agent_leg_failed', { sessionId: session.id, legId, error: String(err) });
-    await supabase.rpc('transition_leg', {
-      p_call_control_id: placeholderCallControlId,
-      p_expected_states: ['initiated'],
-      p_new_state: 'ended',
-      p_fields: {
-        outcome: 'failed',
-        hangup_cause: 'unspecified',
-        ended_at: new Date().toISOString(),
-      },
+    dialerLog('dial_agent_leg_failed', {
+      sessionId: session.id,
+      legId,
+      error: String(err),
     });
+    if (legId) {
+      // Terminate by whatever call_control_id is actually in the DB row right now (the
+      // placeholder if dial() never ran or never returned, the real one if only the
+      // post-dial UPDATE failed).
+      const currentCallControlId = dialedCallControlId ?? placeholderCallControlId;
+      if (currentCallControlId) {
+        await supabase.rpc('transition_leg', {
+          p_call_control_id: currentCallControlId,
+          p_expected_states: ['initiated'],
+          p_new_state: 'ended',
+          p_fields: {
+            outcome: 'failed',
+            hangup_cause: 'unspecified',
+            ended_at: new Date().toISOString(),
+          },
+        });
+      }
+      // If Telnyx actually accepted the dial but the DB update that would have let us find
+      // it by its real id failed, still tell Telnyx to hang it up -- hangupLeg already
+      // swallows its own errors (logs, never throws), safe to call unconditionally here.
+      if (dialedCallControlId) {
+        await hangupLeg(
+          supabase,
+          orgId,
+          dialedCallControlId,
+          'dial_agent_leg_cleanup_hangup_failed'
+        );
+      }
+    }
     // No agent leg means no way forward for this session -- stop it outright rather than
-    // leaving a phantom ready_pending/paused_agent_lost row nobody can ever recover (Go Ready
-    // failing means the caller's HTTP request itself fails; a failed Reconnect leaves the
-    // session in paused_agent_lost, which already has its own Reconnect retry path).
+    // leaving a phantom ready_pending row nobody can ever recover (Go Ready failing means the
+    // caller's HTTP request itself fails; a failed Reconnect leaves the session in
+    // paused_agent_lost, which already has its own Reconnect retry path -- don't stop THAT).
     if (session.state === 'ready_pending') {
       await supabase.rpc('transition_session', {
         p_session: session.id,
@@ -516,13 +599,23 @@ export async function refillSession(
 
   const agentLegState = await agentLegStateFor(supabase, session);
   const activeLegs = await loadActiveLegs(supabase, sessionId);
-  const n = refillCount(session.state, agentLegState, session.lines, activeLegs.length);
+  // TASK-L1 review-fix follow-on: loadActiveLegs is kind-agnostic by design (stopSession
+  // relies on that to also hang up the agent leg) -- this fast-path hint is a CONTACT
+  // capacity check (claim_next_leads' own RPC, the real source of truth, only ever counts
+  // kind='contact' rows), so it needs the same filter or it silently double-counts the
+  // agent's own leg as if it were a dialed contact. With `lines===1` (the narrowest, but real,
+  // case) this made the hint compute exactly 0 the INSTANT the agent leg answered -- refill
+  // would skip forever without ever calling claim_next_leads at all, so a single-line session
+  // could never dial a single contact. Found by this task's own review-fix regression test
+  // (B2's scenario), not by inspection.
+  const activeContactLegs = activeLegs.filter((l) => l.kind === 'contact').length;
+  const n = refillCount(session.state, agentLegState, session.lines, activeContactLegs);
   if (n <= 0) {
     dialerLog('refill_skip_zero', {
       sessionId,
       agentLegState,
       lines: session.lines,
-      active: activeLegs.length,
+      active: activeContactLegs,
     });
     return { dialed: 0 };
   }
@@ -806,7 +899,7 @@ export async function processTelnyxDialerEvent(
   }
 
   if (leg.kind === 'agent') {
-    await processAgentLegEvent(supabase, session, leg, dialerEvent);
+    await processAgentLegEvent(supabase, session, leg, dialerEvent, raw.callControlId);
     return;
   }
 
@@ -1025,15 +1118,30 @@ const AGENT_ACTIVE_SESSION_STATES: SessionState[] = [
 ];
 
 /** Dispatches an agent leg's own webhook event. The agent leg never runs AMD or a claim
- *  decision -- `agentLegTransition` (dialer-core.ts) is its whole state machine. */
+ *  decision -- `agentLegTransition` (dialer-core.ts) is its whole state machine.
+ *
+ *  Review fix (M2): ignores any event for a leg that is no longer `dial_sessions
+ *  .agent_leg_id` -- a stale/duplicate/superseded agent leg's own webhook (redelivery, a
+ *  race with Reconnect creating a fresh leg) must never touch a session it no longer speaks
+ *  for. `session` is loaded fresh at webhook-dispatch time (`processTelnyxDialerEvent`), so
+ *  this is always checked against the CURRENT linkage, not a stale snapshot. */
 async function processAgentLegEvent(
   supabase: SupabaseClient,
   session: DialSessionRow,
   leg: CallLegRow,
-  event: TelnyxDialerEvent
+  event: TelnyxDialerEvent,
+  rawCallControlId: string
 ): Promise<void> {
+  if (leg.id !== session.agent_leg_id) {
+    dialerLog('agent_leg_event_stale', {
+      legId: leg.id,
+      currentAgentLegId: session.agent_leg_id,
+      eventType: event.eventType,
+    });
+    return;
+  }
   if (event.eventType === 'call.answered') {
-    await handleAgentLegAnswered(supabase, session, leg);
+    await handleAgentLegAnswered(supabase, session, leg, rawCallControlId);
     return;
   }
   if (event.eventType === 'call.hangup') {
@@ -1047,10 +1155,91 @@ async function processAgentLegEvent(
   dialerLog('agent_leg_event_ignored', { legId: leg.id, eventType: event.eventType });
 }
 
+/**
+ * Review fix (B2): joining/creating the conference around the agent leg used to swallow a
+ * failure and cascade to `ready`/`dialing` regardless. Telnyx conferences "expire once every
+ * participant has left" -- an agent-lost with no live contact (e.g. a page refresh while
+ * still `dialing`) leaves the conference with nobody in it, so a later Reconnect's
+ * `joinConference` on that same, now-dead, id fails; swallowing that failure used to still
+ * mark the session `ready`/`dialing` with NOTHING actually bridged -- the next contact winner
+ * would join a dead conference and the customer would hear silence. Now: a failed join falls
+ * back to creating a FRESH conference around the agent leg and persists the new id; only a
+ * confirmed conference (created OR joined) lets the caller proceed. Returns null on total
+ * failure -- the caller must not cascade to ready/dialing in that case.
+ *
+ * Review fix (M1 part 2): takes `agentCallControlId` (the raw webhook event's own
+ * `call_control_id`) instead of reading `leg.call_control_id` off the DB row -- if this leg
+ * was found via `loadLegByCallControlIdOrClientLeg`'s clientState fallback, the DB row can
+ * still have the placeholder `pending-agent-*` value (the post-dial UPDATE hasn't landed yet).
+ * Telnyx's conference endpoints need the REAL call_control_id it issued, which the webhook
+ * event that just fired always carries correctly regardless of that DB race.
+ */
+async function ensureAgentConference(
+  supabase: SupabaseClient,
+  client: TelnyxClient,
+  session: DialSessionRow,
+  agentCallControlId: string
+): Promise<string | null> {
+  const existingConferenceId = session.conference_id;
+  if (existingConferenceId) {
+    try {
+      await client.joinConference(existingConferenceId, { callControlId: agentCallControlId });
+      dialerLog('agent_leg_conference_joined', {
+        sessionId: session.id,
+        conferenceId: existingConferenceId,
+      });
+      return existingConferenceId;
+    } catch (err) {
+      dialerLog('agent_leg_join_existing_conference_failed', {
+        sessionId: session.id,
+        conferenceId: existingConferenceId,
+        error: String(err),
+      });
+      // Fall through: the existing conference is presumably dead. Create a fresh one rather
+      // than proceed with a stale id nothing will ever bridge into.
+    }
+  }
+  try {
+    const conference = await client.createConference({
+      name: `hyperdial-session-${session.id}`,
+      callControlId: agentCallControlId,
+    });
+    if (!conference.id) return null;
+    // Same-state field-only update -- expect EXACTLY the current state, not
+    // AGENT_ACTIVE_SESSION_STATES (which deliberately excludes 'paused_agent_lost' itself,
+    // the very state this runs in during Reconnect's fallback-create path; using that list
+    // here made the CAS silently fail whenever this ran from Reconnect -- found by this
+    // task's own regression test, not by inspection: conference_id was never actually
+    // persisted even though this function still logged/returned success).
+    const { data: persisted } = await supabase.rpc('transition_session', {
+      p_session: session.id,
+      p_expected_states: [session.state],
+      p_new_state: session.state,
+      p_fields: { conference_id: conference.id },
+    });
+    if (!persisted) {
+      dialerLog('agent_leg_conference_created_but_not_persisted', {
+        sessionId: session.id,
+        conferenceId: conference.id,
+      });
+      return null;
+    }
+    dialerLog('agent_leg_conference_created', {
+      sessionId: session.id,
+      conferenceId: conference.id,
+    });
+    return conference.id;
+  } catch (err) {
+    dialerLog('agent_leg_create_conference_failed', { sessionId: session.id, error: String(err) });
+    return null;
+  }
+}
+
 async function handleAgentLegAnswered(
   supabase: SupabaseClient,
   session: DialSessionRow,
-  leg: CallLegRow
+  leg: CallLegRow,
+  rawCallControlId: string
 ): Promise<void> {
   const nextState = agentLegTransition(leg.state, { eventType: 'call.answered' });
   if (!nextState) {
@@ -1078,35 +1267,38 @@ async function handleAgentLegAnswered(
     return;
   }
 
-  let conferenceId = session.conference_id;
-  try {
-    if (!conferenceId) {
-      const conference = await client.createConference({
-        name: `hyperdial-session-${session.id}`,
-        callControlId: leg.call_control_id,
+  const conferenceId = await ensureAgentConference(supabase, client, session, rawCallControlId);
+  if (!conferenceId) {
+    // Never confirmed in ANY conference -- do not cascade to ready/dialing with nothing
+    // actually bridged. Hang up this now-orphaned leg and leave the session recoverable:
+    // stop it outright if this was the initial Go Ready (nothing else has happened yet), or
+    // leave it in paused_agent_lost (Reconnect case) so the intern can just try again.
+    dialerLog('agent_leg_no_conference_abort', { sessionId: session.id, legId: leg.id });
+    await hangupLeg(
+      supabase,
+      session.org_id,
+      rawCallControlId,
+      'agent_leg_no_conference_hangup_failed'
+    );
+    if (session.state === 'ready_pending') {
+      await supabase.rpc('transition_session', {
+        p_session: session.id,
+        p_expected_states: ['ready_pending'],
+        p_new_state: 'stopped',
+        p_fields: { ended_at: new Date().toISOString() },
       });
-      conferenceId = conference.id;
-      if (conferenceId) {
-        await supabase.rpc('transition_session', {
-          p_session: session.id,
-          p_expected_states: AGENT_ACTIVE_SESSION_STATES,
-          p_new_state: session.state,
-          p_fields: { conference_id: conferenceId },
-        });
-      }
-    } else {
-      await client.joinConference(conferenceId, { callControlId: leg.call_control_id });
     }
-    dialerLog('agent_leg_conference_ready', { sessionId: session.id, conferenceId });
-  } catch (err) {
-    dialerLog('agent_leg_conference_failed', { sessionId: session.id, error: String(err) });
+    return;
   }
 
   // Cascade session state. paused_agent_lost -> ready is Reconnect's own path; ready_pending
   // -> ready is Go Ready's. Either way 'ready' is genuinely observable (a poller/UI can catch
   // it), then this immediately decides what comes next: rejoin an ongoing call (a contact leg
-  // is still `claimed` -- the agent dropped mid-call and is reconnecting) or resume/start
-  // rolling dialing (no active leg).
+  // is still `claimed` -- the agent dropped mid-call and is reconnecting), return to wrap_up
+  // (an undispositioned connected leg is still waiting -- M4: this can be true even if the
+  // pre-loss state wasn't literally 'wrap_up' yet, if the customer's own hangup only
+  // completed AFTER the agent already dropped), return to a remembered manual `paused`, or
+  // resume/start rolling dialing (the ordinary case).
   const fromStates: SessionState[] =
     session.state === 'paused_agent_lost' ? ['paused_agent_lost'] : ['ready_pending'];
   const { data: reachedReady } = await supabase.rpc('transition_session', {
@@ -1130,16 +1322,48 @@ async function handleAgentLegAnswered(
       p_session: session.id,
       p_expected_states: ['ready'],
       p_new_state: 'on_call',
-      p_fields: {},
+      p_fields: { paused_agent_lost_from: null },
     });
     dialerLog('agent_leg_rejoined_live_call', { sessionId: session.id });
     return;
   }
+
+  const { data: undispositionedLeg } = await supabase
+    .from('call_legs')
+    .select('id')
+    .eq('session_id', session.id)
+    .eq('kind', 'contact')
+    .eq('outcome', 'connected')
+    .is('dispositioned_at', null)
+    .limit(1)
+    .maybeSingle();
+  if (undispositionedLeg) {
+    await supabase.rpc('transition_session', {
+      p_session: session.id,
+      p_expected_states: ['ready'],
+      p_new_state: 'wrap_up',
+      p_fields: { paused_agent_lost_from: null },
+    });
+    dialerLog('agent_leg_returned_to_wrap_up', { sessionId: session.id });
+    return;
+  }
+
+  if (reloaded?.paused_agent_lost_from === 'paused') {
+    await supabase.rpc('transition_session', {
+      p_session: session.id,
+      p_expected_states: ['ready'],
+      p_new_state: 'paused',
+      p_fields: { paused_agent_lost_from: null },
+    });
+    dialerLog('agent_leg_returned_to_paused', { sessionId: session.id });
+    return;
+  }
+
   const { data: reachedDialing } = await supabase.rpc('transition_session', {
     p_session: session.id,
     p_expected_states: ['ready'],
     p_new_state: 'dialing',
-    p_fields: {},
+    p_fields: { paused_agent_lost_from: null },
   });
   if (reachedDialing) {
     dialerLog('agent_leg_dialing_started', { sessionId: session.id });
@@ -1149,11 +1373,27 @@ async function handleAgentLegAnswered(
 
 /**
  * Agent leg lost (AUD-5): every state the agent leg being present mattered for collapses to
- * paused_agent_lost, and every active contact leg that is NOT `claimed` gets hung up --
+ * paused_agent_lost, and every active contact leg that is NOT `claimed` gets resolved --
  * `claimed` is the one invariant this task states explicitly (a live, bridged contact is
- * never hung up for an agent-leg problem). Reuses legTransition's own hungUpByEngine
- * hangupOutcome bucketing (dropped if never answered, abandoned if it was) for the legs that
- * DO get hung up here, the same split every other engine-initiated hangup in this file uses.
+ * never hung up for an agent-leg problem).
+ *
+ * Review fix (M3): this used to hang up an already-`answered`/`amd_pending` human SILENTLY --
+ * no abandon message, unlike `handleWin`'s own loser-resolution (a real TCPA safe-harbor gap:
+ * design's own abandoned-call message exists specifically so a human who picked up hears
+ * something before the line goes dead). Also used to unconditionally re-hang-up a leg already
+ * `abandoned` from an EARLIER resolution, cutting off its in-progress message mid-playback.
+ * Now reuses `loserActions` (dialer-core.ts) -- the exact same speak_then_hangup/hangup split
+ * `handleWin` uses -- over only the legs that haven't already been resolved one way or another
+ * (`abandoned`/`dropped`/`machine` legs are left alone; their own in-flight
+ * speak.ended/hangup sequence finishes undisturbed). No "winner" to exclude here (the one
+ * `claimed` leg is already filtered out above), so `loserActions` is called with a winner id
+ * that can never match a real leg.
+ *
+ * Review fix (M4): records which state this session was in right before the loss
+ * (`paused_agent_lost_from`) -- Reconnect's cascade (`handleAgentLegAnswered`) reads it back
+ * to tell a manually `paused` session apart from one that was actively `dialing`, so
+ * reconnecting doesn't override the intern's own Pause (see the migration's header for why
+ * the `wrap_up` case is instead caught by a direct undispositioned-leg check, not this field).
  */
 async function handleAgentLegLost(
   supabase: SupabaseClient,
@@ -1182,7 +1422,7 @@ async function handleAgentLegLost(
     p_session: session.id,
     p_expected_states: AGENT_ACTIVE_SESSION_STATES,
     p_new_state: 'paused_agent_lost',
-    p_fields: {},
+    p_fields: { paused_agent_lost_from: session.state },
   });
   dialerLog('agent_leg_lost', { sessionId: session.id, pausedSession: Boolean(paused) });
   if (!paused) {
@@ -1193,42 +1433,67 @@ async function handleAgentLegLost(
   }
 
   const { client } = await getConnectedOrgTelnyxContext(supabase, session.org_id);
+  const campaign = await loadCampaign(supabase, session.campaign_id);
   const activeLegs = await loadActiveLegs(supabase, session.id);
-  for (const contactLeg of activeLegs) {
-    if (contactLeg.kind !== 'contact' || contactLeg.state === 'claimed') continue;
-    const result = legTransition(
-      contactLeg.state,
-      { eventType: 'call.hangup', hangupCause: 'unspecified' },
-      { amdMode: session.amd_mode, hungUpByEngine: true }
-    );
-    if (!result) continue;
+  const stillUnresolvedContactLegs = activeLegs.filter(
+    (l) => l.kind === 'contact' && !['claimed', 'abandoned', 'dropped', 'machine'].includes(l.state)
+  );
+  const coreLegs: DialerLeg[] = stillUnresolvedContactLegs.map((l) => ({
+    id: l.id,
+    state: l.state,
+  }));
+  const actions = loserActions(
+    coreLegs,
+    '__no_winner__',
+    campaign?.abandon_message_enabled ?? true
+  );
+  const orgName = await loadOrgName(supabase, session.org_id);
+
+  for (const action of actions) {
+    const contactLeg = stillUnresolvedContactLegs.find((l) => l.id === action.legId);
+    if (!contactLeg) continue;
+    const nextContactState: LegState =
+      action.action === 'speak_then_hangup' ? 'abandoned' : 'dropped';
     const { data: legApplied, error: legError } = await supabase.rpc('transition_leg', {
       p_call_control_id: contactLeg.call_control_id,
       p_expected_states: [contactLeg.state],
-      p_new_state: result.next,
-      p_fields: {
-        outcome: result.outcome,
-        hangup_cause: 'unspecified',
-        ended_at: new Date().toISOString(),
-      },
+      p_new_state: nextContactState,
     });
     if (legError) throw new Error(`transition_leg (agent-lost contact): ${legError.message}`);
     if (!legApplied) {
+      // This leg's own event processing already moved it past its snapshot state --
+      // whatever it resolved to independently is authoritative, same race-safety shape as
+      // handleWin's own loser loop.
       dialerLog('agent_lost_contact_race_skip', { legId: contactLeg.id });
       continue;
     }
-    if (client) {
+    if (!client) {
+      dialerLog('agent_lost_contact_no_client', { legId: contactLeg.id });
+      continue;
+    }
+    if (action.action === 'speak_then_hangup') {
+      try {
+        await client.speak(contactLeg.call_control_id, {
+          payload: abandonMessage(orgName),
+          voice: DEFAULT_SPEAK_VOICE,
+        });
+        dialerLog('agent_lost_contact_speak', { legId: contactLeg.id });
+      } catch (err) {
+        dialerLog('agent_lost_contact_speak_failed', { legId: contactLeg.id, error: String(err) });
+      }
+    } else {
       try {
         await client.hangup(contactLeg.call_control_id);
+        dialerLog('agent_lost_contact_hangup', { legId: contactLeg.id });
       } catch (err) {
         dialerLog('agent_lost_contact_hangup_failed', { legId: contactLeg.id, error: String(err) });
       }
     }
-    await supabase.rpc('apply_leg_outcome', { p_leg: contactLeg.id });
-    dialerLog('agent_lost_contact_resolved', {
-      legId: contactLeg.id,
-      outcome: result.outcome,
-    });
+    // outcome/apply_leg_outcome are deliberately NOT finalized here -- the natural
+    // call.hangup this just triggered (directly, or after call.speak.ended) flows through
+    // the normal processContactLegEvent path, which preserves this abandoned/dropped
+    // decision via hangupOutcome and calls apply_leg_outcome then. Same shape as handleWin's
+    // own loser loop.
   }
 }
 

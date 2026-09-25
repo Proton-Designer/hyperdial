@@ -65,6 +65,12 @@ Deno.serve(async (req) => {
           code: 'NOT_PAUSED_AGENT_LOST',
         });
       }
+      if (result.reason === 'reconnect_already_in_flight') {
+        return jsonResponse(409, {
+          error: 'A reconnect is already in progress for this session.',
+          code: 'RECONNECT_ALREADY_IN_FLIGHT',
+        });
+      }
       return jsonResponse(404, { error: 'Session not found' });
     }
 
