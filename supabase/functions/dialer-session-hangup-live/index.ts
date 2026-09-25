@@ -2,6 +2,7 @@ import { createClient } from 'npm:@supabase/supabase-js@2';
 import { corsHeaders, corsPreflightResponse } from '../_shared/cors.ts';
 import { requireTelnyxOrgRole } from '../_shared/telnyx-org-context.ts';
 import { endLiveCall } from '../_shared/dialer-engine.ts';
+import { readJsonBody } from '../_shared/http-json.ts';
 
 interface HangupLiveBody {
   sessionId?: string;
@@ -30,8 +31,10 @@ Deno.serve(async (req) => {
   } = await requireTelnyxOrgRole(req, ['owner', 'admin', 'agent']);
   if (authError) return authError;
 
+  const { body, errorResponse } = await readJsonBody<HangupLiveBody>(req);
+  if (errorResponse) return errorResponse;
+
   try {
-    const body = (await req.json()) as HangupLiveBody;
     const sessionId = body.sessionId?.trim();
     if (!sessionId) return jsonResponse(400, { error: 'sessionId is required' });
 

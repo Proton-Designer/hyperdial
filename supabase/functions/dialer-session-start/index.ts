@@ -2,6 +2,7 @@ import { createClient } from 'npm:@supabase/supabase-js@2';
 import { corsHeaders, corsPreflightResponse } from '../_shared/cors.ts';
 import { requireTelnyxOrgRole } from '../_shared/telnyx-org-context.ts';
 import { startSession } from '../_shared/dialer-engine.ts';
+import { readJsonBody } from '../_shared/http-json.ts';
 
 /**
  * Starts a rolling-refill dial session for a campaign (TASK-P2-E2). Rewritten from the
@@ -51,8 +52,10 @@ Deno.serve(async (req) => {
   } = await requireTelnyxOrgRole(req, ['owner', 'admin', 'agent']);
   if (authError) return authError;
 
+  const { body, errorResponse } = await readJsonBody<StartBody>(req);
+  if (errorResponse) return errorResponse;
+
   try {
-    const body = (await req.json()) as StartBody;
     const campaignId = body.campaignId?.trim();
     if (!campaignId) return jsonResponse(400, { error: 'campaignId is required' });
 

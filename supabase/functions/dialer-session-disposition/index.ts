@@ -2,6 +2,7 @@ import { createClient } from 'npm:@supabase/supabase-js@2';
 import { corsHeaders, corsPreflightResponse } from '../_shared/cors.ts';
 import { requireTelnyxOrgRole } from '../_shared/telnyx-org-context.ts';
 import { refillSession } from '../_shared/dialer-engine.ts';
+import { readJsonBody } from '../_shared/http-json.ts';
 
 /**
  * Submits a wrap-up disposition for a call leg (TASK-P3-E1, design §5). The mandatory wrap-up
@@ -46,8 +47,10 @@ Deno.serve(async (req) => {
   } = await requireTelnyxOrgRole(req, ['owner', 'admin', 'agent']);
   if (authError) return authError;
 
+  const { body, errorResponse } = await readJsonBody<SubmitDispositionBody>(req);
+  if (errorResponse) return errorResponse;
+
   try {
-    const body = (await req.json()) as SubmitDispositionBody;
     const legId = body.legId?.trim();
     const dispositionKey = body.dispositionKey?.trim();
     if (!legId || !dispositionKey) {
