@@ -4,13 +4,21 @@ import './styles/globals.css';
 
 const root = createRoot(document.getElementById('root')!);
 
-// Dev-only harness entry point (TASK-L2a): `import.meta.env.DEV` is statically `false` in a
-// production build, so Vite/Rollup dead-code-eliminates this whole branch -- including the
-// dynamic import -- out of the built bundle entirely. Reached via `?dev_wrapup=1` in `npm run
-// dev` only; never wired into the real app's routing (that stays TASK-L2b's job).
-if (import.meta.env.DEV && new URLSearchParams(window.location.search).has('dev_wrapup')) {
+// Dev-only harness entry points: `import.meta.env.DEV` is statically `false` in a production
+// build, so Vite/Rollup dead-code-eliminates these whole branches -- including the dynamic
+// imports -- out of the built bundle entirely.
+const devHarness = import.meta.env.DEV ? new URLSearchParams(window.location.search) : null;
+if (devHarness?.has('dev_wrapup')) {
+  // TASK-L2a: WrapUpModal in isolation, fixture dispositions. `?dev_wrapup=1`
+  // (`&dev_wrapup_fail=1` to exercise the submit-error retry path).
   import('./dev/WrapUpModalHarness.tsx').then(({ WrapUpModalHarness }) => {
     root.render(<WrapUpModalHarness />);
+  });
+} else if (devHarness?.has('dev_dialer_states')) {
+  // TASK-L2b: every dial_sessions.state rendered against ParallelDialerUI/DialerStateBanner/
+  // WrapUpModal with fixture data, no live session/DB. `?dev_dialer_states=1`.
+  import('./dev/DialerStatesHarness.tsx').then(({ DialerStatesHarness }) => {
+    root.render(<DialerStatesHarness />);
   });
 } else {
   root.render(<App />);

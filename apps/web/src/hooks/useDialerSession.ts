@@ -4,6 +4,7 @@ import {
   hangupLiveCall,
   pauseDialerSession,
   reconnectDialerSession,
+  resumeDialerSession,
   startDialerSession,
   stopDialerSession,
   type CallLegRecord,
@@ -26,6 +27,14 @@ export interface BatchContactPreview {
   id: string;
   name: string;
   phone: string;
+}
+
+/** TASK-L2b: the leg still waiting on a wrap-up disposition, plus everything WrapUpModal
+ *  needs to render (it takes contact/duration as plain values, not a whole leg row). */
+export interface WrapUpLegInfo {
+  legId: string;
+  contact: { name: string; phone: string };
+  callDurationSeconds?: number;
 }
 
 interface DialerHookState {
@@ -118,6 +127,14 @@ export function useDialerSession(initialSessionId: string | null = null) {
     return res;
   }, [loadSession, state.sessionId]);
 
+  /** TASK-L2b: resumes a manually `paused` session (the counterpart `pause()` never had). */
+  const resume = useCallback(async () => {
+    if (!state.sessionId) return null;
+    const res = await resumeDialerSession(state.sessionId);
+    await loadSession(state.sessionId);
+    return res;
+  }, [loadSession, state.sessionId]);
+
   /** TASK-L1: the Reconnect button, shown when session.state === 'paused_agent_lost'. Only
    *  dials the agent leg again server-side -- the caller (the pre-flight/Reconnect UI) is
    *  responsible for making sure useTelnyxCall's client is registered and will auto-answer
@@ -157,23 +174,33 @@ export function useDialerSession(initialSessionId: string | null = null) {
   }, [state.sessionId, state.session, loadSession]);
 
   const derived = useMemo(() => {
-    const connected = state.legs.filter((l) => l.outcome === 'connected').length;
-    const voicemail = state.legs.filter((l) => l.outcome === 'machine').length;
-    const noAnswer = state.legs.filter((l) => l.outcome === 'no_answer').length;
-    const callsMade = state.legs.length;
+    // TASK-L1 put a real `kind='agent'` leg into this same `legs` array -- every stat below is
+    // a CONTACT-facing count/list, so it needs the same `kind==='contact'` filter handleWin
+    // needed on the backend (LANE-eng2.md's TASK-L1 section). Without it: "Calls Made" counts
+    // the agent's own leg (and every Reconnect adds another), and the current-batch grid shows
+    // an "Unknown contact" card (no `contact` join, no phone) for the agent leg whenever it's
+    // 'answered'/'ringing'.
+    const contactLegs = state.legs.filter((l) => l.kind === 'contact');
+    const connected = contactLegs.filter((l) => l.outcome === 'connected').length;
+    const voicemail = contactLegs.filter((l) => l.outcome === 'machine').length;
+    const noAnswer = contactLegs.filter((l) => l.outcome === 'no_answer').length;
+    const callsMade = contactLegs.length;
     // No campaign-total-contacts equivalent exists in the new schema (the legacy engine
     // snapshotted it at session start into dialer_sessions.total_contacts; dial_sessions has
     // no such column). Approximated as "every leg attempted so far" -- progress reads as "%
     // of attempted calls resolved," not "% of the whole campaign," until a future task adds
     // a real rollup query.
     const totalContacts = Math.max(callsMade, 1);
-    const activeLeg = state.legs.find((l) => state.session && l.id === state.session.active_leg_id);
+    const activeLeg = contactLegs.find(
+      (l) => state.session && l.id === state.session.active_leg_id
+    );
     const connectedContactId = activeLeg?.contact_id ?? null;
-    const answeringLeg = state.legs.find(
+    const connectedAnsweredAt = activeLeg?.answered_at ?? null;
+    const answeringLeg = contactLegs.find(
       (l) => l.state === 'answered' || l.state === 'amd_pending'
     );
     const answeredContactId = answeringLeg?.contact_id ?? null;
-    const currentBatchContacts: BatchContactPreview[] = state.legs
+    const currentBatchContacts: BatchContactPreview[] = contactLegs
       .filter((l) => !TERMINAL_LEG_STATES.has(l.state))
       .map((l) => ({
         id: l.contact_id ?? l.id,
@@ -184,6 +211,35 @@ export function useDialerSession(initialSessionId: string | null = null) {
       callsMade === 0
         ? 0
         : Math.min(100, Math.round(((connected + voicemail + noAnswer) / totalContacts) * 100));
+    // TASK-L2b (wrap_up): dial_sessions.active_leg_id is already cleared by apply_leg_outcome
+    // by the time the session reaches `wrap_up`, so "the leg to disposition" has to be found a
+    // different way -- the CONTACT leg with outcome='connected' that hasn't been dispositioned
+    // yet. At most one such leg should ever exist at a time (a new dialing cycle can't reach
+    // 'connected' again until this one is dispositioned and the session leaves wrap_up), so
+    // this is also correct across a page refresh with no client-side memory of "which leg was
+    // live" -- it's derived purely from this one snapshot, which is what makes "a refresh
+    // while in wrap_up re-opens the modal" (this task's own spec line) actually hold.
+    const wrapUpLegRow = contactLegs.find((l) => l.outcome === 'connected' && !l.dispositioned_at);
+    const wrapUpLeg: WrapUpLegInfo | null = wrapUpLegRow
+      ? {
+          legId: wrapUpLegRow.id,
+          contact: {
+            name: contactName(wrapUpLegRow),
+            phone: wrapUpLegRow.contact?.phone_number ?? '',
+          },
+          callDurationSeconds:
+            wrapUpLegRow.answered_at && wrapUpLegRow.ended_at
+              ? Math.max(
+                  0,
+                  Math.round(
+                    (new Date(wrapUpLegRow.ended_at).getTime() -
+                      new Date(wrapUpLegRow.answered_at).getTime()) /
+                      1000
+                  )
+                )
+              : undefined,
+        }
+      : null;
     return {
       connected,
       voicemail,
@@ -191,8 +247,10 @@ export function useDialerSession(initialSessionId: string | null = null) {
       callsMade,
       totalContacts,
       connectedContactId,
+      connectedAnsweredAt,
       answeredContactId,
       currentBatchContacts,
+      wrapUpLeg,
       progress,
     };
   }, [state.legs, state.session]);
@@ -203,6 +261,7 @@ export function useDialerSession(initialSessionId: string | null = null) {
     start,
     stop,
     pause,
+    resume,
     reconnect,
     endLiveCall,
     loadSession,

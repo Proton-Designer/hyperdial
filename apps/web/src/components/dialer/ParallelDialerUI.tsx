@@ -1,8 +1,12 @@
 import { ContactBatchCard } from './ContactBatchCard';
 import { LiveCallPanel } from './LiveCallPanel';
 import type { BatchContactPreview } from '@/hooks/useDialerSession';
+import type { DialSessionState } from '@/lib/api';
 
 interface ParallelDialerUIProps {
+  sessionState: DialSessionState;
+  lines: number;
+  amdMode: 'off' | 'on';
   callsMade: number;
   connected: number;
   voicemail: number;
@@ -13,13 +17,22 @@ interface ParallelDialerUIProps {
   batchContacts: BatchContactPreview[];
   answeredContactId: string | null;
   connectedContactId: string | null;
+  connectedAnsweredAt: string | null;
   onPause: () => void;
+  onResume: () => void;
   onStop: () => void;
   onMuteChange: (muted: boolean) => void;
   onEndLiveCall: () => void;
 }
 
+/** Session states where clicking Pause could do anything (pauseSession's own gate) -- disabled
+ *  everywhere else so it's never a confusing no-op click. */
+const PAUSABLE_STATES = new Set<DialSessionState>(['dialing', 'ready']);
+
 export function ParallelDialerUI({
+  sessionState,
+  lines,
+  amdMode,
   callsMade,
   connected,
   voicemail,
@@ -30,7 +43,9 @@ export function ParallelDialerUI({
   batchContacts,
   answeredContactId,
   connectedContactId,
+  connectedAnsweredAt,
   onPause,
+  onResume,
   onStop,
   onMuteChange,
   onEndLiveCall,
@@ -48,6 +63,10 @@ export function ParallelDialerUI({
       <div className="rounded-2xl border border-white/10 bg-[#1A2332]/70 p-5">
         <div className="flex flex-wrap items-center gap-3 justify-between">
           <div className="flex flex-wrap items-center gap-3 text-sm">
+            <span className="text-[#B0BEC5]">
+              Lines: <b className="text-white">{lines}</b> · AMD:{' '}
+              <b className="text-white">{amdMode === 'on' ? 'On' : 'Off'}</b>
+            </span>
             <span className="text-white">
               Calls Made: <b>{callsMade}</b>
             </span>
@@ -68,13 +87,25 @@ export function ParallelDialerUI({
             </span>
           </div>
           <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={onPause}
-              className="px-4 py-2 rounded-lg bg-[#FFB300]/20 border border-[#FFB300]/30 text-[#FFB300]"
-            >
-              Pause
-            </button>
+            {sessionState === 'paused' ? (
+              <button
+                type="button"
+                onClick={onResume}
+                className="px-4 py-2 rounded-lg bg-[#00D9FF]/20 border border-[#00D9FF]/30 text-[#00D9FF]"
+              >
+                Resume
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={onPause}
+                disabled={!PAUSABLE_STATES.has(sessionState)}
+                className="px-4 py-2 rounded-lg bg-[#FFB300]/20 border border-[#FFB300]/30 text-[#FFB300] disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                Pause
+              </button>
+            )}
+            {/* Stop always works, in every state, per this task's own spec. */}
             <button
               type="button"
               onClick={onStop}
@@ -110,6 +141,7 @@ export function ParallelDialerUI({
         <LiveCallPanel
           contactName={connectedContact.name}
           phone={connectedContact.phone}
+          answeredAt={connectedAnsweredAt}
           onToggleMute={onMuteChange}
           onEndCall={onEndLiveCall}
         />

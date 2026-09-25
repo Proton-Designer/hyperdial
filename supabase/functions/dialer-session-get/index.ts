@@ -63,7 +63,7 @@ Deno.serve(async (req) => {
     const { data: legs, error: legsError } = await supabase
       .from('call_legs')
       .select(
-        'id, kind, state, outcome, contact_id, lead_id, call_control_id, amd_result, hangup_cause, answered_at, claimed_at, ended_at, created_at, ' +
+        'id, kind, state, outcome, contact_id, lead_id, call_control_id, amd_result, hangup_cause, answered_at, claimed_at, ended_at, created_at, dispositioned_at, ' +
           'contact:contacts(business_name, first_name, last_name, phone_number)'
       )
       .eq('session_id', sessionId)

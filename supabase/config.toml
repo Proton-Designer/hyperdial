@@ -416,6 +416,8 @@ verify_jwt = false
 verify_jwt = false
 [functions.dialer-session-pause]
 verify_jwt = false
+[functions.dialer-session-resume]
+verify_jwt = false
 [functions.dialer-session-get]
 verify_jwt = false
 [functions.dialer-session-active]

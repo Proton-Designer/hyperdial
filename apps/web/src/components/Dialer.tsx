@@ -9,8 +9,10 @@ import { ActiveCall } from './dialer/ActiveCall';
 import { CampaignStats } from './dialer/CampaignStats';
 import { useDialerSession } from '@/hooks/useDialerSession';
 import { ParallelDialerUI } from './dialer/ParallelDialerUI';
-import { AgentConnectionStatus } from './dialer/AgentConnectionStatus';
+import { DialerStateBanner } from './dialer/DialerStateBanner';
+import { WrapUpModal } from './dialer/WrapUpModal';
 import { getActiveDialerSession } from '@/lib/api';
+import { playConnectChime } from '@/lib/dialerSoundCue';
 
 const REMOTE_AUDIO_ID = 'telnyx-remote-audio';
 
@@ -72,7 +74,7 @@ export function Dialer({
     if (!effectiveSessionId) return;
     if (agentLineReady || agentLineConnecting) return;
     connectAgentLine().catch(() => {
-      // Surfaced via useTelnyxCall's own `error` state; AgentConnectionStatus renders it.
+      // Surfaced via useTelnyxCall's own `error` state; DialerStateBanner renders it.
     });
   }, [effectiveSessionId, agentLineReady, agentLineConnecting, connectAgentLine]);
 
@@ -84,6 +86,28 @@ export function Dialer({
       toast.error(e instanceof Error ? e.message : 'Failed to reconnect');
     }
   }, [parallelSession.reconnect]);
+
+  // UI-8: a short chime the instant a human connects -- only on the actual transition into
+  // connected (a ref, not state, so this never re-fires on every 3s poll tick while the same
+  // contact stays connected, and never fires on mount if the page loads directly into an
+  // already-on_call session).
+  const previousConnectedContactIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    const current = parallelSession.connectedContactId;
+    if (current && current !== previousConnectedContactIdRef.current) {
+      playConnectChime();
+    }
+    previousConnectedContactIdRef.current = current;
+  }, [parallelSession.connectedContactId]);
+
+  const handleParallelResume = useCallback(async () => {
+    try {
+      await parallelSession.resume();
+      toast.success('Dialing resumed');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to resume');
+    }
+  }, [parallelSession.resume]);
 
   useEffect(() => {
     if (parallelSessionId != null) return;
@@ -183,6 +207,9 @@ export function Dialer({
   const resolvedCount =
     parallelSession.connected + parallelSession.voicemail + parallelSession.noAnswer;
   const isParallelLoading = isParallelMode && parallelSession.loading;
+  const connectedContactPreview =
+    parallelSession.currentBatchContacts.find((c) => c.id === parallelSession.connectedContactId) ??
+    null;
 
   const handleParallelPause = useCallback(async () => {
     if (!parallelSession.sessionId) {
@@ -231,34 +258,64 @@ export function Dialer({
             <p className="text-white font-medium">Loading parallel dialing session…</p>
           </div>
         )}
-        {isParallelMode && !isParallelLoading && !parallelSession.error && (
-          <AgentConnectionStatus
-            sessionState={parallelSession.session?.state ?? null}
-            webrtcReady={agentLineReady}
-            webrtcConnecting={agentLineConnecting}
-            webrtcError={error}
-            onReconnect={() => void handleReconnectAgentLine()}
-            reconnecting={parallelSession.loading}
-          />
-        )}
-        {isParallelMode && !isParallelLoading && !parallelSession.error && (
-          <ParallelDialerUI
-            callsMade={parallelSession.callsMade}
-            connected={parallelSession.connected}
-            voicemail={parallelSession.voicemail}
-            noAnswer={parallelSession.noAnswer}
-            resolvedCount={resolvedCount}
-            totalContacts={parallelSession.totalContacts}
-            progress={parallelSession.progress}
-            batchContacts={parallelSession.currentBatchContacts}
-            answeredContactId={parallelSession.answeredContactId}
-            connectedContactId={parallelSession.connectedContactId}
-            onPause={handleParallelPause}
-            onStop={() => void handleParallelStop()}
-            onMuteChange={setMuted}
-            onEndLiveCall={handleEndLiveCallParallel}
-          />
-        )}
+        {isParallelMode &&
+          !isParallelLoading &&
+          !parallelSession.error &&
+          parallelSession.session && (
+            <>
+              <DialerStateBanner
+                sessionState={parallelSession.session.state}
+                ringingCount={parallelSession.currentBatchContacts.length}
+                connectedContact={connectedContactPreview}
+                connectedAnsweredAt={parallelSession.connectedAnsweredAt}
+                webrtcReady={agentLineReady}
+                webrtcConnecting={agentLineConnecting}
+                webrtcError={error}
+                onReconnect={() => void handleReconnectAgentLine()}
+                reconnecting={parallelSession.loading}
+                onResume={() => void handleParallelResume()}
+                resuming={parallelSession.loading}
+              />
+              <ParallelDialerUI
+                sessionState={parallelSession.session.state}
+                lines={parallelSession.session.lines}
+                amdMode={parallelSession.session.amd_mode}
+                callsMade={parallelSession.callsMade}
+                connected={parallelSession.connected}
+                voicemail={parallelSession.voicemail}
+                noAnswer={parallelSession.noAnswer}
+                resolvedCount={resolvedCount}
+                totalContacts={parallelSession.totalContacts}
+                progress={parallelSession.progress}
+                batchContacts={parallelSession.currentBatchContacts}
+                answeredContactId={parallelSession.answeredContactId}
+                connectedContactId={parallelSession.connectedContactId}
+                connectedAnsweredAt={parallelSession.connectedAnsweredAt}
+                onPause={handleParallelPause}
+                onResume={() => void handleParallelResume()}
+                onStop={() => void handleParallelStop()}
+                onMuteChange={setMuted}
+                onEndLiveCall={handleEndLiveCallParallel}
+              />
+              {/* wrap_up (TASK-L2b): the modal is the ONLY way out (no "Continue" bypass) --
+                submit_disposition (SQL) moves the session wrap_up -> dialing itself; onSubmitted
+                just re-polls so this component naturally stops rendering once the session has
+                moved on. Deriving `wrapUpLeg` purely from the current legs snapshot (not from
+                having "seen" the call go live) is what makes a page refresh mid-wrap_up correctly
+                re-open this same modal, per this task's own spec line. */}
+              {parallelSession.session.state === 'wrap_up' && parallelSession.wrapUpLeg && (
+                <WrapUpModal
+                  sessionId={parallelSession.session.id}
+                  legId={parallelSession.wrapUpLeg.legId}
+                  contact={parallelSession.wrapUpLeg.contact}
+                  callDurationSeconds={parallelSession.wrapUpLeg.callDurationSeconds}
+                  onSubmitted={() => {
+                    void parallelSession.loadSession(parallelSession.session!.id);
+                  }}
+                />
+              )}
+            </>
+          )}
 
         {(!isParallelMode || parallelSession.error) && (
           <AnimatePresence mode="wait">

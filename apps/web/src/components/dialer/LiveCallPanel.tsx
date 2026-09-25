@@ -4,18 +4,37 @@ import { Mic, MicOff, PhoneOff } from 'lucide-react';
 interface LiveCallPanelProps {
   contactName: string;
   phone: string;
+  /** TASK-L2b: the leg's real `answered_at` (ISO). Elapsed time is derived from it every tick
+   *  instead of a local counter that reset to 0 on every remount (a real bug once this task
+   *  put a second, correct timer -- the DialerStateBanner's "Connected — <name> <timer>" -- on
+   *  screen at the same time: the two would visibly disagree). `null` shows "0:00" rather than
+   *  guessing. */
+  answeredAt: string | null;
   onToggleMute: (muted: boolean) => void;
   onEndCall: () => void;
 }
 
-export function LiveCallPanel({ contactName, phone, onToggleMute, onEndCall }: LiveCallPanelProps) {
+export function LiveCallPanel({
+  contactName,
+  phone,
+  answeredAt,
+  onToggleMute,
+  onEndCall,
+}: LiveCallPanelProps) {
   const [seconds, setSeconds] = useState(0);
   const [muted, setMuted] = useState(false);
 
   useEffect(() => {
-    const timer = setInterval(() => setSeconds((prev) => prev + 1), 1000);
+    if (!answeredAt) {
+      setSeconds(0);
+      return;
+    }
+    const answeredAtMs = new Date(answeredAt).getTime();
+    const tick = () => setSeconds(Math.max(0, Math.floor((Date.now() - answeredAtMs) / 1000)));
+    tick();
+    const timer = setInterval(tick, 1000);
     return () => clearInterval(timer);
-  }, []);
+  }, [answeredAt]);
 
   const mins = Math.floor(seconds / 60);
   const secs = `${seconds % 60}`.padStart(2, '0');

@@ -1078,6 +1078,10 @@ export interface CallLegRecord {
   claimed_at: string | null;
   ended_at: string | null;
   created_at: string;
+  /** TASK-L2b: null until a wrap-up disposition is submitted for this leg -- the signal the
+   *  dialer UI uses to find "the leg still waiting on a disposition" during `wrap_up` (a leg's
+   *  own `active_leg_id` reference on the session is already cleared by then). */
+  dispositioned_at: string | null;
   contact: {
     business_name: string | null;
     first_name: string | null;
@@ -1162,6 +1166,18 @@ export async function reconnectDialerSession(
   const data = (await res.json()) as { error?: string; code?: string; status?: string };
   if (!res.ok) throw new Error(data.error || 'Failed to reconnect dialer session');
   return data as { status: 'reconnecting' };
+}
+
+/** TASK-L2b: resumes a manually `paused` session back to `dialing`. */
+export async function resumeDialerSession(sessionId: string): Promise<{ status: 'dialing' }> {
+  const res = await fetch(`${getFunctionsUrl()}/dialer-session-resume`, {
+    method: 'POST',
+    headers: await getEdgeFunctionHeaders(),
+    body: JSON.stringify({ sessionId }),
+  });
+  const data = (await res.json()) as { error?: string; status?: string };
+  if (!res.ok) throw new Error(data.error || 'Failed to resume dialer session');
+  return data as { status: 'dialing' };
 }
 
 /** End the current live (claimed/on_call) contact leg in a session; the resulting webhook

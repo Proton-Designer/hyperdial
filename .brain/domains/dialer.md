@@ -72,10 +72,10 @@ them anymore — see "Not covered here" for what's actually dead versus still re
 | `client_state` codec | `supabase/functions/_shared/client-state.ts` | `encodeDialClientState`/`decodeDialClientState`. |
 | Telnyx REST (BYO key) | `supabase/functions/_shared/telnyx-client.ts`, `_shared/telnyx-org-context.ts` | `createTelnyxClient(apiKey, {apiBase?})`; `getConnectedOrgTelnyxContext` builds one from the org's own stored key. `apiBase` exists only for `scripts/dev/dialer-sim.ts`'s mock server. |
 | Schema + RPCs | `supabase/migrations/20260924000700/000800/001000/001900` | `dial_sessions`, `call_legs`, `webhook_events`; `claim_next_leads`/`claim_leg`/`transition_leg`/`transition_session`/`apply_leg_outcome`/`record_webhook_event`. |
-| Session control | `supabase/functions/dialer-session-{start,stop,pause,reconnect,get,active,hangup-live}/index.ts` | Org-scoped auth via `requireTelnyxOrgRole`; owner/admin can act on any session in the org, an agent only their own. `-reconnect` (TASK-L1) re-dials the agent leg from `paused_agent_lost`. |
+| Session control | `supabase/functions/dialer-session-{start,stop,pause,resume,reconnect,get,active,hangup-live,disposition}/index.ts` | Org-scoped auth via `requireTelnyxOrgRole`; owner/admin can act on any session in the org, an agent only their own. `-reconnect` (TASK-L1) re-dials the agent leg from `paused_agent_lost`. `-resume` (TASK-L2b) is the counterpart to `-pause` -- resumes a manually `paused` session (there was no way back before this task). |
 | Webhook ingress | `supabase/functions/telnyx-webhook/index.ts` | Signature-verifies, requires `client_state` on `call.*` events, acks 200, processes async via `processTelnyxDialerEvent`. |
 | Client | `apps/web/src/hooks/useDialerSession.ts`, `apps/web/src/lib/useTelnyxCall.ts`, `apps/web/src/lib/api.ts` | Polls `dialer-session-get` (no realtime push — see gotchas). `useTelnyxCall`'s optional `sessionId` (TASK-L1) makes it auto-answer the agent leg's own inbound call for that session and reject every other inbound call. |
-| UI | `apps/web/src/components/Dialer.tsx`, `apps/web/src/components/dialer/*.tsx`, `CampaignManageModal.tsx` | Not rewritten for this task (E4/L2b); TASK-L1 added only `components/dialer/AgentConnectionStatus.tsx` (pre-flight/Reconnect status) and the minimal wiring in `Dialer.tsx` to register the WebRTC client and show it. |
+| UI | `apps/web/src/components/Dialer.tsx`, `apps/web/src/components/dialer/*.tsx`, `CampaignManageModal.tsx` | TASK-L2b: `DialerStateBanner.tsx` (renamed/broadened from TASK-L1's `AgentConnectionStatus.tsx`) is the single "big visible state" (UI-7) keyed on `dial_sessions.state`; `WrapUpModal` (TASK-L2a) is wired in on `wrap_up`, no bypass; `ParallelDialerUI`/`LiveCallPanel` show real `lines`/`amd_mode` and a real answered_at-derived timer (not a local reset-on-mount counter). `CampaignManageModal.tsx`'s own Start Session button is still the other lane's file (untouched). |
 | Acceptance | `supabase/functions/_shared/dialer-engine.test.ts` | `deno test`, in-memory fake Supabase client + the real `createTelnyxClient` with `fetch` stubbed — no DB, no Docker. `scripts/dev/dialer-sim.ts` (the old `functions serve` + real local Postgres script) is now UNRUNNABLE — local Docker is retired (RULES-CARD) — and is left as dead code, not deleted. |
 
 ## How it works
@@ -151,10 +151,14 @@ them anymore — see "Not covered here" for what's actually dead versus still re
    TERMINAL event (most notably the leg's own `call.hangup`) used to leave it stuck non-terminal
    forever. Exercised live with two genuinely concurrent (not sequentially-awaited) HTTP requests
    in `dialer-sim.ts`'s step 7.
-7. **`wrap_up` → `dialing`** has no dedicated HTTP endpoint on purpose — `resumeToDialing`
-   (`_shared/dialer-engine.ts`) calls `transition_session` directly. Phase 3's dispositions
-   submission is the intended real caller once it exists; until then, `scripts/dev/dialer-sim.ts`
-   calls it directly to prove the rolling loop across a wrap_up cycle.
+7. **`wrap_up` → `dialing`** has no dedicated HTTP endpoint for THAT transition specifically --
+   `submit_disposition` (SQL, TASK-P3-E1) does it directly as part of the same call that writes
+   the disposition, then `dialer-session-disposition/index.ts` calls `refillSession`.
+   `resumeToDialing` (`_shared/dialer-engine.ts`) is the shared primitive both that path and
+   `paused` → `dialing` use -- TASK-L2b added `dialer-session-resume/index.ts` as the first (and
+   only) dedicated HTTP endpoint for the OTHER case `resumeToDialing` always accepted
+   (`paused` → `dialing`, the Resume button): there was previously no way back from a manually
+   `paused` session at all.
 
 ## Integration points
 

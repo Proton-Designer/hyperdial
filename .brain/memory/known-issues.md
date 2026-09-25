@@ -438,6 +438,86 @@ left as unrunnable dead code, not deleted — fixing/removing it is out of scope
 
 ---
 
+## 17. ~~The dialer UI showed the old optimistic "connected" instead of the real session state, and a manually-paused session had no way back~~ — FIXED by TASK-L2b (2026-09-25)
+
+**UI-7/UI-8, BASE-10, audit/final.json.** `ParallelDialerUI`/`useDialerSession.ts` had no
+concept of a "big visible state" keyed on `dial_sessions.state` — no `wrap_up` disposition
+gate, no `paused`/`paused_agent_lost` surfacing beyond TASK-L1's own connection-status banner,
+and `LiveCallPanel`'s call timer reset to 0 on every remount instead of tracking the real
+`answered_at`.
+
+Fixed: `DialerStateBanner.tsx` (renamed/broadened from TASK-L1's `AgentConnectionStatus.tsx`) is
+now the single big-state banner for every `dial_sessions.state` value ("Ready — waiting to
+dial", "Ringing N lines", "Connected — `<name>` `<timer>`", "Wrapping up", "Paused", "Agent
+audio lost — Reconnect"). `WrapUpModal` (TASK-L2a) is wired in on `wrap_up` with no bypass —
+`submit_disposition` (SQL) is what actually returns the session to `dialing`; the UI just
+re-polls. `LiveCallPanel`'s timer now derives from the leg's real `answered_at`. UI-8: a short
+Web-Audio chime (no asset) on human connect.
+
+Two real, previously-shipping bugs caught building this (both from TASK-L1 putting a real
+`kind='agent'` leg into `call_legs`, composed incorrectly by code that predates it):
+1. `useDialerSession.ts`'s derived stats (`callsMade`, the current-batch grid, etc.) had no
+   `kind==='contact'` filter, mirroring the exact `handleWin` bug TASK-L1 already found and
+   fixed server-side (known-issues.md #14) — the client-side equivalent was still there. Every
+   agent leg inflated "Calls Made" and showed as an "Unknown contact" card with no phone number
+   whenever it was `answered`/`ringing`.
+2. There was no way to resume a manually `paused` session at all — `resumeToDialing`
+   (`_shared/dialer-engine.ts`) already accepted `paused` as a valid starting state (built for
+   the wrap_up/disposition path), but no HTTP endpoint ever called it for that case. Fixed with
+   a new, minimal `dialer-session-resume/index.ts`.
+
+**Not done / out of scope:** `LiveCallPanel`'s own notes textarea is still local-state-only,
+disconnected from any submit path (pre-existing, `WrapUpModal`'s own Notes field is the real
+one) — not touched, since fixing it wasn't asked for and two separate "notes" fields on screen,
+while a little confusing, isn't new mock data introduced by this task.
+
+---
+
+## 16. ~~Open self-signup was live in production, contradicting the documented invite-only design~~ — FIXED by TASK-L4 (2026-09-25)
+
+**ADM-3, audit/final.json.** `AuthScreen.tsx` exposed a public "Start Crushing Quota" signup
+form and the `on_auth_user_created` trigger's own comment admitted the self-serve path ("when
+absent [no invite_token], this trigger runs the normal self-serve path: new org, owner
+membership, profile") — live-verified at TASK-A1: anyone could sign up and create their own org
+on `hyperdial.myhomebasesolutions.com`.
+
+Fixed by `20260925000300_invite_only_signup.sql`: `handle_new_user()` now rejects any signup
+whose `invite_token` is missing, doesn't match a real `org_invites.token_hash`, is expired,
+is already accepted, or whose email doesn't match the invite — no carve-out for a first/owner
+signup either, that is the point. `AuthScreen.tsx` is sign-in + password reset only now; the
+only signup path left is `InviteLanding.tsx` via `?invite=<token>`. Role-based nav (UI-4) landed
+in the same task: `MainApp.tsx`'s `AGENT_ALLOWED_TABS` guards every tab switch (not just the
+sidebar) so a hidden tab always falls back to Dialer; `Sidebar.tsx` filters Campaigns/
+Analytics/Settings out for `agent` and relabels Dashboard "My stats"; `Contacts.tsx` hides
+import/add/edit/delete/bulk actions for agents (row-click-through to `ContactDetailModal` was
+already view+DNC-toggle-only for non-owner/admin roles since TASK-P2-P1, untouched).
+
+**Real, cross-cutting consequence, only partly fixed**: every `supabase/tests/*.sql` fixture
+that bootstraps a test user via a direct `insert into auth.users` now either needs a real
+matching `org_invites` row, or `alter table auth.users disable/enable trigger
+on_auth_user_created` around the insert plus hand-built `orgs`/`profiles`/`org_members` rows
+(the old "no token = self-serve" and "any non-null token = already invited" fixture shortcuts
+both silently relied on behavior this migration removes). Fixed in `rls_org_matrix.sql` only
+(it is the tenancy RLS regression suite, most likely to be re-run soon) and in the new
+`invite_only_signup.sql`. **Not fixed**: `contacts_e164_tz_dnc.sql`, `dispositions.sql`,
+`ghl_integration_outbox.sql`, `campaign_settings_agents.sql`, `analytics_real_data.sql`,
+`tenancy_backfill_assertions.sql` (all eng1's own), and eng2's `dialer_schema_rpcs.sql`/
+`dialer_sweeper.sql` — these will error on their very first fixture insert if re-run as-is
+post-deploy. `scripts/dev/dialer-sim.ts` is unaffected in practice; it is already unrunnable
+dead code for an unrelated reason (#14 above, local Docker retired).
+
+**Also found, not fixed here — a real gap in the "per-intern setup" flow (design intent, not
+literally in TASK-L4's own acceptance criteria)**: `dialer-session-start` sets the new
+`dial_sessions.agent_id` to whoever calls it, and the only UI that calls it —
+`CampaignManageModal`'s **Start Session** button — is reachable only from the Campaigns screen,
+which this same task hides for agents. An intern therefore has no way to start their own
+parallel-dial session today; an owner/admin clicking Start Session on their behalf starts it
+under the *owner's* `agent_id`, not the intern's, so it never shows up in the intern's Dialer via
+`getActiveDialerSession`. Needs a lightweight "start dialing my assigned campaign" control inside
+`Dialer.tsx` itself (dialer lane) — see `docs/guides/inviting-and-assigning-interns.md`.
+
+---
+
 ## Not issues — deliberate, documented elsewhere
 
 - Redis alongside Postgres → `mem.decisions`
