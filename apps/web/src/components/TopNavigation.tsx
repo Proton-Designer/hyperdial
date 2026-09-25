@@ -77,6 +77,22 @@ export function TopNavigation({ activeTab = 'dashboard', onTabChange }: TopNavig
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
 
+  // B1 Phase 1: backdrop-click already closes each popover/dialog below, but Escape did nothing
+  // -- only the click-outside div was wired. Topmost-open wins on a given press (the sign-out
+  // confirm portal sits above everything else, including a still-open user menu underneath it).
+  useEffect(() => {
+    if (!showSignOutConfirm && !showUserMenu && !showNotifications && !showOrgSwitcher) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      if (showSignOutConfirm) return setShowSignOutConfirm(false);
+      if (showUserMenu) return setShowUserMenu(false);
+      if (showNotifications) return setShowNotifications(false);
+      if (showOrgSwitcher) return setShowOrgSwitcher(false);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [showSignOutConfirm, showUserMenu, showNotifications, showOrgSwitcher]);
+
   useEffect(() => {
     ensureWeekSummary().catch(() => {});
   }, []);
