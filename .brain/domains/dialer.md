@@ -229,13 +229,15 @@ them anymore — see "Not covered here" for what's actually dead versus still re
 
 ## dialer-sweeper (TASK-P2-E5): the safety net for a lost webhook
 
-- `public.run_dialer_sweep(p_stuck_after_seconds default 60)` (SQL RPC,
-  `20260924001700_dialer_sweeper_cron.sql`), called every 30s by `pg_cron`/`pg_net`
-  (`private.trigger_dialer_sweeper`, configured via `private.set_dialer_sweeper_config(url,
-  secret)` -- same Vault-backed global config shape as `ghl-sync-worker`'s cron, a no-op until
-  configured) and directly by the `dialer-sweeper` Edge Function (shared-secret `X-Cron-Secret`
-  header, service role, not a user JWT -- the caller is Postgres itself).
-- Reconciles three things a lost webhook can strand forever, all built on the engine's OWN
+- `public.run_dialer_sweep(p_stuck_after_seconds default 60, p_claimed_check_after_seconds
+  default 300)` (SQL RPC, `20260924001700_dialer_sweeper_cron.sql` +
+  `20260925010000_dialer_sweeper_claimed_legs.sql`, TASK-L6), called every 30s by
+  `pg_cron`/`pg_net` (`private.trigger_dialer_sweeper`, configured via
+  `private.set_dialer_sweeper_config(url, secret)` -- same Vault-backed global config shape as
+  `ghl-sync-worker`'s cron, a no-op until configured) and directly by the `dialer-sweeper` Edge
+  Function (shared-secret `X-Cron-Secret` header, service role, not a user JWT -- the caller is
+  Postgres itself).
+- Reconciles several things a lost webhook can strand forever, all built on the engine's OWN
   idempotent primitives (`transition_leg`/`transition_session`'s expected-state no-op,
   `apply_leg_outcome`'s `outcome_applied_at` gate) rather than a new locking scheme -- a leg or
   session a REAL webhook resolves in the tiny window between the sweep's own SELECT and its
@@ -243,14 +245,10 @@ them anymore — see "Not covered here" for what's actually dead versus still re
   1. A pre-connect/hangup-pending contact leg (anything non-terminal except `claimed`) with no
      `webhook_events` row (or none ever, falling back to `created_at`) for over the threshold --
      ended as `failed`/`no_answer`, then `apply_leg_outcome`.
-  2. A session whose agent leg independently reached `ended` -- `paused_agent_lost`. Real agent
-     legs exist as of TASK-L1, so this is a genuine lost-webhook safety net now, not a no-op --
-     the fast path is `handleAgentLegLost` (dialer-engine.ts) reacting to the real `call.hangup`
-     webhook; this is the fallback if THAT webhook is ever lost. **Flag for TASK-L6 (this
-     sweeper's own next task):** its states-to-check list is `array['dialing','connecting',
-     'on_call','wrap_up']` — TASK-L1's own webhook-driven path treats `ready_pending`/`ready`/
-     `paused` as equally in-scope (`AGENT_ACTIVE_SESSION_STATES` in `dialer-engine.ts`). Worth
-     reconciling when L6 touches this function, not fixed here (out of this task's file list).
+  2. A session whose agent leg independently reached `ended` -- `paused_agent_lost`. States list
+     now matches `AGENT_ACTIVE_SESSION_STATES` (dialer-engine.ts) exactly -- `ready_pending`/
+     `ready`/`dialing`/`connecting`/`on_call`/`wrap_up`/`paused` (TASK-L6 fix; previously missed
+     the first, second and last of those, known-issues #14's own follow-up).
   3. In_flight leads a leg can no longer speak for: an ended leg with a decided outcome that
      never got applied (TASK-P2-E2's own carried item 5 -- `record_webhook_event` commits its
      dedupe row before processing runs, so a webhook whose processing throws after that commit
@@ -259,12 +257,21 @@ them anymore — see "Not covered here" for what's actually dead versus still re
      A `connected` outcome is excluded by construction (never null), so a completed call's lead
      correctly stays `in_flight` until Phase 3's disposition submission, not requeued out from
      under it.
-- **Deliberate gap, not an oversight:** an active `claimed` (bridged, talking) leg is NEVER
-  reaped by staleness, at any age. A real live call is silent on the webhook stream for its
-  whole duration by design (only `call.hangup` fires at the end) -- webhook silence alone can't
-  tell "on a real call" apart from "the hangup webhook got lost," and hanging up a live
-  conversation on that false positive is worse than leaving the rare true-dead-`claimed`-leg
-  case to Telnyx's own eventual timeout delivery. See `.brain/memory/known-issues.md`.
+  4. **TASK-L6 (known-issues #11):** a `claimed` (bridged) contact leg whose own `call.hangup`
+     webhook was lost -- previously a deliberate, permanent gap (a real live call is silent on
+     the webhook stream for its whole duration by design, so webhook silence alone can't tell
+     it apart from a lost hangup webhook). Closed with a real signal instead of a longer
+     silence window: `run_dialer_sweep` only SELECTs candidates (`claimed_at` older than
+     `p_claimed_check_after_seconds`, returned as `stale_claimed_legs`) -- the actual decision
+     is TS-side (`_shared/dialer-sweeper-core.ts`'s `reconcileStaleClaimedLeg`, called from
+     `dialer-sweeper/index.ts`): past `CONTACT_DIAL_TIME_LIMIT_SECS` (1800, exported from
+     `dialer-engine.ts`) + a 5-minute grace -> reap unconditionally (Telnyx guarantees the call
+     ended by then, BUG-8); otherwise ask Telnyx directly (`_shared/telnyx-client.ts`'s
+     `getCallStatus`, `GET /calls/{id}`, `is_alive`) and only reap on a DEFINITIVE not-alive/404
+     -- an API error or a genuinely live call is left alone. Either path reaps through the same
+     new `reap_dead_claimed_leg` SQL primitive, which replicates the normal `call.hangup`
+     outcome path exactly (`transition_leg` -> ended, `apply_leg_outcome`, and -- only if this
+     leg was the session's `active_leg_id` -- `transition_session` -> `wrap_up`).
 
 ## Not covered here
 

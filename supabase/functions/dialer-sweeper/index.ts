@@ -10,18 +10,31 @@
  * signed-in user, so this is not `requireTelnyxOrgRole` either -- it acts across every org in
  * one sweep, and `run_dialer_sweep` (SQL) org-scopes its own row-level work internally.
  *
- * All the actual STATE mutation happens inside `run_dialer_sweep` (SQL), reusing transition_leg/
- * transition_session/apply_leg_outcome's existing idempotent expected-state guards -- this
- * function's only job is the one thing SQL can't do: best-effort Telnyx hangup for every leg the
- * RPC just reaped, exactly like `dialer-engine.ts`'s own `hangupLeg` (a failed hangup is logged,
- * never fatal -- the leg is already 'ended' in our own bookkeeping regardless).
+ * Most of the actual STATE mutation happens inside `run_dialer_sweep` (SQL), reusing
+ * transition_leg/transition_session/apply_leg_outcome's existing idempotent expected-state
+ * guards. This function's own job is the two things SQL can't do: (1) best-effort Telnyx
+ * hangup for every leg the RPC just reaped, exactly like `dialer-engine.ts`'s own `hangupLeg`
+ * (a failed hangup is logged, never fatal -- the leg is already 'ended' in our own bookkeeping
+ * regardless); (2) TASK-L6's own claimed-leg reconciliation
+ * (`_shared/dialer-sweeper-core.ts`'s `reconcileStaleClaimedLeg`) -- the RPC only ever SELECTs
+ * candidate `claimed` legs silent past a threshold, since deciding whether one is actually dead
+ * needs a live Telnyx call (`GET /calls/{id}`, `is_alive`) this function makes per candidate.
  */
 import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2';
 import { timingSafeEqual } from 'jsr:@std/crypto@1/timing-safe-equal';
 import { corsHeaders, corsPreflightResponse } from '../_shared/cors.ts';
 import { getConnectedOrgTelnyxContext } from '../_shared/telnyx-org-context.ts';
+import {
+  reconcileStaleClaimedLeg,
+  type StaleClaimedLegCandidate,
+} from '../_shared/dialer-sweeper-core.ts';
+import type { TelnyxClient } from '../_shared/telnyx-client.ts';
 
 const STUCK_AFTER_SECONDS = 60;
+// TASK-L6: how long a claimed (bridged) contact leg must be silent before this even asks
+// Telnyx whether it's still alive -- see dialer-sweeper-core.ts's own header for why this
+// can't just be a longer version of STUCK_AFTER_SECONDS's own webhook-silence heuristic.
+const CLAIMED_CHECK_AFTER_SECONDS = 300;
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -54,6 +67,7 @@ interface DialerSweepResult {
   paused_agent_sessions: number;
   applied_orphaned_outcomes: number;
   requeued_leads: number;
+  stale_claimed_legs: StaleClaimedLegCandidate[];
 }
 
 Deno.serve(async (req: Request) => {
@@ -72,6 +86,7 @@ Deno.serve(async (req: Request) => {
 
   const { data, error } = await supabase.rpc('run_dialer_sweep', {
     p_stuck_after_seconds: STUCK_AFTER_SECONDS,
+    p_claimed_check_after_seconds: CLAIMED_CHECK_AFTER_SECONDS,
   });
   if (error) {
     console.error('[dialer-sweeper] run_dialer_sweep failed', error.message);
@@ -98,12 +113,39 @@ Deno.serve(async (req: Request) => {
     }
   }
 
+  // TASK-L6 (known-issues #11 / BUG-9): claimed legs the RPC only ever SELECTs (never mutates
+  // -- it can't ask Telnyx anything). reconcileStaleClaimedLeg decides per candidate: past
+  // Telnyx's own hard time_limit_secs+grace cap -> reap unconditionally, no need to ask;
+  // otherwise ask Telnyx (getCallStatus/is_alive) and only reap on a DEFINITIVE not-alive/404
+  // -- an API error or a genuinely live call never ends anything. Reuses the SAME per-org
+  // client map as the hangup loop above.
+  let reapedClaimedTimeout = 0;
+  let reapedClaimedConfirmedDead = 0;
+  let claimedLeftAlone = 0;
+  for (const leg of result.stale_claimed_legs ?? []) {
+    if (!orgClients.has(leg.org_id)) {
+      orgClients.set(leg.org_id, await getConnectedOrgTelnyxContext(supabase, leg.org_id));
+    }
+    const ctx = orgClients.get(leg.org_id);
+    const outcome = await reconcileStaleClaimedLeg(leg, {
+      supabase,
+      client: (ctx?.client ?? null) as TelnyxClient | null,
+    });
+    if (outcome === 'reaped_timeout') reapedClaimedTimeout++;
+    else if (outcome === 'reaped_confirmed_dead') reapedClaimedConfirmedDead++;
+    else claimedLeftAlone++;
+  }
+
   console.log('[dialer-sweeper] sweep_done', {
     reaped: result.reaped_legs?.length ?? 0,
     hungUp,
     pausedAgentSessions: result.paused_agent_sessions,
     appliedOrphanedOutcomes: result.applied_orphaned_outcomes,
     requeuedLeads: result.requeued_leads,
+    staleClaimedLegsChecked: result.stale_claimed_legs?.length ?? 0,
+    reapedClaimedTimeout,
+    reapedClaimedConfirmedDead,
+    claimedLeftAlone,
   });
 
   return jsonResponse({
@@ -112,5 +154,9 @@ Deno.serve(async (req: Request) => {
     pausedAgentSessions: result.paused_agent_sessions,
     appliedOrphanedOutcomes: result.applied_orphaned_outcomes,
     requeuedLeads: result.requeued_leads,
+    staleClaimedLegsChecked: result.stale_claimed_legs?.length ?? 0,
+    reapedClaimedTimeout,
+    reapedClaimedConfirmedDead,
+    claimedLeftAlone,
   });
 });

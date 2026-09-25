@@ -23,6 +23,7 @@ function makeMockClient(overrides: Partial<TelnyxClient> = {}): {
       throw new Error('not used in this test');
     },
     hangup: async () => {},
+    getCallStatus: async () => null,
     speak: async () => {},
     createConference: async () => ({ id: null, name: '' }),
     joinConference: async () => {},

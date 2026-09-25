@@ -123,8 +123,10 @@ const AGENT_SESSION_HEADER_NAME = 'X-Hyperdial-Session';
 
 /** CallRequest.time_limit_secs for every CONTACT dial (BUG-8) -- see telnyx-client.ts's
  *  DialArgs header comment for the spec citation. Not applied to the agent leg dial, which
- *  keeps Telnyx's own 4h default (an agent shift, not a parallel-dial candidate). */
-const CONTACT_DIAL_TIME_LIMIT_SECS = 1800;
+ *  keeps Telnyx's own 4h default (an agent shift, not a parallel-dial candidate). Exported
+ *  (TASK-L6) so dialer-sweeper-core.ts's own hard-timeout check uses this SAME value, not an
+ *  independently-maintained copy that could drift out of sync with the actual dial. */
+export const CONTACT_DIAL_TIME_LIMIT_SECS = 1800;
 
 function webhookBaseUrl(): string {
   return `${Deno.env.get('SUPABASE_URL')}/functions/v1/telnyx-webhook`;

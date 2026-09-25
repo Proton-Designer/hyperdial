@@ -210,6 +210,79 @@ Deno.test(
   }
 );
 
+Deno.test('createTelnyxClient.getCallStatus: is_alive:true -> { isAlive: true }', async () => {
+  let seenUrl = '';
+  let seenAuth: string | null = null;
+  const restore = stubFetch((url, init) => {
+    seenUrl = url;
+    seenAuth = (init?.headers as Record<string, string>)?.Authorization ?? null;
+    return new Response(JSON.stringify({ data: { is_alive: true } }), { status: 200 });
+  });
+  try {
+    const result = await createTelnyxClient('test-api-key').getCallStatus('call-1');
+    assertEquals(result, { isAlive: true });
+    assertEquals(seenUrl, 'https://api.telnyx.com/v2/calls/call-1');
+    assertEquals(seenAuth, 'Bearer test-api-key');
+  } finally {
+    restore();
+  }
+});
+
+Deno.test('createTelnyxClient.getCallStatus: is_alive:false -> { isAlive: false }', async () => {
+  const restore = stubFetch(
+    () => new Response(JSON.stringify({ data: { is_alive: false } }), { status: 200 })
+  );
+  try {
+    const result = await createTelnyxClient('test-api-key').getCallStatus('call-1');
+    assertEquals(result, { isAlive: false });
+  } finally {
+    restore();
+  }
+});
+
+Deno.test(
+  'createTelnyxClient.getCallStatus: 404 (unknown/long-gone call_control_id) is a DEFINITIVE not-alive signal',
+  async () => {
+    const restore = stubFetch(
+      () => new Response(JSON.stringify({ errors: [{ detail: 'not found' }] }), { status: 404 })
+    );
+    try {
+      const result = await createTelnyxClient('test-api-key').getCallStatus('call-1');
+      assertEquals(result, { isAlive: false });
+    } finally {
+      restore();
+    }
+  }
+);
+
+Deno.test(
+  'createTelnyxClient.getCallStatus: any other error status is inconclusive (null), never a false "not alive"',
+  async () => {
+    const restore = stubFetch(
+      () => new Response(JSON.stringify({ errors: [{ detail: 'server error' }] }), { status: 500 })
+    );
+    try {
+      const result = await createTelnyxClient('test-api-key').getCallStatus('call-1');
+      assertEquals(result, null);
+    } finally {
+      restore();
+    }
+  }
+);
+
+Deno.test(
+  'createTelnyxClient.getCallStatus: a malformed 200 (missing is_alive) is also inconclusive, not a crash',
+  async () => {
+    const restore = stubFetch(() => new Response(JSON.stringify({ data: {} }), { status: 200 }));
+    try {
+      const result = await createTelnyxClient('test-api-key').getCallStatus('call-1');
+      assertEquals(result, null);
+    } finally {
+      restore();
+    }
+  }
+);
+
 Deno.test(
   'createTelnyxClient.joinConference: hits /conferences/{id}/actions/join, not /calls/.../join_conference',
   async () => {

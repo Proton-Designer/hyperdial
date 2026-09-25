@@ -297,28 +297,13 @@ agent calling `campaigns_with_stats` directly still gets every org campaign row 
 no leads). Not fixed here: narrowing `campaigns` SELECT itself is a real RLS change, out of this
 task's scope.
 
-## 11. `dialer-sweeper` never reaps a stuck-but-`claimed` (actively bridged) leg
+## 11. ~~`dialer-sweeper` never reaps a stuck-but-`claimed` (actively bridged) leg~~ — FIXED by TASK-L6 (2026-09-25)
 
-**Severity: low, deliberate.** `run_dialer_sweep`'s staleness check (TASK-P2-E5,
-`20260924001700_dialer_sweeper_cron.sql`) excludes `call_legs.state = 'claimed'` entirely,
-regardless of age. Reasoning: a real live call is silent on the webhook stream for its whole
-duration by design — only `call.hangup` fires at the end — so "no webhook event in 60s" can't
-distinguish a genuinely-ongoing conversation from a `claimed` leg whose hangup webhook got lost.
-Forcibly hanging up a live call on that false positive is worse than leaving the rare true-dead-
-`claimed`-leg case unresolved until Telnyx's own eventual timeout/`time_limit` hangup delivery.
-If this ever needs closing, it needs a real signal a lost webhook can't fake — e.g. a periodic
-Telnyx call-status poll (`GET /calls/{id}`) — not a longer staleness window on the same webhook-
-silence heuristic, which would just make real long calls false-positive instead.
-
-**Downstream consequence, flagged by the lead in review:** since `handleWin`'s winning leg is
-the one that carries `dial_sessions.active_leg_id`, a WINNER whose own `call.hangup` webhook is
-lost leaves that leg stuck at `claimed` forever — and because the sweeper never reaps `claimed`,
-the SESSION also stays stuck in `on_call` forever (never reaches `wrap_up`, so no disposition is
-ever possible for it). **Follow-up, not yet built:** either (a) reap a `claimed` leg specifically
-once it's been silent for a much longer window than the pre-connect threshold (e.g. 2 hours —
-long enough that no real conversation is still running, short enough to actually recover), or
-(b) a periodic Telnyx call-status poll for any session parked in `on_call`/`connecting` past a
-similar threshold. Neither is implemented; this is the honest gap, not a silent assumption.
+Was deliberate (a real live call is silent on the webhook stream for its whole duration by
+design, so webhook silence alone can't tell a genuine conversation apart from a lost hangup
+webhook) -- closed exactly the way this entry's own "if this ever needs closing" note said it
+would need to: a periodic Telnyx call-status poll (`GET /calls/{id}`, `is_alive`), not a longer
+version of the same silence heuristic. Full writeup: entry #22 below.
 
 ## 12. `_shared/telnyx-client.ts` had 3 real request-shape bugs vs. the current Telnyx API
 
@@ -800,6 +785,60 @@ Deno files individually (clean), full `npm run check`/`build` clean. NEEDS-LIVE-
 DB, the reconnect timing fix against a real refresh-mid-agent-lost, and the tab-switch fix
 against the real `Dialer`/`useTelnyxCall` (only the underlying React mount pattern was
 hands-on-verified, in isolation).
+
+## 22. TASK-L6: sweeper now reconciles a lost-hangup-webhook `claimed` leg + the agent-lost states-list fix from #14 — fixed (2026-09-25)
+
+`board/*/TASK-L6-sweeper-claimed-legs.md`. Two independent fixes, one migration
+(`20260925010000_dialer_sweeper_claimed_legs.sql`):
+
+- **The `claimed`-leg reconciliation (#11)**: `run_dialer_sweep` (SQL) gained a new SELECT-only
+  step -- claimed contact legs silent (by `claimed_at`) longer than
+  `p_claimed_check_after_seconds` (default 300s/5min) are returned as `stale_claimed_legs`,
+  never mutated (SQL can't ask Telnyx anything). All the actual DECIDING happens in TS
+  (`_shared/dialer-sweeper-core.ts`'s `reconcileStaleClaimedLeg`, called from
+  `dialer-sweeper/index.ts`):
+  1. Older than `time_limit_secs` (1800, `CONTACT_DIAL_TIME_LIMIT_SECS` -- exported from
+     `dialer-engine.ts` so this can't independently drift from the value every contact dial
+     actually uses) + a 5-minute grace -- Telnyx guarantees the call ended by then (BUG-8's own
+     `time_limit_secs`); reaped unconditionally, Telnyx is never even asked.
+  2. Otherwise, ask Telnyx directly: `_shared/telnyx-client.ts`'s new `getCallStatus` (`GET
+     /calls/{call_control_id}`, verified against spec3.json's `RetrieveCallStatus` operation --
+     "Returns the status of a call...", response requires `is_alive: boolean`). Not alive (or a
+     404 -- Telnyx has no record of the call at all, no less gone than one it reports dead) ->
+     reap. Alive, or any other error/malformed response -> **left alone** -- a Telnyx error (or
+     a genuinely live call) must never end a leg.
+  - Reaping either way calls the same new SQL primitive, `reap_dead_claimed_leg(p_leg,
+    p_hangup_cause)` -- replicates `processContactLegEvent`'s own `result.next === 'ended'`
+    branch exactly (dialer-engine.ts): `transition_leg` -> ended (outcome stays `'connected'`,
+    set by `claim_leg`'s own win transition, untouched here), `apply_leg_outcome`, and -- only
+    if this leg was actually the session's `active_leg_id` -- `transition_session` -> `wrap_up`.
+    Race-safe the same way every RPC in this codebase is: its own `where ... and state =
+    'claimed'` guard means a real webhook that resolves the leg first just makes this a no-op.
+  - Tests (this task's own acceptance line, verbatim): `_shared/dialer-sweeper-core.test.ts` --
+    alive (untouched, positive control: RPC never called), not-alive (reaps, RPC called with
+    `call_not_alive`), 404 (same as not-alive), API error/rejected promise (untouched, RPC never
+    called), older-than-time_limit+grace (reaped unconditionally, positive control: Telnyx
+    never even asked), the exact boundary (still asks), the RPC itself returning false (race
+    loss, surfaces as inconclusive not a false success), and no Telnyx client available.
+    `_shared/telnyx-client.test.ts` gained 5 tests for `getCallStatus` itself (alive/not-alive/
+    404/other-error/malformed-response).
+- **The agent-lost states-list fix (#14's own follow-up)**: `run_dialer_sweep`'s step 2 states
+  list was `['dialing','connecting','on_call','wrap_up']` -- never matched the webhook-driven
+  path's own `AGENT_ACTIVE_SESSION_STATES` (dialer-engine.ts), which also treats
+  `ready_pending`/`ready`/`paused` as in-scope. An agent-leg-lost webhook lost while a session
+  sat in any of those three states was never reconciled by this safety net. Fixed to match
+  exactly (still deliberately excluding `paused_agent_lost` itself, the target state).
+- **Migration note**: `run_dialer_sweep`'s signature changed (`int` -> `int, int`) -- Postgres
+  identifies a function by argument TYPES, so `create or replace` alone would have created a
+  SECOND, overloaded function and silently left the original one-arg version callable too. The
+  migration explicitly `drop function if exists public.run_dialer_sweep(int)` first.
+
+Checks: `npm run test:functions` 234 passed / 0 failed / 1 pre-existing ignored (up from 220);
+`npm run check && npm run build` clean. **NEEDS-LIVE-VERIFY**: the whole migration
+(`supabase/tests/dialer_sweeper.sql` gained new fixtures/assertions for this, but -- like every
+SQL-level test in this run -- could not be executed; local Docker is retired) and the real
+Telnyx `GET /calls/{id}` response shape against a real call (only verified against spec3.json's
+schema, never a live request).
 
 ---
 

@@ -211,6 +211,19 @@ export interface TelnyxClient {
 
   dial(args: DialArgs): Promise<{ callControlId: string }>;
   hangup(callControlId: string): Promise<void>;
+  /**
+   * TASK-L6: `GET /calls/{call_control_id}` -- verified against spec3.json's own
+   * `RetrieveCallStatus` operation ("Retrieve a call status" / "Returns the status of a call
+   * (data is available 10 minutes after call ended)."). Response schema (`Call`) requires
+   * `is_alive: boolean` ("Indicates whether the call is alive or not."); no explicit 404 is
+   * documented for an unknown/long-gone `call_control_id`, only a generic error response --
+   * treated as a definitive "not alive" signal anyway (a call Telnyx has no record of at all
+   * is at least as gone as one it reports `is_alive:false` for), same as this task's own
+   * sweeper spec ("not-alive/404"). Returns `null` for anything else (any other HTTP error, or
+   * a malformed/missing `is_alive`) -- the caller must never end a leg on an inconclusive
+   * result, only on a definitive one.
+   */
+  getCallStatus(callControlId: string): Promise<{ isAlive: boolean } | null>;
   speak(callControlId: string, payload: { payload: string; voice: string }): Promise<void>;
 
   createConference(args: {
@@ -289,6 +302,22 @@ export function createTelnyxClient(
         method: 'POST',
         body: JSON.stringify({}),
       });
+    },
+
+    // Deliberately NOT built on `req`/`telnyxRequest` -- that helper throws on any non-2xx
+    // status, losing the actual status code (needed to tell a definitive 404 apart from an
+    // inconclusive 4xx/5xx). A raw fetch here keeps that distinction.
+    async getCallStatus(callControlId) {
+      const res = await fetch(`${apiBase}/calls/${encodeURIComponent(callControlId)}`, {
+        headers: { Authorization: `Bearer ${apiKey}` },
+      });
+      if (res.status === 404) return { isAlive: false };
+      if (!res.ok) return null;
+      const body = (await res.json().catch(() => null)) as {
+        data?: { is_alive?: boolean };
+      } | null;
+      if (typeof body?.data?.is_alive !== 'boolean') return null;
+      return { isAlive: body.data.is_alive };
     },
 
     async speak(callControlId, payload) {
