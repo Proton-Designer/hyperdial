@@ -16,11 +16,11 @@ import {
   planGhlImport,
   type ExistingContactRow,
 } from '../_shared/ghl-import.ts';
+import { planCampaignQueue, type CampaignQueueCandidate } from '../_shared/campaign-queue.ts';
 import {
-  planCampaignQueue,
-  ACTIVE_CAMPAIGN_LEAD_STATUSES,
-  type CampaignQueueCandidate,
-} from '../_shared/campaign-queue.ts';
+  fetchActiveElsewhereContactIds,
+  upsertCampaignLeads,
+} from '../_shared/campaign-queue-io.ts';
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -31,6 +31,30 @@ function jsonResponse(body: unknown, status = 200): Response {
 
 function getSupabaseAdmin() {
   return createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
+}
+
+/** Same PostgREST max_rows=1000 pagination gap as contacts-import's existing-contacts lookup
+ * (TASK-L3 review fix-forward, MAJOR item 5) -- an org with more than 1000 contacts would
+ * otherwise see this dedupe check silently miss everything past the first page. */
+async function fetchAllExistingContactRows(
+  // deno-lint-ignore no-explicit-any
+  supabase: any,
+  orgId: string
+): Promise<ExistingContactRow[]> {
+  const PAGE_SIZE = 1000;
+  const all: ExistingContactRow[] = [];
+  for (let offset = 0; ; offset += PAGE_SIZE) {
+    const { data, error } = await supabase
+      .from('contacts')
+      .select('id, phone_number, ghl_contact_id, dnc')
+      .eq('org_id', orgId)
+      .range(offset, offset + PAGE_SIZE - 1);
+    if (error) throw new Error(`existing contacts lookup failed: ${error.message}`);
+    const page = (data ?? []) as ExistingContactRow[];
+    all.push(...page);
+    if (page.length < PAGE_SIZE) break;
+  }
+  return all;
 }
 
 Deno.serve(async (req: Request) => {
@@ -113,12 +137,12 @@ Deno.serve(async (req: Request) => {
     }
   }
 
-  const { data: existingRows, error: existingError } = await supabase
-    .from('contacts')
-    .select('id, phone_number, ghl_contact_id, dnc')
-    .eq('org_id', orgId);
-  if (existingError) {
-    console.error('[ghl-import] existing contacts lookup failed', existingError.message);
+  let existingRows: ExistingContactRow[];
+  try {
+    existingRows = await fetchAllExistingContactRows(supabase, orgId);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error('[ghl-import] existing contacts lookup failed', message);
     return jsonResponse({ error: 'Failed to look up existing contacts' }, 500);
   }
 
@@ -126,13 +150,11 @@ Deno.serve(async (req: Request) => {
     mode,
     value,
     ghlContacts: fetched.contacts,
-    existing: (existingRows ?? []) as ExistingContactRow[],
+    existing: existingRows,
   });
 
   const now = new Date().toISOString();
-  const existingById = new Map(
-    ((existingRows ?? []) as ExistingContactRow[]).map((r) => [r.id, r])
-  );
+  const existingById = new Map(existingRows.map((r) => [r.id, r]));
   const queueCandidates: CampaignQueueCandidate[] = [];
 
   if (plan.toInsert.length > 0) {
@@ -197,18 +219,17 @@ Deno.serve(async (req: Request) => {
   let skippedActiveCampaign = 0;
 
   if (campaignId && queueCandidates.length > 0) {
-    const { data: activeElsewhereRows } = await supabase
-      .from('campaign_leads')
-      .select('contact_id')
-      .neq('campaign_id', campaignId)
-      .in('status', ACTIVE_CAMPAIGN_LEAD_STATUSES)
-      .in(
-        'contact_id',
-        queueCandidates.map((c) => c.contactId)
-      );
-    const activeElsewhereContactIds = new Set(
-      (activeElsewhereRows ?? []).map((r: { contact_id: string }) => r.contact_id)
-    );
+    let activeElsewhereContactIds: Set<string>;
+    try {
+      activeElsewhereContactIds = await fetchActiveElsewhereContactIds(supabase, {
+        contactIds: queueCandidates.map((c) => c.contactId),
+        excludeCampaignId: campaignId,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error('[ghl-import] active-elsewhere lookup failed', message);
+      return jsonResponse({ error: 'Failed to check existing campaign assignments' }, 500);
+    }
 
     const queuePlan = planCampaignQueue({ candidates: queueCandidates, activeElsewhereContactIds });
     skippedDnc = queuePlan.skippedDnc;
@@ -216,15 +237,18 @@ Deno.serve(async (req: Request) => {
     skippedActiveCampaign = queuePlan.skippedActiveElsewhere;
 
     if (queuePlan.toQueue.length > 0) {
-      const leadRows = queuePlan.toQueue.map((contact_id) => ({
-        campaign_id: campaignId,
-        contact_id,
-        org_id: orgId,
-        status: 'queued',
-      }));
-      await supabase
-        .from('campaign_leads')
-        .upsert(leadRows, { onConflict: 'campaign_id,contact_id', ignoreDuplicates: true });
+      try {
+        await upsertCampaignLeads(supabase, {
+          campaignId,
+          orgId,
+          contactIds: queuePlan.toQueue,
+          status: 'queued',
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.error('[ghl-import] campaign_leads upsert failed', message);
+        return jsonResponse({ error: 'Failed to queue contacts onto the campaign' }, 500);
+      }
     }
   }
 

@@ -36,6 +36,19 @@ export interface PlanCampaignQueueResult {
   skippedActiveElsewhere: number;
 }
 
+/** Splits an array into chunks of at most `size` elements -- PostgREST's `.in(col, values)`
+ * compiles every value into the request URL, so a caller with hundreds/thousands of ids (an
+ * import's existing-contacts lookup, the active-elsewhere check) must batch it or risk a URL
+ * length limit. `size` defaults to 200, a comfortably safe batch for a uuid column. */
+export function chunk<T>(items: readonly T[], size = 200): T[][] {
+  if (size <= 0) throw new Error('chunk size must be positive');
+  const out: T[][] = [];
+  for (let i = 0; i < items.length; i += size) {
+    out.push(items.slice(i, i + size));
+  }
+  return out;
+}
+
 /** DNC is checked before "paused" before "active elsewhere" -- order only matters for which
  * single counter a contact that somehow matches more than one condition lands in, and DNC is the
  * legally/product-critical one, so it takes priority. */

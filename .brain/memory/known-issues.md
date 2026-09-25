@@ -368,8 +368,9 @@ the same task:
    Live-verified at TASK-A1 (findings-eng1.md): the index genuinely did not exist. Fixed by
    `20260925000100_contacts_dedupe_dnc.sql`, which merges any real duplicate groups (oldest row
    survives, `dnc` OR'd across the group so a DNC flag is never lost, FKs repointed, verified
-   live: 0 duplicate groups existed as of this fix, so it ran as a no-op in practice) and then
-   creates the index unconditionally.
+   live: 0 duplicate groups existed as of this fix, so it will run as a no-op in practice once
+   the lead applies it -- not yet applied as of this writing) and then creates the index
+   unconditionally.
 2. Neither import path checked DNC (or, for GHL, the `dialer:paused` tag) before queueing a
    contact onto a campaign — a DNC'd contact re-imported into a campaign would get dialed again.
    Fixed: both paths now go through `_shared/campaign-queue.ts`'s shared `planCampaignQueue`
@@ -386,6 +387,23 @@ mechanics. Not done (explicitly out of TASK-L3's scope): a separate E.164-keyed 
 (DNC still lives on the `contacts` row itself, so a *new* contact row for an already-DNC'd phone
 number, from a future import that somehow bypasses the org-scoped unique index, would not
 automatically inherit it), SMS STOP handling, and GHL push of DNC (already existed).
+
+**Real, pre-existing gap made more visible by QUE-8's new index (found in review, documented not
+built — the reviewer offered either option):** a `campaign_leads` row can be `queued`/`in_flight`/
+`callback` in a campaign that later gets paused, soft-deleted, or completed, or can sit
+`in_flight` with no disposition ever recorded (an abandoned call). None of those states change the
+row's own status, so `idx_campaign_leads_one_active_per_contact` still counts it as that contact's
+one active slot — the contact is effectively stuck, unimportable into any other campaign, until
+someone manually changes that row's status. This isn't new behavior QUE-8 introduced (a contact
+could always get silently stuck like this); the new unique index just turns "silently stuck" into
+"the next import attempt visibly skips it," which is strictly more honest but also more visible.
+Not fixed here: doing so would mean campaign soft-delete/pause/complete cascading to release their
+active leads (or a sweep for long-idle `in_flight` rows), which touches the dialer engine's
+candidate-selection logic and campaign lifecycle — both bigger than a fix-forward on this task's
+own migrations. Whoever picks this up next: releasing active leads on soft-delete is the more
+clearly-correct default (a deleted/paused campaign has no business holding a contact hostage);
+handling a stuck `in_flight` row without a disposition is closer to `dialer-sweeper`'s territory
+(known-issues #11 is the same family of gap).
 
 ---
 

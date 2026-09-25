@@ -402,11 +402,30 @@ export function CampaignManageModal({
     onRefreshList();
   };
 
+  const reportAddLeadsResult = (result: {
+    added: number;
+    skippedDnc: number;
+    skippedActiveElsewhere: number;
+  }) => {
+    const skips: string[] = [];
+    if (result.skippedDnc > 0) skips.push(`${result.skippedDnc} DNC`);
+    if (result.skippedActiveElsewhere > 0)
+      skips.push(`${result.skippedActiveElsewhere} already active elsewhere`);
+    if (skips.length === 0) {
+      toast.success(`Added ${result.added} contact${result.added === 1 ? '' : 's'}`);
+    } else {
+      toast.warning(
+        `Added ${result.added} contact${result.added === 1 ? '' : 's'} -- skipped ${skips.join(', ')}`
+      );
+    }
+  };
+
   const handleAddExisting = async (selectedIds: string[]) => {
     if (!campaignId || selectedIds.length === 0) return;
     try {
-      await addLeadsToCampaign(campaignId, selectedIds);
+      const result = await addLeadsToCampaign(campaignId, selectedIds);
       setAddExistingOpen(false);
+      reportAddLeadsResult(result);
       fetchLeads();
       fetchCampaign();
       onRefreshList();
@@ -417,11 +436,16 @@ export function CampaignManageModal({
 
   const handleAddNewSuccess = (contact?: Contact) => {
     if (campaignId && contact) {
-      addLeadsToCampaign(campaignId, [contact.id]).then(() => {
-        fetchLeads();
-        fetchCampaign();
-        onRefreshList();
-      });
+      addLeadsToCampaign(campaignId, [contact.id])
+        .then((result) => {
+          reportAddLeadsResult(result);
+          fetchLeads();
+          fetchCampaign();
+          onRefreshList();
+        })
+        .catch((e) => {
+          toast.error(e instanceof Error ? e.message : 'Failed to add lead');
+        });
     }
     setAddNewOpen(false);
   };

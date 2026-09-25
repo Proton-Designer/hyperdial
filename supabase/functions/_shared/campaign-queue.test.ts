@@ -1,5 +1,5 @@
-import { assertEquals } from 'jsr:@std/assert@1';
-import { planCampaignQueue, ACTIVE_CAMPAIGN_LEAD_STATUSES } from './campaign-queue.ts';
+import { assertEquals, assertThrows } from 'jsr:@std/assert@1';
+import { planCampaignQueue, ACTIVE_CAMPAIGN_LEAD_STATUSES, chunk } from './campaign-queue.ts';
 
 Deno.test('planCampaignQueue: a plain, unencumbered candidate is queued', () => {
   const result = planCampaignQueue({
@@ -105,3 +105,48 @@ Deno.test(
 Deno.test('ACTIVE_CAMPAIGN_LEAD_STATUSES matches the audit-derived active set exactly', () => {
   assertEquals([...ACTIVE_CAMPAIGN_LEAD_STATUSES].sort(), ['callback', 'in_flight', 'queued']);
 });
+
+Deno.test('chunk: splits evenly-divisible input into equal-sized batches', () => {
+  assertEquals(chunk([1, 2, 3, 4], 2), [
+    [1, 2],
+    [3, 4],
+  ]);
+});
+
+Deno.test('chunk: a remainder becomes its own shorter final batch', () => {
+  assertEquals(chunk([1, 2, 3, 4, 5], 2), [[1, 2], [3, 4], [5]]);
+});
+
+Deno.test('chunk: input shorter than size returns exactly one batch', () => {
+  assertEquals(chunk([1, 2], 200), [[1, 2]]);
+});
+
+Deno.test('chunk: empty input returns no batches', () => {
+  assertEquals(chunk([], 200), []);
+});
+
+Deno.test('chunk: default size is 200', () => {
+  const items = Array.from({ length: 401 }, (_, i) => i);
+  const batches = chunk(items);
+  assertEquals(batches.length, 3);
+  assertEquals(batches[0].length, 200);
+  assertEquals(batches[1].length, 200);
+  assertEquals(batches[2].length, 1);
+});
+
+Deno.test('chunk: rejects a non-positive size instead of looping forever', () => {
+  assertThrows(() => chunk([1, 2, 3], 0));
+});
+
+Deno.test(
+  'positive control: chunk actually re-groups, not just returns the input array unchanged',
+  () => {
+    const items = [1, 2, 3, 4, 5];
+    const batches = chunk(items, 2);
+    if (batches.length === 1 && batches[0] === items) {
+      throw new Error(
+        'positive control is broken: chunk returned the input untouched as a single batch -- the batch-count assertions above would not have caught a no-op implementation'
+      );
+    }
+  }
+);

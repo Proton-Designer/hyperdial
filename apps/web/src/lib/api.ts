@@ -964,19 +964,85 @@ export async function listCampaignLeads(campaignId: string): Promise<CampaignLea
     .filter((cl) => cl.contact);
 }
 
-export async function addLeadsToCampaign(campaignId: string, contactIds: string[]): Promise<void> {
-  if (contactIds.length === 0) return;
+/** PostgREST's `.in(col, values)` compiles every value into the request URL -- batches a large
+ * id list (TASK-L3 review fix-forward) instead of risking a URL length limit. Mirrors
+ * `_shared/campaign-queue.ts`'s `chunk` (that one lives in the Deno functions tree, not
+ * importable from the browser bundle, so this is a second, tiny copy, not a shared import). */
+function chunk<T>(items: readonly T[], size = 200): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
+  return out;
+}
+
+export interface AddLeadsToCampaignResult {
+  added: number;
+  skippedDnc: number;
+  skippedActiveElsewhere: number;
+}
+
+/**
+ * TASK-L3 review fix-forward (MAJOR item 3): this used to be a single unconditional upsert, which
+ * a single already-active-elsewhere contact would fail entirely (a 23505 against
+ * `idx_campaign_leads_one_active_per_contact`, added by this same task) -- rejecting the WHOLE
+ * batch, including every contact that was perfectly fine to add. Now pre-filters DNC and
+ * active-elsewhere contacts first (same policy CSV/GHL import already enforce via
+ * `planCampaignQueue`, reimplemented here rather than shared since that planner lives in the Deno
+ * functions tree) and reports what it skipped instead of throwing.
+ */
+export async function addLeadsToCampaign(
+  campaignId: string,
+  contactIds: string[]
+): Promise<AddLeadsToCampaignResult> {
+  if (contactIds.length === 0) return { added: 0, skippedDnc: 0, skippedActiveElsewhere: 0 };
   const orgId = await getActiveOrgId();
-  const rows = contactIds.map((contact_id) => ({
-    campaign_id: campaignId,
-    contact_id,
-    org_id: orgId,
-  }));
-  const { error } = await supabase.from('campaign_leads').upsert(rows, {
-    onConflict: 'campaign_id,contact_id',
-    ignoreDuplicates: true,
-  });
-  if (error) throw new Error(error.message);
+
+  const dncIds = new Set<string>();
+  for (const batch of chunk(contactIds)) {
+    const { data, error } = await supabase
+      .from('contacts')
+      .select('id, dnc')
+      .in('id', batch)
+      .eq('dnc', true);
+    if (error) throw new Error(error.message);
+    for (const row of (data ?? []) as { id: string }[]) dncIds.add(row.id);
+  }
+
+  const candidateIds = contactIds.filter((id) => !dncIds.has(id));
+  const activeElsewhereIds = new Set<string>();
+  for (const batch of chunk(candidateIds)) {
+    if (batch.length === 0) continue;
+    const { data, error } = await supabase
+      .from('campaign_leads')
+      .select('contact_id, campaign_id')
+      .in('contact_id', batch)
+      .in('status', ['queued', 'in_flight', 'callback']);
+    if (error) throw new Error(error.message);
+    for (const row of (data ?? []) as { contact_id: string; campaign_id: string }[]) {
+      if (row.campaign_id !== campaignId) activeElsewhereIds.add(row.contact_id);
+    }
+  }
+
+  const toAdd = candidateIds.filter((id) => !activeElsewhereIds.has(id));
+  if (toAdd.length > 0) {
+    for (const batch of chunk(toAdd)) {
+      const rows = batch.map((contact_id) => ({
+        campaign_id: campaignId,
+        contact_id,
+        org_id: orgId,
+      }));
+      const { error } = await supabase.from('campaign_leads').upsert(rows, {
+        onConflict: 'campaign_id,contact_id',
+        ignoreDuplicates: true,
+      });
+      if (error) throw new Error(error.message);
+    }
+  }
+
+  return {
+    added: toAdd.length,
+    skippedDnc: dncIds.size,
+    skippedActiveElsewhere: activeElsewhereIds.size,
+  };
 }
 
 export async function removeLeadFromCampaign(campaignId: string, contactId: string): Promise<void> {

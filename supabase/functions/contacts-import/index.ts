@@ -4,11 +4,37 @@ import { corsHeaders, corsPreflightResponse } from '../_shared/cors.ts';
 import { requireOrgRole } from '../_shared/auth.ts';
 import { normalizePhoneStrict } from '../_shared/phone-normalize.ts';
 import { timezoneForAreaCode } from '../_shared/area-code-tz.ts';
+import { planCampaignQueue, type CampaignQueueCandidate } from '../_shared/campaign-queue.ts';
 import {
-  planCampaignQueue,
-  ACTIVE_CAMPAIGN_LEAD_STATUSES,
-  type CampaignQueueCandidate,
-} from '../_shared/campaign-queue.ts';
+  fetchActiveElsewhereContactIds,
+  upsertCampaignLeads,
+} from '../_shared/campaign-queue-io.ts';
+
+/** PostgREST's default `max_rows` caps a single `.select()` at 1000 rows -- an org with more
+ * contacts than that would silently see only a partial existing-contacts set, which (as of the
+ * TASK-L3 unique index) makes a re-import of an untracked contact's phone number 500 the whole
+ * batch insert instead of being recognized as a duplicate. Pages through with `.range()` until a
+ * page comes back short. */
+async function fetchAllContactRows(
+  // deno-lint-ignore no-explicit-any
+  supabase: any,
+  orgId: string
+): Promise<{ id: string; phone_number: string | null; dnc: boolean }[]> {
+  const PAGE_SIZE = 1000;
+  const all: { id: string; phone_number: string | null; dnc: boolean }[] = [];
+  for (let offset = 0; ; offset += PAGE_SIZE) {
+    const { data, error } = await supabase
+      .from('contacts')
+      .select('id, phone_number, dnc')
+      .eq('org_id', orgId)
+      .range(offset, offset + PAGE_SIZE - 1);
+    if (error) throw new Error(`existing-contacts lookup failed: ${error.message}`);
+    const page = (data ?? []) as { id: string; phone_number: string | null; dnc: boolean }[];
+    all.push(...page);
+    if (page.length < PAGE_SIZE) break;
+  }
+  return all;
+}
 
 const CANONICAL_TO_DB: Record<string, string> = {
   'Business Name': 'business_name',
@@ -73,16 +99,9 @@ Deno.serve(async (req) => {
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    const { data: existingPhones } = await supabase
-      .from('contacts')
-      .select('id, phone_number, dnc')
-      .eq('org_id', orgId);
+    const existingPhones = await fetchAllContactRows(supabase, orgId);
     const existingByPhoneDigits = new Map<string, { id: string; dnc: boolean }>();
-    for (const r of (existingPhones ?? []) as {
-      id: string;
-      phone_number: string | null;
-      dnc: boolean;
-    }[]) {
+    for (const r of existingPhones) {
       if (r.phone_number) existingByPhoneDigits.set(r.phone_number.replace(/\D/g, ''), r);
     }
     const existingSet = new Set(existingByPhoneDigits.keys());
@@ -95,8 +114,12 @@ Deno.serve(async (req) => {
     // Every existing contact this run matched by phone (a "duplicate" row in the CSV) is still a
     // campaign-queue candidate below if campaignId is set -- re-importing the same list into a
     // different campaign should attach it, not silently do nothing, as long as it isn't DNC or
-    // already active elsewhere.
-    const duplicateContactCandidates: CampaignQueueCandidate[] = [];
+    // already active elsewhere. Keyed by contactId (not a plain array) so the SAME phone number
+    // repeated more than twice in one CSV -- which resolves to the same existing contact every
+    // time -- contributes exactly one candidate; an array here would double/triple-count that one
+    // contact into skippedDnc/skippedActiveCampaign for every extra repeat, even though only one
+    // real contact was ever actually affected.
+    const duplicateContactCandidates = new Map<string, CampaignQueueCandidate>();
 
     for (const row of rows) {
       const contact: Record<string, unknown> = {
@@ -142,7 +165,10 @@ Deno.serve(async (req) => {
         // insert+queue path below) is still a campaign-queue candidate.
         const existingMatch = existingByPhoneDigits.get(phoneDigits);
         if (existingMatch) {
-          duplicateContactCandidates.push({ contactId: existingMatch.id, dnc: existingMatch.dnc });
+          duplicateContactCandidates.set(existingMatch.id, {
+            contactId: existingMatch.id,
+            dnc: existingMatch.dnc,
+          });
         }
         continue;
       }
@@ -176,7 +202,7 @@ Deno.serve(async (req) => {
     // only the duplicate-matched existing contacts can already be DNC.
     const queueCandidates: CampaignQueueCandidate[] = [
       ...insertedContactIds.map((contactId) => ({ contactId, dnc: false })),
-      ...duplicateContactCandidates,
+      ...duplicateContactCandidates.values(),
     ];
 
     if (campaignId && queueCandidates.length > 0) {
@@ -187,33 +213,21 @@ Deno.serve(async (req) => {
         .eq('org_id', orgId)
         .maybeSingle();
       if (campaign) {
-        const { data: activeElsewhereRows } = await supabase
-          .from('campaign_leads')
-          .select('contact_id')
-          .neq('campaign_id', campaignId)
-          .in('status', ACTIVE_CAMPAIGN_LEAD_STATUSES)
-          .in(
-            'contact_id',
-            queueCandidates.map((c) => c.contactId)
-          );
-        const activeElsewhereContactIds = new Set(
-          (activeElsewhereRows ?? []).map((r: { contact_id: string }) => r.contact_id)
-        );
+        const activeElsewhereContactIds = await fetchActiveElsewhereContactIds(supabase, {
+          contactIds: queueCandidates.map((c) => c.contactId),
+          excludeCampaignId: campaignId,
+        });
 
         const plan = planCampaignQueue({ candidates: queueCandidates, activeElsewhereContactIds });
         skippedDnc = plan.skippedDnc;
         skippedActiveCampaign = plan.skippedActiveElsewhere;
 
         if (plan.toQueue.length > 0) {
-          const leadRows = plan.toQueue.map((contact_id) => ({
-            campaign_id: campaignId,
-            contact_id,
-            org_id: orgId,
+          await upsertCampaignLeads(supabase, {
+            campaignId,
+            orgId,
+            contactIds: plan.toQueue,
             status: 'queued',
-          }));
-          await supabase.from('campaign_leads').upsert(leadRows, {
-            onConflict: 'campaign_id,contact_id',
-            ignoreDuplicates: true,
           });
         }
       }
