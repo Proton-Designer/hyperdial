@@ -5,7 +5,7 @@ layer: L2
 type: memory
 status: canonical
 owner: maintainer
-updated: 2026-09-21
+updated: 2026-09-25
 related:
   - mem.known-issues
   - mem.decisions
@@ -16,7 +16,7 @@ answers:
   - "what did previous work get wrong"
 covers: "Non-obvious things learned from working in this repository"
 excludes: "Current defects (see mem.known-issues), the reasoning behind choices (see mem.decisions)"
-tokens_est: 2719
+tokens_est: 3150
 ---
 
 # Lessons
@@ -166,3 +166,33 @@ This happened here while verifying TASK-P1-05's fix (`mem.known-issues` #0c): th
 semantics matter. Assert the *permission*, not the *denial*, with `select has_function_privilege('role_name', 'schema.fn(arg_types)', 'EXECUTE')` instead of
 provoking the actual error. This generalizes past this one bug: any future negative-control test for a revoked function needs the same treatment, or it will take
 the local DB down instead of proving the revoke works.
+
+---
+
+## A "loading just became false" check is unsafe if the provider can run more than one load cycle per mount
+
+`OrgProvider` (`OrgContext.tsx`) mounts above `AppContent`'s own auth-loading gate (`App.tsx`), so
+every fresh mount runs an unavoidable spurious first `load()` cycle with `user` still `null`
+(`AuthContext`'s session restore hasn't resolved yet). That cycle resolves `loading` straight from
+its initial `true` to `false` with `role=null` — often before a consumer's own effects run even
+once, so `orgLoading` can already read `false` on that effect's very first invocation, well before
+the REAL load cycle (for the actual signed-in user) has even started.
+
+Found building TASK-B1's URL-sync deep-link promotion in `MainApp.tsx`: an effect that promoted a
+manager-only deep link once `!orgLoading` treated this spurious tick as final and discarded the
+pending tab before the real cycle ever got to use it — an admin deep-linking to `/campaigns`
+stayed stuck on `/dialer` forever. Agents were masked from ever seeing it: `role=null` (spurious)
+and `role='agent'` (real) both resolve to the same fallback, so the wrong cycle winning didn't
+change their outcome — only a manager's promotion was actually lost. Caught only via live
+verification (a `false` reading with the right final value by luck, and a stuck-forever value in
+the actual bug case, look identical to code review — the bug is in the *ordering* of two cycles).
+
+**Apply it:** when consuming `OrgContext.loading` (or any provider whose `load()` can legitimately
+fire more than once per mount) to decide "the real data has arrived," don't trust a level read of
+`loading === false`. Track whether the effect has also observed `loading === true` at some point
+since mount, and only act on `false` once that's happened — i.e. wait for an actual transition, not
+a value that might already be stale before the effect ever looked. The existing "gate on `role`,
+not `loading`" pattern elsewhere in this codebase (Sidebar/TopNavigation/MainApp's tab-visibility
+gates, `.brain/memory/known-issues.md`) is a *different* fix for a *different* symptom (that one is
+about not re-hiding UI on every refetch); this one is about a one-time "has the real answer arrived
+yet" promotion, which needs the transition-based guard instead.
