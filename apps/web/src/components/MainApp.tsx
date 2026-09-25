@@ -6,13 +6,15 @@ import { Dialer } from './Dialer';
 import { Contacts } from './Contacts';
 import { Campaigns } from './Campaigns';
 import { Analytics } from './Analytics';
+import { Team } from './Team';
 import { Settings } from './Settings';
 import { BottomTabBar } from './app/BottomTabBar';
 import { PageTransition } from './app/PageTransition';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { useOrg } from '@/contexts/OrgContext';
 
-export type TabType = 'dashboard' | 'dialer' | 'contacts' | 'campaigns' | 'analytics' | 'settings';
+export type TabType =
+  'dashboard' | 'dialer' | 'contacts' | 'campaigns' | 'analytics' | 'team' | 'settings';
 
 export interface ParallelDialLaunchContext {
   sessionId: string;
@@ -36,6 +38,7 @@ const TAB_PATHS: Record<TabType, string> = {
   contacts: '/contacts',
   campaigns: '/campaigns',
   analytics: '/analytics',
+  team: '/team',
   settings: '/settings',
 };
 const PATH_TABS: Partial<Record<string, TabType>> = Object.fromEntries(
@@ -253,6 +256,11 @@ export function MainApp() {
           {activeTab === 'analytics' && (
             <PageTransition>
               <Analytics />
+            </PageTransition>
+          )}
+          {activeTab === 'team' && (
+            <PageTransition>
+              <Team />
             </PageTransition>
           )}
           {activeTab === 'settings' && (

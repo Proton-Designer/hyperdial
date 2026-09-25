@@ -316,6 +316,71 @@ export async function getAnalyticsSummary(
   return data as AnalyticsSummary;
 }
 
+// --- Team view (TASK-M2, ADM-6/ADM-7) ---
+//
+// Both RPCs are called directly (no edge function in between -- `supabase.rpc(...)`, same
+// direct-client shape as `listContactDispositionHistory`/`contact_disposition_history`), and
+// both are owner/admin-only, checked by the RPC itself via `auth.uid()` -- an agent caller gets
+// back an empty array, not an error, and a p_org the caller doesn't manage never returns a row.
+// See 20260925080100_team_view.sql's own header for why this repo's usual "edge function does
+// the role check, a service-role client trusts it" pattern isn't used here.
+
+export interface TeamDailyStatsRow {
+  agent_id: string;
+  name: string;
+  dials: number;
+  connects: number;
+  connect_rate: number;
+  conversations: number;
+  /** Null when dialing_hours < 0.1 for this agent in range -- same floor as dashboard-stats'
+   *  conversationsPerHour, avoids a nonsense spike right after Go Ready. */
+  conversations_per_hr: number | null;
+  wins: number;
+  callbacks_set: number;
+  talk_time_seconds: number;
+  dialing_hours: number;
+}
+
+/** `start`/`end` are the caller's own resolved window (Team.tsx computes Today/Yesterday in
+ *  America/Chicago, matching dialing_hours_today's boundary; 7d/Custom are plain UTC instants) --
+ *  the RPC clips dialing hours to whatever window it's handed, it has no "today" special case. */
+export async function getTeamDailyStats(start: Date, end: Date): Promise<TeamDailyStatsRow[]> {
+  const orgId = await getActiveOrgId();
+  const { data, error } = await supabase.rpc('team_daily_stats', {
+    p_org: orgId,
+    p_start: start.toISOString(),
+    p_end: end.toISOString(),
+  });
+  if (error) throw new Error(error.message);
+  return (data ?? []) as TeamDailyStatsRow[];
+}
+
+export type TeamLiveStatus = 'offline' | 'ready' | 'dialing' | 'on_call' | 'wrap_up' | 'paused';
+
+export interface TeamLiveBoardRow {
+  agent_id: string;
+  name: string;
+  status: TeamLiveStatus;
+  /** Only meaningful (and non-null) while status is 'dialing'. */
+  lines: number | null;
+  /** Only meaningful (and non-null) while status is 'on_call'. */
+  contact_name: string | null;
+  /** When the current session last changed state -- null while offline. */
+  state_since: string | null;
+  /** When the current session started -- null while offline. */
+  session_started_at: string | null;
+  calls_today: number;
+  conversations_today: number;
+}
+
+/** Poll every 5s (ADM-7) -- a single RPC round trip per poll, not N queries. */
+export async function getTeamLiveBoard(): Promise<TeamLiveBoardRow[]> {
+  const orgId = await getActiveOrgId();
+  const { data, error } = await supabase.rpc('team_live_board', { p_org: orgId });
+  if (error) throw new Error(error.message);
+  return (data ?? []) as TeamLiveBoardRow[];
+}
+
 export interface UserPreferences {
   team_performance_range?: '7d' | '30d' | 'custom';
   custom_start?: string;

@@ -5,6 +5,7 @@ import {
   Users,
   Target,
   BarChart3,
+  UsersRound,
   Settings,
   ChevronsLeft,
   ChevronsRight,
@@ -37,6 +38,7 @@ const tabs: NavTab[] = [
   { id: 'contacts', icon: Users, label: 'Contacts' },
   { id: 'campaigns', icon: Target, label: 'Campaigns', ownerAdminOnly: true },
   { id: 'analytics', icon: BarChart3, label: 'Analytics', ownerAdminOnly: true },
+  { id: 'team', icon: UsersRound, label: 'Team', ownerAdminOnly: true },
 ];
 
 export function Sidebar({

@@ -26,6 +26,7 @@ const TAB_LABELS: Record<TabType, string> = {
   contacts: 'Contacts',
   campaigns: 'Campaigns',
   analytics: 'Analytics',
+  team: 'Team',
   settings: 'Settings',
 };
 
