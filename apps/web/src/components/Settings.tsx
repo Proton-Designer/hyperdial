@@ -20,10 +20,24 @@ import {
   Pencil,
   X,
   PhoneOff,
+  Construction,
 } from 'lucide-react';
 import { usePhoneNumbers } from '@/contexts/PhoneNumbersContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { useOrg } from '@/contexts/OrgContext';
+import { useBreakpoint } from '@/hooks/useBreakpoint';
+import { PageHeader } from '@/components/app/PageHeader';
+import { EmptyState } from '@/components/app/EmptyState';
+import { Button } from '@/components/ui/button';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
+import { cn } from '@/components/ui/utils';
 import {
   searchPhoneNumbers,
   purchasePhoneNumber,
@@ -60,7 +74,7 @@ import {
   type DncNumber,
 } from '@/lib/api';
 import { Skeleton } from '@/components/ui/skeleton';
-import { ListSkeleton } from '@/components/app/skeletons';
+import { ListSkeleton, TableSkeleton } from '@/components/app/skeletons';
 import { normalizePhoneStrict } from '@/lib/phone-normalize';
 
 type SettingsTab =
@@ -110,10 +124,10 @@ function ProfileTab() {
       <div>
         <Skeleton className="h-8 w-56 mb-8" />
         <div className="space-y-4 max-w-xl">
-          <Skeleton className="h-12 w-full rounded-xl" />
-          <Skeleton className="h-12 w-full rounded-xl" />
-          <Skeleton className="h-12 w-full rounded-xl" />
-          <Skeleton className="h-10 w-32 rounded-xl" />
+          <Skeleton className="h-12 w-full rounded-app-md" />
+          <Skeleton className="h-12 w-full rounded-app-md" />
+          <Skeleton className="h-12 w-full rounded-app-md" />
+          <Skeleton className="h-10 w-32 rounded-app-md" />
         </div>
       </div>
     );
@@ -121,68 +135,68 @@ function ProfileTab() {
 
   return (
     <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
-      <h1 className="text-3xl font-bold text-white mb-8">Profile Settings</h1>
+      <PageHeader title="Profile" />
 
-      <div className="bg-[#1A2332]/60 backdrop-blur-xl rounded-2xl p-8 border border-white/5 shadow-[0_4px_24px_rgba(0,102,255,0.15)] mb-8">
+      <div className="bg-surface-1 rounded-app-lg p-8 border border-border-subtle shadow-app-sm mb-8">
         <div className="flex items-center gap-6 mb-8">
-          <div className="w-24 h-24 rounded-full bg-gradient-to-br from-[#00D9FF] to-[#0066FF] flex items-center justify-center text-white text-3xl font-bold">
+          <div className="w-24 h-24 rounded-full bg-gradient-to-br from-accent-from to-accent-to flex items-center justify-center text-white text-3xl font-bold">
             {initials.toUpperCase() || (ctxFirstName?.[0] ?? '') + (ctxLastName?.[0] ?? '')}
           </div>
           <div>
             <h3 className="text-2xl font-bold text-white mb-1">
               {firstName || lastName ? `${firstName} ${lastName}`.trim() : 'Your profile'}
             </h3>
-            <p className="text-[#B0BEC5]">{user?.email}</p>
+            <p className="text-text-secondary">{user?.email}</p>
           </div>
         </div>
 
         {error && (
-          <div className="mb-6 p-3 rounded-xl bg-red-500/10 border border-red-500/30 text-red-400 text-sm">
+          <div className="mb-6 p-3 rounded-app-md bg-danger/10 border border-danger/30 text-danger text-sm">
             {error}
           </div>
         )}
 
         <div className="space-y-6">
           <div>
-            <h4 className="text-lg font-semibold text-white mb-4">Personal Information</h4>
+            <h4 className="text-section-title text-text-primary mb-4">Personal Information</h4>
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="block text-sm text-[#B0BEC5] mb-2">First Name</label>
+                <label className="block text-sm text-text-secondary mb-2">First Name</label>
                 <input
                   type="text"
                   value={firstName}
                   onChange={(e) => setFirstName(e.target.value)}
-                  className="w-full bg-[#1E2A3A] border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-[#00D9FF] transition-colors"
+                  className="w-full bg-surface-2 border border-white/10 rounded-app-md px-4 py-3 text-white focus:outline-none focus:border-accent-to transition-colors"
                 />
               </div>
               <div>
-                <label className="block text-sm text-[#B0BEC5] mb-2">Last Name</label>
+                <label className="block text-sm text-text-secondary mb-2">Last Name</label>
                 <input
                   type="text"
                   value={lastName}
                   onChange={(e) => setLastName(e.target.value)}
-                  className="w-full bg-[#1E2A3A] border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-[#00D9FF] transition-colors"
+                  className="w-full bg-surface-2 border border-white/10 rounded-app-md px-4 py-3 text-white focus:outline-none focus:border-accent-to transition-colors"
                 />
               </div>
               <div>
-                <label className="block text-sm text-[#B0BEC5] mb-2">Email</label>
+                <label className="block text-sm text-text-secondary mb-2">Email</label>
                 <input
                   type="email"
                   value={user?.email ?? ''}
                   readOnly
-                  className="w-full bg-[#1E2A3A]/60 border border-white/10 rounded-xl px-4 py-3 text-[#B0BEC5] cursor-not-allowed"
+                  className="w-full bg-surface-2/60 border border-white/10 rounded-app-md px-4 py-3 text-text-secondary cursor-not-allowed"
                 />
               </div>
             </div>
           </div>
         </div>
 
-        <div className="flex items-center justify-end gap-3 mt-8 pt-6 border-t border-white/5">
-          {saved && <span className="text-sm text-[#00E676] mr-auto">Saved</span>}
+        <div className="flex items-center justify-end gap-3 mt-8 pt-6 border-t border-border-subtle">
+          {saved && <span className="text-sm text-success mr-auto">Saved</span>}
           <button
             onClick={handleSave}
             disabled={saving}
-            className="px-6 py-3 bg-gradient-to-r from-[#00D9FF] to-[#0066FF] rounded-xl text-white font-semibold shadow-[0_4px_24px_rgba(0,217,255,0.3)] hover:shadow-[0_6px_32px_rgba(0,217,255,0.4)] transition-all disabled:opacity-60"
+            className="px-6 py-3 bg-gradient-to-r from-accent-from to-accent-to rounded-app-md text-white font-semibold shadow-[0_4px_24px_rgba(0,217,255,0.3)] hover:shadow-[0_6px_32px_rgba(0,217,255,0.4)] transition-all disabled:opacity-60"
           >
             {saving ? 'Saving…' : 'Save Changes'}
           </button>
@@ -197,6 +211,8 @@ const ROLE_LABEL: Record<string, string> = { owner: 'Owner', admin: 'Admin', age
 function TeamTab() {
   const { user } = useAuth();
   const { role } = useOrg();
+  const breakpoint = useBreakpoint();
+  const isDesktop = breakpoint === 'desktop';
   const [members, setMembers] = useState<OrgMember[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -266,27 +282,30 @@ function TeamTab() {
 
   return (
     <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
-      <div className="flex items-center justify-between mb-8">
-        <h1 className="text-3xl font-bold text-white">Team</h1>
-        {canManage && (
-          <button
-            onClick={() => {
-              setShowInvite((v) => !v);
-              setInviteLink(null);
-            }}
-            className="px-5 py-2.5 bg-gradient-to-r from-[#00D9FF] to-[#0066FF] rounded-xl text-white font-semibold text-sm"
-          >
-            Invite member
-          </button>
-        )}
-      </div>
+      <PageHeader
+        title="Team"
+        actions={
+          canManage && (
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={() => {
+                setShowInvite((v) => !v);
+                setInviteLink(null);
+              }}
+            >
+              Invite member
+            </Button>
+          )
+        }
+      />
 
       {canManage && showInvite && (
-        <div className="bg-gradient-to-r from-[#0066FF]/10 to-[#00D9FF]/10 backdrop-blur-xl rounded-2xl p-6 border border-[#0066FF]/20 mb-6">
-          <h3 className="text-lg font-semibold text-white mb-4">Invite a teammate</h3>
+        <div className="bg-gradient-to-r from-accent-from/10 to-accent-to/10 rounded-app-lg p-6 border border-accent-from/20 mb-6">
+          <h3 className="text-section-title text-text-primary mb-4">Invite a teammate</h3>
           {inviteLink ? (
             <div>
-              <p className="text-sm text-[#B0BEC5] mb-3">
+              <p className="text-sm text-text-secondary mb-3">
                 Send this single-use link (expires in 7 days). Anyone with it can join as{' '}
                 {inviteRole}.
               </p>
@@ -295,12 +314,12 @@ function TeamTab() {
                   type="text"
                   readOnly
                   value={inviteLink}
-                  className="flex-1 bg-[#1E2A3A] border border-white/10 rounded-xl px-4 py-3 text-white text-sm"
+                  className="flex-1 bg-surface-2 border border-white/10 rounded-app-md px-4 py-3 text-white text-sm"
                   onFocus={(e) => e.target.select()}
                 />
                 <button
                   onClick={handleCopyLink}
-                  className="px-4 py-3 bg-[#00D9FF]/20 hover:bg-[#00D9FF]/30 border border-[#00D9FF]/30 rounded-xl text-[#00D9FF] flex items-center gap-2"
+                  className="px-4 py-3 bg-accent-to/20 hover:bg-accent-to/30 border border-accent-to/30 rounded-app-md text-accent-to flex items-center gap-2"
                 >
                   {linkCopied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
                   {linkCopied ? 'Copied' : 'Copy'}
@@ -310,22 +329,22 @@ function TeamTab() {
           ) : (
             <form onSubmit={handleCreateInvite} className="flex flex-wrap items-end gap-3">
               <div className="flex-1 min-w-[200px]">
-                <label className="block text-sm text-[#B0BEC5] mb-2">Email</label>
+                <label className="block text-sm text-text-secondary mb-2">Email</label>
                 <input
                   type="email"
                   value={inviteEmail}
                   onChange={(e) => setInviteEmail(e.target.value)}
                   required
-                  className="w-full bg-[#1E2A3A] border border-white/10 rounded-xl px-4 py-3 text-white placeholder-[#B0BEC5]/50 focus:outline-none focus:border-[#00D9FF]"
+                  className="w-full bg-surface-2 border border-white/10 rounded-app-md px-4 py-3 text-white placeholder-text-muted focus:outline-none focus:border-accent-to"
                   placeholder="teammate@company.com"
                 />
               </div>
               <div>
-                <label className="block text-sm text-[#B0BEC5] mb-2">Role</label>
+                <label className="block text-sm text-text-secondary mb-2">Role</label>
                 <select
                   value={inviteRole}
                   onChange={(e) => setInviteRole(e.target.value as 'admin' | 'agent')}
-                  className="bg-[#1E2A3A] border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-[#00D9FF]"
+                  className="bg-surface-2 border border-white/10 rounded-app-md px-4 py-3 text-white focus:outline-none focus:border-accent-to"
                 >
                   <option value="agent">Agent</option>
                   <option value="admin">Admin</option>
@@ -334,7 +353,7 @@ function TeamTab() {
               <button
                 type="submit"
                 disabled={inviteSubmitting}
-                className="px-6 py-3 bg-gradient-to-r from-[#00D9FF] to-[#0066FF] rounded-xl text-white font-semibold disabled:opacity-50 flex items-center gap-2"
+                className="px-6 py-3 bg-gradient-to-r from-accent-from to-accent-to rounded-app-md text-white font-semibold disabled:opacity-50 flex items-center gap-2"
               >
                 {inviteSubmitting ? (
                   <Loader2 className="w-4 h-4 animate-spin" />
@@ -349,13 +368,124 @@ function TeamTab() {
       )}
 
       {(error || actionError) && (
-        <div className="mb-6 p-4 rounded-xl bg-red-500/10 border border-red-500/30 text-red-400 text-sm">
+        <div className="mb-6 p-4 rounded-app-md bg-danger/10 border border-danger/30 text-danger text-sm">
           {error || actionError}
         </div>
       )}
 
       {loading ? (
-        <ListSkeleton rows={4} />
+        isDesktop ? (
+          <TableSkeleton rows={4} columns={4} />
+        ) : (
+          <ListSkeleton rows={4} />
+        )
+      ) : isDesktop ? (
+        <div className="rounded-app-lg border border-border-subtle bg-surface-1 overflow-hidden">
+          <Table>
+            <TableHeader>
+              <TableRow className="border-border-subtle hover:bg-transparent">
+                <TableHead className="text-text-secondary">Name</TableHead>
+                <TableHead className="text-text-secondary">Status</TableHead>
+                <TableHead className="text-text-secondary">Role</TableHead>
+                <TableHead className="text-right text-text-secondary">Actions</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {members.map((m) => {
+                const name =
+                  [m.first_name, m.last_name].filter(Boolean).join(' ') || m.email || 'Unnamed';
+                const isSelf = m.user_id === user?.id;
+                const isOwner = m.role === 'owner';
+                const busy = busyUserId === m.user_id;
+                return (
+                  <TableRow key={m.user_id} className="border-border-subtle">
+                    <TableCell>
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="w-8 h-8 rounded-full bg-gradient-to-br from-accent-from to-accent-to flex items-center justify-center text-white text-xs font-semibold flex-shrink-0">
+                          {name.slice(0, 2).toUpperCase()}
+                        </div>
+                        <div className="min-w-0">
+                          <div className="text-text-primary font-medium truncate">
+                            {name}{' '}
+                            {isSelf && <span className="text-text-secondary text-xs">(you)</span>}
+                          </div>
+                          <div className="text-meta text-text-secondary truncate">{m.email}</div>
+                        </div>
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <span
+                        className={cn(
+                          'px-2.5 py-1 rounded-full text-xs border',
+                          m.status === 'disabled'
+                            ? 'bg-white/5 text-text-secondary border-white/10'
+                            : 'bg-success/10 text-success border-success/20'
+                        )}
+                      >
+                        {m.status === 'disabled' ? 'Disabled' : 'Active'}
+                      </span>
+                    </TableCell>
+                    <TableCell>
+                      {canManage && !isOwner ? (
+                        <select
+                          value={m.role}
+                          disabled={busy}
+                          onChange={(e) =>
+                            runAction(m.user_id, () =>
+                              changeMemberRole(m.user_id, e.target.value as 'admin' | 'agent')
+                            )
+                          }
+                          className="bg-surface-2 border border-border-subtle rounded-app-sm px-3 py-1.5 text-text-primary text-sm focus:outline-none focus:border-accent-to"
+                        >
+                          <option value="admin">Admin</option>
+                          <option value="agent">Agent</option>
+                        </select>
+                      ) : (
+                        <span className="text-sm text-text-secondary">{ROLE_LABEL[m.role]}</span>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      {canManage && !isOwner && (
+                        <div className="flex items-center justify-end gap-1">
+                          <button
+                            disabled={busy}
+                            onClick={() =>
+                              runAction(m.user_id, () =>
+                                m.status === 'disabled'
+                                  ? enableMember(m.user_id)
+                                  : disableMember(m.user_id)
+                              )
+                            }
+                            title={m.status === 'disabled' ? 'Enable' : 'Disable'}
+                            className="p-2 rounded-app-sm hover:bg-white/5 text-text-secondary hover:text-text-primary transition-colors disabled:opacity-50"
+                          >
+                            {m.status === 'disabled' ? (
+                              <UserCheck className="w-4 h-4" />
+                            ) : (
+                              <UserX className="w-4 h-4" />
+                            )}
+                          </button>
+                          <button
+                            disabled={busy}
+                            onClick={() => {
+                              if (confirm(`Remove ${name} from the team?`)) {
+                                runAction(m.user_id, () => removeMember(m.user_id));
+                              }
+                            }}
+                            title="Remove"
+                            className="p-2 rounded-app-sm hover:bg-danger/10 text-text-secondary hover:text-danger transition-colors disabled:opacity-50"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      )}
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
+        </div>
       ) : (
         <div className="space-y-3">
           {members.map((m) => {
@@ -367,26 +497,27 @@ function TeamTab() {
             return (
               <div
                 key={m.user_id}
-                className="flex items-center justify-between p-4 bg-[#1A2332]/60 backdrop-blur-xl rounded-xl border border-white/5"
+                className="flex items-center justify-between p-4 bg-surface-1 rounded-app-md border border-border-subtle"
               >
                 <div className="flex items-center gap-4 min-w-0">
-                  <div className="w-10 h-10 rounded-full bg-gradient-to-br from-[#00D9FF] to-[#0066FF] flex items-center justify-center text-white text-sm font-semibold flex-shrink-0">
+                  <div className="w-10 h-10 rounded-full bg-gradient-to-br from-accent-from to-accent-to flex items-center justify-center text-white text-sm font-semibold flex-shrink-0">
                     {name.slice(0, 2).toUpperCase()}
                   </div>
                   <div className="min-w-0">
-                    <div className="text-white font-medium truncate">
-                      {name} {isSelf && <span className="text-[#B0BEC5] text-xs">(you)</span>}
+                    <div className="text-text-primary font-medium truncate">
+                      {name} {isSelf && <span className="text-text-secondary text-xs">(you)</span>}
                     </div>
-                    <div className="text-sm text-[#B0BEC5] truncate">{m.email}</div>
+                    <div className="text-sm text-text-secondary truncate">{m.email}</div>
                   </div>
                 </div>
                 <div className="flex items-center gap-3 flex-shrink-0">
                   <span
-                    className={`px-2.5 py-1 rounded-full text-xs border ${
+                    className={cn(
+                      'px-2.5 py-1 rounded-full text-xs border',
                       m.status === 'disabled'
-                        ? 'bg-white/5 text-[#B0BEC5] border-white/10'
-                        : 'bg-[#00E676]/10 text-[#00E676] border-[#00E676]/20'
-                    }`}
+                        ? 'bg-white/5 text-text-secondary border-white/10'
+                        : 'bg-success/10 text-success border-success/20'
+                    )}
                   >
                     {m.status === 'disabled' ? 'Disabled' : 'Active'}
                   </span>
@@ -401,7 +532,7 @@ function TeamTab() {
                             changeMemberRole(m.user_id, e.target.value as 'admin' | 'agent')
                           )
                         }
-                        className="bg-[#1E2A3A] border border-white/10 rounded-lg px-3 py-1.5 text-white text-sm focus:outline-none focus:border-[#00D9FF]"
+                        className="bg-surface-2 border border-border-subtle rounded-app-sm px-3 py-1.5 text-text-primary text-sm focus:outline-none focus:border-accent-to"
                       >
                         <option value="admin">Admin</option>
                         <option value="agent">Agent</option>
@@ -416,7 +547,7 @@ function TeamTab() {
                           )
                         }
                         title={m.status === 'disabled' ? 'Enable' : 'Disable'}
-                        className="p-2 rounded-lg hover:bg-white/5 text-[#B0BEC5] hover:text-white transition-colors disabled:opacity-50"
+                        className="p-2 rounded-app-sm hover:bg-white/5 text-text-secondary hover:text-text-primary transition-colors disabled:opacity-50"
                       >
                         {m.status === 'disabled' ? (
                           <UserCheck className="w-4 h-4" />
@@ -432,13 +563,13 @@ function TeamTab() {
                           }
                         }}
                         title="Remove"
-                        className="p-2 rounded-lg hover:bg-red-500/10 text-[#B0BEC5] hover:text-[#FF3D00] transition-colors disabled:opacity-50"
+                        className="p-2 rounded-app-sm hover:bg-danger/10 text-text-secondary hover:text-danger transition-colors disabled:opacity-50"
                       >
                         <Trash2 className="w-4 h-4" />
                       </button>
                     </>
                   ) : (
-                    <span className="text-sm text-[#B0BEC5] px-2">{ROLE_LABEL[m.role]}</span>
+                    <span className="text-sm text-text-secondary px-2">{ROLE_LABEL[m.role]}</span>
                   )}
                 </div>
               </div>
@@ -508,30 +639,29 @@ function IntegrationsTab() {
 
   return (
     <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
-      <h1 className="text-3xl font-bold text-white mb-2">Integrations</h1>
-      <p className="text-[#B0BEC5] mb-8">
-        Connect a GHL (GoHighLevel) sub-account to sync dispositions, notes, tags and callback tasks
-        after every call.
-      </p>
+      <PageHeader
+        title="Integrations"
+        description="Connect a GHL (GoHighLevel) sub-account to sync dispositions, notes, tags and callback tasks after every call."
+      />
 
       {error && (
-        <div className="mb-6 p-4 rounded-xl bg-red-500/10 border border-red-500/30 text-red-400 text-sm">
+        <div className="mb-6 p-4 rounded-app-md bg-danger/10 border border-danger/30 text-danger text-sm">
           {error}
         </div>
       )}
 
       {loading ? (
-        <Skeleton className="h-[140px] w-full max-w-xl rounded-2xl" />
+        <Skeleton className="h-[140px] w-full max-w-xl rounded-app-lg" />
       ) : (
-        <div className="bg-[#1A2332]/60 backdrop-blur-xl rounded-2xl p-6 border border-white/5 max-w-xl">
+        <div className="bg-surface-1 rounded-app-lg p-6 border border-border-subtle max-w-xl">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-[#00D9FF] to-[#0066FF] flex items-center justify-center">
+              <div className="w-10 h-10 rounded-app-md bg-gradient-to-br from-accent-from to-accent-to flex items-center justify-center">
                 <Zap className="w-5 h-5 text-white" />
               </div>
               <div>
                 <div className="text-white font-medium">GoHighLevel</div>
-                <div className="text-sm text-[#B0BEC5]">
+                <div className="text-sm text-text-secondary">
                   {isConnected && status?.location_id
                     ? `Location ${status.location_id}`
                     : 'Not connected'}
@@ -541,8 +671,8 @@ function IntegrationsTab() {
             <span
               className={`px-2.5 py-1 rounded-full text-xs border ${
                 isConnected
-                  ? 'bg-[#00E676]/10 text-[#00E676] border-[#00E676]/20'
-                  : 'bg-white/5 text-[#B0BEC5] border-white/10'
+                  ? 'bg-success/10 text-success border-success/20'
+                  : 'bg-white/5 text-text-secondary border-white/10'
               }`}
             >
               {isConnected
@@ -554,14 +684,14 @@ function IntegrationsTab() {
           </div>
 
           {!isOwner ? (
-            <p className="text-sm text-[#B0BEC5]">
+            <p className="text-sm text-text-secondary">
               Only the org owner can connect or disconnect GHL.
             </p>
           ) : isConnected ? (
             <button
               onClick={handleDisconnect}
               disabled={disconnecting}
-              className="px-5 py-2.5 bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 rounded-xl text-red-400 text-sm font-medium disabled:opacity-50 flex items-center gap-2"
+              className="px-5 py-2.5 bg-danger/10 hover:bg-danger/20 border border-danger/30 rounded-app-md text-danger text-sm font-medium disabled:opacity-50 flex items-center gap-2"
             >
               {disconnecting && <Loader2 className="w-4 h-4 animate-spin" />}
               Disconnect
@@ -569,7 +699,7 @@ function IntegrationsTab() {
           ) : (
             <form onSubmit={handleConnect} className="space-y-4">
               <div>
-                <label className="block text-sm text-[#B0BEC5] mb-2">
+                <label className="block text-sm text-text-secondary mb-2">
                   Private Integration Token
                 </label>
                 <input
@@ -577,25 +707,25 @@ function IntegrationsTab() {
                   value={token}
                   onChange={(e) => setToken(e.target.value)}
                   required
-                  className="w-full bg-[#1E2A3A] border border-white/10 rounded-xl px-4 py-3 text-white placeholder-[#B0BEC5]/50 focus:outline-none focus:border-[#00D9FF]"
+                  className="w-full bg-surface-2 border border-white/10 rounded-app-md px-4 py-3 text-white placeholder-text-muted focus:outline-none focus:border-accent-to"
                   placeholder="pit-..."
                 />
               </div>
               <div>
-                <label className="block text-sm text-[#B0BEC5] mb-2">Location ID</label>
+                <label className="block text-sm text-text-secondary mb-2">Location ID</label>
                 <input
                   type="text"
                   value={locationId}
                   onChange={(e) => setLocationId(e.target.value)}
                   required
-                  className="w-full bg-[#1E2A3A] border border-white/10 rounded-xl px-4 py-3 text-white placeholder-[#B0BEC5]/50 focus:outline-none focus:border-[#00D9FF]"
+                  className="w-full bg-surface-2 border border-white/10 rounded-app-md px-4 py-3 text-white placeholder-text-muted focus:outline-none focus:border-accent-to"
                   placeholder="Sub-account location ID"
                 />
               </div>
               <button
                 type="submit"
                 disabled={connecting}
-                className="px-6 py-3 bg-gradient-to-r from-[#00D9FF] to-[#0066FF] rounded-xl text-white font-semibold disabled:opacity-50 flex items-center gap-2"
+                className="px-6 py-3 bg-gradient-to-r from-accent-from to-accent-to rounded-app-md text-white font-semibold disabled:opacity-50 flex items-center gap-2"
               >
                 {connecting && <Loader2 className="w-4 h-4 animate-spin" />}
                 Connect GHL
@@ -611,11 +741,11 @@ function IntegrationsTab() {
 }
 
 const SYNC_STATUS_BADGE: Record<CrmSyncJob['status'], string> = {
-  queued: 'bg-white/5 text-[#B0BEC5] border-white/10',
-  running: 'bg-[#0066FF]/10 text-[#0066FF] border-[#0066FF]/20',
-  done: 'bg-[#00E676]/10 text-[#00E676] border-[#00E676]/20',
+  queued: 'bg-white/5 text-text-secondary border-white/10',
+  running: 'bg-accent-from/10 text-accent-from border-accent-from/20',
+  done: 'bg-success/10 text-success border-success/20',
   failed: 'bg-yellow-500/10 text-yellow-400 border-yellow-500/30',
-  dead: 'bg-red-500/10 text-red-400 border-red-500/30',
+  dead: 'bg-danger/10 text-danger border-danger/30',
 };
 
 /** Last 20 crm_sync_jobs for this org (TASK-P3-P3) -- a read-only status list, no retry/cancel
@@ -633,33 +763,33 @@ function SyncStatusList() {
   }, []);
 
   return (
-    <div className="mt-6 bg-[#1A2332]/60 backdrop-blur-xl rounded-2xl p-6 border border-white/5 max-w-xl">
-      <h3 className="text-white font-medium mb-4">Sync status</h3>
+    <div className="mt-6 bg-surface-1 rounded-app-lg p-6 border border-border-subtle max-w-xl">
+      <h3 className="text-section-title text-text-primary mb-4">Sync status</h3>
       {loading ? (
         <div className="space-y-2">
           <Skeleton className="h-10 w-full rounded-lg" />
           <Skeleton className="h-10 w-full rounded-lg" />
         </div>
       ) : jobs.length === 0 ? (
-        <p className="text-sm text-[#B0BEC5]">No sync activity yet.</p>
+        <p className="text-sm text-text-secondary">No sync activity yet.</p>
       ) : (
         <div className="space-y-2">
           {jobs.map((job) => (
             <div
               key={job.id}
-              className="flex items-center justify-between gap-3 py-2 border-b border-white/5 last:border-0"
+              className="flex items-center justify-between gap-3 py-2 border-b border-border-subtle last:border-0"
             >
               <div className="min-w-0">
                 <div className="text-sm text-white capitalize">{job.kind.replace('_', ' ')}</div>
                 {job.status === 'dead' && job.last_error && (
-                  <div className="text-xs text-red-400 truncate" title={job.last_error}>
+                  <div className="text-xs text-danger truncate" title={job.last_error}>
                     {job.last_error}
                   </div>
                 )}
               </div>
               <div className="flex items-center gap-2 flex-shrink-0">
                 {job.attempts > 0 && (
-                  <span className="text-xs text-[#B0BEC5]">{job.attempts} attempt(s)</span>
+                  <span className="text-xs text-text-secondary">{job.attempts} attempt(s)</span>
                 )}
                 <span
                   className={`px-2.5 py-1 rounded-full text-xs border ${SYNC_STATUS_BADGE[job.status]}`}
@@ -802,26 +932,28 @@ function DispositionsTab() {
 
   return (
     <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
-      <h1 className="text-3xl font-bold text-white mb-2">Dispositions</h1>
-      <p className="text-[#B0BEC5] mb-8">
-        The outcomes agents choose after each call, and their effect on the lead and on GHL.
-      </p>
+      <PageHeader
+        title="Dispositions"
+        description="The outcomes agents choose after each call, and their effect on the lead and on GHL."
+      />
 
       {error && (
-        <div className="mb-6 p-4 rounded-xl bg-red-500/10 border border-red-500/30 text-red-400 text-sm">
+        <div className="mb-6 p-4 rounded-app-md bg-danger/10 border border-danger/30 text-danger text-sm">
           {error}
         </div>
       )}
 
       {!isAdmin ? (
-        <p className="text-sm text-[#B0BEC5]">Only an owner or admin can manage dispositions.</p>
+        <p className="text-sm text-text-secondary">
+          Only an owner or admin can manage dispositions.
+        </p>
       ) : loading ? (
-        <Skeleton className="h-[320px] w-full max-w-2xl rounded-2xl" />
+        <Skeleton className="h-[320px] w-full max-w-2xl rounded-app-lg" />
       ) : (
-        <div className="bg-[#1A2332]/60 backdrop-blur-xl rounded-2xl p-6 border border-white/5 max-w-2xl">
+        <div className="bg-surface-1 rounded-app-lg p-6 border border-border-subtle max-w-2xl">
           <div className="space-y-2 mb-4">
             {dispositions.map((d) => (
-              <div key={d.id} className="py-3 border-b border-white/5 last:border-0">
+              <div key={d.id} className="py-3 border-b border-border-subtle last:border-0">
                 {editingId === d.id ? (
                   <div className="space-y-3">
                     <div className="flex gap-2">
@@ -829,18 +961,18 @@ function DispositionsTab() {
                         type="text"
                         value={editLabel}
                         onChange={(e) => setEditLabel(e.target.value)}
-                        className="flex-1 bg-[#1E2A3A] border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-[#00D9FF]"
+                        className="flex-1 bg-surface-2 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-accent-to"
                         placeholder="Label"
                       />
                       <input
                         type="text"
                         value={editGhlTag}
                         onChange={(e) => setEditGhlTag(e.target.value)}
-                        className="flex-1 bg-[#1E2A3A] border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-[#00D9FF]"
+                        className="flex-1 bg-surface-2 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-accent-to"
                         placeholder="GHL tag (optional)"
                       />
                     </div>
-                    <label className="flex items-center gap-2 text-sm text-[#B0BEC5]">
+                    <label className="flex items-center gap-2 text-sm text-text-secondary">
                       <input
                         type="checkbox"
                         checked={editCreatesTask}
@@ -852,14 +984,14 @@ function DispositionsTab() {
                       <button
                         onClick={() => saveEdit(d.id)}
                         disabled={savingId === d.id}
-                        className="px-4 py-2 bg-gradient-to-r from-[#00D9FF] to-[#0066FF] rounded-lg text-white text-sm font-medium disabled:opacity-50 flex items-center gap-2"
+                        className="px-4 py-2 bg-gradient-to-r from-accent-from to-accent-to rounded-lg text-white text-sm font-medium disabled:opacity-50 flex items-center gap-2"
                       >
                         {savingId === d.id && <Loader2 className="w-4 h-4 animate-spin" />}
                         Save
                       </button>
                       <button
                         onClick={() => setEditingId(null)}
-                        className="px-4 py-2 bg-white/5 border border-white/10 rounded-lg text-[#B0BEC5] text-sm"
+                        className="px-4 py-2 bg-white/5 border border-white/10 rounded-lg text-text-secondary text-sm"
                       >
                         Cancel
                       </button>
@@ -869,11 +1001,11 @@ function DispositionsTab() {
                   <div className="flex items-center justify-between gap-3">
                     <div className="min-w-0">
                       <div
-                        className={`text-sm font-medium ${d.active ? 'text-white' : 'text-[#B0BEC5] line-through'}`}
+                        className={`text-sm font-medium ${d.active ? 'text-white' : 'text-text-secondary line-through'}`}
                       >
                         {d.label}
                       </div>
-                      <div className="text-xs text-[#B0BEC5] mt-0.5">
+                      <div className="text-xs text-text-secondary mt-0.5">
                         {LEAD_EFFECT_LABEL[d.lead_effect]}
                         {d.ghl_tag ? ` · GHL tag "${d.ghl_tag}"` : ' · no GHL tag'}
                         {d.creates_task ? ' · creates task' : ''}
@@ -885,15 +1017,15 @@ function DispositionsTab() {
                         disabled={savingId === d.id}
                         className={`px-2.5 py-1 rounded-full text-xs border disabled:opacity-50 ${
                           d.active
-                            ? 'bg-[#00E676]/10 text-[#00E676] border-[#00E676]/20'
-                            : 'bg-white/5 text-[#B0BEC5] border-white/10'
+                            ? 'bg-success/10 text-success border-success/20'
+                            : 'bg-white/5 text-text-secondary border-white/10'
                         }`}
                       >
                         {d.active ? 'Active' : 'Inactive'}
                       </button>
                       <button
                         onClick={() => startEdit(d)}
-                        className="p-1.5 text-[#B0BEC5] hover:text-white"
+                        className="p-1.5 text-text-secondary hover:text-white"
                         title="Edit"
                       >
                         <Pencil className="w-4 h-4" />
@@ -901,7 +1033,7 @@ function DispositionsTab() {
                       <button
                         onClick={() => handleDelete(d)}
                         disabled={savingId === d.id}
-                        className="p-1.5 text-[#B0BEC5] hover:text-red-400 disabled:opacity-50"
+                        className="p-1.5 text-text-secondary hover:text-danger disabled:opacity-50"
                         title="Delete"
                       >
                         <Trash2 className="w-4 h-4" />
@@ -914,7 +1046,7 @@ function DispositionsTab() {
           </div>
 
           {showCreate ? (
-            <form onSubmit={handleCreate} className="space-y-3 pt-4 border-t border-white/5">
+            <form onSubmit={handleCreate} className="space-y-3 pt-4 border-t border-border-subtle">
               <div className="flex gap-2">
                 <input
                   type="text"
@@ -923,7 +1055,7 @@ function DispositionsTab() {
                   required
                   pattern="[a-z0-9_]+"
                   title="lowercase letters, numbers and underscores only"
-                  className="flex-1 bg-[#1E2A3A] border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-[#00D9FF]"
+                  className="flex-1 bg-surface-2 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-accent-to"
                   placeholder="key (e.g. not_home)"
                 />
                 <input
@@ -931,7 +1063,7 @@ function DispositionsTab() {
                   value={newLabel}
                   onChange={(e) => setNewLabel(e.target.value)}
                   required
-                  className="flex-1 bg-[#1E2A3A] border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-[#00D9FF]"
+                  className="flex-1 bg-surface-2 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-accent-to"
                   placeholder="Label shown to agents"
                 />
               </div>
@@ -939,7 +1071,7 @@ function DispositionsTab() {
                 <select
                   value={newLeadEffect}
                   onChange={(e) => setNewLeadEffect(e.target.value as DispositionLeadEffect)}
-                  className="flex-1 bg-[#1E2A3A] border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-[#00D9FF]"
+                  className="flex-1 bg-surface-2 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-accent-to"
                 >
                   {(Object.keys(LEAD_EFFECT_LABEL) as DispositionLeadEffect[]).map((k) => (
                     <option key={k} value={k}>
@@ -951,11 +1083,11 @@ function DispositionsTab() {
                   type="text"
                   value={newGhlTag}
                   onChange={(e) => setNewGhlTag(e.target.value)}
-                  className="flex-1 bg-[#1E2A3A] border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-[#00D9FF]"
+                  className="flex-1 bg-surface-2 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-accent-to"
                   placeholder="GHL tag (optional)"
                 />
               </div>
-              <label className="flex items-center gap-2 text-sm text-[#B0BEC5]">
+              <label className="flex items-center gap-2 text-sm text-text-secondary">
                 <input
                   type="checkbox"
                   checked={newCreatesTask}
@@ -967,7 +1099,7 @@ function DispositionsTab() {
                 <button
                   type="submit"
                   disabled={creating}
-                  className="px-4 py-2 bg-gradient-to-r from-[#00D9FF] to-[#0066FF] rounded-lg text-white text-sm font-medium disabled:opacity-50 flex items-center gap-2"
+                  className="px-4 py-2 bg-gradient-to-r from-accent-from to-accent-to rounded-lg text-white text-sm font-medium disabled:opacity-50 flex items-center gap-2"
                 >
                   {creating && <Loader2 className="w-4 h-4 animate-spin" />}
                   Add disposition
@@ -975,7 +1107,7 @@ function DispositionsTab() {
                 <button
                   type="button"
                   onClick={() => setShowCreate(false)}
-                  className="px-4 py-2 bg-white/5 border border-white/10 rounded-lg text-[#B0BEC5] text-sm flex items-center gap-2"
+                  className="px-4 py-2 bg-white/5 border border-white/10 rounded-lg text-text-secondary text-sm flex items-center gap-2"
                 >
                   <X className="w-4 h-4" />
                   Cancel
@@ -985,7 +1117,7 @@ function DispositionsTab() {
           ) : (
             <button
               onClick={() => setShowCreate(true)}
-              className="mt-2 px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-[#B0BEC5] text-sm flex items-center gap-2"
+              className="mt-2 px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-text-secondary text-sm flex items-center gap-2"
             >
               <Plus className="w-4 h-4" />
               Add disposition
@@ -1043,13 +1175,13 @@ function RecordingSettingsCard() {
   if (!isAdmin) return null;
 
   return (
-    <div className="bg-[#1A2332]/60 backdrop-blur-xl rounded-2xl p-6 border border-white/5 max-w-2xl mt-6">
-      <h3 className="text-lg font-semibold text-white mb-1">Call recording</h3>
-      <p className="text-sm text-[#B0BEC5] mb-4">
+    <div className="bg-surface-1 rounded-app-lg p-6 border border-border-subtle max-w-2xl mt-6">
+      <h3 className="text-section-title text-text-primary mb-1">Call recording</h3>
+      <p className="text-sm text-text-secondary mb-4">
         Record every answered call for this org. Texas is a one-party-consent state; check your own
         state's law before enabling this.
       </p>
-      {error && <p className="text-sm text-red-400 mb-3">{error}</p>}
+      {error && <p className="text-sm text-danger mb-3">{error}</p>}
       {loading ? (
         <Skeleton className="h-6 w-40" />
       ) : (
@@ -1130,46 +1262,45 @@ function DncTab() {
 
   return (
     <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
-      <h1 className="text-3xl font-bold text-white mb-2">Do-not-call list</h1>
-      <p className="text-[#B0BEC5] mb-8">
-        Org-wide numbers excluded from dialing and from CSV/GHL imports, in addition to each
-        contact's own DNC flag.
-      </p>
+      <PageHeader
+        title="Do-not-call list"
+        description="Org-wide numbers excluded from dialing and from CSV/GHL imports, in addition to each contact's own DNC flag."
+      />
 
       {error && (
-        <div className="mb-6 p-4 rounded-xl bg-red-500/10 border border-red-500/30 text-red-400 text-sm">
+        <div className="mb-6 p-4 rounded-app-md bg-danger/10 border border-danger/30 text-danger text-sm">
           {error}
         </div>
       )}
 
       {!isAdmin ? (
-        <p className="text-sm text-[#B0BEC5]">
+        <p className="text-sm text-text-secondary">
           Only an owner or admin can manage the do-not-call list.
         </p>
       ) : loading ? (
-        <Skeleton className="h-[220px] w-full max-w-2xl rounded-2xl" />
+        <Skeleton className="h-[220px] w-full max-w-2xl rounded-app-lg" />
       ) : (
-        <div className="bg-[#1A2332]/60 backdrop-blur-xl rounded-2xl p-6 border border-white/5 max-w-2xl">
+        <div className="bg-surface-1 rounded-app-lg p-6 border border-border-subtle max-w-2xl">
           <form onSubmit={handleAdd} className="flex gap-2 mb-4">
             <input
               type="text"
               value={newNumber}
               onChange={(e) => setNewNumber(e.target.value)}
               required
-              className="flex-1 bg-[#1E2A3A] border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-[#00D9FF]"
+              className="flex-1 bg-surface-2 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-accent-to"
               placeholder="Phone number"
             />
             <input
               type="text"
               value={newNote}
               onChange={(e) => setNewNote(e.target.value)}
-              className="flex-1 bg-[#1E2A3A] border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-[#00D9FF]"
+              className="flex-1 bg-surface-2 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-accent-to"
               placeholder="Note (optional)"
             />
             <button
               type="submit"
               disabled={adding}
-              className="px-4 py-2 bg-gradient-to-r from-[#00D9FF] to-[#0066FF] rounded-lg text-white text-sm font-medium disabled:opacity-50 flex items-center gap-2 flex-shrink-0"
+              className="px-4 py-2 bg-gradient-to-r from-accent-from to-accent-to rounded-lg text-white text-sm font-medium disabled:opacity-50 flex items-center gap-2 flex-shrink-0"
             >
               {adding ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
               Add
@@ -1177,28 +1308,28 @@ function DncTab() {
           </form>
 
           <div className="relative mb-4">
-            <Search className="w-4 h-4 text-[#B0BEC5] absolute left-3 top-1/2 -translate-y-1/2" />
+            <Search className="w-4 h-4 text-text-secondary absolute left-3 top-1/2 -translate-y-1/2" />
             <input
               type="text"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="w-full bg-[#1E2A3A] border border-white/10 rounded-lg pl-9 pr-3 py-2 text-sm text-white focus:outline-none focus:border-[#00D9FF]"
+              className="w-full bg-surface-2 border border-white/10 rounded-lg pl-9 pr-3 py-2 text-sm text-white focus:outline-none focus:border-accent-to"
               placeholder="Search"
             />
           </div>
 
           {filtered.length === 0 ? (
-            <p className="text-sm text-[#B0BEC5] py-4 text-center">No numbers on the list.</p>
+            <p className="text-sm text-text-secondary py-4 text-center">No numbers on the list.</p>
           ) : (
             <div className="space-y-2">
               {filtered.map((n) => (
                 <div
                   key={n.id}
-                  className="flex items-center justify-between gap-3 py-3 border-b border-white/5 last:border-0"
+                  className="flex items-center justify-between gap-3 py-3 border-b border-border-subtle last:border-0"
                 >
                   <div className="min-w-0">
                     <div className="text-sm font-medium text-white">{n.e164}</div>
-                    <div className="text-xs text-[#B0BEC5] mt-0.5">
+                    <div className="text-xs text-text-secondary mt-0.5">
                       {n.source}
                       {n.note ? ` · ${n.note}` : ''}
                     </div>
@@ -1206,7 +1337,7 @@ function DncTab() {
                   <button
                     onClick={() => handleRemove(n)}
                     disabled={removingId === n.id}
-                    className="p-1.5 text-[#B0BEC5] hover:text-red-400 disabled:opacity-50 flex-shrink-0"
+                    className="p-1.5 text-text-secondary hover:text-danger disabled:opacity-50 flex-shrink-0"
                     title="Remove"
                   >
                     <Trash2 className="w-4 h-4" />
@@ -1354,40 +1485,69 @@ export function Settings() {
     }
   };
 
+  const breakpoint = useBreakpoint();
+  const isDesktop = breakpoint === 'desktop';
+
   return (
-    <div className="flex h-full">
-      {/* Sidebar Navigation */}
-      <div className="w-64 bg-[#1A2332]/60 backdrop-blur-xl border-r border-white/5 p-6">
-        <h2 className="text-white font-bold text-lg mb-6">Settings</h2>
-        <nav className="space-y-1">
-          {tabs.map((tab) => {
-            const Icon = tab.icon;
-            return (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
-                className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${
-                  activeTab === tab.id
-                    ? 'bg-[#0066FF]/10 text-white border-l-4 border-[#00D9FF]'
-                    : 'text-[#B0BEC5] hover:bg-white/5 hover:text-white'
-                }`}
-              >
-                <Icon className="w-5 h-5" />
-                <span className="font-medium">{tab.label}</span>
-              </button>
-            );
-          })}
-        </nav>
-      </div>
+    <div className={isDesktop ? 'flex h-full' : 'flex flex-col h-full'}>
+      {/* Sub-nav: a left sidebar on desktop, a horizontal scrollable tab bar on mobile/tablet. */}
+      {isDesktop ? (
+        <div className="w-64 flex-shrink-0 bg-surface-1 border-r border-border-subtle p-6">
+          <h2 className="text-text-primary font-bold text-lg mb-6">Settings</h2>
+          <nav className="space-y-1">
+            {tabs.map((tab) => {
+              const Icon = tab.icon;
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id)}
+                  className={cn(
+                    'w-full flex items-center gap-3 px-4 py-3 rounded-app-md transition-colors',
+                    activeTab === tab.id
+                      ? 'bg-accent-from/10 text-text-primary border-l-4 border-accent-to'
+                      : 'text-text-secondary hover:bg-white/5 hover:text-text-primary'
+                  )}
+                >
+                  <Icon className="w-5 h-5" />
+                  <span className="font-medium">{tab.label}</span>
+                </button>
+              );
+            })}
+          </nav>
+        </div>
+      ) : (
+        <div className="flex-shrink-0 border-b border-border-subtle bg-surface-1 px-4 pt-3">
+          <nav className="flex gap-1 overflow-x-auto pb-3 -mx-1 px-1">
+            {tabs.map((tab) => {
+              const Icon = tab.icon;
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id)}
+                  className={cn(
+                    'flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-app-sm text-meta font-medium whitespace-nowrap transition-colors',
+                    activeTab === tab.id
+                      ? 'bg-accent-from/15 text-accent-to'
+                      : 'text-text-secondary hover:bg-white/5 hover:text-text-primary'
+                  )}
+                >
+                  <Icon className="w-3.5 h-3.5" />
+                  {tab.label}
+                </button>
+              );
+            })}
+          </nav>
+        </div>
+      )}
 
       {/* Main Content */}
-      <div className="flex-1 overflow-y-auto p-8">
+      <div className="flex-1 overflow-y-auto p-4 sm:p-8">
         <div className="max-w-4xl">
           {orgLoading ? (
             <div>
               <Skeleton className="h-8 w-40 mb-8" />
-              <Skeleton className="h-[140px] w-full rounded-2xl mb-4" />
-              <Skeleton className="h-[140px] w-full rounded-2xl" />
+              <Skeleton className="h-[140px] w-full rounded-app-lg mb-4" />
+              <Skeleton className="h-[140px] w-full rounded-app-lg" />
             </div>
           ) : (
             <>
@@ -1395,30 +1555,29 @@ export function Settings() {
 
               {activeTab === 'phone' && !isAgent && (
                 <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
-                  <h1 className="text-3xl font-bold text-white mb-2">Telephony</h1>
-                  <p className="text-[#B0BEC5] mb-8">
-                    Connect your org's own Telnyx account, then buy and share phone numbers across
-                    the team.
-                  </p>
+                  <PageHeader
+                    title="Telephony"
+                    description="Connect your org's own Telnyx account, then buy and share phone numbers across the team."
+                  />
 
                   {telnyxError && (
-                    <div className="mb-6 p-4 rounded-xl bg-red-500/10 border border-red-500/30 text-red-400 text-sm">
+                    <div className="mb-6 p-4 rounded-app-md bg-danger/10 border border-danger/30 text-danger text-sm">
                       {telnyxError}
                     </div>
                   )}
 
                   {telnyxStatusLoading ? (
-                    <Skeleton className="h-[104px] w-full rounded-2xl mb-8" />
+                    <Skeleton className="h-[104px] w-full rounded-app-lg mb-8" />
                   ) : (
-                    <div className="bg-[#1A2332]/60 backdrop-blur-xl rounded-2xl p-6 border border-white/5 mb-8">
+                    <div className="bg-surface-1 rounded-app-lg p-6 border border-border-subtle mb-8">
                       <div className="flex items-center justify-between mb-4">
                         <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-[#00D9FF] to-[#0066FF] flex items-center justify-center">
+                          <div className="w-10 h-10 rounded-app-md bg-gradient-to-br from-accent-from to-accent-to flex items-center justify-center">
                             <Phone className="w-5 h-5 text-white" />
                           </div>
                           <div>
                             <div className="text-white font-medium">Telnyx</div>
-                            <div className="text-sm text-[#B0BEC5]">
+                            <div className="text-sm text-text-secondary">
                               {isTelnyxConnected && telnyxStatus?.api_key_last4
                                 ? `Key ending in ${telnyxStatus.api_key_last4}`
                                 : 'Not connected'}
@@ -1428,8 +1587,8 @@ export function Settings() {
                         <span
                           className={`px-2.5 py-1 rounded-full text-xs border ${
                             isTelnyxConnected
-                              ? 'bg-[#00E676]/10 text-[#00E676] border-[#00E676]/20'
-                              : 'bg-white/5 text-[#B0BEC5] border-white/10'
+                              ? 'bg-success/10 text-success border-success/20'
+                              : 'bg-white/5 text-text-secondary border-white/10'
                           }`}
                         >
                           {isTelnyxConnected
@@ -1441,14 +1600,14 @@ export function Settings() {
                       </div>
 
                       {role !== 'owner' ? (
-                        <p className="text-sm text-[#B0BEC5]">
+                        <p className="text-sm text-text-secondary">
                           Only the org owner can connect or disconnect Telnyx.
                         </p>
                       ) : isTelnyxConnected ? (
                         <button
                           onClick={handleDisconnectTelnyx}
                           disabled={telnyxDisconnecting}
-                          className="px-5 py-2.5 bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 rounded-xl text-red-400 text-sm font-medium disabled:opacity-50 flex items-center gap-2"
+                          className="px-5 py-2.5 bg-danger/10 hover:bg-danger/20 border border-danger/30 rounded-app-md text-danger text-sm font-medium disabled:opacity-50 flex items-center gap-2"
                         >
                           {telnyxDisconnecting && <Loader2 className="w-4 h-4 animate-spin" />}
                           Disconnect
@@ -1456,7 +1615,7 @@ export function Settings() {
                       ) : (
                         <form onSubmit={handleConnectTelnyx} className="space-y-4">
                           <div>
-                            <label className="block text-sm text-[#B0BEC5] mb-2">
+                            <label className="block text-sm text-text-secondary mb-2">
                               Telnyx API Key
                             </label>
                             <input
@@ -1464,12 +1623,12 @@ export function Settings() {
                               value={telnyxApiKey}
                               onChange={(e) => setTelnyxApiKey(e.target.value)}
                               required
-                              className="w-full bg-[#1E2A3A] border border-white/10 rounded-xl px-4 py-3 text-white placeholder-[#B0BEC5]/50 focus:outline-none focus:border-[#00D9FF]"
+                              className="w-full bg-surface-2 border border-white/10 rounded-app-md px-4 py-3 text-white placeholder-text-muted focus:outline-none focus:border-accent-to"
                               placeholder="KEY..."
                             />
                           </div>
                           <div>
-                            <label className="block text-sm text-[#B0BEC5] mb-2">
+                            <label className="block text-sm text-text-secondary mb-2">
                               Webhook Public Key
                             </label>
                             <input
@@ -1477,16 +1636,16 @@ export function Settings() {
                               value={telnyxWebhookPublicKey}
                               onChange={(e) => setTelnyxWebhookPublicKey(e.target.value)}
                               required
-                              className="w-full bg-[#1E2A3A] border border-white/10 rounded-xl px-4 py-3 text-white placeholder-[#B0BEC5]/50 focus:outline-none focus:border-[#00D9FF]"
+                              className="w-full bg-surface-2 border border-white/10 rounded-app-md px-4 py-3 text-white placeholder-text-muted focus:outline-none focus:border-accent-to"
                               placeholder="From your Telnyx portal's public keys page"
                             />
-                            <p className="text-xs text-[#B0BEC5]/70 mt-1.5">
+                            <p className="text-xs text-text-muted mt-1.5">
                               Find this in your{' '}
                               <a
                                 href="https://portal.telnyx.com"
                                 target="_blank"
                                 rel="noopener noreferrer"
-                                className="text-[#00D9FF] hover:underline"
+                                className="text-accent-to hover:underline"
                               >
                                 Telnyx Portal
                               </a>{' '}
@@ -1496,7 +1655,7 @@ export function Settings() {
                           <button
                             type="submit"
                             disabled={telnyxConnecting}
-                            className="px-6 py-3 bg-gradient-to-r from-[#00D9FF] to-[#0066FF] rounded-xl text-white font-semibold disabled:opacity-50 flex items-center gap-2"
+                            className="px-6 py-3 bg-gradient-to-r from-accent-from to-accent-to rounded-app-md text-white font-semibold disabled:opacity-50 flex items-center gap-2"
                           >
                             {telnyxConnecting && <Loader2 className="w-4 h-4 animate-spin" />}
                             Connect Telnyx
@@ -1506,10 +1665,10 @@ export function Settings() {
                     </div>
                   )}
 
-                  <h2 className="text-xl font-bold text-white mb-4">Phone Numbers</h2>
+                  <h2 className="text-section-title text-text-primary mb-4">Phone Numbers</h2>
 
                   {(phoneError || phoneNumbersError) && (
-                    <div className="mb-6 p-4 rounded-xl bg-red-500/10 border border-red-500/30 text-red-400 text-sm">
+                    <div className="mb-6 p-4 rounded-app-md bg-danger/10 border border-danger/30 text-danger text-sm">
                       {phoneError || phoneNumbersError}
                     </div>
                   )}
@@ -1518,8 +1677,8 @@ export function Settings() {
                     {phoneNumbersLoading ? (
                       <ListSkeleton rows={2} />
                     ) : phoneNumbers.length === 0 ? (
-                      <div className="bg-[#1A2332]/60 backdrop-blur-xl rounded-2xl p-8 border border-white/5 text-center">
-                        <p className="text-[#B0BEC5]">
+                      <div className="bg-surface-1 rounded-app-lg p-8 border border-border-subtle text-center">
+                        <p className="text-text-secondary">
                           No phone numbers yet. Search and purchase below.
                         </p>
                       </div>
@@ -1527,19 +1686,19 @@ export function Settings() {
                       phoneNumbers.map((phone) => (
                         <div
                           key={phone.id}
-                          className="bg-[#1A2332]/60 backdrop-blur-xl rounded-2xl p-6 border border-white/5 shadow-[0_4px_24px_rgba(0,102,255,0.15)]"
+                          className="bg-surface-1 rounded-app-lg p-6 border border-border-subtle shadow-app-sm"
                         >
                           <div className="flex items-center justify-between">
                             <div className="flex-1">
                               <div className="text-2xl font-bold text-white mb-1">
                                 {phone.phone_number}
                               </div>
-                              <div className="flex items-center gap-4 text-sm text-[#B0BEC5]">
+                              <div className="flex items-center gap-4 text-sm text-text-secondary">
                                 <span className="flex items-center gap-1.5">
                                   <Globe className="w-4 h-4" />
                                   US
                                 </span>
-                                <span className="px-2 py-1 rounded-full text-xs bg-[#00E676]/10 text-[#00E676] border border-[#00E676]/20">
+                                <span className="px-2 py-1 rounded-full text-xs bg-success/10 text-success border border-success/20">
                                   Active
                                 </span>
                               </div>
@@ -1551,15 +1710,17 @@ export function Settings() {
                   </div>
 
                   {!isTelnyxConnected ? (
-                    <div className="bg-gradient-to-r from-[#0066FF]/10 to-[#00D9FF]/10 backdrop-blur-xl rounded-2xl p-8 border border-[#0066FF]/20 text-center">
-                      <p className="text-[#B0BEC5]">
+                    <div className="bg-gradient-to-r from-accent-from/10 to-accent-to/10 rounded-app-lg p-8 border border-accent-from/20 text-center">
+                      <p className="text-text-secondary">
                         Connect your org's Telnyx account above to search and purchase numbers.
                       </p>
                     </div>
                   ) : (
-                    <div className="bg-gradient-to-r from-[#0066FF]/10 to-[#00D9FF]/10 backdrop-blur-xl rounded-2xl p-8 border border-[#0066FF]/20">
-                      <h3 className="text-xl font-bold text-white mb-4">Purchase Numbers</h3>
-                      <p className="text-[#B0BEC5] mb-4">
+                    <div className="bg-gradient-to-r from-accent-from/10 to-accent-to/10 rounded-app-lg p-8 border border-accent-from/20">
+                      <h3 className="text-section-title text-text-primary mb-4">
+                        Purchase Numbers
+                      </h3>
+                      <p className="text-text-secondary mb-4">
                         Search by area code (e.g. 415, 920) or leave blank to browse US numbers.
                       </p>
                       <div className="flex gap-2 mb-4">
@@ -1570,12 +1731,12 @@ export function Settings() {
                           onChange={(e) =>
                             setSearchAreaCode(e.target.value.replace(/\D/g, '').slice(0, 3))
                           }
-                          className="flex-1 bg-[#1E2A3A] border border-white/10 rounded-xl px-4 py-3 text-white placeholder-[#B0BEC5]/50 focus:outline-none focus:border-[#00D9FF]"
+                          className="flex-1 bg-surface-2 border border-white/10 rounded-app-md px-4 py-3 text-white placeholder-text-muted focus:outline-none focus:border-accent-to"
                         />
                         <button
                           onClick={handleSearchNumbers}
                           disabled={searchLoading}
-                          className="px-6 py-3 bg-gradient-to-r from-[#00D9FF] to-[#0066FF] rounded-xl text-white font-semibold disabled:opacity-50 flex items-center gap-2"
+                          className="px-6 py-3 bg-gradient-to-r from-accent-from to-accent-to rounded-app-md text-white font-semibold disabled:opacity-50 flex items-center gap-2"
                         >
                           {searchLoading ? (
                             <Loader2 className="w-5 h-5 animate-spin" />
@@ -1586,12 +1747,12 @@ export function Settings() {
                         </button>
                       </div>
                       {searchLoading && (
-                        <div className="py-4 text-center text-[#B0BEC5]">
+                        <div className="py-4 text-center text-text-secondary">
                           Searching Telnyx marketplace…
                         </div>
                       )}
                       {searchAttempted && !searchLoading && searchResults.length === 0 && (
-                        <div className="py-4 text-center text-[#B0BEC5] text-sm">
+                        <div className="py-4 text-center text-text-secondary text-sm">
                           No numbers found for this area. Try a different area code or leave blank
                           for US numbers.
                         </div>
@@ -1601,16 +1762,16 @@ export function Settings() {
                           {searchResults.map((n) => (
                             <div
                               key={n.phone_number}
-                              className="flex items-center justify-between p-3 bg-[#1E2A3A]/60 rounded-lg"
+                              className="flex items-center justify-between p-3 bg-surface-2/60 rounded-lg"
                             >
                               <span className="text-white font-medium">{n.phone_number}</span>
-                              <span className="text-[#B0BEC5] text-sm">
+                              <span className="text-text-secondary text-sm">
                                 {n.monthly_cost ? `$${n.monthly_cost}/mo` : ''}
                               </span>
                               <button
                                 onClick={() => handlePurchaseNumber(n.phone_number)}
                                 disabled={purchaseLoading === n.phone_number}
-                                className="px-4 py-2 bg-[#00E676]/20 hover:bg-[#00E676]/30 border border-[#00E676]/30 rounded-lg text-[#00E676] text-sm font-medium disabled:opacity-50 flex items-center gap-1"
+                                className="px-4 py-2 bg-success/20 hover:bg-success/30 border border-success/30 rounded-lg text-success text-sm font-medium disabled:opacity-50 flex items-center gap-1"
                               >
                                 {purchaseLoading === n.phone_number ? (
                                   <Loader2 className="w-4 h-4 animate-spin" />
@@ -1637,14 +1798,13 @@ export function Settings() {
               {activeTab === 'dnc' && !isAgent && <DncTab />}
 
               {activeTab === 'security' ? (
-                <motion.div
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  className="text-center py-20"
-                >
-                  <div className="text-6xl mb-4">🚧</div>
-                  <h3 className="text-2xl font-bold text-white mb-2">Coming Soon</h3>
-                  <p className="text-[#B0BEC5]">This feature is under development</p>
+                <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
+                  <PageHeader title="Security" />
+                  <EmptyState
+                    icon={Construction}
+                    title="Coming soon"
+                    body="This feature is under development."
+                  />
                 </motion.div>
               ) : null}
             </>
