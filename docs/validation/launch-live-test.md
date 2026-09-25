@@ -123,6 +123,23 @@ The lead runs `audit/FT1/dryrun.sql` against a rolled-back live transaction for 
 that are impractical to force through the UI (exhaustion timing, exact block rotation, RLS). B9
 above covers what a real click-through can actually exercise.
 
+### B10 — Call recording (TASK-F-T2) — **needs a real Telnyx call**
+
+| #     | Step                                                                                                                                       | Expected                                                                                                                                                          | ☐   |
+| ----- | ------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --- |
+| B10.1 | Settings → Telephony → confirm "Record calls" is checked (default). As an agent, make and answer a real call that connects for 15+ seconds. | The call proceeds normally — no delay, no error, recording never visible to the agent mid-call.                                                                   | ☐   |
+| B10.2 | Within a minute or two of hanging up, open the wrap-up modal (or reopen it if already dispositioned) for that leg.                          | An inline audio player appears with the actual call audio playable. If opened immediately, "Recording processing…" shows first, then the player a few seconds later. | ☐   |
+| B10.3 | Check the `recordings` bucket (Supabase Studio → Storage) for the object at `{org_id}/{call_leg_id}.mp3`.                                    | The object exists, private, non-empty, playable.                                                                                                                   | ☐   |
+| B10.4 | If the org has a connected GHL integration, check the GHL contact's note for this disposition.                                              | The note includes a `https://hyperdial.myhomebasesolutions.com/contacts?leg=<id>` link (not a raw signed URL).                                                    | ☐   |
+| B10.5 | As a different agent (or owner/admin from a different browser/session), try calling `recording-url` for this same `callLegId`.               | Owner/admin: succeeds. A different agent (not this session's own agent): 404.                                                                                     | ☐   |
+| B10.6 | Owner/admin: Settings → Telephony → uncheck "Record calls." Make and answer another real call.                                             | No recording appears for this new call; `call_legs.recording_status` stays null for it. Re-check the box afterward to restore the default.                       | ☐   |
+
+The lead runs `audit/FT2/dryrun-tests.sql` against a rolled-back live transaction for the bucket/
+columns/RLS/retention-scaffolding parts (nothing here needs a real Telnyx call to verify). B10
+above covers only what genuinely needs a real recorded call — retention (90-day deletion) is not
+practically checkable live within a single session and is covered by `_shared/recording-core.
+test.ts`'s `isPastRetention` unit tests instead.
+
 ---
 
 ## C. Evidence to capture
@@ -154,3 +171,6 @@ above covers what a real click-through can actually exercise.
   the single-tab lock (B4) was only hands-on-verified with two tabs of the same automated
   browser session before this test; two real machines is the real live-verify this checklist
   covers.
+- **REC-5's contact-history recording link** (TASK-F-T2) is not built — there's no contact
+  call-history UI anywhere in the app yet. Only the wrap-up modal's recording player exists;
+  don't re-report the missing history view, it's tracked as deferred to TASK-F-P4.

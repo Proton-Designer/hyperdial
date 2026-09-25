@@ -49,6 +49,8 @@ import {
   listDncNumbers,
   addDncNumber,
   removeDncNumber,
+  getRecordingEnabled,
+  setRecordingEnabled,
   type OrgMember,
   type GhlIntegrationStatus,
   type CrmSyncJob,
@@ -1000,6 +1002,71 @@ function DispositionsTab() {
  *  any member can read, only owner/admin can insert/delete), with search, manual add
  *  (normalized to E.164 client-side before the insert, matching createContact's own convention),
  *  and remove. */
+/** TASK-F-T2: org-wide record/don't-record toggle, owner/admin only. Own fetch-on-mount/save
+ *  lifecycle (independent of any other tab's Save button), same shape as CampaignManageModal's
+ *  RetryRulesCard. Rendered as a card inside the existing Telephony tab, not a new tab -- this
+ *  is one setting, not a whole editor. */
+function RecordingSettingsCard() {
+  const { role } = useOrg();
+  const isAdmin = role === 'owner' || role === 'admin';
+
+  const [enabled, setEnabled] = useState(true);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isAdmin) {
+      setLoading(false);
+      return;
+    }
+    getRecordingEnabled()
+      .then(setEnabled)
+      .catch((e) => setError(String(e)))
+      .finally(() => setLoading(false));
+  }, [isAdmin]);
+
+  const handleToggle = async (next: boolean) => {
+    setEnabled(next);
+    setSaving(true);
+    setError(null);
+    try {
+      await setRecordingEnabled(next);
+    } catch (e) {
+      setError(String(e));
+      setEnabled(!next);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (!isAdmin) return null;
+
+  return (
+    <div className="bg-[#1A2332]/60 backdrop-blur-xl rounded-2xl p-6 border border-white/5 max-w-2xl mt-6">
+      <h3 className="text-lg font-semibold text-white mb-1">Call recording</h3>
+      <p className="text-sm text-[#B0BEC5] mb-4">
+        Record every answered call for this org. Texas is a one-party-consent state; check your own
+        state's law before enabling this.
+      </p>
+      {error && <p className="text-sm text-red-400 mb-3">{error}</p>}
+      {loading ? (
+        <Skeleton className="h-6 w-40" />
+      ) : (
+        <label className="flex items-center gap-2 text-sm text-white">
+          <input
+            type="checkbox"
+            checked={enabled}
+            disabled={saving}
+            onChange={(e) => void handleToggle(e.target.checked)}
+          />
+          Record calls
+        </label>
+      )}
+    </div>
+  );
+}
+
 function DncTab() {
   const { role } = useOrg();
   const isAdmin = role === 'owner' || role === 'admin';
@@ -1556,6 +1623,8 @@ export function Settings() {
                       )}
                     </div>
                   )}
+
+                  <RecordingSettingsCard />
                 </motion.div>
               )}
 

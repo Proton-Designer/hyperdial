@@ -340,6 +340,56 @@ logic has to live inside the exact same atomic writes those functions already do
      `claimed` leg (see its own step 1/2 above), so it becomes exactly this kind of stale
      candidate, reaped and given a duration the same way any other timed-out claimed leg is.
 
+## Call recording (TASK-F-T2)
+
+Records the WINNING contact leg only, never a loser, starting the moment it's actually bridged.
+
+- **Starting**: `handleWin` (`dialer-engine.ts`), right after `bridged_at` is stamped, calls
+  `maybeStartRecording` -- checks `org_recording_settings.recording_enabled` (default `true`,
+  missing row also means `true`), then `client.recordStart(winnerLeg.call_control_id, {format:
+  'mp3', channels: 'dual', clientState})`. `channels: 'dual'` on a call-level (not
+  conference-level) command already captures the whole bridge from this one leg's perspective
+  (verified against spec3.json -- see `.brain/memory/decisions.md`). Never blocks or fails the
+  bridge: wrapped in its own try/catch, logged, never rethrown. `call_legs.recording_status`
+  becomes `'recording'` on success.
+- **The webhook**: `call.recording.saved`/`call.recording.error` are intercepted in
+  `processTelnyxDialerEvent` right after the existing dedup check, BEFORE `mapToDialerEvent`
+  (which would otherwise just drop them as unhandled -- they're not part of the leg state
+  machine at all). Mapped back to the row via `client_state` (the SAME `{org,session,leg}` shape
+  `encodeDialClientState` already produces for the dial itself, passed as `record_start`'s own
+  `client_state` param) -- NEVER `call_control_id`, which this event's real payload does not
+  carry (see `.brain/memory/known-issues.md` #27). `call.recording.saved` fetches
+  `recording_urls.mp3` (valid 10 minutes) and uploads it to the private `recordings` Storage
+  bucket at `{org_id}/{call_leg_id}.mp3` (our own `call_legs.id`, not Telnyx's), synchronously,
+  in the same webhook call. Duration is derived from `recording_started_at`/`recording_ended_at`
+  (no duration field exists on the payload). Telnyx's own `call_leg_id` is kept as
+  `recording_telnyx_call_leg_id` for a possible future manual retry, never called a "recording
+  id" (the payload has none). A download/upload failure sets `recording_status='download_failed'`
+  and is never auto-retried by this function.
+- **Pure logic split into `_shared/recording-core.ts`** (same "split I/O from decisions" pattern
+  as `campaign-queue-io.ts`/`dialer-sweeper-core.ts`): `isRecordingEnabled`,
+  `parseRecordingSavedPayload`/`parseRecordingErrorPayload`, `recordingStoragePath`,
+  `canAccessRecording` (REC-4's auth matrix, reused by `recording-url`), `isPastRetention`.
+- **Playback (REC-4)**: `recording-url` Edge Function mints a 10-minute signed URL. Auth mirrors
+  `call_legs`' own RLS exactly (owner/admin see any leg in-org; an agent only their own session's
+  leg) -- done in TS because this function uses the service-role client. Anything disallowed is a
+  plain 404, never a 403 (never confirms a leg id exists in another org).
+- **The wrap-up modal** (`WrapUpModal.tsx`) polls `recording-url` lightly (every 5s, up to ~3
+  minutes) and shows an inline `<audio>` player once available -- never blocks wrap-up submission
+  on it.
+- **The GHL note**: `submit_disposition`'s `recording_url` payload field (already read by
+  `buildDispositionNote`, `ghl-sync-worker.ts` -- that part predates this task) is now a stable
+  app link (`https://hyperdial.myhomebasesolutions.com/contacts?leg=<id>`), never a raw signed
+  URL, since it's written well before the recording may have finished processing.
+- **Retention (REC-6)**: `recording-retention` Edge Function, triggered daily at 03:17 by the
+  same pg_cron/pg_net shared-secret pattern as `dialer-sweeper`/`ghl-sync-worker`. Anchored on
+  `recording_saved_at` (when the recording was actually confirmed saved), not the leg's
+  `created_at`. Deletes via the Storage API (`storage.from('recordings').remove(...)`), never a
+  raw SQL delete of `storage.objects` -- see `.brain/memory/decisions.md` for why.
+- **Not built**: a contact-history UI showing the recording link per leg (REC-5's second clause)
+  -- no such surface exists anywhere in the app yet. Deferred to TASK-F-P4; the signal it would
+  need (`call_legs.recording_path is not null`) already exists.
+
 ## Not covered here
 
 - Telnyx numbers, WebRTC credentials, raw API wrappers → `.brain/domains/telephony.md`; campaigns

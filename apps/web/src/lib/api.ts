@@ -1667,3 +1667,47 @@ export async function upsertCampaignRetryRules(
   );
   if (error) throw new Error(error.message);
 }
+
+// --- Call recording (TASK-F-T2, REC-4/REC-6) ---
+
+/** Owner/admin only (RLS-enforced) -- a straight table read/write, no edge function, same
+ *  "a simple settings toggle is fine" pattern as listCampaignRetryRules. Defaults to `true`
+ *  when the org has no row yet (matches the column's own default and org_recording_settings'
+ *  seed trigger -- see the migration). */
+export async function getRecordingEnabled(): Promise<boolean> {
+  const orgId = await getActiveOrgId();
+  const { data, error } = await supabase
+    .from('org_recording_settings')
+    .select('recording_enabled')
+    .eq('org_id', orgId)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return data?.recording_enabled ?? true;
+}
+
+export async function setRecordingEnabled(enabled: boolean): Promise<void> {
+  const orgId = await getActiveOrgId();
+  const { error } = await supabase
+    .from('org_recording_settings')
+    .upsert({ org_id: orgId, recording_enabled: enabled, updated_at: new Date().toISOString() });
+  if (error) throw new Error(error.message);
+}
+
+export interface RecordingUrlResult {
+  url: string;
+  expiresInSeconds: number;
+}
+
+/** A fresh 10-minute signed URL for one call leg's recording, or throws (404: not recorded /
+ *  still processing / not this caller's to see -- WrapUpModal treats all of those the same:
+ *  "not available yet", keep the play button hidden, no error surfaced). */
+export async function getRecordingUrl(callLegId: string): Promise<RecordingUrlResult> {
+  const res = await fetch(`${getFunctionsUrl()}/recording-url`, {
+    method: 'POST',
+    headers: await getEdgeFunctionHeaders(),
+    body: JSON.stringify({ callLegId }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Recording not available');
+  return data as RecordingUrlResult;
+}

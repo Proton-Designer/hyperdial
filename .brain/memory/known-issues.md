@@ -1047,6 +1047,34 @@ genuinely separate browser processes/machines).
   `audit/FT1/dryrun.sql` — local Docker is retired, same as every other high-risk SQL task this
   session.
 
+## 27. TASK-F-T2's own task doc assumed webhook fields that don't exist on `call.recording.saved` — CORRECTED before any code was written (2026-09-25)
+
+- **The doc's assumption**: "store `recording_url`, `duration_seconds`" implied the webhook
+  payload carries a duration field and (per REC-6's "keep the Telnyx `recording_id`") a
+  `recording_id` field. Verified against the real spec3.json (`CallRecordingSaved.payload`) and
+  `webhook-events.json`: neither exists. The payload has `call_leg_id`/`call_session_id`
+  (neither is `call_control_id`), `recording_started_at`/`recording_ended_at` (duration is
+  derived, not read off a field), and `recording_urls.{mp3,wav}`.
+- **Consequence for the webhook→row mapping**: `telnyx-webhook/index.ts`'s existing
+  `callControlId = payload.call_control_id || payload.call_session_id` fallback means this event
+  is ALWAYS looked up by `call_session_id` (since `call_control_id` is absent) — which never
+  matches a real `call_legs.call_control_id`. This is not a bug: `loadLegByCallControlIdOrClientLeg`
+  (`dialer-engine.ts`, TASK-P2-E2) already falls back to `clientState.leg` on a miss, and
+  `record_start`'s own `client_state` param carries exactly that. Working as designed, but worth
+  knowing if this ever needs debugging — the `call_control_id` lookup for this ONE event type is
+  expected to always miss.
+- Not fixed-forward as a bug because nothing shipped with the wrong assumption — caught during
+  the pre-build Telnyx-docs verification pass (`.brain/memory/decisions.md` has the full
+  writeup) before `recording-core.ts`/`dialer-engine.ts` were written.
+
+## 28. REC-5's "contact history shows the recording link" — not built, no contact-history UI exists yet
+
+- Grepped the whole `apps/web/src` tree: there is no per-contact call-history surface anywhere in
+  this app today. Only the wrap-up modal's recording play button (REC-5's other clause) was
+  built. Deferred to TASK-F-P4 (eng1's future touch-history strip) — the underlying signal
+  (`call_legs.recording_path is not null`) already exists; F-P4 just needs to select it, no new
+  column or API required. See `.brain/memory/decisions.md`.
+
 ---
 
 ## Not issues — deliberate, documented elsewhere
@@ -1059,3 +1087,8 @@ genuinely separate browser processes/machines).
   them → `mem.decisions`, `domain.contacts`
 - `campaign_retry_rules` has no seeded row for `gatekeeper`/`already_on_platform` (QUE-2's PDF
   names) -- this build never seeded matching dispositions for either → `mem.decisions`
+- Call recording uses call-level `record_start` (channels: dual), not conference-level, and its
+  webhook is mapped via `client_state` (never `call_control_id`, which doesn't exist on that
+  payload) → `mem.decisions`
+- Recording retention deletes via the `recording-retention` Edge Function's Storage API call,
+  never a raw SQL `DELETE FROM storage.objects` → `mem.decisions`

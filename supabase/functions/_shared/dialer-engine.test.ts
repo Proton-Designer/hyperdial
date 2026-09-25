@@ -337,6 +337,18 @@ function createFakeSupabase(db: FakeDb) {
     rpc(name: string, args: Record<string, unknown>) {
       return Promise.resolve(rpc(db, name, args));
     },
+    // TASK-F-T2: minimal fake of `.storage.from(bucket).upload()` -- the recording download
+    // path's only Storage call. No error, no real bytes kept: the DB row update that follows
+    // (recording_status/recording_path) is what the tests actually assert on.
+    storage: {
+      from(_bucket: string) {
+        return {
+          upload(_path: string, _body: unknown, _opts?: unknown) {
+            return Promise.resolve({ data: { path: _path }, error: null });
+          },
+        };
+      },
+    },
     // deno-lint-ignore no-explicit-any
   } as any;
 }
@@ -359,8 +371,17 @@ class FakeTelnyxServer {
   /** B2 regression test hook: makes the NEXT conference join fail (simulating a dead/expired
    *  conference), then resets itself -- exactly one failure, not a permanent outage. */
   failNextConferenceJoin = false;
+  /** TASK-F-T2: fake "recording download" URLs (an entirely different host than the Telnyx API
+   *  itself) -- checked before any path-based Telnyx routing below, since these aren't
+   *  `/v2/...` paths at all. */
+  recordingFiles = new Map<string, Uint8Array>();
+  recordingDownloadCount = 0;
 
   handle(url: string, init?: RequestInit): Response {
+    if (this.recordingFiles.has(url)) {
+      this.recordingDownloadCount++;
+      return new Response(this.recordingFiles.get(url) as BodyInit);
+    }
     const path = new URL(url).pathname;
     const method = init?.method ?? 'GET';
     const body = init?.body ? JSON.parse(String(init.body)) : {};
@@ -372,6 +393,9 @@ class FakeTelnyxServer {
       return Response.json({ data: { call_control_id: callControlId } });
     }
     if (method === 'POST' && /\/v2\/calls\/[^/]+\/actions\/(hangup|speak)$/.test(path)) {
+      return Response.json({ data: {} });
+    }
+    if (method === 'POST' && /\/v2\/calls\/[^/]+\/actions\/record_start$/.test(path)) {
       return Response.json({ data: {} });
     }
     if (method === 'POST' && path === '/v2/conferences') {
@@ -492,6 +516,32 @@ function contactEvent(
     eventType,
     callControlId,
     payload: extra,
+    clientState: {
+      org: orgId,
+      session: sessionId,
+      leg: legId,
+      kind: 'contact' as DialClientStateKind,
+    },
+  };
+}
+
+function recordingEvent(
+  orgId: string,
+  sessionId: string,
+  legId: string,
+  eventType: 'call.recording.saved' | 'call.recording.error',
+  payload: Record<string, unknown>
+): RawTelnyxEvent {
+  // Neither event's real payload carries call_control_id (recording-core.ts's header) --
+  // callControlId here mirrors what telnyx-webhook/index.ts actually falls back to
+  // (call_session_id), which never matches a real call_legs row, forcing the SAME
+  // clientState.leg fallback path production traffic goes through.
+  return {
+    orgId,
+    eventId: crypto.randomUUID(),
+    eventType,
+    callControlId: String(payload.call_session_id ?? ''),
+    payload,
     clientState: {
       org: orgId,
       session: sessionId,
@@ -1460,6 +1510,245 @@ Deno.test(
         true,
         `expected ~60s from claimed_at fallback, got ${duration}`
       );
+    } finally {
+      restoreFetch();
+    }
+  }
+);
+
+// ---------------------------------------------------------------------------
+// TASK-F-T2: recording (REC-1/REC-2/REC-3) -- record_start on the winner only, gated on
+// org_recording_settings, and the call.recording.saved/error webhook updating call_legs.
+// ---------------------------------------------------------------------------
+
+Deno.test(
+  'REC-1: handleWin starts recording (dual/mp3 + client_state) on the winning leg only, when enabled',
+  async () => {
+    const db = new FakeDb();
+    const server = new FakeTelnyxServer();
+    const restoreFetch = stubTelnyxFetch(server);
+    const supabase = createFakeSupabase(db);
+    const { orgId, campaignId, agentId } = seedFixtures(db);
+    try {
+      const { sessionId } = await startSession(supabase, {
+        orgId,
+        campaignId,
+        agentId,
+        lines: 3,
+        amdMode: 'off',
+      });
+      const agentLeg = [...db.table('call_legs').values()].find((l) => l.kind === 'agent')!;
+      await processTelnyxDialerEvent(
+        supabase,
+        agentEvent(
+          orgId,
+          sessionId,
+          agentLeg.id as string,
+          agentLeg.call_control_id as string,
+          'call.answered'
+        )
+      );
+      const contactLegs = [...db.table('call_legs').values()].filter((l) => l.kind === 'contact');
+      const winnerLeg = contactLegs[0];
+      const loserLeg = contactLegs[1];
+
+      await processTelnyxDialerEvent(
+        supabase,
+        contactEvent(
+          orgId,
+          sessionId,
+          winnerLeg.id as string,
+          winnerLeg.call_control_id as string,
+          'call.answered'
+        )
+      );
+
+      const recordStartReq = server.requests.find(
+        (r) =>
+          r.method === 'POST' &&
+          r.path === `/v2/calls/${winnerLeg.call_control_id}/actions/record_start`
+      );
+      assertExists(recordStartReq, 'record_start must be called for the winning leg');
+      const body = recordStartReq!.body as Record<string, unknown>;
+      assertEquals(body.format, 'mp3');
+      assertEquals(body.channels, 'dual');
+      const decoded = JSON.parse(atob(String(body.client_state)));
+      assertEquals(decoded, { org: orgId, session: sessionId, leg: winnerLeg.id, kind: 'contact' });
+
+      const winnerRow = db.table('call_legs').get(winnerLeg.id as string)!;
+      assertEquals(winnerRow.recording_status, 'recording');
+
+      const loserRecordStartReq = server.requests.find(
+        (r) =>
+          r.method === 'POST' &&
+          r.path === `/v2/calls/${loserLeg.call_control_id}/actions/record_start`
+      );
+      assertEquals(loserRecordStartReq, undefined, 'a losing leg must never be recorded');
+    } finally {
+      restoreFetch();
+    }
+  }
+);
+
+Deno.test('REC-1: recording_enabled=false on the org skips record_start entirely', async () => {
+  const db = new FakeDb();
+  const server = new FakeTelnyxServer();
+  const restoreFetch = stubTelnyxFetch(server);
+  const supabase = createFakeSupabase(db);
+  const { orgId, campaignId, agentId } = seedFixtures(db);
+  db.insert('org_recording_settings', { id: orgId, org_id: orgId, recording_enabled: false });
+  try {
+    const { sessionId } = await startSession(supabase, {
+      orgId,
+      campaignId,
+      agentId,
+      lines: 3,
+      amdMode: 'off',
+    });
+    const agentLeg = [...db.table('call_legs').values()].find((l) => l.kind === 'agent')!;
+    await processTelnyxDialerEvent(
+      supabase,
+      agentEvent(
+        orgId,
+        sessionId,
+        agentLeg.id as string,
+        agentLeg.call_control_id as string,
+        'call.answered'
+      )
+    );
+    const winnerLeg = [...db.table('call_legs').values()].find((l) => l.kind === 'contact')!;
+    await processTelnyxDialerEvent(
+      supabase,
+      contactEvent(
+        orgId,
+        sessionId,
+        winnerLeg.id as string,
+        winnerLeg.call_control_id as string,
+        'call.answered'
+      )
+    );
+
+    const recordStartReq = server.requests.find((r) => r.path.endsWith('/actions/record_start'));
+    assertEquals(
+      recordStartReq,
+      undefined,
+      'recording_enabled=false must skip record_start entirely'
+    );
+    const winnerRow = db.table('call_legs').get(winnerLeg.id as string)!;
+    assertEquals(winnerRow.recording_status ?? null, null);
+  } finally {
+    restoreFetch();
+  }
+});
+
+Deno.test(
+  'REC-2/REC-3: call.recording.saved downloads the mp3, uploads it, and stores path/duration/status',
+  async () => {
+    const db = new FakeDb();
+    const server = new FakeTelnyxServer();
+    const restoreFetch = stubTelnyxFetch(server);
+    const supabase = createFakeSupabase(db);
+    const orgId = 'org-1';
+    const sessionId = 'session-1';
+    const legId = 'leg-1';
+    db.insert('call_legs', {
+      id: legId,
+      org_id: orgId,
+      session_id: sessionId,
+      campaign_id: 'campaign-1',
+      kind: 'contact',
+      call_control_id: 'call-winner-1',
+      state: 'claimed',
+    });
+    const mp3Url = 'https://fake-recordings.example.com/rec-1.mp3';
+    server.recordingFiles.set(mp3Url, new Uint8Array([1, 2, 3, 4]));
+    try {
+      await processTelnyxDialerEvent(
+        supabase,
+        recordingEvent(orgId, sessionId, legId, 'call.recording.saved', {
+          call_session_id: 'sess-abc',
+          call_leg_id: 'telnyx-leg-uuid-1',
+          recording_started_at: '2026-01-01T00:00:00.000Z',
+          recording_ended_at: '2026-01-01T00:01:30.000Z',
+          recording_urls: { mp3: mp3Url, wav: null },
+        })
+      );
+      const row = db.table('call_legs').get(legId)!;
+      assertEquals(row.recording_status, 'saved');
+      assertEquals(row.recording_path, `${orgId}/${legId}.mp3`);
+      assertEquals(row.recording_duration_seconds, 90);
+      assertEquals(row.recording_telnyx_call_leg_id, 'telnyx-leg-uuid-1');
+      assertExists(row.recording_saved_at);
+    } finally {
+      restoreFetch();
+    }
+  }
+);
+
+Deno.test('REC-2: call.recording.error marks the leg recording_failed, never throws', async () => {
+  const db = new FakeDb();
+  const server = new FakeTelnyxServer();
+  const restoreFetch = stubTelnyxFetch(server);
+  const supabase = createFakeSupabase(db);
+  const orgId = 'org-1';
+  const legId = 'leg-1';
+  db.insert('call_legs', {
+    id: legId,
+    org_id: orgId,
+    session_id: 'session-1',
+    campaign_id: 'campaign-1',
+    kind: 'contact',
+    call_control_id: 'call-winner-1',
+    state: 'claimed',
+  });
+  try {
+    await processTelnyxDialerEvent(
+      supabase,
+      recordingEvent(orgId, 'session-1', legId, 'call.recording.error', {
+        call_session_id: 'sess-abc',
+        reason: 'invalid-recording-config',
+      })
+    );
+    const row = db.table('call_legs').get(legId)!;
+    assertEquals(row.recording_status, 'recording_failed');
+  } finally {
+    restoreFetch();
+  }
+});
+
+Deno.test(
+  'call.recording.saved is deduped on redelivery, same as every other webhook event',
+  async () => {
+    const db = new FakeDb();
+    const server = new FakeTelnyxServer();
+    const restoreFetch = stubTelnyxFetch(server);
+    const supabase = createFakeSupabase(db);
+    const orgId = 'org-1';
+    const legId = 'leg-1';
+    db.insert('call_legs', {
+      id: legId,
+      org_id: orgId,
+      session_id: 'session-1',
+      campaign_id: 'campaign-1',
+      kind: 'contact',
+      call_control_id: 'call-winner-1',
+      state: 'claimed',
+    });
+    const mp3Url = 'https://fake-recordings.example.com/rec-2.mp3';
+    server.recordingFiles.set(mp3Url, new Uint8Array([9, 9, 9]));
+    try {
+      const event = recordingEvent(orgId, 'session-1', legId, 'call.recording.saved', {
+        call_session_id: 'sess-abc',
+        recording_started_at: '2026-01-01T00:00:00.000Z',
+        recording_ended_at: '2026-01-01T00:00:10.000Z',
+        recording_urls: { mp3: mp3Url },
+      });
+      await processTelnyxDialerEvent(supabase, event);
+      assertEquals(server.recordingDownloadCount, 1);
+      // Redeliver the EXACT same event (same eventId) -- record_webhook_event's existing dedupe
+      // must skip it before processRecordingEvent ever runs a second download.
+      await processTelnyxDialerEvent(supabase, event);
+      assertEquals(server.recordingDownloadCount, 1, 'a redelivered eventId must not re-download');
     } finally {
       restoreFetch();
     }

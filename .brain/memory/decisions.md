@@ -504,3 +504,95 @@ tightening — not worth diverging from the established shape for.
 
 **Do not undo without understanding:** if a future task genuinely wants retry rules hidden from non-admin members (e.g. a UI ever surfaces them to agents and
 that turns out to be undesirable), that's a deliberate re-tightening decision to make explicitly, not something to "notice" and quietly revert.
+
+### Call recording: call-level `record_start` (channels: dual), not conference-level
+
+**Status:** Active · **Decided by:** eng2 (TASK-F-T2, 2026-09-25)
+
+**Context:** the task asked to "confirm in the docs whether conference-level record_start would be better or cheaper" before picking one. Read spec3.json's real
+`StartRecordingRequest` schema (not assumed): `channels: 'dual'`'s own description is "final audio file will be stereo recorded with the first leg on channel A,
+and the rest on channel B" — meaning a single participant leg's own `record_start` already captures the whole bridge, not just that one leg's own audio.
+
+**Decision:** `handleWin` (`_shared/dialer-engine.ts`) calls `client.recordStart` on the WINNING contact leg only, `channels: 'dual'`, right after the bridge
+succeeds (after `bridged_at` is stamped). No conference-level `record_start` — it would be redundant (same audio) and would also complicate mapping the resulting
+webhook back to a single `call_legs` row (a conference recording keys by `conference_id`, not a leg), for zero benefit since only the winner's own recording is
+ever needed.
+
+**Do not undo without understanding:** if a future task ever needs the LOSING legs' own audio too (not just the bridge), that's a materially different feature —
+don't "fix" this into conference-level recording as a shortcut for that; it changes what gets captured.
+
+### Call recording webhook: mapped via `client_state`, never `call_control_id` — and no `recording_id` field exists
+
+**Status:** Active · **Decided by:** eng2 (TASK-F-T2, 2026-09-25)
+
+**Context:** the task doc assumed `call.recording.saved`'s payload carries `recording_id`/`duration_millis` and could be correlated like other call events. Verified
+against the real spec3.json (`CallRecordingSaved.payload`) and `webhook-events.json`: this event's payload has NO `call_control_id` and NO `recording_id` at all —
+only `call_leg_id`/`call_session_id` (both different UUIDs from `call_control_id`), `recording_started_at`/`recording_ended_at` (duration is derived, not read off
+a field), and `recording_urls.{mp3,wav}` (valid 10 minutes).
+
+**Decision:** `record_start`'s own `client_state` param carries the SAME `{org,session,leg}` shape `encodeDialClientState` already produces for the dial itself
+(a distinct, per-command client_state — Telnyx echoes it back only on webhooks resulting from that command). `processRecordingEvent` (`dialer-engine.ts`) looks the
+leg up via the existing `loadLegByCallControlIdOrClientLeg` fallback, which already falls through to `clientState.leg` whenever the `call_control_id` lookup
+misses — exactly what happens here since the lookup key it's given (`call_session_id`, telnyx-webhook/index.ts's own fallback) never matches a real
+`call_legs.call_control_id`. Telnyx's own `call_leg_id` is stored as `call_legs.recording_telnyx_call_leg_id` (never called a "recording id" anywhere in code) —
+kept only so a future manual retry beyond the 10-minute URL window could re-resolve the real recording resource via `GET /recordings?filter[call_leg_id]=`.
+
+**Do not undo without understanding:** don't "simplify" this to match on `call_control_id` like every other call.* event — that field genuinely does not exist on
+this webhook's payload; matching on it would silently never fire.
+
+### Recording retention: an Edge Function deletes, not a raw SQL `DELETE FROM storage.objects`
+
+**Status:** Active · **Decided by:** eng2 (TASK-F-T2, 2026-09-25), approved by the lead
+
+**Context:** the task allowed either approach ("Verify that's supported, or else have the cron call an Edge Function"). Could not verify live, with local Docker
+retired, whether a bare SQL delete of a `storage.objects` metadata row alone actually removes the underlying file from the backing store, or just orphans it.
+
+**Decision:** `recording-retention` (Edge Function, triggered daily at 03:17 by the exact same pg_cron/pg_net shared-secret pattern as `dialer-sweeper`/
+`ghl-sync-worker`) calls `supabase.storage.from('recordings').remove([path])` -- Supabase's own documented, always-correct way to delete both the object and its
+metadata row -- then nulls `call_legs`' recording columns only after the storage delete is confirmed to have succeeded (never optimistically before).
+
+**Do not undo without understanding:** if a future task wants this in pure SQL instead, first verify live (a real object, a real SQL delete, then check the
+actual storage bucket contents) that the file is really gone, not just the metadata row — don't assume it works from the SQL alone.
+
+### `org_recording_settings`: a new dedicated table, not `orgs` or `org_telephony`
+
+**Status:** Active · **Decided by:** eng2 (TASK-F-T2, 2026-09-25)
+
+**Context:** the task allowed "recording_enabled (default true) on orgs, or the settings table the code already uses," and wants owner+admin write.
+`public.orgs`'s own UPDATE RLS policy is owner-only ("owner can update their org") — widening it for one column would either loosen it for everything or need
+column-level grants layered on top of RLS, more machinery than one boolean warrants. `org_telephony` has ZERO client-facing RLS policies by design (the Telnyx key
+must never be client-selectable at all) — adding a client-writable column there would break that invariant for the whole table.
+
+**Decision:** a new table, `org_recording_settings` (org_id PK/FK, recording_enabled boolean default true), with member-read/owner-or-admin-write RLS -- the exact
+same shape as `dnc_numbers`/`campaign_retry_rules` (TASK-F-T1). Auto-seeded per org via an AFTER INSERT trigger on `orgs`, same pattern as
+`seed_default_dispositions`.
+
+**Do not undo without understanding:** a missing row (pre-seed-trigger org, or a race) must default to `true` — both the column's own default and
+`recording-core.ts`'s `isRecordingEnabled(null) === true` encode this twice, deliberately; don't "fix" one without the other if this is ever revisited.
+
+### GHL note's recording link: a hardcoded app host, not a config value
+
+**Status:** Active · **Decided by:** eng2 (TASK-F-T2, 2026-09-25)
+
+**Context:** REC-5 wants the disposition note to link to the app (`https://hyperdial.myhomebasesolutions.com/contacts?leg=<id>`), never a raw signed URL (expires
+in 10 minutes). `submit_disposition` (SQL) builds this string directly with the exact host the task named.
+
+**Decision:** hardcoded in `submit_disposition`'s SQL, not read from an env var or a settings table -- Stage 1 is a single deployment with one fixed domain, no
+per-org custom domain feature exists yet.
+
+**Do not undo without understanding:** if a future task adds per-org custom domains, this string needs to become a real lookup (probably `org_telephony` or a
+new org-settings column), not just a different hardcoded string -- don't patch in a second hardcoded host as a shortcut.
+
+### REC-5's "contact history shows the recording link" — scope-cut, deferred to TASK-F-P4
+
+**Status:** Active · **Decided by:** eng2 (TASK-F-T2, 2026-09-25), approved by the lead
+
+**Context:** grepped the entire `apps/web/src` tree for any existing contact-call-history surface -- there is none; REC-5's second clause has nothing to attach to
+yet. Building a whole new contact-history feature was out of scope for this task.
+
+**Decision:** only the wrap-up modal's recording play button (REC-5's first clause) was built. Per the lead: expose a recording-available signal per leg for
+whatever API TASK-F-P4's touch-history strip ends up using -- `call_legs.recording_path is not null` IS that signal already (no new column/API needed); F-P4
+just needs to select it. Tracked as NOT-done in the task log, not silently dropped.
+
+**Do not undo without understanding:** don't build a separate "recording available" boolean column -- `recording_path is not null` is already the single source
+of truth; a redundant flag would just be another thing to keep in sync.

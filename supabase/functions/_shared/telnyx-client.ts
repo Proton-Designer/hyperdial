@@ -177,13 +177,27 @@ export function buildDialPayload(args: DialArgs): TelnyxDialPayload {
 export interface RecordStartArgs {
   format?: 'mp3' | 'wav';
   channels: 'single' | 'dual';
+  /** Base-64 string echoed back verbatim on this command's own resulting webhooks
+   *  (call.recording.saved/call.recording.error) -- per-command, independent of the call's own
+   *  dial-time client_state (StartRecordingRequest.client_state: "add state to every subsequent
+   *  webhook"). TASK-F-T2 passes the same {org,session,leg} shape `dial()` uses
+   *  (`encodeDialClientState`) so the recording webhook can map back to our row without relying
+   *  on `call_control_id` -- verified against spec3.json that `call.recording.saved`'s payload
+   *  carries none at all (only `call_leg_id`/`call_session_id`, both different UUIDs). */
+  clientState?: string;
 }
 
 export function buildRecordStartPayload(args: RecordStartArgs): {
   format: 'mp3' | 'wav';
   channels: 'single' | 'dual';
+  client_state?: string;
 } {
-  return { format: args.format ?? 'mp3', channels: args.channels };
+  const payload: { format: 'mp3' | 'wav'; channels: 'single' | 'dual'; client_state?: string } = {
+    format: args.format ?? 'mp3',
+    channels: args.channels,
+  };
+  if (args.clientState) payload.client_state = args.clientState;
+  return payload;
 }
 
 export interface TranscriptionStartArgs {

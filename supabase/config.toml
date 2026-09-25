@@ -439,6 +439,15 @@ verify_jwt = false
 # start this time (TASK-P2-E5), not caught by a later fix-forward.
 verify_jwt = false
 
+[functions.recording-url]
+# Custom auth (requireTelnyxOrgRole), same pattern as every other dialer-session-*/telnyx-*
+# function -- gateway JWT verification would otherwise 401 before that code runs.
+verify_jwt = false
+[functions.recording-retention]
+# Triggered by pg_net (a cron job), no Supabase JWT at all -- auth is the X-Cron-Secret header.
+# Set from the start (TASK-F-T2), same lesson as dialer-sweeper/ghl-sync-worker above.
+verify_jwt = false
+
 [edge_runtime]
 enabled = true
 # Supported request policies: `oneshot`, `per_worker`.

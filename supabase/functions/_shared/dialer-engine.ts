@@ -110,6 +110,12 @@ import { getConnectedOrgTelnyxContext } from './telnyx-org-context.ts';
 import { webhookUrlForOrg } from './telnyx-provision.ts';
 import { getOrCreateMemberCredentialId } from './agent-webrtc-credential.ts';
 import type { TelnyxClient } from './telnyx-client.ts';
+import {
+  isRecordingEnabled,
+  parseRecordingSavedPayload,
+  parseRecordingErrorPayload,
+  recordingStoragePath,
+} from './recording-core.ts';
 
 function dialerLog(step: string, meta: Record<string, unknown> = {}): void {
   console.log('[dialer-engine]', step, meta);
@@ -885,6 +891,16 @@ export async function processTelnyxDialerEvent(
     return;
   }
 
+  // REC-2 (TASK-F-T2): call.recording.saved/error never drive the leg state machine (they're
+  // not in mapToDialerEvent's switch at all -- would just be logged as unhandled and dropped),
+  // so they're intercepted here, right after the SAME dedup check every other event already
+  // gets (satisfies "idempotent on redelivery" for free), before the state-machine dispatch
+  // below ever sees them.
+  if (raw.eventType === 'call.recording.saved' || raw.eventType === 'call.recording.error') {
+    await processRecordingEvent(supabase, raw);
+    return;
+  }
+
   const dialerEvent = mapToDialerEvent(raw);
   if (!dialerEvent) {
     dialerLog('webhook_event_unhandled', { eventType: raw.eventType });
@@ -919,6 +935,88 @@ export async function processTelnyxDialerEvent(
   }
 
   await processContactLegEvent(supabase, session, leg, dialerEvent);
+}
+
+/** REC-2/REC-3 (TASK-F-T2): handles `call.recording.saved`/`call.recording.error`, mapped back
+ *  to our row via client_state's `leg` (never `callControlId` -- neither event's real payload
+ *  carries `call_control_id` at all, see recording-core.ts's header). `call.recording.saved`
+ *  fetches the mp3 from Telnyx's own temp URL (valid 10 minutes) and uploads it into the
+ *  private `recordings` Storage bucket immediately, synchronously, in this same webhook call --
+ *  never throws past this function (a download/upload failure is recorded as
+ *  `recording_status='download_failed'`, keeping `recording_telnyx_call_leg_id` for a possible
+ *  future manual retry via `GET /recordings?filter[call_leg_id]=`, not retried automatically
+ *  here). */
+async function processRecordingEvent(supabase: SupabaseClient, raw: RawTelnyxEvent): Promise<void> {
+  const leg = await loadLegByCallControlIdOrClientLeg(
+    supabase,
+    raw.callControlId,
+    raw.clientState.leg
+  );
+  if (!leg) {
+    dialerLog('recording_event_no_leg', { eventType: raw.eventType, legId: raw.clientState.leg });
+    return;
+  }
+  if (leg.org_id !== raw.orgId) {
+    dialerLog('recording_event_org_mismatch', { legOrg: leg.org_id, eventOrg: raw.orgId });
+    return;
+  }
+
+  if (raw.eventType === 'call.recording.error') {
+    const { reason } = parseRecordingErrorPayload(raw.payload);
+    await supabase
+      .from('call_legs')
+      .update({ recording_status: 'recording_failed' })
+      .eq('id', leg.id);
+    dialerLog('recording_failed_webhook', { legId: leg.id, reason });
+    return;
+  }
+
+  const { mp3Url, telnyxCallLegId, durationSeconds } = parseRecordingSavedPayload(raw.payload);
+  if (!mp3Url) {
+    await supabase
+      .from('call_legs')
+      .update({
+        recording_status: 'download_failed',
+        recording_telnyx_call_leg_id: telnyxCallLegId,
+        recording_duration_seconds: durationSeconds,
+      })
+      .eq('id', leg.id);
+    dialerLog('recording_saved_no_mp3_url', { legId: leg.id });
+    return;
+  }
+
+  try {
+    const res = await fetch(mp3Url);
+    if (!res.ok) throw new Error(`recording download failed: HTTP ${res.status}`);
+    const bytes = await res.arrayBuffer();
+    const path = recordingStoragePath(leg.org_id, leg.id);
+    const { error: uploadError } = await supabase.storage
+      .from('recordings')
+      .upload(path, bytes, { contentType: 'audio/mpeg', upsert: true });
+    if (uploadError) throw new Error(uploadError.message);
+
+    await supabase
+      .from('call_legs')
+      .update({
+        recording_status: 'saved',
+        recording_path: path,
+        recording_duration_seconds: durationSeconds,
+        recording_telnyx_call_leg_id: telnyxCallLegId,
+        recording_saved_at: new Date().toISOString(),
+      })
+      .eq('id', leg.id);
+    dialerLog('recording_saved', { legId: leg.id, durationSeconds });
+  } catch (err) {
+    await supabase
+      .from('call_legs')
+      .update({
+        recording_status: 'download_failed',
+        recording_telnyx_call_leg_id: telnyxCallLegId,
+        recording_duration_seconds: durationSeconds,
+      })
+      .eq('id', leg.id);
+    dialerLog('recording_download_failed', { legId: leg.id, error: String(err) });
+  }
 }
 
 /** Bounded retry count for `applyLegTransition`'s reload-and-retry on a race loss (TASK-P2-E2
@@ -1584,6 +1682,58 @@ async function sendAbandonMessage(
  *  conference, then proactively resolves every OTHER active leg (both still-ringing and
  *  already-answered) from a snapshot -- see this file's header for why this is safe even
  *  though a losing leg's own event might independently reach the same conclusion. */
+/** REC-1 (TASK-F-T2): starts recording on the WINNING contact leg only, right after it's
+ *  actually bridged. Never blocks or fails the bridge -- every failure (org opted out, no
+ *  recording-settings row, or the Telnyx command itself throwing) is caught and logged, never
+ *  rethrown. `channels: 'dual'` on a call-level (not conference-level) record_start already
+ *  captures the whole bridge from this one participant leg's perspective (spec3.json's
+ *  StartRecordingRequest: "final audio file will be stereo recorded with the first leg on
+ *  channel A, and the rest on channel B") -- no conference-level record_start needed, and it
+ *  would only complicate mapping the resulting webhook back to a single leg for no benefit.
+ *  See decisions.md for the full writeup. */
+async function maybeStartRecording(
+  supabase: SupabaseClient,
+  client: TelnyxClient,
+  session: DialSessionRow,
+  winnerLeg: CallLegRow
+): Promise<void> {
+  try {
+    const { data: settings, error: settingsError } = await supabase
+      .from('org_recording_settings')
+      .select('recording_enabled')
+      .eq('org_id', session.org_id)
+      .maybeSingle();
+    if (settingsError) throw new Error(settingsError.message);
+    if (!isRecordingEnabled(settings)) {
+      dialerLog('recording_skipped_disabled', { sessionId: session.id, legId: winnerLeg.id });
+      return;
+    }
+
+    const clientState = encodeDialClientState({
+      org: session.org_id,
+      session: session.id,
+      leg: winnerLeg.id,
+      kind: 'contact',
+    });
+    await client.recordStart(winnerLeg.call_control_id, {
+      format: 'mp3',
+      channels: 'dual',
+      clientState,
+    });
+    await supabase
+      .from('call_legs')
+      .update({ recording_status: 'recording' })
+      .eq('id', winnerLeg.id);
+    dialerLog('recording_started', { sessionId: session.id, legId: winnerLeg.id });
+  } catch (err) {
+    dialerLog('recording_start_failed', {
+      sessionId: session.id,
+      legId: winnerLeg.id,
+      error: String(err),
+    });
+  }
+}
+
 async function handleWin(
   supabase: SupabaseClient,
   session: DialSessionRow,
@@ -1641,6 +1791,9 @@ async function handleWin(
         p_new_state: 'claimed',
         p_fields: { bridged_at: new Date().toISOString() },
       });
+      // REC-1: only ever the winner, only once actually bridged -- see maybeStartRecording's
+      // own header for why this can never fail/block the call itself.
+      await maybeStartRecording(supabase, client, session, winnerLeg);
     }
   } catch (err) {
     dialerLog('handle_win_conference_failed', { sessionId: session.id, error: String(err) });

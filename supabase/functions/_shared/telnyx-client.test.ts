@@ -95,6 +95,15 @@ Deno.test('buildRecordStartPayload: defaults to mp3, requires channels', () => {
   });
 });
 
+Deno.test('buildRecordStartPayload: includes client_state only when provided', () => {
+  assertEquals(buildRecordStartPayload({ channels: 'dual', clientState: 'abc123' }), {
+    format: 'mp3',
+    channels: 'dual',
+    client_state: 'abc123',
+  });
+  assertEquals(Object.hasOwn(buildRecordStartPayload({ channels: 'dual' }), 'client_state'), false);
+});
+
 Deno.test('buildTranscriptionStartPayload: defaults to Deepgram + both tracks', () => {
   assertEquals(buildTranscriptionStartPayload(), {
     transcription_engine: 'Deepgram',
