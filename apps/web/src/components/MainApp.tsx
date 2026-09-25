@@ -97,13 +97,36 @@ export function MainApp() {
     }
   }, [restrictToAgentTabs, activeTab]);
 
-  // Resolves the deep-link deferred above, exactly once, as soon as OrgContext's first fetch
-  // settles: promote to the real manager-only tab if the visitor turned out to be a manager,
-  // otherwise just correct the URL to match the 'dialer' fallback already on screen.
+  // Resolves the deep-link deferred above, as soon as OrgContext's REAL fetch (the one for the
+  // actual signed-in user) settles: promote to the real manager-only tab if the visitor turned
+  // out to be a manager, otherwise just correct the URL to match the 'dialer' fallback already
+  // on screen.
+  //
+  // OrgProvider mounts above AppContent's own auth-loading gate (App.tsx), so on every fresh
+  // mount it runs an unavoidable SPURIOUS first load cycle with `user` still null (AuthContext's
+  // own session restore hasn't resolved yet) -- that cycle resolves `loading` straight from its
+  // initial `true` to `false` with role=null, often before this component's effects even run
+  // once, i.e. `orgLoading` can already read `false` on THIS effect's very first invocation. A
+  // naive "orgLoading just became false" check treats that spurious tick as final and discards
+  // the pending deep link before the real cycle (which always follows, and always visibly sets
+  // `orgLoading` true first -- `load()`'s real-user branch calls `setLoading(true)` explicitly
+  // before its awaits) ever gets to promote it. Caught live: an admin deep-linking to
+  // /campaigns stayed stuck on /dialer forever. Agents were unaffected only by coincidence --
+  // role=null and role='agent' both resolve to the same restricted fallback, so the wrong cycle
+  // winning didn't change the outcome for that role.
+  //
+  // Fix: only trust an `orgLoading=false` observation once this effect has also observed
+  // `orgLoading=true` at some point since mount -- i.e. wait for an actual loading transition,
+  // not just a level read that might already be stale before we ever looked.
+  const sawOrgLoadingRef = useRef(false);
   useEffect(() => {
-    if (orgLoading) return;
+    if (orgLoading) {
+      sawOrgLoadingRef.current = true;
+      return;
+    }
     const pending = pendingDeepLinkTabRef.current;
     if (pending === null) return;
+    if (!sawOrgLoadingRef.current) return; // still the spurious pre-auth cycle; wait for the real one
     pendingDeepLinkTabRef.current = null;
     if (!restrictToAgentTabs) {
       setActiveTabState(pending);
