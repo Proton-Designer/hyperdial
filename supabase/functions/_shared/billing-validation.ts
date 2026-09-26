@@ -5,7 +5,9 @@
  * logic that matters for a real-money feature, so it lives here where it's cheap to exhaustively
  * test without a network call.
  *
- * The $5-$1,000 add-funds bounds and the $10-$5,000 auto-recharge bounds are this task's own
+ * The $5-$200 add-funds bounds (TASK-BF2, 2026-09-25: the user lowered the $1,000 max to $200 as
+ * a starting safety limit -- "we don't have as much capital... $1,000 is a lot") and the
+ * $10-$5,000 auto-recharge bounds are this task's own
  * suggested defaults (Telnyx's spec places no min/max on these decimal-string fields at all --
  * verified against spec3.json's StoredPaymentTransactionRequest/AutoRechargePrefRequest schemas,
  * 2026-09-25), not a Telnyx-documented limit. The 1-per-60s / $2,000-per-24h rate limits are this
@@ -14,7 +16,10 @@
  */
 
 export const MIN_ADD_FUNDS_USD = 5;
-export const MAX_ADD_FUNDS_USD = 1000;
+// TASK-BF2 (user order, 2026-09-25): lowered from 1000 -- keep in sync with
+// apps/web/src/components/Settings.tsx's own MAX_ADD_FUNDS_USD (no shared module between the
+// Deno edge function and the browser app to import a single constant from).
+export const MAX_ADD_FUNDS_USD = 200;
 export const ADD_FUNDS_MIN_INTERVAL_SECONDS = 60;
 export const ADD_FUNDS_DAILY_CAP_USD = 2000;
 

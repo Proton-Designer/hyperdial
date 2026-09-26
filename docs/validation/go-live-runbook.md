@@ -143,7 +143,7 @@ is done). Set:
 
 For ongoing funding, the same card (owner OR admin, either can do this) has:
 
-- **Add funds** — presets ($10/$25/$50/$100) or a custom amount ($5-$1,000
+- **Add funds** — presets ($10/$25/$50/$100) or a custom amount ($5-$200
   per charge), charged to the payment method you already added in step 1.
   A confirm step shows the exact amount before anything is charged. At most
   one successful charge every 60 seconds and $2,000 total per rolling 24

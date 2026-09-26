@@ -1133,3 +1133,14 @@ retry safe. Also don't hardcode a different daily cap or rate-limit window in
 `ADD_FUNDS_DAILY_CAP_USD`/`ADD_FUNDS_MIN_INTERVAL_SECONDS` at the same time -- the SQL function's
 own signature (fixed by the lead's review) has no way to receive them as parameters, so the two
 numbers must be kept in sync by hand across SQL and TypeScript.
+
+**TASK-BF2 (user order verbatim, 2026-09-25): "Change limit from $1,000 to $200 ... I think
+that's a better safety limit for starting out since we don't have as much capital."**
+`MAX_ADD_FUNDS_USD` (`_shared/billing-validation.ts`) lowered 1000 -> 200, with the duplicate
+client-side constant of the same name (`Settings.tsx`) kept in sync by hand (still no shared
+module between the Deno edge function and the browser app). The $10/$25/$50/$100 presets, the $5
+minimum, the $2,000/24h cap, and the 60s interval are all unchanged -- $100 (the highest preset)
+is still comfortably under the new $200 max. No migration needed: confirmed `reserve_add_funds`
+(migration `20260925080301`) never checks the per-charge amount at all, only the rate-limit
+interval and the 24h cap -- the per-charge bound is enforced purely by
+`validateAddFundsAmount`, in TypeScript, before the RPC is ever called.

@@ -20,7 +20,7 @@ Deno.test('validateAddFundsAmount: accepts an amount within bounds', () => {
 
 Deno.test('validateAddFundsAmount: accepts the exact min and max bounds', () => {
   assertEquals(validateAddFundsAmount(5), { ok: true, amountUsd: 5 });
-  assertEquals(validateAddFundsAmount(1000), { ok: true, amountUsd: 1000 });
+  assertEquals(validateAddFundsAmount(200), { ok: true, amountUsd: 200 });
 });
 
 Deno.test('validateAddFundsAmount: rejects below the minimum', () => {
@@ -29,9 +29,17 @@ Deno.test('validateAddFundsAmount: rejects below the minimum', () => {
 });
 
 Deno.test('validateAddFundsAmount: rejects above the maximum', () => {
-  const result = validateAddFundsAmount(1000.01);
+  const result = validateAddFundsAmount(200.01);
   assertEquals(result.ok, false);
 });
+
+Deno.test(
+  'validateAddFundsAmount: TASK-BF2 -- rejects the OLD $1,000 max, now well above the $200 limit',
+  () => {
+    const result = validateAddFundsAmount(1000);
+    assertEquals(result.ok, false);
+  }
+);
 
 Deno.test('validateAddFundsAmount: rejects more than 2 decimal places', () => {
   const result = validateAddFundsAmount(25.005);

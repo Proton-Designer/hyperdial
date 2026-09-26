@@ -2014,7 +2014,9 @@ function NumberPoolCard() {
 
 const ADD_FUNDS_PRESETS_USD = [10, 25, 50, 100];
 const MIN_ADD_FUNDS_USD = 5;
-const MAX_ADD_FUNDS_USD = 1000;
+// TASK-BF2 (user order, 2026-09-25): lowered from 1000 -- keep in sync with
+// supabase/functions/_shared/billing-validation.ts's own MAX_ADD_FUNDS_USD.
+const MAX_ADD_FUNDS_USD = 200;
 
 /** TASK-BF1 fix (lead + eng2 review, MEDIUM): error codes the server can return BEFORE ever
  *  calling Telnyx (reserve_add_funds itself rejected the reservation) -- this key was never
