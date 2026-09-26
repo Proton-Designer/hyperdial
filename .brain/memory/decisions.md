@@ -1080,3 +1080,56 @@ an unvalidated amount/threshold -- `runAddFundsAction`/`runUpdateAutoRechargeAct
 (`_shared/billing-core.ts`) are the ONLY call sites that validate first; a new caller that
 imports `_shared/telnyx-client.ts` directly and skips `_shared/billing-validation.ts` would charge
 an arbitrary amount with no idempotency/rate-limit protection at all.
+
+**TASK-BF1 fix-forward (2026-09-25, lead + eng2 review before deploy): the rate-limit/cap checks
+were a check-then-act race, and every Telnyx failure permanently burned its idempotency key.**
+
+1. **HIGH (money): two concurrent `add_funds` requests with DIFFERENT idempotency keys (two
+   admins, or two tabs) could both charge Telnyx.** The old `runAddFundsAction` ran two separate
+   `SELECT`s against `status='succeeded'` (never `'pending'`), then a separate `INSERT` -- neither
+   step was atomic with the other, and neither one could see a request still in flight. Fixed by
+   moving the checks + the insert into ONE atomic `public.reserve_add_funds(p_org, p_user,
+   p_amount, p_key)` SQL function (migration `20260925080301`, service-role only), serialized per
+   org with `pg_advisory_xact_lock(hashtextextended('add_funds:'||org_id, 0))`. It counts
+   `status IN ('pending', 'succeeded', 'unknown')` -- never just `'succeeded'` -- for both the 60s
+   interval and the $2,000/24h cap, and raises a distinct custom SQLSTATE per rejection
+   (`BF001`=RATE_LIMITED, `BF002`=DAILY_CAP_EXCEEDED, `BF003`=DUPLICATE_REQUEST) that
+   `billing-core.ts` maps to 429/400/409. `'failed'` never counts -- no charge was actually
+   attempted, so it must not consume a slot. A true concurrent race can't be exercised in a
+   single-threaded deno test; `audit/BF1/dryrun-tests.sql` section 5 proves the counting logic via
+   two SEQUENTIAL calls (call #2 must see call #1's still-`'pending'` row), and
+   `billing-core.test.ts` has a seeded-`'pending'`-row positive control for the same thing at the
+   orchestration level.
+2. **MEDIUM: a failed charge used to permanently burn its idempotency key, since the unique index
+   was unconditional on `idempotency_key` regardless of status.** The dialog's own documented
+   retry path (reuse the same key) always hit a false-positive 409 "already submitted" on the very
+   next click, even for a plain declined card. Fixed by splitting the failure into two cases,
+   *not* by scoping the unique index to `succeeded` (that would let a retry double-charge while
+   the first attempt is still pending):
+   - **(a) DEFINITE** -- a 4xx from Telnyx (declined, no payment method, forbidden key, invalid
+     amount): no charge was attempted. Row stays `'failed'`, but `idempotency_key` is set to
+     `null`, freeing the slot. `AddFundsDialog` mints a brand-new key and returns to the amount
+     step.
+   - **(b) AMBIGUOUS** -- a network error/timeout, or a 5xx: Telnyx may or may not have actually
+     charged the card. Row is marked `'unknown'` (new status value, migration `20260925080301`'s
+     constraint change) and KEEPS its key -- a same-key retry is refused (409), and the row still
+     counts toward both rate limits (conservative, on purpose). The dialog disables Confirm
+     entirely and tells the user to check the real balance/Telnyx portal before trying again; the
+     only way out of the dialog at that point is closing it (which discards the burned key for
+     good, by design -- there is no automatic recovery from an unconfirmed charge).
+   - `classifyAddFundsFailure` (`_shared/billing-validation.ts`) does the 4xx-vs-other split by
+     parsing the `(NNN)` status `telnyxRequest` always embeds in its thrown message; no status at
+     all (a real network error) is treated the same as a 5xx -- ambiguous.
+3. **LOW: Telnyx's `processor_status` on a successful charge was read then silently dropped.**
+   Now stored in `request_snapshot` on the succeeded update (`{processorStatus: ...}`), so there's
+   something to reconcile against if a 200 response is ever not a plain success in practice.
+
+**Do not undo without understanding:** don't scope `org_billing_events_org_idempotency_key_key` to
+`status='succeeded'` to "simplify" the retry story -- that was explicitly considered and rejected
+(see MEDIUM above): it would let a retry fire a second real Telnyx charge while the first one is
+still genuinely in flight (`'pending'`). The DEFINITE/AMBIGUOUS split is what actually keeps a
+retry safe. Also don't hardcode a different daily cap or rate-limit window in
+`reserve_add_funds` without updating `_shared/billing-validation.ts`'s
+`ADD_FUNDS_DAILY_CAP_USD`/`ADD_FUNDS_MIN_INTERVAL_SECONDS` at the same time -- the SQL function's
+own signature (fixed by the lead's review) has no way to receive them as parameters, so the two
+numbers must be kept in sync by hand across SQL and TypeScript.

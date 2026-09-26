@@ -1,5 +1,6 @@
 import { assertEquals } from 'jsr:@std/assert@1';
 import {
+  classifyAddFundsFailure,
   isAddFundsRateLimited,
   isValidIdempotencyKey,
   mapTelnyxBillingError,
@@ -198,3 +199,72 @@ Deno.test(
     assertEquals(result.code, 'TELNYX_ERROR');
   }
 );
+
+// ---------------------------------------------------------------------------
+// classifyAddFundsFailure -- TASK-BF1 fix (lead + eng2 review, MEDIUM)
+// ---------------------------------------------------------------------------
+
+Deno.test('classifyAddFundsFailure: 400 is definitive', () => {
+  assertEquals(
+    classifyAddFundsFailure(new Error('Telnyx API POST /payment/x failed (400): {}')),
+    'definitive'
+  );
+});
+
+Deno.test('classifyAddFundsFailure: 401/403 (forbidden key) is definitive', () => {
+  assertEquals(
+    classifyAddFundsFailure(new Error('Telnyx API POST /payment/x failed (401): {}')),
+    'definitive'
+  );
+  assertEquals(
+    classifyAddFundsFailure(new Error('Telnyx API POST /payment/x failed (403): {}')),
+    'definitive'
+  );
+});
+
+Deno.test(
+  'classifyAddFundsFailure: 422 (declined / no payment method / invalid) is definitive',
+  () => {
+    assertEquals(
+      classifyAddFundsFailure(new Error('Telnyx API POST /payment/x failed (422): {}')),
+      'definitive'
+    );
+  }
+);
+
+Deno.test('classifyAddFundsFailure: 499 is still definitive (upper edge of the 4xx range)', () => {
+  assertEquals(
+    classifyAddFundsFailure(new Error('Telnyx API POST /payment/x failed (499): {}')),
+    'definitive'
+  );
+});
+
+Deno.test('classifyAddFundsFailure: 500/502/503 are ambiguous, not definitive', () => {
+  assertEquals(
+    classifyAddFundsFailure(new Error('Telnyx API POST /payment/x failed (500): {}')),
+    'ambiguous'
+  );
+  assertEquals(
+    classifyAddFundsFailure(new Error('Telnyx API POST /payment/x failed (502): {}')),
+    'ambiguous'
+  );
+  assertEquals(
+    classifyAddFundsFailure(new Error('Telnyx API POST /payment/x failed (503): {}')),
+    'ambiguous'
+  );
+});
+
+Deno.test(
+  'classifyAddFundsFailure: a network error/timeout with no status code at all is ambiguous',
+  () => {
+    assertEquals(
+      classifyAddFundsFailure(new Error('TypeError: error sending request (connection reset)')),
+      'ambiguous'
+    );
+    assertEquals(classifyAddFundsFailure(new Error('The operation timed out')), 'ambiguous');
+  }
+);
+
+Deno.test('classifyAddFundsFailure: a non-Error thrown value falls back to String()', () => {
+  assertEquals(classifyAddFundsFailure('some string'), 'ambiguous');
+});

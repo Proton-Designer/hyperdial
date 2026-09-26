@@ -2016,13 +2016,27 @@ const ADD_FUNDS_PRESETS_USD = [10, 25, 50, 100];
 const MIN_ADD_FUNDS_USD = 5;
 const MAX_ADD_FUNDS_USD = 1000;
 
+/** TASK-BF1 fix (lead + eng2 review, MEDIUM): error codes the server can return BEFORE ever
+ *  calling Telnyx (reserve_add_funds itself rejected the reservation) -- this key was never
+ *  consumed, so the dialog just shows the message and lets the user retry with the SAME key once
+ *  whatever blocked it (rate limit / daily cap) has passed. Anything else with a `code` -- a real
+ *  Telnyx rejection -- is a DEFINITIVE failure (see handleConfirm's catch block). */
+const PRE_CHARGE_ADD_FUNDS_ERROR_CODES = new Set([
+  'RATE_LIMITED',
+  'DAILY_CAP_EXCEEDED',
+  'DUPLICATE_REQUEST',
+]);
+
 /** TASK-BF1 (user order: "fully build out/integrate the add funds capbilty"): presets + custom
  *  amount -> a confirm step -> the actual charge. Same hand-rolled portal/focus-trap/motion modal
  *  shape as AddContactModal.tsx/ParallelDialerUI.tsx's StopConfirmDialog (this codebase's real
  *  dialog convention -- the shadcn AlertDialog primitive under ui/ is unused scaffolding).
- *  `idempotencyKey` is generated once, the moment the CONFIRM step is entered, and reused for
- *  every attempt of that same charge (a retry after a network error must reuse it, never mint a
- *  new one) -- the server refuses a second charge under the same key. */
+ *  `idempotencyKey` is generated once, the moment the CONFIRM step is entered. A DEFINITIVE
+ *  Telnyx rejection (4xx -- declined, no payment method, etc.) frees it server-side, so the
+ *  dialog mints a NEW one and returns to the amount step; an AMBIGUOUS outcome (network error/
+ *  timeout/5xx) keeps it -- a same-key retry is refused (409), so Confirm is disabled until the
+ *  dialog is closed and reopened. See handleConfirm's catch block (TASK-BF1 fix, lead + eng2
+ *  review). */
 export function AddFundsDialog({
   open,
   onClose,
@@ -2038,6 +2052,11 @@ export function AddFundsDialog({
   const [customAmount, setCustomAmount] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // TASK-BF1 fix (lead + eng2 review, MEDIUM): set when the server couldn't confirm whether
+  // Telnyx actually charged the card (network error/timeout/5xx) -- the idempotency key is kept
+  // server-side specifically to make a same-key retry fail with DUPLICATE_REQUEST, so Confirm is
+  // disabled here too rather than letting the user hammer a button that can only ever 409.
+  const [outcomeUnknown, setOutcomeUnknown] = useState(false);
   const idempotencyKeyRef = useRef<string | null>(null);
   const modalRef = useRef<HTMLDivElement>(null);
   const cancelButtonRef = useRef<HTMLButtonElement>(null);
@@ -2062,6 +2081,7 @@ export function AddFundsDialog({
     setUseCustom(false);
     setCustomAmount('');
     setError(null);
+    setOutcomeUnknown(false);
     idempotencyKeyRef.current = null;
   };
 
@@ -2078,7 +2098,7 @@ export function AddFundsDialog({
   };
 
   const handleConfirm = async () => {
-    if (!validAmount || submitting) return;
+    if (!validAmount || submitting || outcomeUnknown) return;
     setSubmitting(true);
     setError(null);
     try {
@@ -2093,7 +2113,30 @@ export function AddFundsDialog({
       reset();
       onClose();
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to add funds');
+      if (e instanceof BillingActionError && e.code === 'OUTCOME_UNKNOWN') {
+        // Ambiguous outcome -- Telnyx may or may not have charged the card. The server keeps
+        // this key (a same-key retry would just 409 DUPLICATE_REQUEST), so there's no safe
+        // "try again" left in this dialog -- the user has to close it and check the real balance.
+        setError(e.message);
+        setOutcomeUnknown(true);
+      } else if (
+        e instanceof BillingActionError &&
+        e.code &&
+        !PRE_CHARGE_ADD_FUNDS_ERROR_CODES.has(e.code)
+      ) {
+        // A DEFINITIVE Telnyx rejection (declined, no payment method, forbidden key, or any
+        // other 4xx) -- no charge was attempted, so the server already freed this idempotency
+        // key. Mint a fresh one and go back to the amount step instead of staying on confirm with
+        // a key the server will no longer honor.
+        idempotencyKeyRef.current = null;
+        setStep('select');
+        setError(e.message);
+      } else {
+        // RATE_LIMITED / DAILY_CAP_EXCEEDED / DUPLICATE_REQUEST (or a plain network error before
+        // the request even reached the server) -- this key was never consumed, stay on confirm
+        // and let the user try again with it once whatever blocked it has passed.
+        setError(e instanceof Error ? e.message : 'Failed to add funds');
+      }
     } finally {
       setSubmitting(false);
     }
@@ -2195,11 +2238,11 @@ export function AddFundsDialog({
               </Button>
               <Button
                 variant="primary"
-                onClick={handleConfirm}
+                onClick={outcomeUnknown ? handleClose : handleConfirm}
                 disabled={submitting}
                 loading={submitting}
               >
-                Confirm charge
+                {outcomeUnknown ? 'Close and check your balance' : 'Confirm charge'}
               </Button>
             </div>
           </>
@@ -2364,6 +2407,9 @@ const BILLING_EVENT_STATUS_STYLE: Record<BillingEvent['status'], string> = {
   pending: 'bg-surface-3 text-text-secondary',
   succeeded: 'bg-success/10 text-success',
   failed: 'bg-danger/10 text-danger',
+  // TASK-BF1 fix: an ambiguous outcome (network error/timeout/5xx) -- distinct from a definite
+  // failure, since the charge may actually have gone through on Telnyx's side.
+  unknown: 'bg-warning/10 text-warning',
 };
 
 /** TASK-BF1: the last 10 org_billing_events, read directly under RLS (owner/admin SELECT-only --

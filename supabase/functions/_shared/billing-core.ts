@@ -13,14 +13,11 @@
 import type { SupabaseClient } from 'npm:@supabase/supabase-js@2';
 import type { TelnyxClient } from './telnyx-client.ts';
 import {
-  ADD_FUNDS_DAILY_CAP_USD,
-  ADD_FUNDS_MIN_INTERVAL_SECONDS,
-  isAddFundsRateLimited,
+  classifyAddFundsFailure,
   isValidIdempotencyKey,
   mapTelnyxBillingError,
   validateAddFundsAmount,
   validateAutoRechargePrefs,
-  wouldExceedDailyAddFundsCap,
 } from './billing-validation.ts';
 
 export interface ActionResult {
@@ -128,80 +125,34 @@ export async function runAddFundsAction(
   }
   const idempotencyKey = body.idempotencyKey as string;
 
-  // Rate limit 1: at most 1 SUCCESSFUL add_funds per org per ADD_FUNDS_MIN_INTERVAL_SECONDS.
-  const windowStart = new Date(Date.now() - ADD_FUNDS_MIN_INTERVAL_SECONDS * 1000).toISOString();
-  const { data: recentSucceeded } = await supabase
-    .from('org_billing_events')
-    .select('created_at')
-    .eq('org_id', orgId)
-    .eq('kind', 'add_funds')
-    .eq('status', 'succeeded')
-    .gte('created_at', windowStart)
-    .order('created_at', { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  if (
-    recentSucceeded &&
-    isAddFundsRateLimited(new Date(recentSucceeded.created_at as string), new Date())
-  ) {
-    return {
-      status: 429,
-      body: {
-        error: `Please wait a moment before adding funds again (at most once every ${ADD_FUNDS_MIN_INTERVAL_SECONDS}s).`,
-        code: 'RATE_LIMITED',
-      },
-    };
-  }
-
-  // Rate limit 2: at most ADD_FUNDS_DAILY_CAP_USD of SUCCESSFUL add_funds per org per rolling
-  // 24h.
-  const dayStart = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-  const { data: last24h } = await supabase
-    .from('org_billing_events')
-    .select('amount_usd')
-    .eq('org_id', orgId)
-    .eq('kind', 'add_funds')
-    .eq('status', 'succeeded')
-    .gte('created_at', dayStart);
-  const succeededLast24hUsd = ((last24h ?? []) as { amount_usd: number | null }[]).reduce(
-    (sum, row) => sum + Number(row.amount_usd ?? 0),
-    0
-  );
-  if (wouldExceedDailyAddFundsCap(amountUsd, succeededLast24hUsd)) {
-    return {
-      status: 400,
-      body: {
-        error: `This would exceed the $${ADD_FUNDS_DAILY_CAP_USD.toFixed(2)}/24h add-funds limit for this org ($${succeededLast24hUsd.toFixed(2)} already added in the last 24h).`,
-        code: 'DAILY_CAP_EXCEEDED',
-      },
-    };
-  }
-
-  // Idempotency: insert the 'pending' row BEFORE calling Telnyx. A 23505 on the
-  // (org_id, idempotency_key) unique index means this exact key was already used for this org --
-  // refuse without ever calling Telnyx a second time.
-  const { data: pendingRow, error: insertError } = await supabase
-    .from('org_billing_events')
-    .insert({
-      org_id: orgId,
-      user_id: userId,
-      kind: 'add_funds',
-      amount_usd: amountUsd,
-      idempotency_key: idempotencyKey,
-      status: 'pending',
-    })
-    .select('id')
-    .single();
-  if (insertError) {
-    if (insertError.code === '23505') {
-      return {
-        status: 409,
-        body: { error: 'This add-funds request was already submitted.', code: 'DUPLICATE_REQUEST' },
-      };
+  // TASK-BF1 fix (lead + eng2 review, HIGH): the rate-limit check, the daily-cap check, and the
+  // 'pending' row insert used to be three separate round-trips, each looking only at
+  // status='succeeded' -- two concurrent add_funds requests with DIFFERENT idempotency keys (so
+  // the unique index never fires) each saw "nothing recent yet" before either one's own Telnyx
+  // call resolved, and both charged. `reserve_add_funds` (migration 20260925080301) does all
+  // three atomically inside one pg_advisory_xact_lock'd SQL function, counting
+  // pending/succeeded/unknown (never just succeeded), and raises a distinct SQLSTATE per
+  // rejection reason that this function maps below.
+  const { data: reservedId, error: reserveError } = await supabase.rpc('reserve_add_funds', {
+    p_org: orgId,
+    p_user: userId,
+    p_amount: amountUsd,
+    p_key: idempotencyKey,
+  });
+  if (reserveError || !reservedId) {
+    switch (reserveError?.code) {
+      case 'BF001':
+        return { status: 429, body: { error: reserveError.message, code: 'RATE_LIMITED' } };
+      case 'BF002':
+        return { status: 400, body: { error: reserveError.message, code: 'DAILY_CAP_EXCEEDED' } };
+      case 'BF003':
+        return { status: 409, body: { error: reserveError.message, code: 'DUPLICATE_REQUEST' } };
+      default:
+        console.error('[billing-core] reserve_add_funds failed', reserveError?.message);
+        return { status: 500, body: { error: 'Failed to record the billing event' } };
     }
-    console.error('[billing-core] audit insert failed (add_funds)', insertError.message);
-    return { status: 500, body: { error: 'Failed to record the billing event' } };
   }
+  const pendingRowId = reservedId as string;
 
   let result;
   try {
@@ -209,17 +160,47 @@ export async function runAddFundsAction(
   } catch (err) {
     console.error('[billing-core] add_funds failed', err);
     const mapped = mapTelnyxBillingError(err);
+    if (classifyAddFundsFailure(err) === 'definitive') {
+      // Telnyx itself rejected the request outright (a 4xx) -- no charge was attempted, so it's
+      // safe to free the idempotency key: the dialog mints a new one and returns to the amount
+      // step (eng2 review finding #2 -- the old unconditional-unique-key shape permanently burned
+      // the key on every failure, including this safe case, leaving no real retry affordance
+      // short of closing and reopening the dialog).
+      await supabase
+        .from('org_billing_events')
+        .update({ status: 'failed', error: mapped.message, idempotency_key: null })
+        .eq('id', pendingRowId);
+      return { status: 502, body: { error: mapped.message, code: mapped.code } };
+    }
+    // Ambiguous (network error/timeout/5xx) -- Telnyx may or may not have actually charged the
+    // card. The key is NOT freed: a same-key retry hits the unique constraint (409) instead of
+    // risking a second real charge, and the row keeps counting toward both rate limits
+    // (conservative, per the lead's own review).
     await supabase
       .from('org_billing_events')
-      .update({ status: 'failed', error: mapped.message })
-      .eq('id', pendingRow.id);
-    return { status: 502, body: { error: mapped.message, code: mapped.code } };
+      .update({ status: 'unknown', error: 'outcome unknown' })
+      .eq('id', pendingRowId);
+    return {
+      status: 502,
+      body: {
+        error:
+          "We couldn't confirm the charge with Telnyx. Check your balance in the Telnyx portal before trying again.",
+        code: 'OUTCOME_UNKNOWN',
+      },
+    };
   }
 
   await supabase
     .from('org_billing_events')
-    .update({ status: 'succeeded', telnyx_transaction_id: result.transactionId })
-    .eq('id', pendingRow.id);
+    .update({
+      status: 'succeeded',
+      telnyx_transaction_id: result.transactionId,
+      // eng2 review finding #3 (LOW): Telnyx's own processor_status was read then silently
+      // dropped -- stored here so there's something to reconcile against if it's ever not a
+      // plain success value.
+      request_snapshot: { processorStatus: result.processorStatus },
+    })
+    .eq('id', pendingRowId);
 
   let balance: { balanceUsd: number; availableCreditUsd: number } | null = null;
   try {

@@ -141,6 +141,78 @@ function makeFakeSupabase(seedRows: Partial<FakeRow>[] = []) {
     return builder;
   }
 
+  // Fakes `reserve_add_funds` (migration 20260925080301) -- same logic the real SQL function
+  // runs, against this same in-memory `rows` array, so a test's seeded rows drive both the old
+  // `.from()`-based assertions and this RPC identically. Concurrency/atomicity itself (the actual
+  // point of the advisory lock) can't be exercised in a single-threaded fake -- that's proven
+  // live in audit/BF1/dryrun-tests.sql instead; this fake only proves the counting/error-code
+  // contract billing-core.ts depends on.
+  async function rpc(name: string, params: Record<string, unknown>) {
+    if (name !== 'reserve_add_funds') {
+      throw new Error(`fake supabase: unexpected rpc ${name}`);
+    }
+    const p_org = params.p_org as string;
+    const p_user = params.p_user as string;
+    const p_amount = params.p_amount as number;
+    const p_key = params.p_key as string;
+
+    const dup = rows.find((r) => r.org_id === p_org && r.idempotency_key === p_key);
+    if (dup) {
+      return {
+        data: null,
+        error: { code: 'BF003', message: 'This add-funds request was already submitted.' },
+      };
+    }
+
+    const windowStart = Date.now() - 60_000;
+    const recentCount = rows.filter(
+      (r) =>
+        r.org_id === p_org &&
+        r.kind === 'add_funds' &&
+        ['pending', 'succeeded', 'unknown'].includes(r.status) &&
+        new Date(r.created_at).getTime() >= windowStart
+    ).length;
+    if (recentCount > 0) {
+      return {
+        data: null,
+        error: {
+          code: 'BF001',
+          message: 'Please wait a moment before adding funds again (at most once every 60s).',
+        },
+      };
+    }
+
+    const dayStart = Date.now() - 24 * 60 * 60 * 1000;
+    const dayTotal = rows
+      .filter(
+        (r) =>
+          r.org_id === p_org &&
+          r.kind === 'add_funds' &&
+          ['pending', 'succeeded', 'unknown'].includes(r.status) &&
+          new Date(r.created_at).getTime() >= dayStart
+      )
+      .reduce((sum, r) => sum + Number(r.amount_usd ?? 0), 0);
+    if (dayTotal + p_amount > 2000) {
+      return {
+        data: null,
+        error: {
+          code: 'BF002',
+          message: `This would exceed the $2000.00/24h add-funds limit for this org ($${dayTotal.toFixed(2)} already added in the last 24h).`,
+        },
+      };
+    }
+
+    const inserted = insertRow({
+      org_id: p_org,
+      user_id: p_user,
+      kind: 'add_funds',
+      amount_usd: p_amount,
+      idempotency_key: p_key,
+      status: 'pending',
+    });
+    return { data: inserted.data!.id, error: null };
+  }
+
   return {
     rows,
     from(table: string) {
@@ -149,6 +221,7 @@ function makeFakeSupabase(seedRows: Partial<FakeRow>[] = []) {
       }
       return query();
     },
+    rpc,
   };
 }
 
@@ -326,6 +399,11 @@ Deno.test(
     assertEquals(supabase.rows.length, 1);
     assertEquals(supabase.rows[0].status, 'succeeded');
     assertEquals(supabase.rows[0].telnyx_transaction_id, 'txn-1');
+    // eng2 review finding #3 (LOW): processor_status is no longer silently dropped.
+    assertEquals(
+      (supabase.rows[0].request_snapshot as { processorStatus: string }).processorStatus,
+      'succeeded'
+    );
   }
 );
 
@@ -470,7 +548,41 @@ Deno.test(
 );
 
 Deno.test(
-  'runAddFundsAction: a Telnyx failure during the charge leaves the audit row failed, not pending or succeeded',
+  'runAddFundsAction: a still-PENDING prior attempt (a different in-flight request) DOES block a new one -- the race fix itself',
+  async () => {
+    // This is the positive control for the HIGH finding (lead + eng2 review): the OLD code's two
+    // separate SELECTs only ever looked at status='succeeded', so a still-in-flight 'pending' row
+    // from a concurrent request was invisible to the rate-limit check -- this seeded row proves
+    // the fix actually looks at 'pending' too, not just 'succeeded'.
+    const supabase = makeFakeSupabase([
+      {
+        org_id: ORG,
+        kind: 'add_funds',
+        idempotency_key: '98200000-0000-4000-8000-0000000000a6',
+        status: 'pending',
+        amount_usd: 25,
+        created_at: new Date().toISOString(),
+      },
+    ]);
+    let callCount = 0;
+    const client = makeFakeTelnyxClient({
+      addFunds: async () => {
+        callCount++;
+        return { transactionId: 'x', amountCents: 100, processorStatus: 'succeeded' };
+      },
+    });
+    const result = await runAddFundsAction(supabase as any, client, ORG, USER, {
+      amountUsd: 25,
+      idempotencyKey: VALID_KEY,
+    });
+    assertEquals(result.status, 429);
+    assertEquals(result.body.code, 'RATE_LIMITED');
+    assertEquals(callCount, 0);
+  }
+);
+
+Deno.test(
+  'runAddFundsAction: a DEFINITIVE Telnyx rejection (4xx) marks the row failed AND frees the idempotency key',
   async () => {
     const supabase = makeFakeSupabase();
     const client = makeFakeTelnyxClient({
@@ -488,7 +600,96 @@ Deno.test(
     assertEquals(result.body.code, 'CARD_DECLINED');
     assertEquals(supabase.rows.length, 1);
     assertEquals(supabase.rows[0].status, 'failed');
-    // Never retried -- exactly one row, one attempt.
+    // No charge was attempted (Telnyx rejected it outright) -- the key is freed, unlike an
+    // ambiguous outcome below, so the dialog can mint a new one and let the user retry cleanly.
+    assertEquals(supabase.rows[0].idempotency_key, null);
+  }
+);
+
+Deno.test(
+  'runAddFundsAction: retrying with a NEW key after a definitive rejection succeeds (the key was freed)',
+  async () => {
+    const supabase = makeFakeSupabase();
+    let attempt = 0;
+    const client = makeFakeTelnyxClient({
+      addFunds: async (amountUsd: number) => {
+        attempt++;
+        if (attempt === 1) {
+          throw new Error(
+            'Telnyx API POST /payment/stored_payment_transactions failed (422): {"errors":[{"detail":"card declined"}]}'
+          );
+        }
+        return {
+          transactionId: 'txn-2',
+          amountCents: amountUsd * 100,
+          processorStatus: 'succeeded',
+        };
+      },
+    });
+    const first = await runAddFundsAction(supabase as any, client, ORG, USER, {
+      amountUsd: 25,
+      idempotencyKey: VALID_KEY,
+    });
+    assertEquals(first.status, 502);
+
+    const NEW_KEY = '98200000-0000-4000-8000-0000000000a9';
+    const second = await runAddFundsAction(supabase as any, client, ORG, USER, {
+      amountUsd: 25,
+      idempotencyKey: NEW_KEY,
+    });
+    assertEquals(second.status, 200);
+    assertEquals(second.body.transactionId, 'txn-2');
+    assertEquals(supabase.rows.length, 2);
+    assertEquals(supabase.rows[1].status, 'succeeded');
+  }
+);
+
+Deno.test(
+  'runAddFundsAction: an AMBIGUOUS Telnyx outcome (network error, no status) marks the row unknown, keeps the key, and blocks a same-key retry',
+  async () => {
+    const supabase = makeFakeSupabase();
+    const client = makeFakeTelnyxClient({
+      addFunds: async () => {
+        throw new Error('TypeError: error sending request (connection reset)');
+      },
+    });
+    const first = await runAddFundsAction(supabase as any, client, ORG, USER, {
+      amountUsd: 25,
+      idempotencyKey: VALID_KEY,
+    });
+    assertEquals(first.status, 502);
+    assertEquals(first.body.code, 'OUTCOME_UNKNOWN');
+    assertEquals(supabase.rows.length, 1);
+    assertEquals(supabase.rows[0].status, 'unknown');
+    // The key is KEPT -- a retry under the same key must be blocked, not silently allowed to
+    // charge Telnyx a second time when the first charge's outcome was never actually confirmed.
+    assertEquals(supabase.rows[0].idempotency_key, VALID_KEY);
+
+    const second = await runAddFundsAction(supabase as any, client, ORG, USER, {
+      amountUsd: 25,
+      idempotencyKey: VALID_KEY,
+    });
+    assertEquals(second.status, 409);
+    assertEquals(second.body.code, 'DUPLICATE_REQUEST');
+    assertEquals(supabase.rows.length, 1);
+  }
+);
+
+Deno.test(
+  'runAddFundsAction: a 5xx Telnyx response is also ambiguous, not definitive',
+  async () => {
+    const supabase = makeFakeSupabase();
+    const client = makeFakeTelnyxClient({
+      addFunds: async () => {
+        throw new Error('Telnyx API POST /payment/stored_payment_transactions failed (503): {}');
+      },
+    });
+    const result = await runAddFundsAction(supabase as any, client, ORG, USER, {
+      amountUsd: 25,
+      idempotencyKey: VALID_KEY,
+    });
+    assertEquals(result.body.code, 'OUTCOME_UNKNOWN');
+    assertEquals(supabase.rows[0].status, 'unknown');
     assertEquals(supabase.rows[0].idempotency_key, VALID_KEY);
   }
 );

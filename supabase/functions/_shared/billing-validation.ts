@@ -138,6 +138,27 @@ export function wouldExceedDailyAddFundsCap(
   return succeededLast24hUsd + amountUsd > ADD_FUNDS_DAILY_CAP_USD;
 }
 
+const HTTP_STATUS_RE = /\((\d{3})\)/;
+
+export type AddFundsFailureKind = 'definitive' | 'ambiguous';
+
+/** TASK-BF1 fix (lead + eng2 review, MEDIUM): classifies a thrown telnyx-client add-funds error
+ *  for retry semantics. `telnyxRequest`'s own error message always embeds the HTTP status in
+ *  parens for a real (non-2xx) Telnyx response (`Telnyx API POST ... failed (422): ...`) -- a 4xx
+ *  means Telnyx received and definitively rejected the request (bad key, declined card, no
+ *  payment method, invalid amount): no charge was attempted, so it's safe to free the
+ *  idempotency key and let the caller retry with a fresh one. A 5xx, OR no status at all (the
+ *  `fetch` call itself never got a response -- a network error or timeout), means Telnyx may or
+ *  may not have actually processed the charge -- the key must NOT be freed, so a same-key retry
+ *  stays blocked by the unique index until a human checks the real balance. */
+export function classifyAddFundsFailure(err: unknown): AddFundsFailureKind {
+  const raw = err instanceof Error ? err.message : String(err);
+  const match = raw.match(HTTP_STATUS_RE);
+  if (!match) return 'ambiguous';
+  const status = Number(match[1]);
+  return status >= 400 && status < 500 ? 'definitive' : 'ambiguous';
+}
+
 export interface MappedBillingError {
   code:
     'FORBIDDEN_KEY' | 'NO_PAYMENT_METHOD' | 'CARD_DECLINED' | 'VALIDATION_ERROR' | 'TELNYX_ERROR';

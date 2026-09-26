@@ -406,7 +406,9 @@ export interface BillingEvent {
   user_id: string | null;
   kind: 'add_funds' | 'auto_recharge_update';
   amount_usd: number | null;
-  status: 'pending' | 'succeeded' | 'failed';
+  // 'unknown' (TASK-BF1 fix): Telnyx's own outcome for this charge couldn't be confirmed
+  // (network error/timeout/5xx) -- may or may not have actually charged the card.
+  status: 'pending' | 'succeeded' | 'failed' | 'unknown';
   telnyx_transaction_id: string | null;
   error: string | null;
   created_at: string;
