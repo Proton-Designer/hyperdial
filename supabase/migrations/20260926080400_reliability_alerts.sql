@@ -107,7 +107,10 @@ comment on column public.dial_sessions.stuck_alerted_at is
 -- reap_stale_call_transfers/reap_stale_coaching_sessions) so two concurrent cron runs can never
 -- double-alert on the same stuck spell -- whichever call's UPDATE lands first is the one that
 -- gets the row back. "No webhook/leg progress" is measured as the LATER of the session's own
--- updated_at (bumped by claim_leg/apply_leg_outcome/transition_session -- see dialer_rpcs.sql)
+-- updated_at (bumped by claim_leg/transition_session -- see dialer_rpcs.sql; apply_leg_outcome
+-- itself only ever writes call_legs.outcome_applied_at/campaign_leads, never dial_sessions --
+-- review fix-forward, eng2's review-eng2.md NIT, corrected 2026-09-27, checked directly against
+-- voicemail_drop.sql's own apply_leg_outcome body)
 -- and the most recent call_legs row created for it (a fresh refill is real progress even before
 -- any of those RPCs run again) -- deliberately NOT webhook_events (that table has no session_id
 -- at all, only call_control_id, and is a pure dedupe log, not an activity signal built for this).

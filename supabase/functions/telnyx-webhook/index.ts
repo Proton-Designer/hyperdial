@@ -325,10 +325,16 @@ Deno.serve(async (req: Request) => {
       transferTargetClientState
     ).catch((err) => {
       console.error('telnyx-webhook async processing error:', err);
-      // TASK-T10 (SEC-7 rest): the one integration point for the webhook-error-spike alert --
+      // TASK-T10 review fix-forward (eng2, review-eng2.md SHOULD): this `return` is load-bearing
+      // -- without it, this inner promise isn't part of the chain `processingPromise` resolves
+      // through, so `EdgeRuntime.waitUntil(processingPromise)` below has no signal to keep the
+      // function instance alive for it. An isolate recycled right after the 200 response could
+      // silently drop this record, under-counting the very alert it exists to drive.
       // record_webhook_processing_error is itself best-effort (never let alert bookkeeping turn
-      // a real processing error into an unhandled rejection).
-      supabase
+      // a real processing error into an unhandled rejection) -- the trailing `.catch` below is
+      // what actually delivers that guarantee now that this promise is tracked (a network-level
+      // rejection, not just a Postgrest error object, would otherwise surface as unhandled).
+      return supabase
         .rpc('record_webhook_processing_error', {
           p_org: orgId,
           p_event_type: body?.data?.event_type ?? null,
@@ -337,6 +343,9 @@ Deno.serve(async (req: Request) => {
         .then(({ error }) => {
           if (error)
             console.error('[telnyx-webhook] record_webhook_processing_error failed', error.message);
+        })
+        .catch((rpcErr) => {
+          console.error('[telnyx-webhook] record_webhook_processing_error threw', rpcErr);
         });
     });
     if (typeof EdgeRuntime !== 'undefined') {
