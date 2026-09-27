@@ -20,14 +20,15 @@
 --    `high_lines_guard_enabled` in one `updateCampaignSettings` call).
 -- =================================================================================================
 
-alter table public.campaigns drop constraint campaigns_lines_check;
-alter table public.campaigns add constraint campaigns_lines_check
-  check (lines between 1 and 7 or (lines between 8 and 10 and high_lines_guard_enabled));
-
 alter table public.campaigns
   add column high_lines_guard_enabled boolean not null default false,
   add column high_lines_guard_last_triggered_at timestamptz,
   add column high_lines_guard_last_drop_rate_pct numeric;
+
+-- (lead fix) the constraint must come AFTER the column it references exists
+alter table public.campaigns drop constraint campaigns_lines_check;
+alter table public.campaigns add constraint campaigns_lines_check
+  check (lines between 1 and 7 or (lines between 8 and 10 and high_lines_guard_enabled));
 
 comment on column public.campaigns.high_lines_guard_enabled is
   'MISSION-4 TASK-S2: owner/admin opt-in (default OFF) allowing this campaign''s `lines` to go
