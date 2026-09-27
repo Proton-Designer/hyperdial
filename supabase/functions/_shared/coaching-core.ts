@@ -210,6 +210,7 @@ export async function runStartCoachingAction(
         org: orgId,
         coaching: coachingId,
         mode: mode as CoachingMode,
+        targetSession: targetSession.id,
       }),
       timeoutSecs: COACHING_DIAL_TIMEOUT_SECS,
       timeLimitSecs: COACHING_DIAL_TIME_LIMIT_SECS,

@@ -26,7 +26,9 @@ import { corsHeaders, corsPreflightResponse } from '../_shared/cors.ts';
 import { getConnectedOrgTelnyxContext } from '../_shared/telnyx-org-context.ts';
 import {
   reconcileStaleClaimedLeg,
+  hangUpReapedCoachingSessions,
   type StaleClaimedLegCandidate,
+  type ReapedCoachingSession,
 } from '../_shared/dialer-sweeper-core.ts';
 import type { TelnyxClient } from '../_shared/telnyx-client.ts';
 import { VOICEMAIL_DROP_SWEEP_TIMEOUT_SECONDS } from '../_shared/voicemail-core.ts';
@@ -36,6 +38,13 @@ const STUCK_AFTER_SECONDS = 60;
 // Telnyx whether it's still alive -- see dialer-sweeper-core.ts's own header for why this
 // can't just be a longer version of STUCK_AFTER_SECONDS's own webhook-silence heuristic.
 const CLAIMED_CHECK_AFTER_SECONDS = 300;
+// TASK-T3 review fix-forward (msg-fix-T3.txt): the target session hasn't been on_call for this
+// long -> the coaching leg is almost certainly stale (the coached call ended/dropped).
+const COACHING_STUCK_AFTER_SECONDS = 60;
+// Absolute ceiling on a coaching session regardless of the target's own state -- a runaway
+// manager leg is real per-minute Telnyx billing, so this never waits forever even if the
+// target session's state somehow never leaves on_call.
+const COACHING_HARD_CAP_SECONDS = 2 * 60 * 60;
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -140,6 +149,31 @@ Deno.serve(async (req: Request) => {
     else claimedLeftAlone++;
   }
 
+  // TASK-T3 review fix-forward: SQL has already flipped each returned row to status='ended' --
+  // this is purely the best-effort real Telnyx hangup, same orgClients cache as the loops above.
+  const { data: reapedCoachingData, error: coachingReapError } = await supabase.rpc(
+    'reap_stale_coaching_sessions',
+    {
+      p_stuck_after_seconds: COACHING_STUCK_AFTER_SECONDS,
+      p_hard_cap_seconds: COACHING_HARD_CAP_SECONDS,
+    }
+  );
+  if (coachingReapError) {
+    console.error(
+      '[dialer-sweeper] reap_stale_coaching_sessions failed',
+      coachingReapError.message
+    );
+  }
+  const reapedCoachingSessions = (reapedCoachingData ?? []) as ReapedCoachingSession[];
+  const coachingHungUp = await hangUpReapedCoachingSessions(reapedCoachingSessions, {
+    resolveClient: async (orgId) => {
+      if (!orgClients.has(orgId)) {
+        orgClients.set(orgId, await getConnectedOrgTelnyxContext(supabase, orgId));
+      }
+      return orgClients.get(orgId)?.client ?? null;
+    },
+  });
+
   console.log('[dialer-sweeper] sweep_done', {
     reaped: result.reaped_legs?.length ?? 0,
     hungUp,
@@ -150,6 +184,8 @@ Deno.serve(async (req: Request) => {
     reapedClaimedTimeout,
     reapedClaimedConfirmedDead,
     claimedLeftAlone,
+    reapedCoachingSessions: reapedCoachingSessions.length,
+    coachingHungUp,
   });
 
   return jsonResponse({
@@ -162,5 +198,7 @@ Deno.serve(async (req: Request) => {
     reapedClaimedTimeout,
     reapedClaimedConfirmedDead,
     claimedLeftAlone,
+    reapedCoachingSessions: reapedCoachingSessions.length,
+    coachingHungUp,
   });
 });

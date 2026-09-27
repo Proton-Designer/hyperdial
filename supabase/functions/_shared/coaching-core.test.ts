@@ -316,6 +316,7 @@ Deno.test(
       coaching: 'coaching-1',
       kind: 'coaching',
       mode: 'whisper',
+      targetSession: 's-target',
     });
   }
 );

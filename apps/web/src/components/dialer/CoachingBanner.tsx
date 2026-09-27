@@ -1,14 +1,24 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Ear, Mic, PhoneOff, Radio } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { switchCoachingMode, type CoachingMode } from '@/lib/api';
+import { switchCoachingMode, getDialerSession, type CoachingMode } from '@/lib/api';
 
 interface CoachingBannerProps {
   coachingId: string;
   mode: CoachingMode;
+  /** TASK-T3 review fix-forward (review-eng1.md #1): the coached session's own id, so this
+   *  banner can poll it and auto-hang-up once it's no longer `on_call` -- '' (a pre-fix client
+   *  build, or a malformed/missing client_state field) just disables this ONE safety layer, the
+   *  server-side sweeper (`reap_stale_coaching_sessions`) still covers it either way. */
+  targetSessionId: string;
   onModeChanged: (mode: CoachingMode) => void;
   onLeave: () => void;
 }
+
+/** How often to poll the target session while coaching -- fast enough that "the call ended, why
+ *  is my line still open" never lingers more than a few seconds, cheap enough (one GET) to run
+ *  for the lifetime of a coaching session. */
+const TARGET_SESSION_POLL_MS = 4000;
 
 const MODE_META: Record<CoachingMode, { label: string; icon: typeof Ear }> = {
   listen: { label: 'Listen', icon: Ear },
@@ -24,9 +34,44 @@ const MODE_META: Record<CoachingMode, { label: string; icon: typeof Ear }> = {
  * useTelnyxCall's own `hangup()`) -- there is no server "end" endpoint at all, see
  * coaching-core.ts's own header for why.
  */
-export function CoachingBanner({ coachingId, mode, onModeChanged, onLeave }: CoachingBannerProps) {
+export function CoachingBanner({
+  coachingId,
+  mode,
+  targetSessionId,
+  onModeChanged,
+  onLeave,
+}: CoachingBannerProps) {
   const [switching, setSwitching] = useState<CoachingMode | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [targetEnded, setTargetEnded] = useState(false);
+  // `onLeave` (hangup) is a fresh closure every render (Dialer.tsx) -- a ref keeps the poll
+  // effect below from needing it in its dependency array, so it never tears down/restarts the
+  // interval on every parent re-render, only when targetSessionId itself actually changes.
+  const onLeaveRef = useRef(onLeave);
+  onLeaveRef.current = onLeave;
+
+  useEffect(() => {
+    if (!targetSessionId) return;
+    let stopped = false;
+    const poll = async () => {
+      try {
+        const { session } = await getDialerSession(targetSessionId);
+        if (stopped) return;
+        if (session.state !== 'on_call') {
+          setTargetEnded(true);
+          onLeaveRef.current();
+        }
+      } catch {
+        // A transient fetch failure (network blip) should never auto-hang-up the manager's own
+        // leg on a false positive -- just try again on the next tick.
+      }
+    };
+    const interval = setInterval(() => void poll(), TARGET_SESSION_POLL_MS);
+    return () => {
+      stopped = true;
+      clearInterval(interval);
+    };
+  }, [targetSessionId]);
 
   const handleSwitch = async (next: CoachingMode) => {
     if (next === mode || switching) return;
@@ -53,6 +98,9 @@ export function CoachingBanner({ coachingId, mode, onModeChanged, onLeave }: Coa
         </Button>
       </div>
       {error && <p className="text-meta text-danger mb-2">{error}</p>}
+      {targetEnded && (
+        <p className="text-meta text-text-secondary mb-2">Call ended, coaching stopped.</p>
+      )}
       <div className="flex items-center gap-1.5">
         {(Object.keys(MODE_META) as CoachingMode[]).map((m) => {
           const meta = MODE_META[m];
@@ -64,7 +112,7 @@ export function CoachingBanner({ coachingId, mode, onModeChanged, onLeave }: Coa
               type="button"
               size="sm"
               variant={active ? 'fe-secondary' : 'fe-ghost'}
-              disabled={switching !== null}
+              disabled={switching !== null || targetEnded}
               onClick={() => void handleSwitch(m)}
             >
               <Icon className="w-3.5 h-3.5" />

@@ -729,6 +729,7 @@ function DialerBody({
           <CoachingBanner
             coachingId={activeCoaching.coachingId}
             mode={activeCoaching.mode}
+            targetSessionId={activeCoaching.targetSessionId}
             onModeChanged={setActiveCoachingMode}
             onLeave={hangup}
           />,

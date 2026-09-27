@@ -89,7 +89,7 @@ const COACHING_MODES: CoachingMode[] = ['listen', 'whisper', 'barge'];
 
 function decodeCoachingClientState(
   value: unknown
-): { org: string; coaching: string; mode: CoachingMode } | null {
+): { org: string; coaching: string; mode: CoachingMode; targetSession: string } | null {
   if (typeof value !== 'string' || !value) return null;
   let decoded: Record<string, unknown>;
   try {
@@ -97,13 +97,17 @@ function decodeCoachingClientState(
   } catch {
     return null;
   }
-  const { org, coaching, kind, mode } = decoded;
+  const { org, coaching, kind, mode, targetSession } = decoded;
   if (kind !== 'coaching' || typeof org !== 'string' || !org) return null;
   if (typeof coaching !== 'string' || !coaching) return null;
   return {
     org,
     coaching,
     mode: COACHING_MODES.includes(mode as CoachingMode) ? (mode as CoachingMode) : 'listen',
+    // TASK-T3 review fix-forward (review-eng1.md #1): only ever used by CoachingBanner's own
+    // banner-polling safety layer -- '' (rather than rejecting the whole decode) just means that
+    // one UI feature can't run for this leg, same reasoning as client-state.ts's own decoder.
+    targetSession: typeof targetSession === 'string' ? targetSession : '',
   };
 }
 
@@ -154,6 +158,7 @@ export function useTelnyxCall(options: UseTelnyxCallOptions = {}) {
   const [activeCoaching, setActiveCoaching] = useState<{
     coachingId: string;
     mode: CoachingMode;
+    targetSessionId: string;
   } | null>(null);
   /** TASK-L1: the SDK re-fires telnyx.notification repeatedly as an inbound call's state
    *  changes (new -> ringing -> ...) -- decide answer-vs-reject exactly once per call id, not
@@ -311,7 +316,11 @@ export function useTelnyxCall(options: UseTelnyxCallOptions = {}) {
                   const coaching = decodeCoachingClientState(call.options?.clientState);
                   if (coaching) {
                     inboundCallDecisionsRef.current.set(call.id, 'answered');
-                    setActiveCoaching({ coachingId: coaching.coaching, mode: coaching.mode });
+                    setActiveCoaching({
+                      coachingId: coaching.coaching,
+                      mode: coaching.mode,
+                      targetSessionId: coaching.targetSession,
+                    });
                     const currentOptions = optionsRef.current;
                     Promise.resolve(
                       call.answer(

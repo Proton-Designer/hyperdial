@@ -43,6 +43,12 @@ export interface CoachingClientState {
    *  row (coaching_sessions.mode) stays authoritative for every server-side decision; nothing
    *  here is ever trusted for anything but what label to show. */
   mode: CoachingMode;
+  /** TASK-T3 review fix-forward (review-eng1.md #1): `dial_sessions.id` of the session being
+   *  coached, round-tripped purely so CoachingBanner.tsx can poll `dialer-session-get?
+   *  sessionId=<this>` (already owner/admin-readable for ANY session in the org) and
+   *  auto-hang-up the manager's own leg once that session leaves `on_call` -- never trusted for
+   *  any server-side decision, same as `mode` above. */
+  targetSession: string;
 }
 
 function isNonEmptyString(value: unknown): value is string {
@@ -51,22 +57,41 @@ function isNonEmptyString(value: unknown): value is string {
 
 const COACHING_MODES: CoachingMode[] = ['listen', 'whisper', 'barge'];
 
-/** Throws on invalid input -- same contract as encodeDialClientState/encodeInboundClientState. */
+/** Throws on invalid input -- same contract as encodeDialClientState/encodeInboundClientState.
+ *  `targetSession` must be a non-empty string too -- every real caller (coaching-core.ts's
+ *  `runStartCoachingAction`) always has the target session's id in scope at dial time; there is
+ *  no legitimate case for omitting it. */
 export function encodeCoachingClientState(state: Omit<CoachingClientState, 'kind'>): string {
-  if (!isNonEmptyString(state.org) || !isNonEmptyString(state.coaching)) {
-    throw new Error('encodeCoachingClientState: org and coaching are required non-empty strings');
+  if (
+    !isNonEmptyString(state.org) ||
+    !isNonEmptyString(state.coaching) ||
+    !isNonEmptyString(state.targetSession)
+  ) {
+    throw new Error(
+      'encodeCoachingClientState: org, coaching and targetSession are required non-empty strings'
+    );
   }
   if (!COACHING_MODES.includes(state.mode)) {
     throw new Error(`encodeCoachingClientState: invalid mode '${state.mode}'`);
   }
   return btoa(
-    JSON.stringify({ org: state.org, coaching: state.coaching, kind: 'coaching', mode: state.mode })
+    JSON.stringify({
+      org: state.org,
+      coaching: state.coaching,
+      kind: 'coaching',
+      mode: state.mode,
+      targetSession: state.targetSession,
+    })
   );
 }
 
 /** Never throws -- untrusted input from a webhook. Returns null on anything malformed, or on a
  *  well-formed DialClientState/InboundClientState (both decode to objects with no `coaching`
- *  key), so a single client_state value can be tried against all three decoders safely. */
+ *  key), so a single client_state value can be tried against all three decoders safely.
+ *  `targetSession` defaults to '' (not rejected) when absent/malformed -- it is ONLY ever used
+ *  by the browser's own banner-polling safety layer (review-eng1.md #1), never by any
+ *  server-side decision, so a bad/missing value should degrade that one UI feature, not the
+ *  whole coaching leg's ability to decode at all. */
 export function decodeCoachingClientState(
   value: string | null | undefined
 ): CoachingClientState | null {
@@ -87,7 +112,8 @@ export function decodeCoachingClientState(
   const mode: CoachingMode = COACHING_MODES.includes(decoded.mode as CoachingMode)
     ? (decoded.mode as CoachingMode)
     : 'listen';
-  return { org: decoded.org, coaching: decoded.coaching, kind: 'coaching', mode };
+  const targetSession = isNonEmptyString(decoded.targetSession) ? decoded.targetSession : '';
+  return { org: decoded.org, coaching: decoded.coaching, kind: 'coaching', mode, targetSession };
 }
 
 /** Throws on invalid input — callers build this from trusted, already-validated IDs.

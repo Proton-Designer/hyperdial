@@ -103,3 +103,51 @@ export async function reconcileStaleClaimedLeg(
   await bestEffortHangup(deps.client, candidate.call_control_id);
   return 'reaped_confirmed_dead';
 }
+
+/**
+ * TASK-T3 review fix-forward (eng1's review-eng1.md #1): the server-side safety net for a
+ * coaching manager's own leg outliving the coached call (a crashed/backgrounded tab -- the
+ * client-side poll in CoachingBanner.tsx is the normal, fast path; this only matters when that
+ * never runs). `reap_stale_coaching_sessions` (SQL,
+ * `20260926070001_coaching_autoend.sql`) has ALREADY flipped each returned row's
+ * `coaching_sessions.status` to 'ended' by the time this runs -- unlike
+ * `reconcileStaleClaimedLeg`, there is no live Telnyx "is it actually dead" check to make here
+ * (staleness was derived from the TARGET session's own state, not from asking Telnyx anything),
+ * so this function's only job is the best-effort real hangup, one Telnyx client per org.
+ */
+export interface ReapedCoachingSession {
+  id: string;
+  org_id: string;
+  manager_call_control_id: string | null;
+}
+
+export interface HangUpReapedCoachingSessionsDeps {
+  /** Resolves (and should itself cache/memoize) a connected org's Telnyx client. Returns null
+   *  for an org with no usable connection -- that org's rows are just skipped, never fatal. */
+  resolveClient: (orgId: string) => Promise<TelnyxClient | null>;
+}
+
+export async function hangUpReapedCoachingSessions(
+  rows: ReapedCoachingSession[],
+  deps: HangUpReapedCoachingSessionsDeps
+): Promise<number> {
+  let hungUp = 0;
+  for (const row of rows) {
+    // A coaching session can be reaped before the manager's own dial() ever returned a
+    // call_control_id (a crash mid-start) -- nothing real to hang up.
+    if (!row.manager_call_control_id) continue;
+    const client = await deps.resolveClient(row.org_id);
+    if (!client) continue;
+    try {
+      // Deliberately NOT bestEffortHangup -- that helper swallows the outcome entirely, and
+      // the return count here should reflect real successes (dialer-sweeper/index.ts's own
+      // reaped_legs loop, the pattern this mirrors, counts the same way).
+      await client.hangup(row.manager_call_control_id);
+      hungUp++;
+    } catch {
+      // Our own bookkeeping already reads 'ended' regardless (set by the SQL reap itself,
+      // before this ever runs) -- nothing left to escalate to.
+    }
+  }
+  return hungUp;
+}

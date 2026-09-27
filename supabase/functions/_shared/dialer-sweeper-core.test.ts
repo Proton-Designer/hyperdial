@@ -9,7 +9,12 @@
  * function happens to return the right label).
  */
 import { assertEquals } from 'jsr:@std/assert@1';
-import { reconcileStaleClaimedLeg, type StaleClaimedLegCandidate } from './dialer-sweeper-core.ts';
+import {
+  reconcileStaleClaimedLeg,
+  hangUpReapedCoachingSessions,
+  type StaleClaimedLegCandidate,
+  type ReapedCoachingSession,
+} from './dialer-sweeper-core.ts';
 import type { TelnyxClient } from './telnyx-client.ts';
 
 const CANDIDATE: StaleClaimedLegCandidate = {
@@ -247,5 +252,94 @@ Deno.test(
     });
     assertEquals(outcome, 'inconclusive');
     assertEquals(rpcCalls.length, 0);
+  }
+);
+
+// TASK-T3 review fix-forward (msg-fix-T3.txt): hangUpReapedCoachingSessions.
+
+function fakeTelnyxHangupOnly(hangup: TelnyxClient['hangup']): TelnyxClient {
+  return { hangup } as unknown as TelnyxClient;
+}
+
+Deno.test(
+  'hangUpReapedCoachingSessions: hangs up every row with a manager_call_control_id, one client resolution per org',
+  async () => {
+    const hangupCalls: string[] = [];
+    const resolveCalls: string[] = [];
+    const rows: ReapedCoachingSession[] = [
+      { id: 'cs-1', org_id: 'org-1', manager_call_control_id: 'call-mgr-1' },
+      { id: 'cs-2', org_id: 'org-1', manager_call_control_id: 'call-mgr-2' },
+      { id: 'cs-3', org_id: 'org-2', manager_call_control_id: 'call-mgr-3' },
+    ];
+    const client = fakeTelnyxHangupOnly((id) => {
+      hangupCalls.push(id);
+      return Promise.resolve();
+    });
+    const hungUp = await hangUpReapedCoachingSessions(rows, {
+      resolveClient: (orgId) => {
+        resolveCalls.push(orgId);
+        return Promise.resolve(client);
+      },
+    });
+    assertEquals(hungUp, 3);
+    assertEquals(hangupCalls, ['call-mgr-1', 'call-mgr-2', 'call-mgr-3']);
+    // Positive control: not just "it works", but that it resolves once per ROW (the caller,
+    // dialer-sweeper/index.ts, is the one that actually caches per-org -- this function itself
+    // makes no such assumption about its resolveClient dependency).
+    assertEquals(resolveCalls, ['org-1', 'org-1', 'org-2']);
+  }
+);
+
+Deno.test(
+  'hangUpReapedCoachingSessions: a null manager_call_control_id (crash mid-start) is skipped, never asked about',
+  async () => {
+    const rows: ReapedCoachingSession[] = [
+      { id: 'cs-1', org_id: 'org-1', manager_call_control_id: null },
+    ];
+    let resolved = false;
+    const hungUp = await hangUpReapedCoachingSessions(rows, {
+      resolveClient: () => {
+        resolved = true;
+        return Promise.resolve(fakeTelnyxHangupOnly(() => Promise.resolve()));
+      },
+    });
+    assertEquals(hungUp, 0);
+    assertEquals(resolved, false, 'a null call_control_id must never even resolve a client');
+  }
+);
+
+Deno.test(
+  'hangUpReapedCoachingSessions: no connected client for the org -> skipped, not a crash',
+  async () => {
+    const rows: ReapedCoachingSession[] = [
+      { id: 'cs-1', org_id: 'org-1', manager_call_control_id: 'call-mgr-1' },
+    ];
+    const hungUp = await hangUpReapedCoachingSessions(rows, {
+      resolveClient: () => Promise.resolve(null),
+    });
+    assertEquals(hungUp, 0);
+  }
+);
+
+Deno.test(
+  'hangUpReapedCoachingSessions: a hangup that throws is swallowed and not counted, never a crash',
+  async () => {
+    const rows: ReapedCoachingSession[] = [
+      { id: 'cs-1', org_id: 'org-1', manager_call_control_id: 'call-mgr-1' },
+      { id: 'cs-2', org_id: 'org-1', manager_call_control_id: 'call-mgr-2' },
+    ];
+    const hangupCalls: string[] = [];
+    const client = fakeTelnyxHangupOnly((id) => {
+      if (id === 'call-mgr-1') return Promise.reject(new Error('already gone'));
+      hangupCalls.push(id);
+      return Promise.resolve();
+    });
+    const hungUp = await hangUpReapedCoachingSessions(rows, {
+      resolveClient: () => Promise.resolve(client),
+    });
+    // Positive control: the SECOND row's real hangup still went out despite the first throwing --
+    // proves the failure is caught per-row, not one that aborts the whole loop.
+    assertEquals(hungUp, 1);
+    assertEquals(hangupCalls, ['call-mgr-2']);
   }
 );
