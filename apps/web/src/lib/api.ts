@@ -1253,6 +1253,11 @@ export interface Campaign {
   calling_window_start: string;
   calling_window_end: string;
   abandon_message_enabled: boolean;
+  /** MISSION-4 TASK-T5 (CRD-4, NO AI): owner/admin-edited in Campaign settings, shown collapsible
+   *  on the connected-call card. Both null until an admin sets them -- no default script/pitch is
+   *  invented for a campaign that hasn't configured one. */
+  script_text: string | null;
+  objection_sheet_text: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -1362,6 +1367,9 @@ export interface CampaignSettingsInput {
   calling_window_start?: string;
   calling_window_end?: string;
   abandon_message_enabled?: boolean;
+  /** MISSION-4 TASK-T5 (CRD-4). */
+  script_text?: string | null;
+  objection_sheet_text?: string | null;
 }
 
 /**

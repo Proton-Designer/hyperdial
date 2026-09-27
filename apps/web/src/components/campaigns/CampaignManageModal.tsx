@@ -250,6 +250,8 @@ export function CampaignManageModal({
           calling_window_start: c.calling_window_start,
           calling_window_end: c.calling_window_end,
           abandon_message_enabled: c.abandon_message_enabled,
+          script_text: c.script_text,
+          objection_sheet_text: c.objection_sheet_text,
         });
       }
     } catch {
@@ -888,6 +890,40 @@ export function CampaignManageModal({
                           )
                         }
                         className="w-full bg-surface-1 border border-white/10 rounded-lg px-3 py-2 text-white"
+                      />
+                    </div>
+                    <div className="sm:col-span-2 lg:col-span-3">
+                      <label className="text-sm text-text-secondary block mb-1">Call Script</label>
+                      <textarea
+                        rows={4}
+                        value={settingsForm.script_text ?? ''}
+                        onChange={(e) =>
+                          setSettingsForm((f) =>
+                            f ? { ...f, script_text: e.target.value || null } : f
+                          )
+                        }
+                        placeholder="Hi, this is {agent} calling from {company}..."
+                        className="w-full bg-surface-1 border border-white/10 rounded-lg px-3 py-2 text-white placeholder:text-text-secondary/50 resize-y"
+                      />
+                      <p className="text-xs text-text-secondary/70 mt-1">
+                        Shown collapsible on the intern's call card once a human answers. No AI --
+                        plain reference text.
+                      </p>
+                    </div>
+                    <div className="sm:col-span-2 lg:col-span-3">
+                      <label className="text-sm text-text-secondary block mb-1">
+                        Objection Sheet
+                      </label>
+                      <textarea
+                        rows={4}
+                        value={settingsForm.objection_sheet_text ?? ''}
+                        onChange={(e) =>
+                          setSettingsForm((f) =>
+                            f ? { ...f, objection_sheet_text: e.target.value || null } : f
+                          )
+                        }
+                        placeholder={'Objection: "Not interested"\nResponse: ...'}
+                        className="w-full bg-surface-1 border border-white/10 rounded-lg px-3 py-2 text-white placeholder:text-text-secondary/50 resize-y"
                       />
                     </div>
                   </div>
