@@ -610,6 +610,55 @@ Records the WINNING contact leg only, never a loser, starting the moment it's ac
   `Dialer.tsx` mount and falling back to the hardcoded default list on any fetch failure --
   never blocks the button on that fetch succeeding.
 
+### Distribution guards: callback fallback, bulk reassign, daily dial cap (MISSION-5 TASK-M5-B3)
+
+- `org_distribution_settings` (org-wide, both OFF by default): `callback_fallback_enabled` +
+  `callback_fallback_minutes` (default 30), `daily_dial_cap_enabled` + `daily_dial_cap_default`
+  (default 300). `org_agent_dial_caps` holds a per-agent override (absence = org default). Both
+  reuse TASK-M5-A1's generic settings-change audit trigger verbatim -- no new logging code.
+- **Callback fallback**: `claim_next_leads`' own `picked`/candidate WHERE clause gained a third
+  branch alongside "queued, unowned or mine" and "callback, mine" -- a `'callback'` row NOT owned
+  by the requesting agent becomes claimable when fallback is enabled AND it's been overdue
+  (`next_attempt_at`) for at least the configured window AND (the owner is disabled/removed from
+  the org OR the owner currently holds no non-terminal `dial_sessions` row at all). The claiming
+  agent becomes the new `assigned_agent_id` (ownership transfers, not just a one-time claim) --
+  logged once per `claim_next_leads` call (`campaign_leads.callback_fallback_claim`, batched
+  count) via `private.log_org_action`. Implemented as a `for ... in (<the same select>) loop
+  return next ...` instead of the original `return query <select>` shape specifically so the
+  function can count fallback claims and log once, AFTER the loop -- a CTE like `picked` is only
+  visible inside the single statement it's part of, so a separate post-hoc query referencing it
+  is not possible.
+- **Bulk reassign "from agent X"**: `assign_campaign_leads` gained a `by_current_agent` filter
+  mode (`{"mode": "by_current_agent", "from_agent_id": "..."}`) -- the only mode whose candidate
+  pool also includes `'callback'` rows (every other mode stays `'queued'`-only, unchanged).
+  `p_agent_id: null` reassigns to the pool (that half of the signature already existed).
+- **EC-5 fix** (applies to every `assign_campaign_leads` mode, not just the new one): the
+  function's own UPDATE now re-checks `cl.status in ('queued', 'callback')` directly against the
+  row it's about to write, not just the earlier `candidates` CTE snapshot. Postgres re-evaluates
+  an `UPDATE ... FROM`'s join condition against the row's latest committed version once it
+  acquires the row's lock -- a row a concurrent `claim_next_leads` call already flipped to
+  `'in_flight'` while this UPDATE was waiting is now correctly excluded, instead of being
+  silently reassigned out from under a live dial. This was a real, pre-existing gap since
+  `20260926070003` first shipped `assign_campaign_leads`; this task's own dry-run is the first
+  thing to prove it either way.
+- **Daily dial cap**: `agent_daily_dial_status(org, agent, tz)` (service_role only) reads the
+  settings + override + counts today's `kind='contact'` legs for that agent, org-timezone-aware
+  (same placeholder-'America/Chicago' convention as TASK-M5-B1's `agent_time_in_state`, pending a
+  real org timezone from TASK-M5-A4). `refillSession` calls it BEFORE `claim_next_leads` (same
+  "pause before claiming, never fail mid-claim" shape as the existing numbers-availability
+  check) -- if the cap is already met, the session pauses (`pause_reason:
+  'daily_dial_cap_reached'`, a DialerStateBanner case exists for it) and owners/admins get one
+  `notifications` row, gated on `transition_session`'s own CAS actually succeeding (so a later
+  refill attempt while already paused can't double-notify -- no separate dedup needed, same
+  free "only fires once" property `no_numbers_available` already relies on).
+- **Fake-Supabase fix found while testing this** (`dialer-fake-supabase.ts`): `FakeQuery.insert()`
+  only ever handled a single-row payload -- a bulk `.insert([row, row, ...])` (the
+  `notifyOwnersAndAdmins` shape already used by `reliability-alert-check`/
+  `campaign-lines-guard-check`) silently stored the WHOLE ARRAY as one fake row (arrays have no
+  `.id`, so it landed under one random uuid key), making every row inside it invisible to a
+  normal table scan. Fixed generically (handles both shapes); this is the first deno test in
+  this shared fake to exercise a bulk insert, so nothing caught it before.
+
 ## Not covered here
 
 - Telnyx numbers, WebRTC credentials, raw API wrappers → `.brain/domains/telephony.md`; campaigns

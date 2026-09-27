@@ -59,7 +59,7 @@ function matchesFilters(
 export class FakeQuery implements PromiseLike<{ data: unknown; error: null }> {
   private filters: [string, 'eq' | 'neq' | 'is' | 'in', unknown][] = [];
   private mode: 'select' | 'insert' | 'update' | 'delete' = 'select';
-  private payload: Row = {};
+  private payload: Row | Row[] = {};
   private singleMode: 'single' | 'maybeSingle' | null = null;
   private limitCount: number | null = null;
   private insertedRow: Row | null = null;
@@ -74,7 +74,7 @@ export class FakeQuery implements PromiseLike<{ data: unknown; error: null }> {
   select(_cols?: string): this {
     return this;
   }
-  insert(payload: Row): this {
+  insert(payload: Row | Row[]): this {
     this.mode = 'insert';
     this.payload = payload;
     return this;
@@ -124,6 +124,18 @@ export class FakeQuery implements PromiseLike<{ data: unknown; error: null }> {
 
   private execute(): { data: unknown; error: null } {
     if (this.mode === 'insert') {
+      // MISSION-5 TASK-M5-B3 fix: a bulk `.insert([row, row, ...])` (notifyOwnersAndAdmins' own
+      // established shape, e.g. reliability-alert-check/campaign-lines-guard-check) used to be
+      // stored as ONE fake row whose value was the array itself (`db.insert` reads `row.id`,
+      // which an array doesn't have, so it silently keyed the whole array under one random
+      // uuid) -- any single-row `.insert(obj)` call elsewhere in this file was never affected,
+      // only a genuinely bulk array payload was. Fixed to insert each element individually,
+      // matching real Postgrest's own array-insert semantics.
+      if (Array.isArray(this.payload)) {
+        const inserted = this.payload.map((row) => this.db.insert(this.table, row));
+        this.insertedRow = inserted[0] ?? null;
+        return { data: inserted, error: null };
+      }
       this.insertedRow = this.db.insert(this.table, this.payload);
       return { data: this.singleMode ? this.insertedRow : [this.insertedRow], error: null };
     }
@@ -498,6 +510,38 @@ function rpc(
         number.resting_until = null;
       }
       return { data: null, error: null };
+    }
+
+    // MISSION-5 TASK-M5-B3: mirrors agent_daily_dial_status (20260927070004_distribution_
+    // guards.sql) -- org_distribution_settings absent/disabled (the common case: no fixture
+    // ever seeds it) returns cap_enabled: false, exactly like the real SQL's own
+    // "v_enabled is null or not v_enabled" branch, so every pre-existing refillSession test
+    // (none of which know this feature exists) sees zero behavior change.
+    case 'agent_daily_dial_status': {
+      const orgId = args.p_org as string;
+      const agentId = args.p_agent as string;
+      const settings = db.table('org_distribution_settings').get(orgId);
+      const enabled = Boolean(settings?.daily_dial_cap_enabled);
+      if (!enabled) {
+        return {
+          data: [{ cap_enabled: false, effective_cap: null, dialed_today: null }],
+          error: null,
+        };
+      }
+      const defaultCap = (settings!.daily_dial_cap_default as number | undefined) ?? 300;
+      const override = db.table('org_agent_dial_caps').get(`${orgId}|${agentId}`);
+      const effectiveCap = (override?.daily_cap as number | undefined) ?? defaultCap;
+      const today = fakeToday();
+      const dialedToday = [...db.table('call_legs').values()].filter((leg) => {
+        if (leg.kind !== 'contact') return false;
+        const session = db.table('dial_sessions').get(leg.session_id as string);
+        if (!session || session.org_id !== orgId || session.agent_id !== agentId) return false;
+        return typeof leg.created_at === 'string' && leg.created_at.slice(0, 10) === today;
+      }).length;
+      return {
+        data: [{ cap_enabled: true, effective_cap: effectiveCap, dialed_today: dialedToday }],
+        error: null,
+      };
     }
 
     default:

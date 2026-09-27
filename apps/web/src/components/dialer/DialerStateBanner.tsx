@@ -156,6 +156,22 @@ export function DialerStateBanner({
     );
   }
 
+  if (sessionState === 'paused' && pauseReason === 'daily_dial_cap_reached') {
+    return (
+      <StatusBanner
+        tone="error"
+        icon={<AlertTriangle className="w-5 h-5" />}
+        title="You've reached your daily dial cap"
+        detail="Your manager has been notified. Ask them to raise your cap in Settings if you need to keep dialing today."
+        action={
+          <Button variant="primary" onClick={onResume} disabled={resuming}>
+            {resuming ? 'Resuming…' : 'Resume'}
+          </Button>
+        }
+      />
+    );
+  }
+
   if (sessionState === 'paused' && pauseReason === 'post_wrapup') {
     const counting = typeof autoResumeSecondsLeft === 'number' && autoResumeSecondsLeft > 0;
     return (

@@ -762,6 +762,42 @@ async function dialAgentLegInternal(
   }
 }
 
+/** MISSION-5 TASK-M5-B3: mirrors reliability-alert-check's/campaign-lines-guard-check's own
+ *  `notifyOwnersAndAdmins` verbatim (not yet extracted to `_shared`, same NIT those two already
+ *  carry) -- one `notifications` row per active owner/admin. */
+async function notifyOwnersAndAdminsOfDailyCap(
+  supabase: SupabaseClient,
+  orgId: string,
+  agentId: string,
+  effectiveCap: number
+): Promise<void> {
+  const { data: members, error } = await supabase
+    .from('org_members')
+    .select('user_id')
+    .eq('org_id', orgId)
+    .eq('status', 'active')
+    .in('role', ['owner', 'admin']);
+  if (error || !members?.length) return;
+
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('first_name, last_name')
+    .eq('user_id', agentId)
+    .maybeSingle();
+  const agentName =
+    [profile?.first_name, profile?.last_name].filter(Boolean).join(' ').trim() || 'An agent';
+
+  await supabase.from('notifications').insert(
+    (members as { user_id: string }[]).map((m) => ({
+      org_id: orgId,
+      user_id: m.user_id,
+      type: 'daily_dial_cap_reached',
+      title: 'Daily dial cap reached',
+      body: `${agentName} hit their daily dial cap of ${effectiveCap} and has been paused. Raise their cap in Settings if this was expected.`,
+    }))
+  );
+}
+
 export async function refillSession(
   supabase: SupabaseClient,
   orgId: string,
@@ -833,6 +869,45 @@ export async function refillSession(
       });
       return { dialed: 0 };
     }
+  }
+
+  // MISSION-5 TASK-M5-B3: per-agent daily dial cap. Same "pause BEFORE claim_next_leads, never
+  // fail mid-claim" shape as the numbers-availability check just above -- agent_daily_dial_status
+  // (SQL) does the settings lookup + org-timezone-aware count in one round trip, service_role
+  // only. `transition_session`'s own CAS means the notification below only ever fires the FIRST
+  // time this session crosses into the paused state for this reason (a later refill attempt
+  // while already paused finds `p_expected_states: ['dialing']` no longer matches, so the
+  // transition -- and the notification gated on it -- both no-op), no separate dedup needed.
+  const { data: capStatus, error: capError } = await supabase.rpc('agent_daily_dial_status', {
+    p_org: orgId,
+    p_agent: session.agent_id,
+  });
+  if (capError) {
+    throw new Error(`agent_daily_dial_status: ${capError.message}`);
+  }
+  const cap = (capStatus ?? [])[0] as
+    { cap_enabled: boolean; effective_cap: number | null; dialed_today: number | null } | undefined;
+  if (
+    cap?.cap_enabled &&
+    cap.effective_cap != null &&
+    (cap.dialed_today ?? 0) >= cap.effective_cap
+  ) {
+    dialerLog('refill_pause_daily_dial_cap_reached', {
+      sessionId,
+      agentId: session.agent_id,
+      effectiveCap: cap.effective_cap,
+      dialedToday: cap.dialed_today,
+    });
+    const { data: justPaused } = await supabase.rpc('transition_session', {
+      p_session: sessionId,
+      p_expected_states: ['dialing'],
+      p_new_state: 'paused',
+      p_fields: { pause_reason: 'daily_dial_cap_reached' },
+    });
+    if (justPaused) {
+      await notifyOwnersAndAdminsOfDailyCap(supabase, orgId, session.agent_id, cap.effective_cap);
+    }
+    return { dialed: 0 };
   }
 
   const { client, callControlAppId, error } = await getConnectedOrgTelnyxContext(supabase, orgId);

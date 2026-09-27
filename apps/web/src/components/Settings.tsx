@@ -26,6 +26,7 @@ import {
   Trophy,
   History,
   Download,
+  Share2,
 } from 'lucide-react';
 import { usePhoneNumbers } from '@/contexts/PhoneNumbersContext';
 import { useAuth } from '@/contexts/AuthContext';
@@ -107,6 +108,9 @@ import {
   setPhoneNumberStatus,
   getSpendSettings,
   updateSpendSettings,
+  getDistributionSettings,
+  updateDistributionSettings,
+  type DistributionSettings,
   getSpendStatus,
   getInboundSettings,
   updateInboundSettings,
@@ -144,7 +148,15 @@ import { rowsToCsv, downloadCsv } from '@/lib/csv';
 import { normalizePhoneStrict } from '@/lib/phone-normalize';
 
 type SettingsTab =
-  'profile' | 'phone' | 'team' | 'integrations' | 'dispositions' | 'dnc' | 'activity' | 'security';
+  | 'profile'
+  | 'phone'
+  | 'team'
+  | 'integrations'
+  | 'dispositions'
+  | 'dnc'
+  | 'distribution'
+  | 'activity'
+  | 'security';
 
 function ProfileTab() {
   const { user } = useAuth();
@@ -3236,6 +3248,146 @@ function DncTab() {
   );
 }
 
+/** MISSION-5 TASK-M5-B3: org-wide toggles only -- callback fallback (enabled + minutes) and the
+ *  daily dial cap (enabled + org default). Both ship OFF. No per-agent override editor here yet
+ *  (api.ts's `listAgentDialCaps`/`setAgentDialCap`/`clearAgentDialCap` exist for a future
+ *  screen; this task's own time went to the enforcement + audit-log side, not a full per-agent
+ *  table UI) -- said explicitly rather than silently claimed as done. */
+function DistributionSettingsTab() {
+  const { role } = useOrg();
+  const isAdmin = role === 'owner' || role === 'admin';
+
+  const [settings, setSettings] = useState<DistributionSettings | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isAdmin) {
+      setLoading(false);
+      return;
+    }
+    getDistributionSettings()
+      .then(setSettings)
+      .catch((e) => setError(String(e)))
+      .finally(() => setLoading(false));
+  }, [isAdmin]);
+
+  const handleChange = async (next: DistributionSettings) => {
+    const prev = settings;
+    setSettings(next);
+    setSaving(true);
+    setError(null);
+    try {
+      await updateDistributionSettings(next);
+    } catch (e) {
+      setError(String(e));
+      setSettings(prev);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
+      <PageHeader
+        title="Distribution"
+        description="Guards for how leads and callbacks get worked across the team. Off by default."
+      />
+
+      {error && (
+        <div className="mb-6 p-4 rounded-app-md bg-danger/10 border border-danger/30 text-danger text-sm">
+          {error}
+        </div>
+      )}
+
+      {!isAdmin ? (
+        <p className="text-sm text-text-secondary">
+          Only an owner or admin can manage distribution settings.
+        </p>
+      ) : loading || !settings ? (
+        <Skeleton className="h-[220px] w-full max-w-2xl rounded-app-lg" />
+      ) : (
+        <div className="flex flex-col gap-6 max-w-2xl">
+          <div className="bg-surface-1 rounded-app-lg p-6 border border-border-subtle">
+            <h3 className="text-section-title text-text-primary mb-1">Callback fallback</h3>
+            <p className="text-sm text-text-secondary mb-4">
+              When on, a due callback whose owner is disabled/removed, or hasn't been in an active
+              session for the window below since it came due, becomes claimable by any agent on that
+              campaign. The claiming agent becomes the new owner.
+            </p>
+            <label className="flex items-center gap-2 text-sm text-white mb-3">
+              <input
+                type="checkbox"
+                checked={settings.callback_fallback_enabled}
+                disabled={saving}
+                onChange={(e) =>
+                  void handleChange({ ...settings, callback_fallback_enabled: e.target.checked })
+                }
+              />
+              Enable callback fallback
+            </label>
+            <label className="flex items-center gap-2 text-sm text-text-secondary">
+              Fall back after
+              <input
+                type="number"
+                min={1}
+                className="w-20 px-2 py-1 bg-surface-2 border border-white/10 rounded text-white text-sm"
+                value={settings.callback_fallback_minutes}
+                disabled={saving || !settings.callback_fallback_enabled}
+                onChange={(e) =>
+                  void handleChange({
+                    ...settings,
+                    callback_fallback_minutes: Math.max(1, Number(e.target.value) || 1),
+                  })
+                }
+              />
+              minutes overdue
+            </label>
+          </div>
+
+          <div className="bg-surface-1 rounded-app-lg p-6 border border-border-subtle">
+            <h3 className="text-section-title text-text-primary mb-1">Daily dial cap</h3>
+            <p className="text-sm text-text-secondary mb-4">
+              When on, an agent's session pauses once they hit this many dialed contacts today (org
+              timezone) -- you're notified when it happens. Set a per-agent override from the API
+              for now; there's no table here yet.
+            </p>
+            <label className="flex items-center gap-2 text-sm text-white mb-3">
+              <input
+                type="checkbox"
+                checked={settings.daily_dial_cap_enabled}
+                disabled={saving}
+                onChange={(e) =>
+                  void handleChange({ ...settings, daily_dial_cap_enabled: e.target.checked })
+                }
+              />
+              Enable daily dial cap
+            </label>
+            <label className="flex items-center gap-2 text-sm text-text-secondary">
+              Default cap
+              <input
+                type="number"
+                min={1}
+                className="w-24 px-2 py-1 bg-surface-2 border border-white/10 rounded text-white text-sm"
+                value={settings.daily_dial_cap_default}
+                disabled={saving || !settings.daily_dial_cap_enabled}
+                onChange={(e) =>
+                  void handleChange({
+                    ...settings,
+                    daily_dial_cap_default: Math.max(1, Number(e.target.value) || 1),
+                  })
+                }
+              />
+              dials/agent/day
+            </label>
+          </div>
+        </div>
+      )}
+    </motion.div>
+  );
+}
+
 /** TASK-N1 (CID-1, CID-2, ADM-5): org-level defaults (default cap, rest days) + the assignment
  *  table. Mounted inside the existing Telephony tab (owner/admin only, per that tab's own
  *  standing invariant -- see the `isAgent` tab-visibility comment above `Settings()`), replacing
@@ -4245,6 +4397,9 @@ export function Settings() {
       ? [{ id: 'dispositions' as SettingsTab, label: 'Dispositions', icon: ListChecks }]
       : []),
     ...(!isAgent ? [{ id: 'dnc' as SettingsTab, label: 'Do-not-call list', icon: PhoneOff }] : []),
+    ...(!isAgent
+      ? [{ id: 'distribution' as SettingsTab, label: 'Distribution', icon: Share2 }]
+      : []),
     ...(!isAgent ? [{ id: 'activity' as SettingsTab, label: 'Activity', icon: History }] : []),
     { id: 'security' as SettingsTab, label: 'Security', icon: Shield },
   ];
@@ -4257,6 +4412,7 @@ export function Settings() {
         activeTab === 'integrations' ||
         activeTab === 'dispositions' ||
         activeTab === 'dnc' ||
+        activeTab === 'distribution' ||
         activeTab === 'activity')
     ) {
       setActiveTab('profile');
@@ -4577,6 +4733,8 @@ export function Settings() {
               {activeTab === 'dispositions' && !isAgent && <DispositionsTab />}
 
               {activeTab === 'dnc' && !isAgent && <DncTab />}
+
+              {activeTab === 'distribution' && !isAgent && <DistributionSettingsTab />}
 
               {activeTab === 'activity' && !isAgent && <ActivityTab />}
 

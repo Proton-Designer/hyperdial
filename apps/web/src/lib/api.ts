@@ -350,6 +350,88 @@ export async function updateSpendSettings(settings: SpendSettings): Promise<void
   if (error) throw new Error(error.message);
 }
 
+// --- MISSION-5 TASK-M5-B3: distribution guards ---
+
+export interface DistributionSettings {
+  callback_fallback_enabled: boolean;
+  callback_fallback_minutes: number;
+  daily_dial_cap_enabled: boolean;
+  daily_dial_cap_default: number;
+}
+
+/** Same "member read, owner/admin write, direct client upsert against RLS" shape as
+ *  getSpendSettings/updateSpendSettings above -- every org already has a seeded row (the
+ *  orgs-insert trigger), this fallback is defensive only. */
+export async function getDistributionSettings(): Promise<DistributionSettings> {
+  const orgId = await getActiveOrgId();
+  const { data, error } = await supabase
+    .from('org_distribution_settings')
+    .select(
+      'callback_fallback_enabled, callback_fallback_minutes, daily_dial_cap_enabled, daily_dial_cap_default'
+    )
+    .eq('org_id', orgId)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return (
+    (data as DistributionSettings | null) ?? {
+      callback_fallback_enabled: false,
+      callback_fallback_minutes: 30,
+      daily_dial_cap_enabled: false,
+      daily_dial_cap_default: 300,
+    }
+  );
+}
+
+export async function updateDistributionSettings(settings: DistributionSettings): Promise<void> {
+  const orgId = await getActiveOrgId();
+  const { error } = await supabase.from('org_distribution_settings').upsert({
+    org_id: orgId,
+    ...settings,
+    updated_at: new Date().toISOString(),
+  });
+  if (error) throw new Error(error.message);
+}
+
+/** Per-agent override -- absence means "use the org default." Owner/admin only (RLS); any
+ *  member may read the whole org's list. No dedicated UI table for this yet (TASK-M5-B3's own
+ *  scope note) -- exposed here so a future Settings screen (or this one, extended) doesn't need
+ *  a new RPC. */
+export interface AgentDialCap {
+  agent_id: string;
+  daily_cap: number;
+}
+
+export async function listAgentDialCaps(): Promise<AgentDialCap[]> {
+  const orgId = await getActiveOrgId();
+  const { data, error } = await supabase
+    .from('org_agent_dial_caps')
+    .select('agent_id, daily_cap')
+    .eq('org_id', orgId);
+  if (error) throw new Error(error.message);
+  return (data ?? []) as AgentDialCap[];
+}
+
+export async function setAgentDialCap(agentId: string, dailyCap: number): Promise<void> {
+  const orgId = await getActiveOrgId();
+  const { error } = await supabase.from('org_agent_dial_caps').upsert({
+    org_id: orgId,
+    agent_id: agentId,
+    daily_cap: dailyCap,
+    updated_at: new Date().toISOString(),
+  });
+  if (error) throw new Error(error.message);
+}
+
+export async function clearAgentDialCap(agentId: string): Promise<void> {
+  const orgId = await getActiveOrgId();
+  const { error } = await supabase
+    .from('org_agent_dial_caps')
+    .delete()
+    .eq('org_id', orgId)
+    .eq('agent_id', agentId);
+  if (error) throw new Error(error.message);
+}
+
 export type SpendStatus =
   | {
       available: true;
@@ -2045,7 +2127,12 @@ export type AssignLeadsFilter =
   | { mode: 'all' }
   | { mode: 'range'; start: number; end: number }
   | { mode: 'percentage'; percentage: number }
-  | { mode: 'tag'; tag: string };
+  | { mode: 'tag'; tag: string }
+  /** MISSION-5 TASK-M5-B3: everything currently on `from_agent_id` (queued OR callback --
+   *  the only mode that also touches callbacks) moves to `agentId` (or the pool, `agentId:
+   *  null`). Safe under a concurrent claim: the RPC re-checks each row's own `status` at
+   *  UPDATE time, not just at candidate-selection time. */
+  | { mode: 'by_current_agent'; from_agent_id: string };
 
 export async function assignCampaignLeads(
   campaignId: string,
@@ -2281,9 +2368,12 @@ export interface DialSessionRecord {
   updated_at: string;
   /** TASK-N1: only meaningful while `state === 'paused'` -- see dialer-engine.ts's own
    *  `pause_reason` field comment for why a stale value from a past pause must be ignored once
-   *  the session has moved on. Known values: 'no_numbers_available', and (MISSION-4 TASK-T7)
+   *  the session has moved on. Known values: 'no_numbers_available', (MISSION-4 TASK-T7)
    *  'post_wrapup' -- set by submit_disposition when the agent has an auto-resume preference
-   *  configured (see the migration's own header comment). */
+   *  configured (see the migration's own header comment) -- (MISSION-5 TASK-M5-B3)
+   *  'daily_dial_cap_reached', and (TASK-M5-B1) whatever an org's own
+   *  `org_pause_reason_settings.reasons` list holds, from a manual pause via the Dialer's own
+   *  picker. */
   pause_reason: string | null;
 }
 

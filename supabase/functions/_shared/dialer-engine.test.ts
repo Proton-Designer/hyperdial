@@ -2860,3 +2860,137 @@ Deno.test(
     );
   }
 );
+
+Deno.test(
+  'MISSION-5 TASK-M5-B3: refillSession pauses with daily_dial_cap_reached (org default cap) before claiming any lead, once the agent has already hit it today',
+  async () => {
+    const db = new FakeDb();
+    const server = new FakeTelnyxServer();
+    const restoreFetch = stubTelnyxFetch(server);
+    const supabase = createFakeSupabase(db);
+    const { orgId, campaignId, agentId } = seedFixtures(db);
+    db.insert('org_distribution_settings', {
+      id: orgId,
+      daily_dial_cap_enabled: true,
+      daily_dial_cap_default: 2,
+    });
+    // seedFixtures only creates the ONE agent org_members row (no role/status set at all, so it
+    // matches neither "active" nor "owner/admin") -- add a real owner so the notify path has
+    // someone to actually notify.
+    db.insert('org_members', {
+      id: 'member-owner-b3',
+      org_id: orgId,
+      user_id: 'owner-b3',
+      role: 'owner',
+      status: 'active',
+    });
+    try {
+      const { sessionId } = await startSession(supabase, {
+        orgId,
+        campaignId,
+        agentId,
+        lines: 3,
+        amdMode: 'off',
+      });
+      // 2 contact legs already dialed today, in an EARLIER (now-stopped) session for this same
+      // agent -- the cap counts across the whole day, not just the session about to start.
+      const priorSessionId = 'session-b3-prior-today';
+      db.insert('dial_sessions', {
+        id: priorSessionId,
+        org_id: orgId,
+        campaign_id: campaignId,
+        agent_id: agentId,
+        state: 'stopped',
+      });
+      const today = new Date().toISOString();
+      db.insert('call_legs', {
+        id: 'leg-b3-today-1',
+        org_id: orgId,
+        session_id: priorSessionId,
+        campaign_id: campaignId,
+        kind: 'contact',
+        created_at: today,
+      });
+      db.insert('call_legs', {
+        id: 'leg-b3-today-2',
+        org_id: orgId,
+        session_id: priorSessionId,
+        campaign_id: campaignId,
+        kind: 'contact',
+        created_at: today,
+      });
+
+      const agentLeg = [...db.table('call_legs').values()].find((l) => l.kind === 'agent')!;
+      await processTelnyxDialerEvent(
+        supabase,
+        agentEvent(
+          orgId,
+          sessionId,
+          agentLeg.id as string,
+          agentLeg.call_control_id as string,
+          'call.answered'
+        )
+      );
+
+      const session = db.table('dial_sessions').get(sessionId)!;
+      assertEquals(session.state, 'paused');
+      assertEquals(session.pause_reason, 'daily_dial_cap_reached');
+      assertEquals(
+        [...db.table('call_legs').values()].filter(
+          (l) => l.kind === 'contact' && l.session_id === sessionId
+        ).length,
+        0,
+        'no lead should ever be claimed once the cap is already hit'
+      );
+      assertEquals(
+        [...db.table('notifications').values()].filter((n) => n.type === 'daily_dial_cap_reached')
+          .length,
+        1,
+        'the one seeded owner gets notified'
+      );
+    } finally {
+      restoreFetch();
+    }
+  }
+);
+
+Deno.test(
+  'MISSION-5 TASK-M5-B3: refillSession does NOT pause on the cap when org_distribution_settings has no row / is disabled (the pre-existing, unconfigured default)',
+  async () => {
+    const db = new FakeDb();
+    const server = new FakeTelnyxServer();
+    const restoreFetch = stubTelnyxFetch(server);
+    const supabase = createFakeSupabase(db);
+    const { orgId, campaignId, agentId } = seedFixtures(db);
+    // Deliberately NOT seeding org_distribution_settings at all -- most orgs in these tests
+    // never do, and this must behave exactly as it did before TASK-M5-B3 existed.
+    try {
+      const { sessionId } = await startSession(supabase, {
+        orgId,
+        campaignId,
+        agentId,
+        lines: 3,
+        amdMode: 'off',
+      });
+      const agentLeg = [...db.table('call_legs').values()].find((l) => l.kind === 'agent')!;
+      await processTelnyxDialerEvent(
+        supabase,
+        agentEvent(
+          orgId,
+          sessionId,
+          agentLeg.id as string,
+          agentLeg.call_control_id as string,
+          'call.answered'
+        )
+      );
+
+      const session = db.table('dial_sessions').get(sessionId)!;
+      assertEquals(session.state, 'dialing');
+      // FakeDb doesn't apply SQL column defaults -- a never-written field reads back as
+      // `undefined`, not the real DEFAULT null (LANE-eng2.md's own documented trap).
+      assertEquals(session.pause_reason ?? null, null);
+    } finally {
+      restoreFetch();
+    }
+  }
+);

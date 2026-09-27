@@ -1715,3 +1715,40 @@ this task.** TASK-M5-A4's own item is the agent-facing "my stats" self-view (TM-
 needed to prove the data model and expose the read RPC an attendance tab can build on. Same
 `if not has_org_role(...) then return;` empty-result gate as `team_daily_stats`/`team_live_board`,
 enforced server-side, not by the client choosing not to ask for someone else's `agent_id`.
+
+## MISSION-5 TASK-M5-B3: distribution guards
+
+**Decision 1 -- per-agent dial-cap overrides get a dedicated `org_agent_dial_caps` table, not a
+column on `org_members`.** `org_members` is eng1's owned surface (board.md's lane split); a new
+table with its own RLS avoids any cross-lane schema edit and mirrors `user_phone_numbers.
+daily_cap`'s own existing per-resource-cap shape (just per-agent instead of per-number) rather
+than inventing a new pattern.
+
+**Decision 2 -- `claim_next_leads`' callback-fallback branch reassigns `assigned_agent_id` to the
+claiming agent, it doesn't just claim once and leave ownership alone.** If ownership stayed with
+the original (unavailable) owner, the very next disposition/requeue cycle would put the lead
+right back into the identical stale state, and the Team page's "my callbacks" view would keep
+showing it under someone who isn't actually working it. Logged via `private.log_org_action`
+(`campaign_leads.callback_fallback_claim`, batched once per `claim_next_leads` call) precisely so
+"who took it" is answerable from the Activity log, not just inferred from a changed column.
+
+**Decision 3 -- `claim_next_leads` was restructured from `return query <select>` to `for v_row in
+(<the same select>) loop return next ...; end loop;`.** Counting how many of a call's own claims
+were fallback claims (to log once, batched) needs to inspect each returned row; a CTE like
+`picked` is scoped to the single statement it's part of, so a separate query after `return query`
+finishes can't reference it at all. The loop form returns the identical rows in the identical
+order, just lets the function tally alongside emitting them.
+
+**Decision 4 -- the EC-5 fix (re-checking `cl.status` directly on `assign_campaign_leads`'s own
+UPDATE) was applied to every mode, not scoped to just the new `by_current_agent` one.** The gap
+was already live in `20260926070003`'s original shipped version for `all`/`range`/`percentage`/
+`tag` too -- a candidate computed via an earlier CTE snapshot, then written via `where cl.id =
+candidates.id` with no re-check of the row's CURRENT status, could silently overwrite a row a
+concurrent `claim_next_leads` had already moved to `in_flight`. Fixing it narrowly for one mode
+would have left the other four modes with the exact same latent race.
+
+**Decision 5 -- the daily dial cap counts `call_legs` across the WHOLE org-scoped day for that
+agent, not per-session.** An agent who stops and restarts a session (or switches campaigns)
+mid-day must not get a fresh cap each time -- `agent_daily_dial_status` joins `call_legs` to
+`dial_sessions` on `agent_id` (not `session_id`), matching how TASK-M5-B1's `agent_time_in_state`
+already treats "today" as spanning every session an agent has run.
