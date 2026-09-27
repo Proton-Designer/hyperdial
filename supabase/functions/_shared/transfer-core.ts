@@ -18,10 +18,12 @@
  * straight to the target the instant it answers, dialing -> completed in one step.
  */
 import type { SupabaseClient } from 'npm:@supabase/supabase-js@2';
+import { parsePhoneNumberFromString } from 'npm:libphonenumber-js';
 import type { TelnyxClient } from './telnyx-client.ts';
 import { agentSipUri } from './dialer-engine.ts';
 import { encodeTransferTargetClientState } from './client-state.ts';
 import { webhookUrlForOrg } from './telnyx-provision.ts';
+import { checkSpendGate } from './spend-gate.ts';
 
 export type TransferType = 'cold' | 'warm';
 export type TransferTargetKind = 'member' | 'external';
@@ -235,6 +237,169 @@ function isE164(value: string): boolean {
   return /^\+[1-9]\d{6,14}$/.test(value);
 }
 
+// ---------------------------------------------------------------------------
+// Review fix-forward (eng1, review-eng1.md BLOCKER 2 + lead's dispatch): an external transfer
+// target is a free-form number the agent types in -- unlike a contact from an imported/vetted
+// list, so it gets its own guard stack, all server-side (the client-side TransferModal hiding
+// the option is UX only, never trusted). Member (internal) transfers skip all of this by design
+// (item e of the dispatch) -- a teammate is already an org_members row, not a free-form number.
+// ---------------------------------------------------------------------------
+
+/** Max external transfers a single agent may INITIATE per rolling hour, DB-counted from
+ *  call_transfers (never in-memory -- a fresh Edge Function invocation has no memory to count
+ *  in). Deliberately generous (10/hr is far above any legitimate warm/cold handoff rate) --
+ *  this exists to bound the "start -> cancel -> restart" abuse case eng1's review found, not to
+ *  throttle normal use. */
+const EXTERNAL_TRANSFER_RATE_LIMIT_PER_HOUR = 10;
+
+/** NANP N11 codes (211/311/411/511/611/711/811/911) are service codes, never real subscriber
+ *  numbers -- listed explicitly per the dispatch even though `parsePhoneNumberFromString`'s own
+ *  `isValid()` already rejects most of these as invalid NANP area codes; kept as a named,
+ *  self-documenting check rather than relying solely on libphonenumber's metadata not changing
+ *  underneath this later. */
+const N11_AREA_CODES: ReadonlySet<string> = new Set([
+  '211',
+  '311',
+  '411',
+  '511',
+  '611',
+  '711',
+  '811',
+  '911',
+]);
+
+/** Returns a user-facing rejection reason, or null when the number is an allowed external
+ *  transfer target. NANP only (matches the dispatch's "+1, a valid 10-digit NPA-NXX"): a bare
+ *  10-digit national number is assumed US per `parsePhoneNumberFromString`'s own
+ *  `defaultCountry` argument, same convention `phone-normalize.ts` already uses -- not imported
+ *  from there since that module is shared with CSV/GHL contact import and has nothing to do
+ *  with this feature's own premium/toll rejection list.
+ *  Premium/toll rejection: NPA 900 (the classic "900 number") and NXX 976 (the older regional
+ *  "976 pay-per-call" exchange code, which can appear under ANY area code, not just 900) are
+ *  both real, valid-format NANP numbers -- `isValid()` alone would accept them. `getType()` is
+ *  also checked for 'PREMIUM_RATE' as a second signal, but the explicit NPA/NXX checks are the
+ *  ones actually doing the work: libphonenumber-js's metadata tracks 900 as premium-rate but
+ *  does NOT universally flag every area code's own local 976 exchange as such. Toll-FREE
+ *  numbers (800/888/877/866/855/844/833) are deliberately NOT rejected -- "premium/toll" in the
+ *  dispatch means pay-per-call premium numbers, not toll-free ones, which are ordinary business
+ *  lines an agent might legitimately warm-transfer to. */
+function externalTransferRejectionReason(raw: string): string | null {
+  const parsed = parsePhoneNumberFromString(raw, 'US');
+  if (!parsed || !parsed.isValid()) {
+    return 'That number is not a valid phone number.';
+  }
+  if (parsed.country !== 'US' && parsed.country !== 'CA') {
+    return 'External transfers are limited to US/Canada (NANP) numbers.';
+  }
+  const national = parsed.nationalNumber;
+  if (national.length !== 10) {
+    return 'External transfers are limited to US/Canada (NANP) numbers.';
+  }
+  const npa = national.slice(0, 3);
+  const nxx = national.slice(3, 6);
+  if (
+    npa === '900' ||
+    nxx === '976' ||
+    N11_AREA_CODES.has(npa) ||
+    parsed.getType() === 'PREMIUM_RATE'
+  ) {
+    return 'This number looks like a premium-rate number and cannot be used as a transfer target.';
+  }
+  return null;
+}
+
+async function isNumberOnOrgDnc(
+  supabase: SupabaseClient,
+  orgId: string,
+  e164: string
+): Promise<boolean> {
+  const { data } = await supabase
+    .from('dnc_numbers')
+    .select('e164')
+    .eq('org_id', orgId)
+    .eq('e164', e164)
+    .maybeSingle();
+  return data != null;
+}
+
+async function getAllowExternalTransfers(
+  supabase: SupabaseClient,
+  orgId: string
+): Promise<boolean> {
+  const { data } = await supabase
+    .from('org_transfer_settings')
+    .select('allow_external_transfers')
+    .eq('org_id', orgId)
+    .maybeSingle();
+  return Boolean(data?.allow_external_transfers);
+}
+
+async function externalTransferRateLimited(
+  supabase: SupabaseClient,
+  orgId: string,
+  callerId: string
+): Promise<boolean> {
+  const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+  const { count } = await supabase
+    .from('call_transfers')
+    .select('id', { count: 'exact', head: true })
+    .eq('org_id', orgId)
+    .eq('initiated_by', callerId)
+    .eq('target_kind', 'external')
+    .gte('created_at', oneHourAgo);
+  return (count ?? 0) >= EXTERNAL_TRANSFER_RATE_LIMIT_PER_HOUR;
+}
+
+/** Runs every external-target guard in order, cheapest/no-I-O first. Returns an ActionResult to
+ *  return immediately on rejection, or null to proceed. Called BEFORE the `call_transfers`
+ *  insert/dial -- a rejected external target never creates a row or reaches Telnyx at all. */
+async function checkExternalTransferAllowed(
+  supabase: SupabaseClient,
+  orgId: string,
+  callerId: string,
+  targetNumber: string
+): Promise<ActionResult | null> {
+  const rejection = externalTransferRejectionReason(targetNumber);
+  if (rejection) {
+    return { status: 400, body: { error: rejection, code: 'EXTERNAL_TRANSFER_NUMBER_REJECTED' } };
+  }
+  if (!(await getAllowExternalTransfers(supabase, orgId))) {
+    return {
+      status: 403,
+      body: {
+        error:
+          'External-number transfers are disabled for this org. Ask an owner or admin to enable them in Settings.',
+        code: 'EXTERNAL_TRANSFERS_DISABLED',
+      },
+    };
+  }
+  if (await isNumberOnOrgDnc(supabase, orgId, targetNumber)) {
+    return {
+      status: 400,
+      body: {
+        error: "This number is on your org's do-not-call list.",
+        code: 'EXTERNAL_TRANSFER_NUMBER_REJECTED',
+      },
+    };
+  }
+  // Same gate contact dialing itself uses (dialer-session-start/index.ts) -- reused, not
+  // reimplemented, so "over spend cap" means the same thing everywhere in this codebase.
+  const spendGate = await checkSpendGate(supabase, orgId);
+  if (spendGate.blocked) {
+    return { status: 400, body: { error: spendGate.message, code: spendGate.code } };
+  }
+  if (await externalTransferRateLimited(supabase, orgId, callerId)) {
+    return {
+      status: 429,
+      body: {
+        error: 'Too many external transfers in the last hour. Try again later.',
+        code: 'EXTERNAL_TRANSFER_RATE_LIMIT',
+      },
+    };
+  }
+  return null;
+}
+
 export async function runStartTransferAction(
   supabase: SupabaseClient,
   client: TelnyxClient,
@@ -267,6 +432,16 @@ export async function runStartTransferAction(
 
   const type = body.type as TransferType;
   const targetKind = body.targetKind as TransferTargetKind;
+
+  if (targetKind === 'external') {
+    const rejection = await checkExternalTransferAllowed(
+      supabase,
+      orgId,
+      callerId,
+      body.targetNumber as string
+    );
+    if (rejection) return rejection;
+  }
 
   const resolved = await loadOnCallProspectLeg(supabase, orgId, role, callerId, body.sessionId);
   if ('status' in resolved) return resolved;
@@ -402,6 +577,65 @@ export async function unwindWarmTransferToMain(
   } catch (err) {
     console.warn('[transfer-core] unwind: unhold prospect failed', err);
   }
+}
+
+/**
+ * Review fix-forward (eng1, review-eng1.md SHOULD): when the agent hangs up (or the customer
+ * leg ends) while a transfer is 'dialing' or 'connected', cancel it right away instead of
+ * leaving it for `reap_stale_call_transfers`' own 5-minute/2-hour timeouts. Same logic
+ * `runCancelTransferAction` runs for a user-initiated Cancel, minus the role/ownership check
+ * (this is called from trusted engine code -- `endLiveCall`, and the contact-leg-ended webhook
+ * branch in dialer-engine.ts -- which has already resolved the session, not from an HTTP body).
+ * Best-effort and never throws, same convention as `unwindWarmTransferToMain` itself: this runs
+ * exactly in the two places ("the agent just hung up", "the customer leg just ended") where the
+ * caller is already tearing the call down, never on a happy path.
+ */
+export async function cancelInFlightTransferForSession(
+  supabase: SupabaseClient,
+  client: TelnyxClient,
+  orgId: string,
+  sessionId: string,
+  reason: string
+): Promise<void> {
+  const { data } = await supabase
+    .from('call_transfers')
+    .select(
+      'id, org_id, session_id, contact_leg_id, type, target_kind, target_user_id, target_number, target_call_control_id, side_conference_id, status'
+    )
+    .eq('session_id', sessionId)
+    .in('status', ['dialing', 'connected'])
+    .maybeSingle();
+  if (!data) return;
+  const row = data as CallTransferRow;
+
+  if (row.target_call_control_id) {
+    try {
+      await client.hangup(row.target_call_control_id);
+    } catch (err) {
+      console.warn('[transfer-core] cancelInFlightTransferForSession: target hangup failed', err);
+    }
+  }
+  if (row.status === 'connected') {
+    const session = await loadSession(supabase, orgId, sessionId);
+    const prospectLeg = await loadLegById(supabase, row.contact_leg_id);
+    if (session?.conference_id && prospectLeg) {
+      const agentCallControlId = await agentLegCallControlId(supabase, session.agent_leg_id);
+      await unwindWarmTransferToMain(client, {
+        mainConferenceId: session.conference_id,
+        sideConferenceId: row.side_conference_id,
+        agentCallControlId,
+        prospectCallControlId: prospectLeg.call_control_id,
+      });
+      await supabase.from('call_legs').update({ held_at: null }).eq('id', prospectLeg.id);
+    }
+  }
+  await supabase.rpc('transition_call_transfer', {
+    p_transfer: row.id,
+    p_org: orgId,
+    p_expected_statuses: ['dialing', 'connected'],
+    p_new_status: 'cancelled',
+    p_fields: { ended_at: new Date().toISOString(), ended_reason: reason },
+  });
 }
 
 // ---------------------------------------------------------------------------

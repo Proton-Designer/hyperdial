@@ -36,6 +36,7 @@ import {
   processTelnyxDialerEvent,
   pauseSession,
   stopSession,
+  endLiveCall,
   AGENT_DIAL_TIMEOUT_SECS,
   AGENT_DIAL_TIME_LIMIT_SECS,
   type RawTelnyxEvent,
@@ -1916,6 +1917,124 @@ async function bootstrapToOnCall(
     winnerCallControlId: winnerLeg.call_control_id as string,
   };
 }
+
+// ---------------------------------------------------------------------------
+// TASK-T4 review fix-forward (SHOULD): cancelling an in-flight transfer the instant its own
+// session's active leg ends -- proves the WIRING in endLiveCall/processContactLegEvent, not the
+// underlying cancelInFlightTransferForSession logic itself (already covered end-to-end by its
+// own dedicated unit tests in transfer-core.test.ts).
+// ---------------------------------------------------------------------------
+
+Deno.test(
+  'TASK-T4 review fix-forward: endLiveCall cancels an in-flight transfer before hanging up the prospect leg',
+  async () => {
+    const db = new FakeDb();
+    const server = new FakeTelnyxServer();
+    const restoreFetch = stubTelnyxFetch(server);
+    const supabase = createFakeSupabase(db);
+    const { orgId, campaignId, agentId } = seedFixtures(db);
+    try {
+      const { sessionId, winnerLegId, winnerCallControlId } = await bootstrapToOnCall(
+        db,
+        supabase,
+        {
+          orgId,
+          campaignId,
+          agentId,
+        }
+      );
+      const transferId = 'transfer-fix-a';
+      db.insert('call_transfers', {
+        id: transferId,
+        org_id: orgId,
+        session_id: sessionId,
+        contact_leg_id: winnerLegId,
+        type: 'cold',
+        target_kind: 'external',
+        target_number: '+14155552671',
+        target_call_control_id: 'call-target-x',
+        status: 'dialing',
+      });
+
+      const ok = await endLiveCall(supabase, orgId, sessionId);
+      assertEquals(ok, true);
+
+      assertEquals(
+        server.requests.some(
+          (r) => r.method === 'POST' && r.path === '/v2/calls/call-target-x/actions/hangup'
+        ),
+        true,
+        'the transfer target must be hung up, not left ringing'
+      );
+      assertEquals(
+        server.requests.some(
+          (r) => r.method === 'POST' && r.path === `/v2/calls/${winnerCallControlId}/actions/hangup`
+        ),
+        true,
+        'the prospect leg itself must still be hung up as usual'
+      );
+      assertEquals(db.table('call_transfers').get(transferId)!.status, 'cancelled');
+      assertEquals(db.table('call_transfers').get(transferId)!.ended_reason, 'agent_hangup');
+    } finally {
+      restoreFetch();
+    }
+  }
+);
+
+Deno.test(
+  'TASK-T4 review fix-forward: the winner-ended webhook branch cancels an in-flight transfer, covering "the customer leg ends" too',
+  async () => {
+    const db = new FakeDb();
+    const server = new FakeTelnyxServer();
+    const restoreFetch = stubTelnyxFetch(server);
+    const supabase = createFakeSupabase(db);
+    const { orgId, campaignId, agentId } = seedFixtures(db);
+    try {
+      const { sessionId, winnerLegId, winnerCallControlId } = await bootstrapToOnCall(
+        db,
+        supabase,
+        {
+          orgId,
+          campaignId,
+          agentId,
+        }
+      );
+      const transferId = 'transfer-fix-b';
+      db.insert('call_transfers', {
+        id: transferId,
+        org_id: orgId,
+        session_id: sessionId,
+        contact_leg_id: winnerLegId,
+        type: 'cold',
+        target_kind: 'external',
+        target_number: '+14155552671',
+        target_call_control_id: 'call-target-y',
+        status: 'dialing',
+      });
+
+      // The CUSTOMER's own leg hangs up -- not an explicit agent action, purely the webhook path.
+      await processTelnyxDialerEvent(
+        supabase,
+        contactEvent(orgId, sessionId, winnerLegId, winnerCallControlId, 'call.hangup', {
+          hangup_cause: 'normal_clearing',
+        })
+      );
+
+      assertEquals(
+        server.requests.some(
+          (r) => r.method === 'POST' && r.path === '/v2/calls/call-target-y/actions/hangup'
+        ),
+        true,
+        'the transfer target must be hung up even when the CUSTOMER ends the call, not the agent'
+      );
+      assertEquals(db.table('call_transfers').get(transferId)!.status, 'cancelled');
+      assertEquals(db.table('call_transfers').get(transferId)!.ended_reason, 'session_ended');
+      assertEquals(db.table('dial_sessions').get(sessionId)!.state, 'wrap_up');
+    } finally {
+      restoreFetch();
+    }
+  }
+);
 
 Deno.test(
   'BUG-11: stopSession refuses (live_call_in_progress) when a contact leg is claimed and force is not passed -- nothing is hung up, session state is unchanged',

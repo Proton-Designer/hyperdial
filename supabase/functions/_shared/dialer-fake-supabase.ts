@@ -40,18 +40,24 @@ export class FakeDb {
   }
 }
 
-function matchesFilters(row: Row, filters: [string, 'eq' | 'neq' | 'is', unknown][]): boolean {
+function matchesFilters(
+  row: Row,
+  filters: [string, 'eq' | 'neq' | 'is' | 'in', unknown][]
+): boolean {
   return filters.every(([col, op, val]) => {
     // A never-set fixture field is `undefined`, not `null` -- normalize for `.is()` so it
     // matches the same way a genuinely-NULL Postgres column would.
     if (op === 'is') return (row[col] ?? null) === val;
     if (op === 'eq') return row[col] === val;
+    // TASK-T4 review fix-forward: cancelInFlightTransferForSession's own
+    // `.in('status', ['dialing','connected'])` -- the first caller of `.in()` through this fake.
+    if (op === 'in') return (val as unknown[]).includes(row[col]);
     return row[col] !== val;
   });
 }
 
 export class FakeQuery implements PromiseLike<{ data: unknown; error: null }> {
-  private filters: [string, 'eq' | 'neq' | 'is', unknown][] = [];
+  private filters: [string, 'eq' | 'neq' | 'is' | 'in', unknown][] = [];
   private mode: 'select' | 'insert' | 'update' | 'delete' = 'select';
   private payload: Row = {};
   private singleMode: 'single' | 'maybeSingle' | null = null;
@@ -88,6 +94,10 @@ export class FakeQuery implements PromiseLike<{ data: unknown; error: null }> {
   }
   neq(col: string, val: unknown): this {
     this.filters.push([col, 'neq', val]);
+    return this;
+  }
+  in(col: string, vals: unknown[]): this {
+    this.filters.push([col, 'in', vals]);
     return this;
   }
   is(col: string, val: unknown): this {
@@ -186,6 +196,16 @@ const TRANSITION_LEG_FIELDS = [
   'bridged_at',
   'ended_at',
   'duration_seconds',
+];
+
+/** TASK-T4 review fix-forward: same allowlist-and-throw discipline as TRANSITION_LEG_FIELDS/
+ *  TRANSITION_SESSION_FIELDS above, tracking transition_call_transfer's real SQL definition
+ *  (20260926070002_transfer_hold.sql) exactly. */
+const TRANSITION_CALL_TRANSFER_FIELDS = [
+  'target_call_control_id',
+  'side_conference_id',
+  'ended_at',
+  'ended_reason',
 ];
 
 /** TASK-N1: UTC calendar day, matching the real SQL's `(now() at time zone 'utc')::date`. */
@@ -313,6 +333,32 @@ function rpc(
       return { data: true, error: null };
     }
 
+    case 'transition_call_transfer': {
+      const transfer = db.table('call_transfers').get(args.p_transfer as string);
+      const expected = args.p_expected_statuses as string[];
+      if (
+        !transfer ||
+        transfer.org_id !== args.p_org ||
+        !expected.includes(transfer.status as string)
+      ) {
+        return { data: false, error: null };
+      }
+      transfer.status = args.p_new_status;
+      const fields = (args.p_fields as Row | undefined) ?? {};
+      for (const key of Object.keys(fields)) {
+        if (!TRANSITION_CALL_TRANSFER_FIELDS.includes(key)) {
+          throw new Error(
+            `fake transition_call_transfer: unrecognized p_fields key '${key}' -- the real SQL ` +
+              `function does not write it either; add it to both if that's intentional`
+          );
+        }
+      }
+      for (const key of TRANSITION_CALL_TRANSFER_FIELDS) {
+        if (key in fields) transfer[key] = fields[key];
+      }
+      return { data: true, error: null };
+    }
+
     case 'transition_session': {
       const session = db.table('dial_sessions').get(args.p_session as string);
       const expected = args.p_expected_states as string[];
@@ -347,12 +393,19 @@ function rpc(
     }
 
     case 'apply_leg_outcome': {
+      // TASK-T4 review fix-forward: this used to also null out dial_sessions.active_leg_id when
+      // the leg being finalized was the session's active one -- the REAL SQL function
+      // (20260925050000_voicemail_drop.sql, apply_leg_outcome) never touches dial_sessions at
+      // all, only call_legs.outcome_applied_at and campaign_leads. That extra mutation was this
+      // fake's own inaccuracy (probably conflating it with transition_session's SEPARATE,
+      // explicit active_leg_id clear, called elsewhere in dialer-engine.ts with its own
+      // p_fields) -- harmless until a test needed session.active_leg_id to still equal the
+      // just-ended leg's id AFTER apply_leg_outcome ran but BEFORE the caller's own later
+      // transition_session call, which is exactly what processContactLegEvent's own
+      // `currentLeg.id === session.active_leg_id` wrap_up check does. Fixed to match the real
+      // function: a pure no-op against dial_sessions.
       const leg = db.table('call_legs').get(args.p_leg as string);
       if (!leg || leg.outcome == null) return { data: null, error: null };
-      if (leg.session_id) {
-        const session = db.table('dial_sessions').get(leg.session_id as string);
-        if (session && session.active_leg_id === leg.id) session.active_leg_id = null;
-      }
       return { data: null, error: null };
     }
 

@@ -1429,3 +1429,58 @@ every code path that puts the agent into the side conference (warm transfer's ow
 `runCancelTransferAction`/the sweeper's `unwindWarmTransferToMain`). Adding a new warm-transfer
 exit path later must preserve this invariant, or a future contact's winning leg can get bridged
 into a conference the agent already abandoned.
+
+### TASK-T4 review fix-forward (eng1's review-eng1.md, 2 BLOCKERs + 1 SHOULD)
+
+**BLOCKER 1 fix -- the R-024 evidence table is a process artifact, not a code fix.**
+`audit/T4/api-evidence.md` cites every Telnyx call this task makes against a freshly re-curled
+`spec3.json`, by exact schema property line number (not the URL pattern, not a cached copy). Every
+key checked out against the code's own prior comments -- the table exists because the rule
+requires it, not because it found a wire-format bug. Two `telnyx-client.test.ts` gaps the review
+implicitly exposed (no dedicated URL/body test for `leaveConference` or `hangup`) were closed
+alongside it.
+
+**BLOCKER 2 fix -- external-target transfers get their own guard stack, entirely separate from
+member (internal) transfers.** A transfer target is normally a vetted contact (dialed) or an
+org_members row (a teammate) -- but `targetKind: 'external'` is a free-form E.164 number the
+agent types in, live, mid-call: a materially larger blast radius than either. Four independent
+guards, all server-side (transfer-core.ts's `checkExternalTransferAllowed`, called from
+`runStartTransferAction` before the `call_transfers` row is even inserted):
+1. `org_transfer_settings.allow_external_transfers`, a new org-scoped table, default **false** --
+   same "dedicated small table, member-read/owner-admin-write, its own seed trigger" shape as
+   `org_recording_settings` (TASK-F-T2), not a column on `orgs` (that table's own UPDATE RLS is
+   owner-only, and this needs owner+admin) and not `org_telephony` (zero client RLS, by design,
+   since it's a Telnyx API key). `TransferModal.tsx` hides the option entirely when off -- UX
+   only, the server check is what actually matters.
+2. NANP-only + premium/toll rejection (`externalTransferRejectionReason`): NPA 900, NXX 976 (the
+   older regional "976 pay-per-call" exchange code, which can sit under ANY area code --
+   libphonenumber-js's own metadata does NOT universally flag this, confirmed empirically against
+   `+12129761234`), and the N11 service codes, plus `libphonenumber-js`'s own `getType() ===
+   'PREMIUM_RATE'` as a second signal. Toll-FREE numbers (800/888/etc.) are deliberately NOT
+   rejected -- "premium/toll" in the dispatch means pay-per-call, not toll-free (an ordinary
+   business line an agent might legitimately warm-transfer to).
+3. The org's own `dnc_numbers` list -- same table `claim_next_leads` already checks for contact
+   dialing, reused rather than reimplemented.
+4. The existing `checkSpendGate` (spend-gate.ts) -- the SAME function `dialer-session-start`
+   already calls for Go Ready, reused as-is rather than a second cap-checking implementation.
+5. A per-agent rolling-hour rate limit (10/hr), DB-counted from `call_transfers` (never
+   in-memory -- a fresh Edge Function invocation has no memory to count in), anchored by a new
+   index (`idx_call_transfers_initiated_by_target_kind_created`).
+Member transfers touch NONE of this (checked only inside the `targetKind === 'external'` branch)
+-- per the dispatch's own item (e), by design, not an oversight.
+
+**SHOULD fix -- an in-flight transfer is now cancelled the instant its own session's active leg
+ends, instead of waiting on the sweeper's 5-minute timeout.** One new function
+(`transfer-core.ts`'s `cancelInFlightTransferForSession`, injected `TelnyxClient` -- matches every
+other function in that file, deliberately NOT a self-fetched-client design like
+`dialer-engine.ts`'s own `hangupLeg`/`sendAbandonMessage`) is called from TWO places: `endLiveCall`
+(the agent's own explicit Hang Up button, synchronous, using the client it already fetched) and
+`processContactLegEvent`'s winner-ended branch (`result.next === 'ended' && currentLeg.id ===
+session.active_leg_id`, purely webhook-driven -- covers "the customer hangs up" too, since BOTH
+paths funnel through the exact same Telnyx `call.hangup` webhook on the prospect leg regardless of
+who initiated it). Calling it from both is safe, not redundant: `transition_call_transfer`'s own
+CAS guard makes the second call a harmless no-op once the first has already cancelled the row.
+Writing the test that PROVED this wiring surfaced a real, separate bug in the test harness itself
+(`dialer-fake-supabase.ts`'s `apply_leg_outcome` case was clearing `dial_sessions.active_leg_id` as
+a side effect -- the REAL SQL function never touches `dial_sessions` at all, only
+`call_legs.outcome_applied_at` and `campaign_leads`; fixed to match).

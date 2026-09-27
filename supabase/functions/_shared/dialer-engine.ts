@@ -136,6 +136,11 @@ import {
   VOICEMAIL_DROP_SIGNED_URL_TTL_SECONDS,
   type VoicemailDropMode,
 } from './voicemail-core.ts';
+// TASK-T4 review fix-forward (SHOULD): cancel any in-flight transfer the instant its own
+// session's active leg ends, rather than waiting on reap_stale_call_transfers' timeout. A
+// circular import (transfer-core.ts itself imports agentSipUri from this file) is safe here --
+// both bindings are only used inside function bodies, never at module-evaluation time.
+import { cancelInFlightTransferForSession } from './transfer-core.ts';
 
 function dialerLog(step: string, meta: Record<string, unknown> = {}): void {
   console.log('[dialer-engine]', step, meta);
@@ -1479,6 +1484,25 @@ async function processContactLegEvent(
     if (currentLeg.id === session.active_leg_id) {
       // The winner just ended -- wrap_up, no more refill until a disposition (or
       // resumeToDialing, for testing) returns the session to dialing.
+      // TASK-T4 review fix-forward (SHOULD): covers "the customer leg ends" mid-transfer-dial
+      // (the agent-hangup case is already covered synchronously in endLiveCall above -- this
+      // call is a harmless no-op by then, since cancelInFlightTransferForSession only matches a
+      // still-'dialing'/'connected' row). No client carried into this webhook branch otherwise
+      // (same reason hangupLeg/sendAbandonMessage each fetch their own, above) -- a failed
+      // lookup here just means the transfer-cancel step no-ops, same fail-open spirit.
+      const { client: transferCancelClient } = await getConnectedOrgTelnyxContext(
+        supabase,
+        session.org_id
+      );
+      if (transferCancelClient) {
+        await cancelInFlightTransferForSession(
+          supabase,
+          transferCancelClient,
+          session.org_id,
+          session.id,
+          'session_ended'
+        );
+      }
       await supabase.rpc('transition_session', {
         p_session: session.id,
         p_expected_states: ['on_call', 'connecting'],
@@ -2357,6 +2381,12 @@ export async function endLiveCall(
   if (!leg) return false;
   const { client } = await getConnectedOrgTelnyxContext(supabase, orgId);
   if (!client) return false;
+  // TASK-T4 review fix-forward (SHOULD): the agent explicitly hung up -- cancel any transfer
+  // still 'dialing'/'connected' for this session BEFORE hanging up the prospect leg, so the
+  // target's ring stops and (for a connected warm transfer) the agent is already moved back to
+  // the main conference. Best-effort, never throws -- a failure here must never block the
+  // hangup itself. Reuses the client already fetched above, no second Telnyx-context lookup.
+  await cancelInFlightTransferForSession(supabase, client, orgId, sessionId, 'agent_hangup');
   await client.hangup(leg.call_control_id as string);
   return true;
 }

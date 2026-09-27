@@ -386,6 +386,55 @@ Deno.test(
 );
 
 Deno.test(
+  // TASK-T4 review fix-forward (BLOCKER 1, R-024): leaveConference had zero dedicated coverage
+  // asserting its exact URL/body -- both cold and warm transfer completion depend on it moving
+  // the prospect/agent between conferences correctly. Verified against LeaveConferenceRequest
+  // (spec3.json:141280, required=[call_control_id] only) in api-evidence.md.
+  'createTelnyxClient.leaveConference: hits /conferences/{id}/actions/leave with call_control_id',
+  async () => {
+    let seenUrl = '';
+    let seenBody: unknown = null;
+    const restore = stubFetch((url, init) => {
+      seenUrl = url;
+      seenBody = JSON.parse(String(init?.body ?? '{}'));
+      return new Response(JSON.stringify({ data: {} }), { status: 200 });
+    });
+    try {
+      const client = createTelnyxClient('test-api-key');
+      await client.leaveConference('conf-1', 'call-1');
+      assertEquals(seenUrl, 'https://api.telnyx.com/v2/conferences/conf-1/actions/leave');
+      assertEquals(seenBody, { call_control_id: 'call-1' });
+    } finally {
+      restore();
+    }
+  }
+);
+
+Deno.test(
+  // TASK-T4 review fix-forward (BLOCKER 1, R-024): the only prior `hangup` coverage
+  // (createTelnyxClient: a non-2xx response throws...) exercises the error path, never the
+  // request itself. Verified against HangupRequest (spec3.json:136843, zero required fields).
+  'createTelnyxClient.hangup: hits /calls/{id}/actions/hangup with an empty body',
+  async () => {
+    let seenUrl = '';
+    let seenBody: unknown = null;
+    const restore = stubFetch((url, init) => {
+      seenUrl = url;
+      seenBody = JSON.parse(String(init?.body ?? '{}'));
+      return new Response(JSON.stringify({ data: {} }), { status: 200 });
+    });
+    try {
+      const client = createTelnyxClient('test-api-key');
+      await client.hangup('call-1');
+      assertEquals(seenUrl, 'https://api.telnyx.com/v2/calls/call-1/actions/hangup');
+      assertEquals(seenBody, {});
+    } finally {
+      restore();
+    }
+  }
+);
+
+Deno.test(
   'createTelnyxClient.joinConference: hits /conferences/{id}/actions/join, not /calls/.../join_conference',
   async () => {
     let seenUrl = '';

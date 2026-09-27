@@ -80,6 +80,8 @@ import {
   removeDncNumber,
   getRecordingEnabled,
   setRecordingEnabled,
+  getAllowExternalTransfers,
+  setAllowExternalTransfers,
   getMyVoicemailDrop,
   getOrgDefaultVoicemailDrop,
   uploadMyVoicemailDrop,
@@ -2037,6 +2039,71 @@ function RecordingSettingsCard() {
   );
 }
 
+/** TASK-T4 review fix-forward (BLOCKER 2): default-off org toggle for external-number transfers.
+ *  Same admin-only shape as RecordingSettingsCard just above -- the server-side check in
+ *  transfer-core.ts is what actually enforces this; this toggle (and TransferModal hiding the
+ *  option when off) are the UX half. */
+function ExternalTransferSettingsCard() {
+  const { role } = useOrg();
+  const isAdmin = role === 'owner' || role === 'admin';
+
+  const [enabled, setEnabled] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isAdmin) {
+      setLoading(false);
+      return;
+    }
+    getAllowExternalTransfers()
+      .then(setEnabled)
+      .catch((e) => setError(String(e)))
+      .finally(() => setLoading(false));
+  }, [isAdmin]);
+
+  const handleToggle = async (next: boolean) => {
+    setEnabled(next);
+    setSaving(true);
+    setError(null);
+    try {
+      await setAllowExternalTransfers(next);
+    } catch (e) {
+      setError(String(e));
+      setEnabled(!next);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (!isAdmin) return null;
+
+  return (
+    <div className="bg-surface-1 rounded-app-lg p-6 border border-border-subtle max-w-2xl mt-6">
+      <h3 className="text-section-title text-text-primary mb-1">External-number transfers</h3>
+      <p className="text-sm text-text-secondary mb-4">
+        Let interns warm/cold transfer a live call to an arbitrary phone number, not just a
+        teammate. Off by default -- each transfer still dials out and is billed to this org.
+      </p>
+      {error && <p className="text-sm text-danger mb-3">{error}</p>}
+      {loading ? (
+        <Skeleton className="h-6 w-40" />
+      ) : (
+        <label className="flex items-center gap-2 text-sm text-white">
+          <input
+            type="checkbox"
+            checked={enabled}
+            disabled={saving}
+            onChange={(e) => void handleToggle(e.target.checked)}
+          />
+          Allow transfers to external numbers
+        </label>
+      )}
+    </div>
+  );
+}
+
 /** TASK-F-T3 (VMD-1): one sub-card per scope ('self' -- every member; 'org' -- owner/admin
  *  only). Both share the same upload/preview shape; only the loader/uploader functions differ. */
 function VoicemailDropSubCard({
@@ -3616,6 +3683,7 @@ export function Settings() {
                   )}
 
                   <RecordingSettingsCard />
+                  <ExternalTransferSettingsCard />
                   <VoicemailDropCard />
                 </motion.div>
               )}

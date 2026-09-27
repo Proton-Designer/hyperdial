@@ -14,6 +14,7 @@ import {
   runCompleteTransferAction,
   runCancelTransferAction,
   processTelnyxTransferEvent,
+  cancelInFlightTransferForSession,
 } from './transfer-core.ts';
 
 type Result<T = Record<string, unknown> | null> = {
@@ -48,6 +49,19 @@ function updateChain(onSettle: () => void) {
   return chain;
 }
 
+/** Terminal chain for a `.select(col, {count:'exact',head:true})` query -- awaited directly
+ *  (no `.maybeSingle()`/`.single()`), matching `externalTransferRateLimited`'s own call shape. */
+function countChain(count: number) {
+  // deno-lint-ignore no-explicit-any
+  const chain: any = {
+    eq: () => chain,
+    gte: () => chain,
+    in: () => chain,
+    then: (resolve: (v: unknown) => void) => resolve({ count, data: null, error: null }),
+  };
+  return chain;
+}
+
 function makeFakeSupabase(cfg: {
   dial_sessions?: Result[];
   call_legs?: Result[];
@@ -56,6 +70,11 @@ function makeFakeSupabase(cfg: {
   profiles?: Result[];
   call_transfersSelect?: Result[];
   call_transfersInsert?: Result;
+  org_transfer_settings?: Result[];
+  dnc_numbers?: Result[];
+  org_spend_settings?: Result[];
+  org_telephony?: Result[];
+  call_transfersCount?: number[];
   // deno-lint-ignore no-explicit-any
   rpc?: Record<string, Result<any>[]>;
 }) {
@@ -64,6 +83,14 @@ function makeFakeSupabase(cfg: {
     const i = counters[key] ?? 0;
     counters[key] = i + 1;
     if (!arr || !arr[i]) throw new Error(`fake supabase: no configured result #${i} for ${key}`);
+    return arr[i];
+  };
+  const nextCount = (key: string, arr?: number[]): number => {
+    const i = counters[key] ?? 0;
+    counters[key] = i + 1;
+    if (!arr || arr[i] === undefined) {
+      throw new Error(`fake supabase: no configured count #${i} for ${key}`);
+    }
     return arr[i];
   };
   const writes: { table: string; patch: Record<string, unknown> }[] = [];
@@ -100,10 +127,27 @@ function makeFakeSupabase(cfg: {
                 }),
               };
             },
-            select: () => selectChain(next('call_transfers', cfg.call_transfersSelect)),
+            // Review fix-forward: externalTransferRateLimited's own count query
+            // (`.select('id', {count:'exact',head:true})`) is awaited directly, no
+            // `.maybeSingle()` -- dispatch on the presence of `count` in opts to tell it apart
+            // from every other row-lookup `.select(...)` this module makes on the same table.
+            select: (_cols?: string, opts?: { count?: string }) =>
+              opts?.count
+                ? countChain(nextCount('call_transfersCount', cfg.call_transfersCount))
+                : selectChain(next('call_transfers', cfg.call_transfersSelect)),
             update: (patch: Record<string, unknown>) =>
               updateChain(() => writes.push({ table, patch })),
           };
+        case 'org_transfer_settings':
+          return {
+            select: () => selectChain(next('org_transfer_settings', cfg.org_transfer_settings)),
+          };
+        case 'dnc_numbers':
+          return { select: () => selectChain(next('dnc_numbers', cfg.dnc_numbers)) };
+        case 'org_spend_settings':
+          return { select: () => selectChain(next('org_spend_settings', cfg.org_spend_settings)) };
+        case 'org_telephony':
+          return { select: () => selectChain(next('org_telephony', cfg.org_telephony)) };
         default:
           throw new Error(`fake supabase: unexpected table ${table}`);
       }
@@ -153,6 +197,23 @@ function makeFakeTelnyxClient(overrides: Partial<TelnyxClient> = {}): {
 }
 
 const OK = <T>(data: T): Result<T> => ({ data, error: null });
+
+/**
+ * TASK-T4 review fix-forward (BLOCKER 2): `runStartTransferAction`'s new external-target guard
+ * chain (org_transfer_settings, dnc_numbers, checkSpendGate's own org_spend_settings/
+ * org_telephony, the rate-limit count) touches 4 tables this fake never needed before. Spread
+ * this into any test exercising a targetKind:'external' happy path so it isn't blocked by an
+ * unconfigured table -- org_spend_settings/org_telephony default to "not connected" (checkSpendGate
+ * fails OPEN, its own documented behavior, re-tested in spend-gate.test.ts, not reimplemented
+ * here) and dnc_numbers/the rate count default to "no match"/"zero so far this hour".
+ */
+const EXTERNAL_TRANSFER_ALLOWED_DEFAULTS = {
+  org_transfer_settings: [OK({ allow_external_transfers: true })],
+  dnc_numbers: [OK(null)],
+  org_spend_settings: [OK(null)],
+  org_telephony: [OK(null)],
+  call_transfersCount: [0],
+};
 
 const SESSION_ON_CALL = OK({
   id: 's-1',
@@ -319,6 +380,7 @@ Deno.test(
       call_legs: [PROSPECT_LEG],
       user_phone_numbers: [OK({ phone_number: '+15551230000' })],
       call_transfersInsert: OK({ id: 'transfer-1' }),
+      ...EXTERNAL_TRANSFER_ALLOWED_DEFAULTS,
     });
     const { client, calls } = makeFakeTelnyxClient();
     const result = await runStartTransferAction(
@@ -333,7 +395,7 @@ Deno.test(
         sessionId: 's-1',
         type: 'cold',
         targetKind: 'external',
-        targetNumber: '+15559998888',
+        targetNumber: '+14155552671',
       }
     );
     assertEquals(result.status, 200);
@@ -341,7 +403,7 @@ Deno.test(
     const dialCall = calls.find((c) => c.method === 'dial');
     assertExists(dialCall);
     const dialArgs = dialCall!.args[0] as { to: string; from: string; clientState: string };
-    assertEquals(dialArgs.to, '+15559998888');
+    assertEquals(dialArgs.to, '+14155552671');
     assertEquals(dialArgs.from, '+15551230000');
     const decoded = JSON.parse(atob(dialArgs.clientState));
     assertEquals(decoded, { org: 'org-1', transfer: 'transfer-1', kind: 'transfer_target' });
@@ -396,6 +458,7 @@ Deno.test(
       call_legs: [PROSPECT_LEG],
       user_phone_numbers: [OK({ phone_number: '+15551230000' })],
       call_transfersInsert: { data: null, error: { message: 'duplicate', code: '23505' } },
+      ...EXTERNAL_TRANSFER_ALLOWED_DEFAULTS,
     });
     const { client, calls } = makeFakeTelnyxClient();
     const result = await runStartTransferAction(
@@ -410,7 +473,7 @@ Deno.test(
         sessionId: 's-1',
         type: 'cold',
         targetKind: 'external',
-        targetNumber: '+15559998888',
+        targetNumber: '+14155552671',
       }
     );
     assertEquals(result.status, 409);
@@ -427,6 +490,7 @@ Deno.test(
       call_legs: [PROSPECT_LEG],
       user_phone_numbers: [OK({ phone_number: '+15551230000' })],
       call_transfersInsert: OK({ id: 'transfer-3' }),
+      ...EXTERNAL_TRANSFER_ALLOWED_DEFAULTS,
     });
     const { client } = makeFakeTelnyxClient({
       dial: async () => {
@@ -445,7 +509,7 @@ Deno.test(
         sessionId: 's-1',
         type: 'cold',
         targetKind: 'external',
-        targetNumber: '+15559998888',
+        targetNumber: '+14155552671',
       }
     );
     assertEquals(result.status, 502);
@@ -455,6 +519,140 @@ Deno.test(
     );
     assertExists(failCall);
     assertEquals((failCall.args.p_fields as Record<string, unknown>).ended_reason, 'dial_failed');
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Review fix-forward (BLOCKER 2): external-target guard chain
+// ---------------------------------------------------------------------------
+
+Deno.test(
+  'runStartTransferAction: external target rejected when a premium/toll number, before any DB call',
+  async () => {
+    // No org_transfer_settings/etc. configured at all -- externalTransferRejectionReason must
+    // reject BEFORE any of those tables are ever touched (a misconfigured harness here would
+    // throw "no configured result", not silently pass).
+    const supabase = makeFakeSupabase({
+      dial_sessions: [SESSION_ON_CALL],
+      call_legs: [PROSPECT_LEG],
+    });
+    const { client, calls } = makeFakeTelnyxClient();
+    for (const targetNumber of ['+19005551234', '+12129761234', '+19115551234']) {
+      const result = await runStartTransferAction(
+        supabase,
+        client,
+        'app-1',
+        'conn-1',
+        'org-1',
+        'agent',
+        'agent-1',
+        { sessionId: 's-1', type: 'cold', targetKind: 'external', targetNumber }
+      );
+      assertEquals(result.status, 400);
+      assertEquals(result.body.code, 'EXTERNAL_TRANSFER_NUMBER_REJECTED');
+    }
+    assertEquals(calls.length, 0);
+  }
+);
+
+Deno.test(
+  'runStartTransferAction: external target rejected (403) when the org has not enabled external transfers',
+  async () => {
+    const supabase = makeFakeSupabase({
+      org_transfer_settings: [OK({ allow_external_transfers: false })],
+    });
+    const { client, calls } = makeFakeTelnyxClient();
+    const result = await runStartTransferAction(
+      supabase,
+      client,
+      'app-1',
+      'conn-1',
+      'org-1',
+      'agent',
+      'agent-1',
+      { sessionId: 's-1', type: 'cold', targetKind: 'external', targetNumber: '+14155552671' }
+    );
+    assertEquals(result.status, 403);
+    assertEquals(result.body.code, 'EXTERNAL_TRANSFERS_DISABLED');
+    assertEquals(calls.length, 0); // never reached the DB session/leg lookup or Telnyx
+  }
+);
+
+Deno.test(
+  'runStartTransferAction: external target rejected when it is on the org DNC list',
+  async () => {
+    const supabase = makeFakeSupabase({
+      org_transfer_settings: [OK({ allow_external_transfers: true })],
+      dnc_numbers: [OK({ e164: '+14155552671' })],
+    });
+    const { client } = makeFakeTelnyxClient();
+    const result = await runStartTransferAction(
+      supabase,
+      client,
+      'app-1',
+      'conn-1',
+      'org-1',
+      'agent',
+      'agent-1',
+      { sessionId: 's-1', type: 'cold', targetKind: 'external', targetNumber: '+14155552671' }
+    );
+    assertEquals(result.status, 400);
+    assertEquals(result.body.code, 'EXTERNAL_TRANSFER_NUMBER_REJECTED');
+  }
+);
+
+Deno.test(
+  'runStartTransferAction: external target rejected (429) at the per-agent rolling-hour rate limit',
+  async () => {
+    const supabase = makeFakeSupabase({
+      org_transfer_settings: [OK({ allow_external_transfers: true })],
+      dnc_numbers: [OK(null)],
+      org_spend_settings: [OK(null)],
+      org_telephony: [OK(null)],
+      call_transfersCount: [10],
+    });
+    const { client, calls } = makeFakeTelnyxClient();
+    const result = await runStartTransferAction(
+      supabase,
+      client,
+      'app-1',
+      'conn-1',
+      'org-1',
+      'agent',
+      'agent-1',
+      { sessionId: 's-1', type: 'cold', targetKind: 'external', targetNumber: '+14155552671' }
+    );
+    assertEquals(result.status, 429);
+    assertEquals(result.body.code, 'EXTERNAL_TRANSFER_RATE_LIMIT');
+    assertEquals(calls.length, 0);
+  }
+);
+
+Deno.test(
+  'runStartTransferAction: a member (internal) target skips every external-only guard',
+  async () => {
+    // Zero org_transfer_settings/dnc_numbers/org_spend_settings/org_telephony/
+    // call_transfersCount configured -- a member target must never touch any of them (item e of
+    // the review fix-forward dispatch: "member transfers are unaffected").
+    const supabase = makeFakeSupabase({
+      dial_sessions: [SESSION_ON_CALL],
+      call_legs: [PROSPECT_LEG],
+      org_members: [OK({ user_id: 'teammate-1' }), OK({ telnyx_credential_id: 'cred-1' })],
+      user_phone_numbers: [OK({ phone_number: '+15551230000' })],
+      call_transfersInsert: OK({ id: 'transfer-member-1' }),
+    });
+    const { client } = makeFakeTelnyxClient();
+    const result = await runStartTransferAction(
+      supabase,
+      client,
+      'app-1',
+      'conn-1',
+      'org-1',
+      'agent',
+      'agent-1',
+      { sessionId: 's-1', type: 'warm', targetKind: 'member', targetUserId: 'teammate-1' }
+    );
+    assertEquals(result.status, 200);
   }
 );
 
@@ -725,5 +923,80 @@ Deno.test(
     });
     assertEquals(calls.length, 0);
     assertEquals(supabase._rpcCalls.length, 0);
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Review fix-forward (SHOULD): cancelInFlightTransferForSession
+// ---------------------------------------------------------------------------
+
+Deno.test(
+  'cancelInFlightTransferForSession: no in-flight transfer for the session is a pure no-op',
+  async () => {
+    const supabase = makeFakeSupabase({ call_transfersSelect: [OK(null)] });
+    const { client, calls } = makeFakeTelnyxClient();
+    await cancelInFlightTransferForSession(supabase, client, 'org-1', 's-1', 'agent_hangup');
+    assertEquals(calls.length, 0);
+    assertEquals(supabase._rpcCalls.length, 0);
+  }
+);
+
+Deno.test(
+  'cancelInFlightTransferForSession: dialing -- hangs up the target only, no conference unwind needed',
+  async () => {
+    const supabase = makeFakeSupabase({
+      call_transfersSelect: [COLD_DIALING],
+      rpc: { transition_call_transfer: [OK(true)] },
+    });
+    const { client, calls } = makeFakeTelnyxClient();
+    await cancelInFlightTransferForSession(supabase, client, 'org-1', 's-1', 'agent_hangup');
+    assertEquals(
+      calls.map((c) => c.method),
+      ['hangup']
+    );
+    assertEquals(calls[0].args, ['call-target-1']);
+    const cancelCall = supabase._rpcCalls.find(
+      (c: { name: string; args: Record<string, unknown> }) =>
+        c.name === 'transition_call_transfer' && c.args.p_new_status === 'cancelled'
+    );
+    assertExists(cancelCall);
+    assertEquals(
+      (cancelCall.args.p_fields as Record<string, unknown>).ended_reason,
+      'agent_hangup'
+    );
+    assertEquals(cancelCall.args.p_expected_statuses, ['dialing', 'connected']);
+  }
+);
+
+Deno.test(
+  'cancelInFlightTransferForSession: connected -- hangs up the target AND unwinds the agent back to main',
+  async () => {
+    const supabase = makeFakeSupabase({
+      call_transfersSelect: [WARM_CONNECTED],
+      dial_sessions: [SESSION_ON_CALL],
+      call_legs: [PROSPECT_LEG, OK({ call_control_id: 'call-agent-1' })],
+      rpc: { transition_call_transfer: [OK(true)] },
+    });
+    const { client, calls } = makeFakeTelnyxClient();
+    await cancelInFlightTransferForSession(supabase, client, 'org-1', 's-1', 'session_ended');
+    assertEquals(
+      calls.map((c) => c.method),
+      ['hangup', 'leaveConference', 'joinConference', 'unholdConferenceParticipants']
+    );
+    assertEquals(calls[0].args, ['call-target-1']);
+    const legWrite = supabase._writes.find(
+      (w: { table: string; patch: Record<string, unknown> }) => w.table === 'call_legs'
+    );
+    assertExists(legWrite);
+    assertEquals(legWrite.patch.held_at, null);
+    const cancelCall = supabase._rpcCalls.find(
+      (c: { name: string; args: Record<string, unknown> }) =>
+        c.name === 'transition_call_transfer' && c.args.p_new_status === 'cancelled'
+    );
+    assertExists(cancelCall);
+    assertEquals(
+      (cancelCall.args.p_fields as Record<string, unknown>).ended_reason,
+      'session_ended'
+    );
   }
 );

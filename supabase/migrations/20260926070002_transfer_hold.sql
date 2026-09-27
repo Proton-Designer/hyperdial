@@ -217,3 +217,76 @@ alter table public.crm_sync_jobs add constraint crm_sync_jobs_kind_check
     'disposition', 'contact_upsert', 'nurture_tag', 'voicemail_tag', 'no_answer_tag',
     'inbound_call_note', 'transfer_note'
   ));
+
+-- =================================================================================================
+-- Review fix-forward (eng1, review-eng1.md BLOCKER 2): external-target transfer had only an E.164
+-- *format* check -- no spend-cap, no premium/international guard, no rate limit. A live call
+-- could start -> cancel -> restart a transfer to any E.164 number repeatedly, each one a real
+-- billed Telnyx dial. This migration is unapplied (070002, not yet deployed), so the fix lands in
+-- the SAME file rather than a new 070003 -- one clean history for a feature nothing has read yet.
+--
+-- org_transfer_settings (allow_external_transfers, default FALSE): same shape as
+-- org_recording_settings (20260925040000) -- member-read/owner-admin-write, its own seed
+-- trigger + one-time backfill, straight client-side table read/write (RLS-enforced, no edge
+-- function) for the Settings toggle, exactly like getRecordingEnabled/setRecordingEnabled.
+-- =================================================================================================
+
+create table public.org_transfer_settings (
+  org_id uuid primary key references public.orgs(id) on delete cascade,
+  allow_external_transfers boolean not null default false,
+  updated_at timestamptz not null default now()
+);
+
+alter table public.org_transfer_settings enable row level security;
+
+create policy "org members can view transfer settings"
+  on public.org_transfer_settings for select
+  using (private.is_org_member(org_id));
+
+create policy "owner or admin can insert transfer settings"
+  on public.org_transfer_settings for insert
+  with check (private.has_org_role(org_id, array['owner', 'admin']));
+
+create policy "owner or admin can update transfer settings"
+  on public.org_transfer_settings for update
+  using (private.has_org_role(org_id, array['owner', 'admin']))
+  with check (private.has_org_role(org_id, array['owner', 'admin']));
+
+create function private.seed_default_transfer_settings(p_org uuid)
+returns void
+language sql
+security definer
+set search_path = ''
+as $$
+  insert into public.org_transfer_settings (org_id, allow_external_transfers)
+  values (p_org, false)
+  on conflict (org_id) do nothing;
+$$;
+
+create function private.seed_default_transfer_settings_trigger()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  perform private.seed_default_transfer_settings(new.id);
+  return new;
+end;
+$$;
+
+create trigger seed_default_transfer_settings_trigger
+  after insert on public.orgs
+  for each row execute function private.seed_default_transfer_settings_trigger();
+
+-- Existing orgs (this org's own inserts never ran the trigger above): default FALSE for every
+-- org that already exists, same as the column default -- explicit, not left to on-conflict.
+insert into public.org_transfer_settings (org_id, allow_external_transfers)
+select id, false from public.orgs
+on conflict (org_id) do nothing;
+
+-- Anchors runStartTransferAction's own per-agent rolling-hour rate-limit count
+-- (transfer-core.ts) -- without this the count query is a sequential scan over every transfer
+-- this org has ever initiated, growing without bound.
+create index idx_call_transfers_initiated_by_target_kind_created
+  on public.call_transfers (initiated_by, target_kind, created_at);

@@ -899,6 +899,34 @@ export async function cancelTransfer(transferId: string): Promise<{ status: 'can
   return data as { status: 'cancelled' };
 }
 
+// --- TASK-T4 review fix-forward (BLOCKER 2): org_transfer_settings ---
+// Same "straight client-side table read/write, RLS-enforced, no edge function" shape as
+// getRecordingEnabled/setRecordingEnabled -- owner/admin write, every org member can read (an
+// agent needs this to know whether TransferModal should show the external option at all; the
+// server-side dialer-transfer/transfer-core.ts check is the one that actually matters, this is
+// UX only). Defaults to false when the org has no row yet, matching the column's own default.
+
+export async function getAllowExternalTransfers(): Promise<boolean> {
+  const orgId = await getActiveOrgId();
+  const { data, error } = await supabase
+    .from('org_transfer_settings')
+    .select('allow_external_transfers')
+    .eq('org_id', orgId)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return data?.allow_external_transfers ?? false;
+}
+
+export async function setAllowExternalTransfers(enabled: boolean): Promise<void> {
+  const orgId = await getActiveOrgId();
+  const { error } = await supabase.from('org_transfer_settings').upsert({
+    org_id: orgId,
+    allow_external_transfers: enabled,
+    updated_at: new Date().toISOString(),
+  });
+  if (error) throw new Error(error.message);
+}
+
 export interface UserPreferences {
   team_performance_range?: '7d' | '30d' | 'custom';
   custom_start?: string;

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { listOrgMembers, type OrgMember } from '@/lib/api';
+import { getAllowExternalTransfers, listOrgMembers, type OrgMember } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { useFocusTrap } from '@/hooks/useFocusTrap';
 
@@ -33,12 +33,24 @@ export function TransferModal({ onClose, onStart }: TransferModalProps) {
   const [targetNumber, setTargetNumber] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // TASK-T4 review fix-forward (BLOCKER 2): UX-only mirror of the server-side
+  // org_transfer_settings check (transfer-core.ts is the one that actually enforces this).
+  // Defaults to false (hides the option) until the fetch resolves, matching the setting's own
+  // default-off -- never flash the option on while loading.
+  const [allowExternal, setAllowExternal] = useState(false);
 
   useEffect(() => {
     listOrgMembers()
       .then((all) => setMembers(all.filter((m) => m.status === 'active')))
       .catch((e) => setMembersError(e instanceof Error ? e.message : 'Failed to load teammates'));
+    getAllowExternalTransfers()
+      .then(setAllowExternal)
+      .catch(() => setAllowExternal(false));
   }, []);
+
+  useEffect(() => {
+    if (!allowExternal && targetKind === 'external') setTargetKind('member');
+  }, [allowExternal, targetKind]);
 
   const handleSubmit = async () => {
     setError(null);
@@ -121,15 +133,23 @@ export function TransferModal({ onClose, onStart }: TransferModalProps) {
               >
                 Teammate
               </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant={targetKind === 'external' ? 'fe-secondary' : 'fe-ghost'}
-                onClick={() => setTargetKind('external')}
-              >
-                Phone number
-              </Button>
+              {allowExternal && (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={targetKind === 'external' ? 'fe-secondary' : 'fe-ghost'}
+                  onClick={() => setTargetKind('external')}
+                >
+                  Phone number
+                </Button>
+              )}
             </div>
+            {!allowExternal && (
+              <p className="text-meta text-text-secondary mb-2">
+                External-number transfers are disabled for this org. Ask an owner or admin to enable
+                them in Settings.
+              </p>
+            )}
             {targetKind === 'member' ? (
               membersError ? (
                 <p className="text-meta text-danger">{membersError}</p>
