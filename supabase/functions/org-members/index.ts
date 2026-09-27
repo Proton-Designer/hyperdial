@@ -14,6 +14,7 @@ interface MemberRow {
   role: OrgRole;
   status: 'active' | 'disabled';
   created_at: string;
+  ghl_user_id: string | null;
 }
 
 Deno.serve(async (req) => {
@@ -31,7 +32,7 @@ Deno.serve(async (req) => {
 
     const { data: members, error } = await supabase
       .from('org_members')
-      .select('user_id, role, status, created_at')
+      .select('user_id, role, status, created_at, ghl_user_id')
       .eq('org_id', orgId)
       .order('created_at', { ascending: true });
     if (error) {
@@ -76,6 +77,7 @@ Deno.serve(async (req) => {
           first_name: profile?.first_name ?? null,
           last_name: profile?.last_name ?? null,
           email,
+          ghl_user_id: m.ghl_user_id,
         };
       })
     );
@@ -91,7 +93,7 @@ Deno.serve(async (req) => {
   const { orgId, error: authError } = await requireOrgRole(req, ['owner', 'admin']);
   if (authError) return authError;
 
-  let body: { action?: string; user_id?: string; role?: string };
+  let body: { action?: string; user_id?: string; role?: string; ghl_user_id?: string | null };
   try {
     body = await req.json();
   } catch {
@@ -112,10 +114,12 @@ Deno.serve(async (req) => {
   }
   if (!target) return jsonError(404, 'Member not found in this org');
 
-  // The owner row is untouchable through this endpoint in every direction (role change,
-  // disable, remove) -- matches org_members' own RLS ("...and role <> 'owner'") and the
-  // invariant that ownership transfer is a separate, not-yet-built owner-only path.
-  if (target.role === 'owner') {
+  // The owner row is untouchable through this endpoint for role change/disable/remove -- matches
+  // org_members' own RLS ("...and role <> 'owner'") and the invariant that ownership transfer is
+  // a separate, not-yet-built owner-only path. MISSION-4 TASK-T1 (GHL-8)'s own set_ghl_user_id is
+  // exempt: mapping the owner's own account to a GHL user id is ordinary per-member config, not a
+  // role/access change.
+  if (target.role === 'owner' && body.action !== 'set_ghl_user_id') {
     return jsonError(403, "The org owner can't be changed, disabled, or removed here");
   }
 
@@ -171,8 +175,34 @@ Deno.serve(async (req) => {
       }
       break;
     }
+    // MISSION-4 TASK-T1 (GHL-8): "the contact's assigned intern comes from GHL's assignedTo,
+    // mapped via each member's GHL user id, which owner/admin can set per member." An empty/null
+    // value clears the mapping (undoing a mistaken assignment); org_members_org_ghl_user_id_key
+    // (20260926080000) is per-org and ignores nulls, so this only ever conflicts with ANOTHER
+    // member of the SAME org already mapped to the same GHL user id.
+    case 'set_ghl_user_id': {
+      const raw = typeof body.ghl_user_id === 'string' ? body.ghl_user_id.trim() : null;
+      const { error } = await supabase
+        .from('org_members')
+        .update({ ghl_user_id: raw || null })
+        .eq('org_id', orgId)
+        .eq('user_id', targetUserId);
+      if (error) {
+        console.error('org-members set_ghl_user_id error:', error.message);
+        const status = error.code === '23505' ? 409 : 500;
+        const message =
+          error.code === '23505'
+            ? 'Another member is already mapped to that GHL user id'
+            : 'Failed to set the GHL user id';
+        return jsonError(status, message);
+      }
+      break;
+    }
     default:
-      return jsonError(400, "action must be one of 'change_role', 'disable', 'enable', 'remove'");
+      return jsonError(
+        400,
+        "action must be one of 'change_role', 'disable', 'enable', 'remove', 'set_ghl_user_id'"
+      );
   }
 
   return new Response(JSON.stringify({ ok: true }), {

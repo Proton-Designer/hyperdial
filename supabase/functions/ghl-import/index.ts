@@ -12,6 +12,7 @@ import { corsHeaders, corsPreflightResponse } from '../_shared/cors.ts';
 import { requireOrgRole } from '../_shared/auth.ts';
 import { createGhlClient } from '../_shared/ghl-client.ts';
 import {
+  fetchAllExistingContactRows,
   fetchAllGhlContacts,
   planGhlImport,
   type ExistingContactRow,
@@ -34,33 +35,6 @@ function jsonResponse(body: unknown, status = 200): Response {
 
 function getSupabaseAdmin() {
   return createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
-}
-
-/** Same PostgREST max_rows=1000 pagination gap as contacts-import's existing-contacts lookup
- * (TASK-L3 review fix-forward, MAJOR item 5) -- an org with more than 1000 contacts would
- * otherwise see this dedupe check silently miss everything past the first page. */
-async function fetchAllExistingContactRows(
-  // deno-lint-ignore no-explicit-any
-  supabase: any,
-  orgId: string
-): Promise<ExistingContactRow[]> {
-  const PAGE_SIZE = 1000;
-  const all: ExistingContactRow[] = [];
-  for (let offset = 0; ; offset += PAGE_SIZE) {
-    const { data, error } = await supabase
-      .from('contacts')
-      .select('id, phone_number, ghl_contact_id, dnc, ghl_tags')
-      .eq('org_id', orgId)
-      // TASK-L8 review nit: same as contacts-import's own fetchAllContactRows -- .range() paging
-      // with no explicit order isn't guaranteed stable across separate requests.
-      .order('id')
-      .range(offset, offset + PAGE_SIZE - 1);
-    if (error) throw new Error(`existing contacts lookup failed: ${error.message}`);
-    const page = (data ?? []) as ExistingContactRow[];
-    all.push(...page);
-    if (page.length < PAGE_SIZE) break;
-  }
-  return all;
 }
 
 Deno.serve(async (req: Request) => {

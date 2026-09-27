@@ -1,7 +1,9 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Search, Plus, Target, Play } from 'lucide-react';
-import { listCampaigns, createCampaign, type CampaignWithStats } from '../lib/api';
+import { Search, Plus, Target, Play, RefreshCw } from 'lucide-react';
+import { listCampaigns, createCampaign, syncGhlNow, type CampaignWithStats } from '../lib/api';
+import { useOrg } from '@/contexts/OrgContext';
+import { toast } from 'sonner';
 import { CampaignManageModal } from './campaigns/CampaignManageModal';
 import { PageHeader } from '@/components/app/PageHeader';
 import { EmptyState } from '@/components/app/EmptyState';
@@ -56,6 +58,9 @@ export function Campaigns({
   const [createError, setCreateError] = useState<string | null>(null);
   const newCampaignModalRef = useRef<HTMLDivElement>(null);
   useFocusTrap(newCampaignModalRef, newCampaignOpen);
+  const { role } = useOrg();
+  const isAdmin = role === 'owner' || role === 'admin';
+  const [syncing, setSyncing] = useState(false);
 
   const fetchCampaigns = useCallback(() => {
     setLoading(true);
@@ -96,6 +101,28 @@ export function Campaigns({
     }
   };
 
+  /** MISSION-4 TASK-T1 (GHL-5): runs every configured tag/stage -> campaign mapping right now
+   *  (Settings -> Integrations -> GHL), regardless of whether the 5-minute auto-pull is enabled. */
+  const handleSyncGhlNow = async () => {
+    setSyncing(true);
+    try {
+      const result = await syncGhlNow();
+      const failed = result.mappings.filter((m) => m.error);
+      if (failed.length > 0) {
+        toast.warning(
+          `Synced -- ${result.created} created, ${result.updated} updated, but ${failed.length} mapping(s) failed.`
+        );
+      } else {
+        toast.success(`Synced with GHL -- ${result.created} created, ${result.updated} updated.`);
+      }
+      fetchCampaigns();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to sync with GHL');
+    } finally {
+      setSyncing(false);
+    }
+  };
+
   return (
     <div className="h-full bg-surface-0">
       <div className="p-4 sm:p-8 max-w-[1600px] mx-auto">
@@ -103,10 +130,18 @@ export function Campaigns({
           title="Campaigns"
           description="Manage your outreach campaigns"
           actions={
-            <Button variant="primary" onClick={() => setNewCampaignOpen(true)}>
-              <Plus className="w-4 h-4" />
-              New campaign
-            </Button>
+            <div className="flex gap-2">
+              {isAdmin && (
+                <Button variant="fe-ghost" onClick={handleSyncGhlNow} disabled={syncing}>
+                  <RefreshCw className={cn('w-4 h-4', syncing && 'animate-spin')} />
+                  {syncing ? 'Syncing...' : 'Sync now'}
+                </Button>
+              )}
+              <Button variant="primary" onClick={() => setNewCampaignOpen(true)}>
+                <Plus className="w-4 h-4" />
+                New campaign
+              </Button>
+            </div>
           }
         />
 

@@ -45,6 +45,40 @@
  * ghl-import/index.ts's GHL_API_BASE, for a local mock-GHL curl verification) reads it
  * server-side and passes it through. Production never sets that env var, so every real
  * caller gets the default.
+ *
+ * TASK-T1 (MISSION-4) additions -- GHL-3/4/5/6/8 -- verified 2026-09-26 the same way (curled
+ * raw.githubusercontent.com/GoHighLevel/highlevel-api-docs/main/apps/{opportunities,users,
+ * custom-fields}.json, parsed with python, never WebFetch):
+ *   - `GET /opportunities/search?locationId&pipeline_stage_id&limit&startAfterId&startAfter` --
+ *     the ONLY server-side way to filter by pipeline stage (GHL-4's "pull by ... pipeline
+ *     stage"); `GET /contacts/` has no stage param at all, same as it has no tag param (see
+ *     above). Response: `SearchOpportunitiesResponseSchema` -- `pipelineId`, `pipelineStageId`,
+ *     `assignedTo` (a GHL user id), `contactId`, `updatedAt`, `customFields` (OPPORTUNITY-level,
+ *     not the contact's own) are all real top-level fields in the published schema, not an
+ *     under-documented guess this time.
+ *   - `GET /opportunities/pipelines?locationId` -- `{pipelines: [{id, name, stages}]}`. The
+ *     spec types `stages` as a bare untyped array (`{"type": "array", "items": {"type":
+ *     "array"}}`) -- a lazy/incomplete spec entry, not a real shape; GHL's own product UI proves
+ *     each pipeline has named stages, so this client types `stages` as `{id, name}[]` and flags
+ *     it UNVERIFIED live (same category as the contacts-list-response gap noted above).
+ *   - `GET /contacts/{contactId}` -- `GetContectByIdSchema` (sic, GHL's own typo) is the only
+ *     schema in the contacts spec confirmed to carry `assignedTo`, `dateUpdated`, and
+ *     `customFields` (`{id, value}[]`, `id` being the location's custom-FIELD-DEFINITION id, not
+ *     a per-contact id) all at once. Used for a STAGE-mode pull's per-contact detail fetch
+ *     (opportunity search only returns a stripped-down nested contact: id/name/companyName/
+ *     email/phone/tags, no assignedTo/customFields/dateUpdated of its own).
+ *   - `GET /custom-fields/object-key/{objectKey}?locationId` (`objectKey='contact'`) --
+ *     `{fields: [{id, name, ...}], folders}` -- the location's custom FIELD DEFINITIONS, used to
+ *     resolve a contact's `customFields[].id` to a human field name (GHL-6's "map GHL custom
+ *     fields ... sensible defaults by field name").
+ *   - `GET /users/?locationId` -- `{users: [{id, name, firstName, lastName, email, phone}]}` --
+ *     the location's GHL users, for GHL-8's "map [a member] via each member's GHL user id."
+ *   - Rate limits are NOT modeled in GHL's OpenAPI specs (no `x-ratelimit-*` anywhere in any of
+ *     the 5 spec files fetched for this task) -- the marketplace docs SITE states them in prose
+ *     (100 requests/10s burst, 200,000/day, per sub-account), but that site is the same
+ *     client-rendered Docusaurus app already documented above as unreachable by a plain fetch.
+ *     `_shared/ghl-rate-limit.ts` cites this as the best available source and flags it as such;
+ *     correct it the first time a live 429 response's own headers are actually observed.
  */
 
 const DEFAULT_GHL_BASE_URL = 'https://services.leadconnectorhq.com';
@@ -150,6 +184,25 @@ export function buildSearchContactsQuery(args: SearchContactsArgs): string {
   return params.toString();
 }
 
+export interface SearchOpportunitiesArgs {
+  locationId: string;
+  pipelineStageId?: string;
+  limit?: number;
+  startAfterId?: string;
+  startAfter?: number;
+}
+
+/** Builds the GET /opportunities/search query string. locationId is the one required param;
+ *  pipeline_stage_id is GHL's own server-side stage filter (GHL-4). */
+export function buildSearchOpportunitiesQuery(args: SearchOpportunitiesArgs): string {
+  const params = new URLSearchParams({ location_id: args.locationId });
+  if (args.pipelineStageId !== undefined) params.set('pipeline_stage_id', args.pipelineStageId);
+  if (args.limit !== undefined) params.set('limit', String(args.limit));
+  if (args.startAfterId !== undefined) params.set('startAfterId', args.startAfterId);
+  if (args.startAfter !== undefined) params.set('startAfter', String(args.startAfter));
+  return params.toString();
+}
+
 export interface AddNoteArgs {
   body: string;
   userId?: string;
@@ -192,6 +245,11 @@ export interface GhlLocation {
   name: string;
 }
 
+export interface GhlCustomFieldValue {
+  id: string;
+  value: unknown;
+}
+
 export interface GhlContact {
   id: string;
   firstName?: string;
@@ -201,7 +259,52 @@ export interface GhlContact {
   tags?: string[];
   dnd?: boolean;
   dateAdded?: string;
+  /** TASK-T1: confirmed on `GetContectByIdSchema` only (see module header) -- assumed present on
+   *  the list response too, same "GHL under-documents the list endpoint's real shape" reasoning
+   *  already applied to firstName/lastName/phone/dnd above. */
+  dateUpdated?: string;
+  assignedTo?: string;
+  customFields?: GhlCustomFieldValue[];
+  companyName?: string;
+  website?: string;
+  city?: string;
+  state?: string;
+  postalCode?: string;
   [key: string]: unknown;
+}
+
+export interface GhlPipelineStage {
+  id: string;
+  name: string;
+}
+
+export interface GhlPipeline {
+  id: string;
+  name: string;
+  stages: GhlPipelineStage[];
+}
+
+export interface GhlOpportunity {
+  id: string;
+  pipelineId: string;
+  pipelineStageId: string;
+  assignedTo?: string;
+  contactId: string;
+  updatedAt?: string;
+  contact?: { id: string; name?: string; companyName?: string; email?: string; phone?: string };
+}
+
+export interface GhlUser {
+  id: string;
+  name?: string;
+  firstName?: string;
+  lastName?: string;
+  email?: string;
+}
+
+export interface GhlCustomFieldDef {
+  id: string;
+  name: string;
 }
 
 export interface GhlClient {
@@ -219,6 +322,24 @@ export interface GhlClient {
   createTask(contactId: string, args: CreateTaskArgs): Promise<{ taskId: string }>;
   /** PUT /contacts/{contactId} with only { dnd } — turns DND on/off for a known contact id (DNC disposition). */
   setDnd(contactId: string, dnd: boolean): Promise<void>;
+  /** GET /contacts/{contactId} — the only endpoint confirmed to return assignedTo/dateUpdated/
+   *  customFields together (TASK-T1). Used for a stage-mode pull's per-contact detail fetch. */
+  getContact(contactId: string): Promise<GhlContact>;
+  /** GET /opportunities/search?pipeline_stage_id=... — TASK-T1 (GHL-4): the only server-side way
+   *  to pull contacts by pipeline stage. */
+  searchOpportunities(
+    args: SearchOpportunitiesArgs
+  ): Promise<{ opportunities: GhlOpportunity[]; count: number }>;
+  /** GET /opportunities/pipelines — TASK-T1: pipeline/stage id -> name, for resolving a stored
+   *  ghl_pipeline_stage to a human label and for the tag/stage -> campaign mapping admin UI. */
+  getPipelines(locationId: string): Promise<GhlPipeline[]>;
+  /** GET /users/?locationId — TASK-T1 (GHL-8): the location's GHL users, so an owner/admin can
+   *  map a member to a real ghl_user_id instead of pasting an opaque string. */
+  listUsers(locationId: string): Promise<GhlUser[]>;
+  /** GET /custom-fields/object-key/contact?locationId — TASK-T1 (GHL-6): the location's custom
+   *  field DEFINITIONS (id -> name), used to resolve `GhlContact.customFields[].id` to a name
+   *  and to compute the field-mapping editor's "sensible defaults by field name". */
+  listContactCustomFieldDefs(locationId: string): Promise<GhlCustomFieldDef[]>;
 }
 
 export interface CreateGhlClientOptions {
@@ -308,6 +429,54 @@ export function createGhlClient(token: string, options: CreateGhlClientOptions =
         method: 'PUT',
         body: JSON.stringify({ dnd }),
       });
+    },
+
+    async getContact(contactId) {
+      const res = await ghlRequest<{ contact?: GhlContact }>(
+        token,
+        apiBase,
+        `/contacts/${contactId}`
+      );
+      if (!res.contact?.id) {
+        throw new Error('GHL getContact: response had no contact.id');
+      }
+      return res.contact;
+    },
+
+    async searchOpportunities(args) {
+      const qs = buildSearchOpportunitiesQuery(args);
+      const res = await ghlRequest<{ opportunities?: GhlOpportunity[]; meta?: { total?: number } }>(
+        token,
+        apiBase,
+        `/opportunities/search?${qs}`
+      );
+      return { opportunities: res.opportunities ?? [], count: res.meta?.total ?? 0 };
+    },
+
+    async getPipelines(locationId) {
+      const qs = new URLSearchParams({ locationId }).toString();
+      const res = await ghlRequest<{ pipelines?: GhlPipeline[] }>(
+        token,
+        apiBase,
+        `/opportunities/pipelines?${qs}`
+      );
+      return res.pipelines ?? [];
+    },
+
+    async listUsers(locationId) {
+      const qs = new URLSearchParams({ locationId }).toString();
+      const res = await ghlRequest<{ users?: GhlUser[] }>(token, apiBase, `/users/?${qs}`);
+      return res.users ?? [];
+    },
+
+    async listContactCustomFieldDefs(locationId) {
+      const qs = new URLSearchParams({ locationId }).toString();
+      const res = await ghlRequest<{ fields?: GhlCustomFieldDef[] }>(
+        token,
+        apiBase,
+        `/custom-fields/object-key/contact?${qs}`
+      );
+      return res.fields ?? [];
     },
   };
 }

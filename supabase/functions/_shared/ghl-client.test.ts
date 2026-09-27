@@ -3,6 +3,7 @@ import {
   buildAddNotePayload,
   buildCreateTaskPayload,
   buildSearchContactsQuery,
+  buildSearchOpportunitiesQuery,
   buildUpsertContactPayload,
   createGhlClient,
 } from './ghl-client.ts';
@@ -302,3 +303,157 @@ Deno.test('createGhlClient.setDnd: PUTs { dnd } to /contacts/{id}, nothing else'
     restore();
   }
 });
+
+// ---------------------------------------------------------------------------
+// TASK-T1 (MISSION-4, GHL-3/4/5/6/8) additions
+// ---------------------------------------------------------------------------
+
+Deno.test(
+  'buildSearchOpportunitiesQuery: locationId always present; pipeline_stage_id/cursor omitted when absent',
+  () => {
+    assertEquals(buildSearchOpportunitiesQuery({ locationId: 'loc-1' }), 'location_id=loc-1');
+    assertEquals(
+      buildSearchOpportunitiesQuery({
+        locationId: 'loc-1',
+        pipelineStageId: 'stage-1',
+        limit: 100,
+        startAfterId: 'opp-1',
+        startAfter: 1700000000000,
+      }),
+      'location_id=loc-1&pipeline_stage_id=stage-1&limit=100&startAfterId=opp-1&startAfter=1700000000000'
+    );
+  }
+);
+
+Deno.test('createGhlClient.getContact: GET /contacts/{id}, returns the contact', async () => {
+  let seenUrl = '';
+  const restore = stubFetch((url) => {
+    seenUrl = url;
+    return new Response(
+      JSON.stringify({
+        contact: { id: 'c1', assignedTo: 'u1', dateUpdated: '2026-09-26T00:00:00Z' },
+      }),
+      { status: 200 }
+    );
+  });
+  try {
+    const client = createGhlClient('test-token');
+    const result = await client.getContact('c1');
+    assertEquals(seenUrl, 'https://services.leadconnectorhq.com/contacts/c1');
+    assertEquals(result.assignedTo, 'u1');
+  } finally {
+    restore();
+  }
+});
+
+Deno.test('createGhlClient.getContact: throws when the response has no contact.id', async () => {
+  const restore = stubFetch(() => new Response(JSON.stringify({}), { status: 200 }));
+  try {
+    const client = createGhlClient('test-token');
+    let threw = false;
+    try {
+      await client.getContact('c1');
+    } catch {
+      threw = true;
+    }
+    assertEquals(threw, true);
+  } finally {
+    restore();
+  }
+});
+
+Deno.test(
+  'createGhlClient.searchOpportunities: GET /opportunities/search?location_id=...&pipeline_stage_id=...',
+  async () => {
+    let seenUrl = '';
+    const restore = stubFetch((url) => {
+      seenUrl = url;
+      return new Response(
+        JSON.stringify({
+          opportunities: [{ id: 'o1', pipelineId: 'p1', pipelineStageId: 's1', contactId: 'c1' }],
+          meta: { total: 1 },
+        }),
+        { status: 200 }
+      );
+    });
+    try {
+      const client = createGhlClient('test-token');
+      const result = await client.searchOpportunities({
+        locationId: 'loc-1',
+        pipelineStageId: 's1',
+      });
+      assertEquals(
+        seenUrl,
+        'https://services.leadconnectorhq.com/opportunities/search?location_id=loc-1&pipeline_stage_id=s1'
+      );
+      assertEquals(result.count, 1);
+      assertEquals(result.opportunities[0].contactId, 'c1');
+    } finally {
+      restore();
+    }
+  }
+);
+
+Deno.test('createGhlClient.getPipelines: GET /opportunities/pipelines?locationId=...', async () => {
+  let seenUrl = '';
+  const restore = stubFetch((url) => {
+    seenUrl = url;
+    return new Response(
+      JSON.stringify({
+        pipelines: [{ id: 'p1', name: 'Main', stages: [{ id: 's1', name: 'New' }] }],
+      }),
+      { status: 200 }
+    );
+  });
+  try {
+    const client = createGhlClient('test-token');
+    const result = await client.getPipelines('loc-1');
+    assertEquals(
+      seenUrl,
+      'https://services.leadconnectorhq.com/opportunities/pipelines?locationId=loc-1'
+    );
+    assertEquals(result, [{ id: 'p1', name: 'Main', stages: [{ id: 's1', name: 'New' }] }]);
+  } finally {
+    restore();
+  }
+});
+
+Deno.test('createGhlClient.listUsers: GET /users/?locationId=...', async () => {
+  let seenUrl = '';
+  const restore = stubFetch((url) => {
+    seenUrl = url;
+    return new Response(JSON.stringify({ users: [{ id: 'u1', name: 'Jane' }] }), { status: 200 });
+  });
+  try {
+    const client = createGhlClient('test-token');
+    const result = await client.listUsers('loc-1');
+    assertEquals(seenUrl, 'https://services.leadconnectorhq.com/users/?locationId=loc-1');
+    assertEquals(result, [{ id: 'u1', name: 'Jane' }]);
+  } finally {
+    restore();
+  }
+});
+
+Deno.test(
+  'createGhlClient.listContactCustomFieldDefs: GET /custom-fields/object-key/contact?locationId=...',
+  async () => {
+    let seenUrl = '';
+    const restore = stubFetch((url) => {
+      seenUrl = url;
+      return new Response(JSON.stringify({ fields: [{ id: 'f1', name: 'Business Name' }] }), {
+        status: 200,
+      });
+    });
+    try {
+      const client = createGhlClient('test-token');
+      const result = await client.listContactCustomFieldDefs('loc-1');
+      assertEquals(
+        seenUrl,
+        'https://services.leadconnectorhq.com/custom-fields/object-key/contact?locationId=loc-1'
+      );
+      assertEquals(result, [{ id: 'f1', name: 'Business Name' }]);
+    } finally {
+      restore();
+    }
+  }
+);

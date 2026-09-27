@@ -678,6 +678,53 @@ export async function getTeamLiveBoard(): Promise<TeamLiveBoardRow[]> {
   return (data ?? []) as TeamLiveBoardRow[];
 }
 
+export type CoachingMode = 'listen' | 'whisper' | 'barge';
+
+export class CoachingActionError extends Error {
+  code?: string;
+  constructor(message: string, code?: string) {
+    super(message);
+    this.name = 'CoachingActionError';
+    this.code = code;
+  }
+}
+
+/** TASK-T3: dials the CALLING manager's own WebRTC credential (useTelnyxCall.ts auto-answers it
+ *  -- see its own header comment) into `targetUserId`'s live conference as a Telnyx supervisor.
+ *  Owner/admin only, enforced server-side; `targetUserId` must currently be `on_call` or this
+ *  409s with `TARGET_NOT_ON_CALL` (Team.tsx's live board already shows who qualifies). */
+export async function startCoaching(
+  targetUserId: string,
+  mode: CoachingMode
+): Promise<{ coachingId: string; mode: CoachingMode }> {
+  const res = await fetch(`${getFunctionsUrl()}/dialer-coaching`, {
+    method: 'POST',
+    headers: await getEdgeFunctionHeaders(),
+    body: JSON.stringify({ action: 'start', targetUserId, mode }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new CoachingActionError(data.error || 'Failed to start coaching', data.code);
+  return data as { coachingId: string; mode: CoachingMode };
+}
+
+/** Switches an ALREADY-CONNECTED coaching leg's mode (e.g. Listen -> Whisper) without leaving and
+ *  rejoining the target conference -- see coaching-core.ts's own header for the Telnyx command
+ *  this maps to. `coachingId` is the id `startCoaching` returned. */
+export async function switchCoachingMode(
+  coachingId: string,
+  mode: CoachingMode
+): Promise<{ coachingId: string; mode: CoachingMode }> {
+  const res = await fetch(`${getFunctionsUrl()}/dialer-coaching`, {
+    method: 'POST',
+    headers: await getEdgeFunctionHeaders(),
+    body: JSON.stringify({ action: 'switch_mode', coachingId, mode }),
+  });
+  const data = await res.json();
+  if (!res.ok)
+    throw new CoachingActionError(data.error || 'Failed to switch coaching mode', data.code);
+  return data as { coachingId: string; mode: CoachingMode };
+}
+
 export interface UserPreferences {
   team_performance_range?: '7d' | '30d' | 'custom';
   custom_start?: string;
@@ -761,6 +808,9 @@ export interface OrgMember {
   first_name: string | null;
   last_name: string | null;
   email: string | null;
+  /** MISSION-4 TASK-T1 (GHL-8): this member's GHL user id, owner/admin-set. Null until mapped.
+   *  Informational only -- the dialer's own queueing/assignment logic never reads it. */
+  ghl_user_id: string | null;
 }
 
 export async function listOrgMembers(): Promise<OrgMember[]> {
@@ -791,6 +841,9 @@ export const enableMember = (userId: string) =>
   orgMembersAction({ action: 'enable', user_id: userId });
 export const removeMember = (userId: string) =>
   orgMembersAction({ action: 'remove', user_id: userId });
+/** MISSION-4 TASK-T1 (GHL-8). Pass an empty string/null to clear the mapping. */
+export const updateMemberGhlUserId = (userId: string, ghlUserId: string | null) =>
+  orgMembersAction({ action: 'set_ghl_user_id', user_id: userId, ghl_user_id: ghlUserId });
 
 export interface CreatedInvite {
   inviteId: string;
@@ -953,6 +1006,16 @@ export interface Contact {
   /** Raw snapshot of the contact's GHL tags as of its last import (TASK-G7). Null until the
    *  contact has been imported from/linked to GHL at least once. */
   ghl_tags: string[] | null;
+  /** TASK-T1 (GHL-3): the contact's pipeline stage NAME, resolved at pull time. Null unless it
+   *  was ever pulled by a stage-mode mapping (a tag-only pull never has a stage to resolve). */
+  ghl_pipeline_stage: string | null;
+  /** TASK-T1 (GHL-6): mapped custom-field values with no dedicated column (license_number,
+   *  service_zips, tier, list_source, ...) -- see api.ts's own GhlFieldMapping docs. */
+  ghl_custom_fields: Record<string, unknown> | null;
+  /** TASK-T1 (GHL-8): the org member this contact's GHL `assignedTo` resolved to (via that
+   *  member's own `ghl_user_id`, Team page). Informational only -- the dialer's own queueing
+   *  never reads this column. */
+  assigned_user_id: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -1789,6 +1852,11 @@ export async function getDialerSession(sessionId: string): Promise<{
   session: DialSessionRecord;
   legs: CallLegRecord[];
   inboundCall: InboundCallInfo | null;
+  /** TASK-T3: 'whisper'/'barge' only (never 'listen', enforced server-side, not just here) --
+   *  a manager currently coaching this session as a Telnyx supervisor the intern can HEAR (a
+   *  plain 'listen' is deliberately silent -- see coaching-core.ts's own header). Drives
+   *  DialerStateBanner's "Manager listening" indicator. */
+  coachingMode: 'whisper' | 'barge' | null;
 }> {
   const res = await fetch(
     `${getFunctionsUrl()}/dialer-session-get?sessionId=${encodeURIComponent(sessionId)}`,
@@ -1803,6 +1871,7 @@ export async function getDialerSession(sessionId: string): Promise<{
     session: DialSessionRecord;
     legs: CallLegRecord[];
     inboundCall: InboundCallInfo | null;
+    coachingMode: 'whisper' | 'barge' | null;
   };
 }
 
@@ -1835,6 +1904,14 @@ export interface GhlIntegrationStatus {
    *  ['do not call','dnc','do-not-call'] / ['paused','pause'] until an owner/admin edits them. */
   ghl_dnc_tags: string[];
   ghl_paused_tags: string[];
+  /** TASK-T1 (GHL-5): the 5-minute scheduled pull, disabled by default. */
+  ghl_pull_enabled: boolean;
+  ghl_last_pull_at: string | null;
+  ghl_last_pull_status: 'ok' | 'error' | null;
+  ghl_last_pull_counts: { created: number; updated: number; mappings: unknown[] } | null;
+  /** TASK-T1 (GHL-6): target key -> GHL custom-field-definition id, e.g.
+   *  `{business_name: "abc123", license_number: "def456"}`. `{}` until configured. */
+  ghl_field_mapping: Record<string, string>;
 }
 
 /** Reads the safe `org_integrations_status` view -- never the base table, which has no client policies at all. */
@@ -1842,7 +1919,9 @@ export async function getGhlIntegrationStatus(): Promise<GhlIntegrationStatus | 
   const orgId = await getActiveOrgId();
   const { data, error } = await supabase
     .from('org_integrations_status')
-    .select('status, location_id, connected_at, ghl_dnc_tags, ghl_paused_tags')
+    .select(
+      'status, location_id, connected_at, ghl_dnc_tags, ghl_paused_tags, ghl_pull_enabled, ghl_last_pull_at, ghl_last_pull_status, ghl_last_pull_counts, ghl_field_mapping'
+    )
     .eq('org_id', orgId)
     .eq('provider', 'ghl')
     .maybeSingle();
@@ -1890,6 +1969,150 @@ export async function disconnectGhl(): Promise<void> {
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || 'Failed to disconnect GHL');
+}
+
+// --- GHL pull settings + field mapping (MISSION-4 TASK-T1, GHL-5/6) ---
+
+/** Owner/admin only. `pullEnabled` toggles the 5-minute scheduled pull; `fieldMapping` replaces
+ *  it wholesale (target key -> GHL custom-field-definition id), same "always submit the whole
+ *  thing" convention as updateGhlBlockedTags. */
+export async function updateGhlPullSettings(
+  pullEnabled: boolean,
+  fieldMapping: Record<string, string>
+): Promise<{ pullEnabled: boolean; fieldMapping: Record<string, string> }> {
+  const res = await fetch(`${getFunctionsUrl()}/ghl-update-pull-settings`, {
+    method: 'POST',
+    headers: await getEdgeFunctionHeaders(),
+    body: JSON.stringify({ pullEnabled, fieldMapping }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Failed to update GHL pull settings');
+  return data;
+}
+
+export interface GhlFieldSuggestions {
+  fields: { id: string; name: string }[];
+  suggestedMapping: Record<string, string>;
+  currentMapping: Record<string, string>;
+}
+
+/** Owner/admin only. Fetches the connected location's real GHL custom field definitions and a
+ *  suggested mapping for any target key the org hasn't already configured (name-matched --
+ *  "business name", "website", etc). Read-only; call updateGhlPullSettings to save. */
+export async function getGhlFieldSuggestions(): Promise<GhlFieldSuggestions> {
+  const res = await fetch(`${getFunctionsUrl()}/ghl-field-suggestions`, {
+    method: 'POST',
+    headers: await getEdgeFunctionHeaders(),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Failed to fetch GHL field suggestions');
+  return data as GhlFieldSuggestions;
+}
+
+// --- GHL tag/stage -> campaign mappings (MISSION-4 TASK-T1, GHL-4) ---
+
+export interface GhlCampaignMapping {
+  id: string;
+  match_type: 'tag' | 'stage';
+  tag: string | null;
+  pipeline_id: string | null;
+  pipeline_stage_id: string | null;
+  campaign_id: string;
+  created_at: string;
+}
+
+/** Direct RLS read (org member) -- org_ghl_campaign_mappings has real client policies, same
+ *  shape as campaigns/campaign_retry_rules, unlike org_integrations. */
+export async function listGhlCampaignMappings(): Promise<GhlCampaignMapping[]> {
+  const orgId = await getActiveOrgId();
+  const { data, error } = await supabase
+    .from('org_ghl_campaign_mappings')
+    .select('id, match_type, tag, pipeline_id, pipeline_stage_id, campaign_id, created_at')
+    .eq('org_id', orgId)
+    .order('created_at', { ascending: false });
+  if (error) throw new Error(error.message);
+  return (data ?? []) as GhlCampaignMapping[];
+}
+
+export async function createGhlTagCampaignMapping(
+  tag: string,
+  campaignId: string
+): Promise<GhlCampaignMapping> {
+  const orgId = await getActiveOrgId();
+  const { data, error } = await supabase
+    .from('org_ghl_campaign_mappings')
+    .insert({ org_id: orgId, match_type: 'tag', tag, campaign_id: campaignId })
+    .select('id, match_type, tag, pipeline_id, pipeline_stage_id, campaign_id, created_at')
+    .single();
+  if (error) throw new Error(error.message);
+  return data as GhlCampaignMapping;
+}
+
+export async function createGhlStageCampaignMapping(
+  pipelineId: string,
+  pipelineStageId: string,
+  campaignId: string
+): Promise<GhlCampaignMapping> {
+  const orgId = await getActiveOrgId();
+  const { data, error } = await supabase
+    .from('org_ghl_campaign_mappings')
+    .insert({
+      org_id: orgId,
+      match_type: 'stage',
+      pipeline_id: pipelineId,
+      pipeline_stage_id: pipelineStageId,
+      campaign_id: campaignId,
+    })
+    .select('id, match_type, tag, pipeline_id, pipeline_stage_id, campaign_id, created_at')
+    .single();
+  if (error) throw new Error(error.message);
+  return data as GhlCampaignMapping;
+}
+
+export async function deleteGhlCampaignMapping(id: string): Promise<void> {
+  const { error } = await supabase.from('org_ghl_campaign_mappings').delete().eq('id', id);
+  if (error) throw new Error(error.message);
+}
+
+// --- GHL pipelines (MISSION-4 TASK-T1, GHL-4) -- for the stage-mapping picker ---
+
+export interface GhlPipelineStageOption {
+  pipelineId: string;
+  pipelineName: string;
+  stageId: string;
+  stageName: string;
+}
+
+/** Owner/admin only. Lists every pipeline/stage in the connected location, flattened for a
+ *  single-level <select> (Settings -> Integrations -> GHL, "Add stage mapping"). */
+export async function listGhlPipelineStages(): Promise<GhlPipelineStageOption[]> {
+  const res = await fetch(`${getFunctionsUrl()}/ghl-list-pipelines`, {
+    method: 'POST',
+    headers: await getEdgeFunctionHeaders(),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Failed to fetch GHL pipelines');
+  return (data.stages ?? []) as GhlPipelineStageOption[];
+}
+
+// --- GHL sync now (MISSION-4 TASK-T1, GHL-5) ---
+
+export interface GhlSyncNowResult {
+  created: number;
+  updated: number;
+  mappings: { mappingId: string; created: number; updated: number; error?: string }[];
+}
+
+/** Owner/admin only. Runs every configured tag/stage -> campaign mapping right now, regardless
+ *  of whether the 5-minute auto-pull is enabled -- the Campaigns page's "Sync now" button. */
+export async function syncGhlNow(): Promise<GhlSyncNowResult> {
+  const res = await fetch(`${getFunctionsUrl()}/ghl-sync-now`, {
+    method: 'POST',
+    headers: await getEdgeFunctionHeaders(),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Failed to sync with GHL');
+  return data as GhlSyncNowResult;
 }
 
 // --- GHL pull import (TASK-P3-P2) ---

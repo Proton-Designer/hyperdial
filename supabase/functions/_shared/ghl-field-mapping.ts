@@ -1,0 +1,82 @@
+/**
+ * MISSION-4 TASK-T1 (GHL-6): "sensible defaults by field name" for the org's GHL custom-field
+ * mapping editor. Pure/network-free -- the caller (an edge function) fetches the location's real
+ * custom field definitions via `GhlClient.listContactCustomFieldDefs` and hands them here.
+ *
+ * Exact match only (case-insensitive, trimmed), never a substring match -- same "exact after
+ * trim+lowercase" rule `ghl-import.ts`'s own tag matching already establishes for this codebase,
+ * to avoid a field named e.g. "Website Note" being wrongly suggested for the "website" target key.
+ */
+import type { GhlCustomFieldDef } from './ghl-client.ts';
+
+/** The task's own example target keys (business name, website, rating, review count, license #,
+ *  service ZIPs, tier, list source) -- an open-ended set in practice (org_integrations.
+ *  ghl_field_mapping is a plain jsonb object, not a fixed enum), but these are the ones worth a
+ *  built-in name-matching guess. */
+export const GHL_FIELD_MAPPING_TARGET_KEYS = [
+  'business_name',
+  'website',
+  'rating',
+  'review_count',
+  'license_number',
+  'service_zips',
+  'tier',
+  'list_source',
+] as const;
+
+/** TASK-T1 (GHL-6): `business_name`/`website`/`rating`/`review_count` already have DEDICATED,
+ *  actively-used `contacts` columns (from the original CSV-import schema, `2025021400001` --
+ *  Contacts.tsx already reads/displays them) -- a value mapped to one of these four target keys
+ *  is written straight onto that existing column, not into `ghl_custom_fields`. Every other
+ *  target key (license_number, service_zips, tier, list_source, and any future org-added one --
+ *  ghl_field_mapping is an open-ended jsonb object, not a fixed enum) has no dedicated column and
+ *  goes into `ghl_custom_fields` instead. See `ghl-import.ts`'s own enrichment-application code
+ *  for where this set is consulted. */
+export const GHL_FIELD_MAPPING_KNOWN_COLUMNS = new Set<string>([
+  'business_name',
+  'website',
+  'rating',
+  'review_count',
+]);
+
+const TARGET_KEY_SYNONYMS: Record<string, string[]> = {
+  business_name: ['business name', 'company name', 'business', 'company'],
+  website: ['website', 'web site', 'url', 'site'],
+  rating: ['rating', 'review rating', 'stars', 'star rating'],
+  review_count: ['review count', 'number of reviews', 'reviews count', '# of reviews'],
+  license_number: ['license number', 'license #', 'license no', 'license'],
+  service_zips: ['service zips', 'service area', 'zip codes', 'service zip codes', 'service areas'],
+  tier: ['tier', 'lead tier', 'quality tier'],
+  list_source: ['list source', 'source list', 'lead source', 'list'],
+};
+
+function normalize(s: string): string {
+  return s.trim().toLowerCase();
+}
+
+/** Returns targetKey -> GHL custom-field-definition id for every target key that found an EXACT
+ *  (case-insensitive, trimmed) name match among `defs` -- a target key with no match is simply
+ *  absent from the result, never guessed at a lower confidence. If two fields somehow share the
+ *  same normalized name, the first one in `defs` wins (deterministic, not an error -- an org's own
+ *  duplicate field names are its problem to fix in GHL, not this function's to adjudicate). */
+export function suggestGhlFieldMapping(defs: GhlCustomFieldDef[]): Record<string, string> {
+  const byNormalizedName = new Map<string, string>();
+  for (const d of defs) {
+    if (!d.name || !d.id) continue;
+    const key = normalize(d.name);
+    if (!byNormalizedName.has(key)) byNormalizedName.set(key, d.id);
+  }
+
+  const suggestions: Record<string, string> = {};
+  for (const targetKey of GHL_FIELD_MAPPING_TARGET_KEYS) {
+    const synonyms = TARGET_KEY_SYNONYMS[targetKey] ?? [];
+    for (const synonym of synonyms) {
+      const fieldId = byNormalizedName.get(synonym);
+      if (fieldId) {
+        suggestions[targetKey] = fieldId;
+        break;
+      }
+    }
+  }
+  return suggestions;
+}

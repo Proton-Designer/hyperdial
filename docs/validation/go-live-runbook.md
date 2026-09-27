@@ -173,6 +173,20 @@ one of these tags is automatically kept out of the dial queue.
 **Expect:** "Connected", no error; the tag lists show your saved values on
 reload, and each list rejects being saved completely empty.
 
+Below that, **"Tag/stage → campaign mappings"** lets you tell HyperDial
+which GHL tag or pipeline stage feeds which campaign — add one, then either
+click **Sync now** on the Campaigns page whenever you want a fresh pull, or
+turn on the **5-minute auto-pull** (off by default) to keep it hands-off.
+**"Custom field mapping"** (with a **Suggest from GHL** button) maps your
+GHL custom fields — business name, website, rating, review count, license
+number, and so on — onto the pulled contact. On the Team page, **"GHL user
+mapping"** lets you record each intern's GHL user id so a pulled contact's
+GHL-assigned owner shows up correctly — this is informational only, it
+never decides who actually dials the contact.
+
+**Expect:** "Sync now" reports created/updated counts; pulled contacts show
+up in Contacts with their tag/stage/mapped fields set.
+
 ## 9. Invite your interns
 
 Settings → Team → **Invite member**, role **Agent**, send them the generated
@@ -238,6 +252,10 @@ behaviors that most affect what an intern actually experiences:
    turning auto-recharge on/off, confirmed against the Telnyx portal's own
    balance and settings (this is the direct real-money version of step 7
    above). Real money — do this once, not repeatedly.
+8. **Section B19** — GHL tag/stage → campaign mappings, custom field
+   mapping, GHL user mapping, and the 5-minute auto-pull, all against your
+   own real GHL sub-account (this is the direct real-call version of step 8
+   above).
 
 Do these as the actual org owner/admin and an actual intern, not the QA
 sandbox accounts — real Telnyx calls, real balance, real GHL contacts if

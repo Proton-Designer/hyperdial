@@ -1144,3 +1144,152 @@ is still comfortably under the new $200 max. No migration needed: confirmed `res
 (migration `20260925080301`) never checks the per-charge amount at all, only the rate-limit
 interval and the 24h cap -- the per-charge bound is enforced purely by
 `validateAddFundsAmount`, in TypeScript, before the RPC is ever called.
+
+## MISSION-4 TASK-T1 -- GHL pull complete (GHL-3,4,5,6,8), 2026-09-26/27
+
+**Context:** the pre-existing pull-import (`ghl-import`, TASK-P3-P2) already handled tag/search-
+mode pulls, dedupe, and DNC/paused enforcement (TASK-G7). This task extends that same planner
+rather than replacing it, and adds a SEPARATE config-driven entry point (a scheduled 5-minute pull
++ an on-demand "Sync now") on top.
+
+**Decision 1 -- API surface verified directly against GHL's published OpenAPI specs (curled
+`raw.githubusercontent.com/GoHighLevel/highlevel-api-docs/main/apps/{opportunities,users,
+custom-fields}.json`, parsed with python, 2026-09-26 -- never WebFetch, which truncates these).**
+`GET /opportunities/search?pipeline_stage_id=...` is the ONLY server-side pipeline-stage filter
+(GHL-4) -- `GET /contacts/` has none, same as it has no tag filter. `GET /contacts/{contactId}`
+(`GetContectByIdSchema`, sic) is the only schema confirmed to carry `assignedTo`/`dateUpdated`/
+`customFields` all together -- the opportunity search's own nested `contact` is missing all
+three, so a stage-mode pull does one `getContact` detail fetch per unique contact id found via
+opportunity search, not per opportunity. `GET /custom-fields/object-key/contact?locationId` gives
+the location's real custom field DEFINITIONS (id -> name) for GHL-6's "sensible defaults by field
+name." `GET /users/?locationId` gives the location's real GHL users for GHL-8. Rate limits (100
+req/10s, 200,000/day) are NOT in any OpenAPI spec (no `x-ratelimit-*` anywhere) -- cited from
+GHL's marketplace docs SITE, which this codebase has already established is unreachable by a
+plain fetch (client-rendered Docusaurus) -- `_shared/ghl-rate-limit.ts` flags this source
+explicitly and should be corrected the first time a real 429's own headers are observed.
+
+**Decision 2 -- `business_name`/`website`/`rating`/`review_count` already had DEDICATED
+`contacts` columns (from the original CSV-import schema, predating this task) -- a mapped GHL
+custom-field value for one of these four target keys is written onto that existing column
+directly, never duplicated into the new `ghl_custom_fields` jsonb catch-all.** Only
+`license_number`/`service_zips`/`tier`/`list_source` (and any future org-added target key --
+`ghl_field_mapping` is an open-ended jsonb object, not a fixed enum) have no dedicated column and
+go into `ghl_custom_fields`. `rating`/`review_count` are parsed from GHL's own string custom-
+field value; an unparseable value is dropped, never written as NaN. See
+`_shared/ghl-field-mapping.ts`'s `GHL_FIELD_MAPPING_KNOWN_COLUMNS`.
+
+**Decision 3 -- a genuinely NEW config-driven orchestration (`_shared/ghl-pull-run.ts`), not a
+retrofit of `ghl-import/index.ts`.** The existing on-demand ad-hoc tag/search pull (with an
+optional manually-picked campaignId) is already reviewed/deployed and stays untouched; the new
+scheduled/"Sync now" path is driven by the org's OWN saved `org_ghl_campaign_mappings` rows
+instead. Both share the same lower-level modules (`planGhlImport` (extended, not duplicated),
+`campaign-queue.ts`, `campaign-queue-io.ts`) so the dedupe/DNC/queueing RULES can never drift
+between the two entry points, even though the orchestration glue around them is written twice.
+`fetchAllExistingContactRows` was moved from being `ghl-import/index.ts`'s own private helper into
+the shared `ghl-import.ts` module so both entry points share the exact same >1000-row pagination
+fix, instead of a second hand-copied version.
+
+**Decision 4 -- the HIGH-value fix from BF1's own review (an atomic RPC replacing a check-then-act
+race) does NOT apply here.** There is no shared, contended resource across concurrent pull runs
+the way `org_billing_events`' rate limit/cap was -- two pulls for the same org would at worst
+double-plan the same GHL contacts (idempotent: `planGhlImport`'s own dedupe on `ghl_contact_id`/
+phone makes a second run a no-op update, not a duplicate insert or a double charge). No advisory
+lock was added for this task; revisit if a future change makes a genuinely non-idempotent side
+effect possible here.
+
+**Decision 5 -- the incremental cursor (GHL-5) is a CLIENT-SIDE filter, not a smaller GHL
+request.** GHL has no server-side "updated since" filter on either endpoint (verified against
+both specs) -- `runGhlPullMapping` still fetches everything a tag/stage mapping matches (bounded,
+~2,000 contacts/20 pages, same cap `fetchAllGhlContacts` already used), then discards any contact
+whose `dateUpdated` is at or before the org's stored cursor before planning/writing. Saves DB
+writes on an unchanged contact, not GHL API calls. A contact with no `dateUpdated` at all is never
+filtered out (silently dropping it forever would be worse than an occasional redundant re-plan).
+One cursor per ORG (not per mapping) -- the max `dateUpdated` seen across every mapping in one
+pull run advances it; a mapping added later starts by re-fetching everything matching it once,
+same as a brand-new org.
+
+**Decision 6 -- `contacts.user_id` (NOT NULL, pre-tenancy-era column) is attributed to the org's
+OWNER for every pull-run-created contact, consistently regardless of entry point.** A cron-
+triggered pull has no acting admin; "Sync now"'s own caller is deliberately not threaded through
+either, so both paths always resolve and use the org's owner id (`resolveOrgOwnerUserId`) -- same
+"match to the owner instead of relaxing NOT NULL" precedent `20260924000200`'s own tenancy
+backfill already established for this exact column.
+
+**Decision 7 -- one mapping/org failing never blocks the rest.** `runGhlPullForOrg` catches per-
+mapping (a stage deleted in GHL since it was configured, a transient error) and still runs every
+other mapping for that org; `ghl-pull-worker`'s own per-org loop applies the identical isolation
+one level up (one org's revoked token/GHL outage doesn't skip every other enabled org's run this
+tick).
+
+**Do not undo without understanding:** don't "simplify" the stage-mode per-contact `getContact`
+detail fetch away by reading fields off the opportunity's own nested `contact` object instead --
+that object is missing `assignedTo`/`customFields`/`dateUpdated` entirely (verified against the
+spec), so GHL-3/6/8 would silently stop working for every stage-sourced contact. Don't move the
+rate-limit numbers out of `_shared/ghl-rate-limit.ts`'s own doc comment without re-verifying them
+against a real GHL 429 response first (they were never confirmed against a machine-readable
+source, only cited from the marketplace docs site).
+
+## TASK-T3 -- Live coaching: listen / whisper / barge (MISSION-4), 2026-09-26
+
+**User order (verbatim):** "give me everything that relates to the parallel dialer and making it
+as powerful and industry level as possible." HIGH risk (real-time conference control on a live
+call) -- built and deno-tested against a fake TelnyxClient; no real Telnyx call was made from
+this session (NEEDS-LIVE-VERIFY, `docs/validation/launch-live-test.md` B20).
+
+**Decision 1 -- verified live against spec3.json, 2026-09-26.** `POST /conferences/{id}/
+actions/join`'s `supervisor_role` enum is `barge | monitor | none | whisper`, NOT the three
+labels this feature exposes to the user -- "listen" maps to Telnyx's own `monitor` (muted,
+hears everyone), "whisper" and "barge" map 1:1. Switching mode mid-call uses a DIFFERENT
+endpoint, `POST /conferences/{id}/actions/update` (`call_control_id` + `supervisor_role` both
+required) -- the participant-level `PATCH /conferences/{id}/participants/{id}` has NO
+`supervisor_role` field at all, verified by reading its full schema, not assumed from the join
+endpoint's shape.
+
+**Decision 2 -- the manager's coaching leg is deliberately NOT a `call_legs` row at all.**
+`call_legs.kind` is `'contact' | 'agent'` today, and this lane's own history
+(`LANE-eng2.md`) has four separate incidents of a THIRD leg shape silently breaking a
+kind-agnostic assumption written before it existed (`loadActiveLegs`, `refillCount`,
+`loserActions`, the analytics views). Adding `'supervisor'` as a third kind would need every one
+of those call sites re-audited for this one feature; instead, a new dedicated table
+(`coaching_sessions`, migration `20260926070000`, same "owner/admin SELECT-only, service-role
+writes" shape as `org_billing_events`) holds the manager's `call_control_id` and the audit
+trail. Nothing in `dialer-engine.ts`, the sweeper, or any analytics view reads this table --
+provably unable to affect the dial loop, not just believed to be.
+
+**Decision 3 -- ending a coaching attempt has no server endpoint at all.** The coaching leg
+lives on the manager's OWN already-connected WebRTC client (`useTelnyxCall.ts` -- "reuse
+Dialer's single client" was the task's own instruction, and `Dialer.tsx` is permanently mounted
+app-wide per `MainApp.tsx`'s existing FE-B fix, so this client is live regardless of which tab
+is active). "Leave" is a plain client-side `hangup()` on that same call; the resulting real
+Telnyx `call.hangup` webhook finalizes the `coaching_sessions` row. `runStartCoachingAction`/
+`runSwitchCoachingModeAction` are the only two server actions (`dialer-coaching` edge function).
+
+**Decision 4 -- "Manager listening" is enforced server-side, not just hidden client-side.**
+`dialer-session-get`'s new `coachingMode` field can only ever be `'whisper' | 'barge' | null` --
+the query itself filters `mode in ('whisper','barge')`, so a plain `'listen'` (the deliberate
+industry-default "silent" mode, per the task's own spec line) can never leak through even if a
+future screen forgot to filter it out again itself.
+
+**Decision 5 (NOT-done, disclosed) -- coaching does not auto-end when the coached call ends.**
+A manager coaching a session that then ends normally stays connected to the now-idle conference
+until they click Leave. Closing this needed either a `dialer-engine.ts` hook (out of scope for
+a feature this task deliberately kept OUT of that file's own blast radius -- see Decision 2) or
+a poll-and-auto-hangup watcher that would only run while a specific tab stayed open, which felt
+like a worse tradeoff than documenting the gap plainly. See `launch-live-test.md`'s "Known open
+items" and B20.8.
+
+**Decision 6 -- `agentSipUri` (`dialer-engine.ts`) was exported, not duplicated.** It resolves
+ANY org member's WebRTC credential SIP URI, despite the agent-specific name -- the underlying
+`getOrCreateMemberCredentialId` (`_shared/agent-webrtc-credential.ts`) already took a generic
+`userId`. A one-word `export` addition (verified: no behavior change, confirmed by re-running
+`npm run test:functions`) was preferred over a second copy of the same credential-lookup logic
+in `coaching-core.ts`, per this lane's "reuse, don't reinvent" convention.
+
+**Do not undo without understanding:** don't scope the manager-busy check to "does the manager
+have an ACTIVE coaching row" alone -- `runStartCoachingAction` also checks the manager's own
+`dial_sessions` state (`on_call` blocks) because `useTelnyxCall.ts` has exactly ONE
+`activeCallRef` slot; a manager who is ALSO an agent and mid-call would collide with a second
+inbound leg on the same WebRTC client if only the coaching-specific check existed. The partial
+unique index `coaching_sessions_one_active_per_manager` closes the remaining race between that
+check and the insert -- don't remove it as "redundant" with the earlier check, it isn't (the
+check is advisory/racy, the index is the actual guarantee).

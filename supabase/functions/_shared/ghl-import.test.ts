@@ -486,3 +486,181 @@ Deno.test('planGhlImport: derives timezone from the normalized phone area code w
   const plan = planGhlImport({ mode: 'search', value: '', ghlContacts: contacts, existing: [] });
   assertEquals(plan.toInsert[0].timezone, 'America/Los_Angeles');
 });
+
+// ---------------------------------------------------------------------------
+// TASK-T1 (MISSION-4, GHL-3/4/6/8) additions
+// ---------------------------------------------------------------------------
+
+Deno.test(
+  'planGhlImport: stage mode does no client-side tag filtering, same as search mode',
+  () => {
+    const contacts: GhlContact[] = [
+      ghlContact('g1', '2026-01-01', { phone: '+14155552671', tags: [] }),
+    ];
+    const plan = planGhlImport({
+      mode: 'stage',
+      value: 'stage-1',
+      ghlContacts: contacts,
+      existing: [],
+    });
+    assertEquals(plan.created, 1);
+  }
+);
+
+Deno.test('planGhlImport: no enrichment (default) sets none of the new fields', () => {
+  const contacts: GhlContact[] = [
+    ghlContact('g1', '2026-01-01', {
+      phone: '+14155552671',
+      pipelineStageId: 'stage-1',
+      assignedTo: 'ghl-user-1',
+      customFields: [{ id: 'f1', value: 'Ace Roofing' }],
+    } as Partial<GhlContact>),
+  ];
+  const plan = planGhlImport({
+    mode: 'stage',
+    value: 'stage-1',
+    ghlContacts: contacts,
+    existing: [],
+  });
+  assertEquals(plan.toInsert[0].ghl_pipeline_stage, undefined);
+  assertEquals(plan.toInsert[0].ghl_custom_fields, undefined);
+  assertEquals(plan.toInsert[0].assigned_user_id, undefined);
+});
+
+Deno.test(
+  'planGhlImport: resolves stage name, custom fields, and assigned owner when enrichment is provided',
+  () => {
+    const contacts: GhlContact[] = [
+      ghlContact('g1', '2026-01-01', {
+        phone: '+14155552671',
+        pipelineStageId: 'stage-1',
+        assignedTo: 'ghl-user-1',
+        customFields: [
+          { id: 'f1', value: 'RF-1234' },
+          { id: 'f-unmapped', value: 'ignored' },
+        ],
+      } as Partial<GhlContact>),
+    ];
+    const plan = planGhlImport({
+      mode: 'stage',
+      value: 'stage-1',
+      ghlContacts: contacts,
+      existing: [],
+      enrichment: {
+        stageNameByPipelineStageId: { 'stage-1': 'Qualified' },
+        fieldMappingByGhlFieldId: { f1: 'license_number' },
+        orgMemberIdByGhlUserId: { 'ghl-user-1': 'user-abc' },
+      },
+    });
+    assertEquals(plan.toInsert[0].ghl_pipeline_stage, 'Qualified');
+    assertEquals(plan.toInsert[0].ghl_custom_fields, { license_number: 'RF-1234' });
+    assertEquals(plan.toInsert[0].assigned_user_id, 'user-abc');
+  }
+);
+
+Deno.test(
+  'planGhlImport: business_name/website/rating/review_count map onto their existing dedicated columns, not into ghl_custom_fields',
+  () => {
+    const contacts: GhlContact[] = [
+      ghlContact('g1', '2026-01-01', {
+        phone: '+14155552671',
+        customFields: [
+          { id: 'f-name', value: '  Ace Roofing  ' },
+          { id: 'f-site', value: 'https://aceroofing.example' },
+          { id: 'f-rating', value: '4.5' },
+          { id: 'f-reviews', value: '127' },
+        ],
+      } as Partial<GhlContact>),
+    ];
+    const plan = planGhlImport({
+      mode: 'search',
+      value: '',
+      ghlContacts: contacts,
+      existing: [],
+      enrichment: {
+        fieldMappingByGhlFieldId: {
+          'f-name': 'business_name',
+          'f-site': 'website',
+          'f-rating': 'rating',
+          'f-reviews': 'review_count',
+        },
+      },
+    });
+    const inserted = plan.toInsert[0];
+    assertEquals(inserted.business_name, 'Ace Roofing');
+    assertEquals(inserted.website, 'https://aceroofing.example');
+    assertEquals(inserted.rating, 4.5);
+    assertEquals(inserted.review_count, 127);
+    assertEquals(inserted.ghl_custom_fields, undefined);
+  }
+);
+
+Deno.test(
+  'planGhlImport: an unparseable rating/review_count value is dropped, not written as NaN',
+  () => {
+    const contacts: GhlContact[] = [
+      ghlContact('g1', '2026-01-01', {
+        phone: '+14155552671',
+        customFields: [{ id: 'f-rating', value: 'not-a-number' }],
+      } as Partial<GhlContact>),
+    ];
+    const plan = planGhlImport({
+      mode: 'search',
+      value: '',
+      ghlContacts: contacts,
+      existing: [],
+      enrichment: { fieldMappingByGhlFieldId: { 'f-rating': 'rating' } },
+    });
+    assertEquals(plan.toInsert[0].rating, undefined);
+  }
+);
+
+Deno.test(
+  'planGhlImport: an unmapped stage id / assignee / custom field is simply left unset, never guessed',
+  () => {
+    const contacts: GhlContact[] = [
+      ghlContact('g1', '2026-01-01', {
+        phone: '+14155552671',
+        pipelineStageId: 'stage-unknown',
+        assignedTo: 'ghl-user-unknown',
+        customFields: [{ id: 'f-unknown', value: 'x' }],
+      } as Partial<GhlContact>),
+    ];
+    const plan = planGhlImport({
+      mode: 'stage',
+      value: 'stage-unknown',
+      ghlContacts: contacts,
+      existing: [],
+      enrichment: {
+        stageNameByPipelineStageId: { 'stage-1': 'Qualified' },
+        fieldMappingByGhlFieldId: { f1: 'business_name' },
+        orgMemberIdByGhlUserId: { 'ghl-user-1': 'user-abc' },
+      },
+    });
+    assertEquals(plan.toInsert[0].ghl_pipeline_stage, undefined);
+    assertEquals(plan.toInsert[0].ghl_custom_fields, undefined);
+    assertEquals(plan.toInsert[0].assigned_user_id, undefined);
+  }
+);
+
+Deno.test(
+  're-importing a contact with no stage this run (e.g. via a tag-mode re-pull) does not blank out a stage stored by an earlier stage-mode pull',
+  () => {
+    const existing: ExistingContactRow[] = [
+      {
+        id: 'db-1',
+        phone_number: '+14155552671',
+        ghl_contact_id: 'g1',
+        dnc: false,
+        ghl_tags: null,
+      },
+    ];
+    const contacts: GhlContact[] = [ghlContact('g1', '2026-01-01', { phone: '+14155552671' })];
+    const plan = planGhlImport({ mode: 'search', value: '', ghlContacts: contacts, existing });
+    // The patch simply never mentions ghl_pipeline_stage -- an UPDATE with this patch leaves the
+    // column's existing DB value untouched, which is the actual behavior being proven here (this
+    // test only proves the PLANNER'S contribution to that: it must not emit an explicit
+    // `ghl_pipeline_stage: undefined`/null override).
+    assertEquals('ghl_pipeline_stage' in plan.toUpdate[0].patch, false);
+  }
+);

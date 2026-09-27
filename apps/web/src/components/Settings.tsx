@@ -54,10 +54,19 @@ import {
   disableMember,
   enableMember,
   removeMember,
+  updateMemberGhlUserId,
   getGhlIntegrationStatus,
   connectGhl,
   disconnectGhl,
   updateGhlBlockedTags,
+  updateGhlPullSettings,
+  getGhlFieldSuggestions,
+  listGhlCampaignMappings,
+  createGhlTagCampaignMapping,
+  createGhlStageCampaignMapping,
+  deleteGhlCampaignMapping,
+  listGhlPipelineStages,
+  listCampaigns,
   listCrmSyncJobs,
   getTelnyxConnectionStatus,
   connectTelnyx,
@@ -101,6 +110,9 @@ import {
   type VoicemailDropInfo,
   type OrgMember,
   type GhlIntegrationStatus,
+  type GhlCampaignMapping,
+  type GhlPipelineStageOption,
+  type CampaignWithStats,
   type CrmSyncJob,
   type TelnyxConnectionStatus,
   type Disposition,
@@ -639,7 +651,88 @@ function TeamTab() {
           })}
         </div>
       )}
+
+      {canManage && members.length > 0 && (
+        <GhlMemberMappingSection members={members} onSaved={load} />
+      )}
     </motion.div>
+  );
+}
+
+/** MISSION-4 TASK-T1 (GHL-8): "the contact's assigned intern comes from GHL's assignedTo, mapped
+ *  via each member's GHL user id, which owner/admin can set per member." A plain per-row text
+ *  input (paste the GHL user id) -- same "no live dropdown, paste the id" convention as the
+ *  Settings GHL field-mapping editor. Saves per-row on blur/Enter, not a single bulk-save button,
+ *  since each row is an independent edit with its own success/error outcome (a duplicate-id
+ *  conflict on one row must not block saving another). */
+function GhlMemberMappingSection({
+  members,
+  onSaved,
+}: {
+  members: OrgMember[];
+  onSaved: () => void;
+}) {
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [savingUserId, setSavingUserId] = useState<string | null>(null);
+  const [rowError, setRowError] = useState<Record<string, string>>({});
+
+  const valueFor = (m: OrgMember) => drafts[m.user_id] ?? m.ghl_user_id ?? '';
+
+  const handleSave = async (m: OrgMember) => {
+    const next = valueFor(m).trim();
+    if (next === (m.ghl_user_id ?? '')) return; // unchanged -- nothing to save
+    setSavingUserId(m.user_id);
+    setRowError((prev) => ({ ...prev, [m.user_id]: '' }));
+    try {
+      await updateMemberGhlUserId(m.user_id, next || null);
+      onSaved();
+    } catch (e) {
+      setRowError((prev) => ({
+        ...prev,
+        [m.user_id]: e instanceof Error ? e.message : 'Failed to save',
+      }));
+    } finally {
+      setSavingUserId(null);
+    }
+  };
+
+  return (
+    <div className="mt-8 bg-surface-1 rounded-app-lg p-6 border border-border-subtle">
+      <h3 className="text-white font-medium mb-1">GHL user mapping</h3>
+      <p className="text-sm text-text-secondary mb-4">
+        Maps each member to their GHL user id, so a pulled contact's assigned owner (GHL-8) shows up
+        as this member on the contact record. HyperDial never uses this to decide who dials a
+        contact -- it's informational only.
+      </p>
+      <div className="space-y-2">
+        {members.map((m) => {
+          const name =
+            [m.first_name, m.last_name].filter(Boolean).join(' ') || m.email || m.user_id;
+          return (
+            <div key={m.user_id} className="flex items-center gap-2">
+              <span className="w-40 shrink-0 truncate text-sm text-white" title={name}>
+                {name}
+              </span>
+              <input
+                type="text"
+                value={valueFor(m)}
+                onChange={(e) => setDrafts((prev) => ({ ...prev, [m.user_id]: e.target.value }))}
+                onBlur={() => handleSave(m)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+                }}
+                placeholder="GHL user id"
+                disabled={savingUserId === m.user_id}
+                className="flex-1 bg-surface-2 border border-white/10 rounded-app-md px-3 py-1.5 text-sm text-white placeholder-text-muted focus:outline-none focus:border-accent-to disabled:opacity-50"
+              />
+              {rowError[m.user_id] && (
+                <span className="text-xs text-danger">{rowError[m.user_id]}</span>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 
@@ -804,6 +897,10 @@ function IntegrationsTab() {
           isAdmin={isOwner || role === 'admin'}
         />
       )}
+      {isConnected && status && (isOwner || role === 'admin') && (
+        <GhlPullSettingsCard status={status} onSaved={load} />
+      )}
+      {isConnected && (isOwner || role === 'admin') && <GhlCampaignMappingsEditor />}
       {isConnected && <SyncStatusList />}
     </motion.div>
   );
@@ -986,6 +1083,337 @@ function GhlBlockedTagsEditor({
           {saved && !dirty ? 'Saved' : 'Save changes'}
         </button>
       )}
+    </div>
+  );
+}
+
+const GHL_FIELD_MAPPING_TARGET_KEYS = [
+  'business_name',
+  'website',
+  'rating',
+  'review_count',
+  'license_number',
+  'service_zips',
+  'tier',
+  'list_source',
+] as const;
+
+const GHL_FIELD_MAPPING_LABELS: Record<(typeof GHL_FIELD_MAPPING_TARGET_KEYS)[number], string> = {
+  business_name: 'Business name',
+  website: 'Website',
+  rating: 'Rating',
+  review_count: 'Review count',
+  license_number: 'License #',
+  service_zips: 'Service ZIPs',
+  tier: 'Tier',
+  list_source: 'List source',
+};
+
+/** MISSION-4 TASK-T1 (GHL-5/6): the 5-minute auto-pull toggle (disabled by default) + last-run
+ *  status, and the custom-field mapping editor (target key -> GHL custom-field-definition id,
+ *  paste-the-id same convention as the Telnyx API key field -- no live dropdown, see
+ *  decisions.md for why). "Suggest" fetches the location's real field defs and a name-matched
+ *  guess for any key not already configured. */
+function GhlPullSettingsCard({
+  status,
+  onSaved,
+}: {
+  status: GhlIntegrationStatus;
+  onSaved: () => void;
+}) {
+  const [pullEnabled, setPullEnabled] = useState(status.ghl_pull_enabled);
+  const [fieldMapping, setFieldMapping] = useState<Record<string, string>>(
+    status.ghl_field_mapping ?? {}
+  );
+  const [saving, setSaving] = useState(false);
+  const [suggesting, setSuggesting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [availableFields, setAvailableFields] = useState<{ id: string; name: string }[] | null>(
+    null
+  );
+
+  const dirty =
+    pullEnabled !== status.ghl_pull_enabled ||
+    JSON.stringify(fieldMapping) !== JSON.stringify(status.ghl_field_mapping ?? {});
+
+  const handleSave = async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      await updateGhlPullSettings(pullEnabled, fieldMapping);
+      onSaved();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to save GHL pull settings');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleSuggest = async () => {
+    setSuggesting(true);
+    setError(null);
+    try {
+      const result = await getGhlFieldSuggestions();
+      setAvailableFields(result.fields);
+      setFieldMapping((prev) => ({ ...result.suggestedMapping, ...prev }));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to fetch GHL field suggestions');
+    } finally {
+      setSuggesting(false);
+    }
+  };
+
+  return (
+    <div className="bg-surface-1 rounded-app-lg p-6 border border-border-subtle max-w-xl mt-6">
+      <h3 className="text-white font-medium mb-1">Scheduled pull + field mapping</h3>
+      <p className="text-sm text-text-secondary mb-4">
+        Every 5 minutes, HyperDial can automatically pull GHL contacts matching your tag/stage
+        mappings below into their mapped campaign. Disabled by default -- turn it on once your
+        mappings look right.
+      </p>
+
+      <label className="flex items-center gap-2 mb-4">
+        <input
+          type="checkbox"
+          checked={pullEnabled}
+          onChange={(e) => setPullEnabled(e.target.checked)}
+        />
+        <span className="text-sm text-white">Enable the 5-minute auto-pull</span>
+      </label>
+
+      {status.ghl_last_pull_at && (
+        <p className="text-xs text-text-muted mb-4">
+          Last run {new Date(status.ghl_last_pull_at).toLocaleString()} --{' '}
+          <span
+            className={status.ghl_last_pull_status === 'error' ? 'text-danger' : 'text-success'}
+          >
+            {status.ghl_last_pull_status}
+          </span>
+          {status.ghl_last_pull_counts &&
+            ` (${status.ghl_last_pull_counts.created} created, ${status.ghl_last_pull_counts.updated} updated)`}
+        </p>
+      )}
+
+      <div className="flex items-center justify-between mb-2">
+        <h4 className="text-sm text-white font-medium">Custom field mapping</h4>
+        <button
+          type="button"
+          onClick={handleSuggest}
+          disabled={suggesting}
+          className="text-xs text-accent-to hover:underline disabled:opacity-50"
+        >
+          {suggesting ? 'Checking GHL...' : 'Suggest from GHL'}
+        </button>
+      </div>
+      <div className="space-y-2 mb-4">
+        {GHL_FIELD_MAPPING_TARGET_KEYS.map((key) => (
+          <div key={key} className="flex items-center gap-2">
+            <label className="w-32 shrink-0 text-xs text-text-secondary">
+              {GHL_FIELD_MAPPING_LABELS[key]}
+            </label>
+            <input
+              type="text"
+              list={availableFields ? 'ghl-field-defs' : undefined}
+              value={fieldMapping[key] ?? ''}
+              onChange={(e) => setFieldMapping((prev) => ({ ...prev, [key]: e.target.value }))}
+              placeholder="GHL custom field id"
+              className="flex-1 bg-surface-2 border border-white/10 rounded-app-md px-3 py-1.5 text-sm text-white placeholder-text-muted focus:outline-none focus:border-accent-to"
+            />
+          </div>
+        ))}
+        {availableFields && (
+          <datalist id="ghl-field-defs">
+            {availableFields.map((f) => (
+              <option key={f.id} value={f.id}>
+                {f.name}
+              </option>
+            ))}
+          </datalist>
+        )}
+      </div>
+
+      {error && <p className="text-sm text-danger mb-4">{error}</p>}
+
+      <button
+        type="button"
+        onClick={handleSave}
+        disabled={saving || !dirty}
+        className="px-5 py-2.5 bg-gradient-to-r from-accent-from to-accent-to rounded-app-md text-white text-sm font-medium disabled:opacity-50 flex items-center gap-2"
+      >
+        {saving && <Loader2 className="w-4 h-4 animate-spin" />}
+        Save changes
+      </button>
+    </div>
+  );
+}
+
+/** MISSION-4 TASK-T1 (GHL-4): the org's tag/stage -> campaign mappings. Direct RLS CRUD (the
+ *  table has real client policies, unlike org_integrations) -- no edge function needed for
+ *  reads/writes here, only for listing the real pipeline/stage options (a live GHL call). */
+function GhlCampaignMappingsEditor() {
+  const [mappings, setMappings] = useState<GhlCampaignMapping[] | null>(null);
+  const [campaigns, setCampaigns] = useState<CampaignWithStats[]>([]);
+  const [stages, setStages] = useState<GhlPipelineStageOption[] | null>(null);
+  const [matchType, setMatchType] = useState<'tag' | 'stage'>('tag');
+  const [tag, setTag] = useState('');
+  const [stageKey, setStageKey] = useState('');
+  const [campaignId, setCampaignId] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(() => {
+    Promise.all([listGhlCampaignMappings(), listCampaigns()])
+      .then(([m, c]) => {
+        setMappings(m);
+        setCampaigns(c);
+      })
+      .catch((e) => setError(e instanceof Error ? e.message : String(e)));
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const handleLoadStages = async () => {
+    try {
+      setStages(await listGhlPipelineStages());
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to load GHL pipelines');
+    }
+  };
+
+  const handleAdd = async () => {
+    if (!campaignId) {
+      setError('Pick a campaign first.');
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      if (matchType === 'tag') {
+        if (!tag.trim()) throw new Error('Enter a tag.');
+        await createGhlTagCampaignMapping(tag.trim(), campaignId);
+        setTag('');
+      } else {
+        const [pipelineId, pipelineStageId] = stageKey.split('|');
+        if (!pipelineStageId) throw new Error('Pick a stage.');
+        await createGhlStageCampaignMapping(pipelineId, pipelineStageId, campaignId);
+        setStageKey('');
+      }
+      load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to add the mapping');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDelete = async (id: string) => {
+    try {
+      await deleteGhlCampaignMapping(id);
+      load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to delete the mapping');
+    }
+  };
+
+  const campaignName = (id: string) => campaigns.find((c) => c.id === id)?.name ?? id;
+  const stageName = (pipelineStageId: string) =>
+    stages?.find((s) => s.stageId === pipelineStageId)?.stageName ?? pipelineStageId;
+
+  return (
+    <div className="bg-surface-1 rounded-app-lg p-6 border border-border-subtle max-w-xl mt-6">
+      <h3 className="text-white font-medium mb-1">Tag/stage → campaign mappings</h3>
+      <p className="text-sm text-text-secondary mb-4">
+        Contacts matching a tag or pipeline stage below are pulled and queued onto the mapped
+        campaign, on-demand ("Sync now" on Campaigns) and automatically if the scheduled pull above
+        is enabled.
+      </p>
+
+      {error && <p className="text-sm text-danger mb-3">{error}</p>}
+
+      {mappings && mappings.length > 0 && (
+        <div className="mb-4 divide-y divide-border-subtle border border-border-subtle rounded-app-md">
+          {mappings.map((m) => (
+            <div key={m.id} className="flex items-center justify-between px-3 py-2 text-sm">
+              <span className="text-white">
+                {m.match_type === 'tag'
+                  ? `Tag "${m.tag}"`
+                  : `Stage "${stageName(m.pipeline_stage_id!)}"`}
+                <span className="text-text-muted"> -&gt; {campaignName(m.campaign_id)}</span>
+              </span>
+              <button
+                type="button"
+                onClick={() => handleDelete(m.id)}
+                className="text-xs text-danger hover:underline"
+              >
+                Remove
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="flex items-center gap-2 mb-2">
+        <select
+          value={matchType}
+          onChange={(e) => setMatchType(e.target.value as 'tag' | 'stage')}
+          className="bg-surface-2 border border-white/10 rounded-app-md px-2 py-1.5 text-sm text-white"
+        >
+          <option value="tag">Tag</option>
+          <option value="stage">Pipeline stage</option>
+        </select>
+        {matchType === 'tag' ? (
+          <input
+            type="text"
+            value={tag}
+            onChange={(e) => setTag(e.target.value)}
+            placeholder="GHL tag"
+            className="flex-1 bg-surface-2 border border-white/10 rounded-app-md px-3 py-1.5 text-sm text-white placeholder-text-muted"
+          />
+        ) : stages ? (
+          <select
+            value={stageKey}
+            onChange={(e) => setStageKey(e.target.value)}
+            className="flex-1 bg-surface-2 border border-white/10 rounded-app-md px-3 py-1.5 text-sm text-white"
+          >
+            <option value="">Pick a stage...</option>
+            {stages.map((s) => (
+              <option key={s.stageId} value={`${s.pipelineId}|${s.stageId}`}>
+                {s.pipelineName} / {s.stageName}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <button
+            type="button"
+            onClick={handleLoadStages}
+            className="flex-1 text-sm text-accent-to hover:underline text-left"
+          >
+            Load pipeline stages from GHL...
+          </button>
+        )}
+        <select
+          value={campaignId}
+          onChange={(e) => setCampaignId(e.target.value)}
+          className="bg-surface-2 border border-white/10 rounded-app-md px-2 py-1.5 text-sm text-white"
+        >
+          <option value="">Campaign...</option>
+          {campaigns.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.name}
+            </option>
+          ))}
+        </select>
+        <button
+          type="button"
+          onClick={handleAdd}
+          disabled={saving}
+          className="px-3 py-1.5 bg-gradient-to-r from-accent-from to-accent-to rounded-app-md text-white text-sm font-medium disabled:opacity-50"
+        >
+          Add
+        </button>
+      </div>
     </div>
   );
 }

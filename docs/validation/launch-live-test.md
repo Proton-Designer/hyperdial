@@ -347,6 +347,60 @@ auto-recharge whatever is already on file there.
 
 ---
 
+### B19 -- GHL pull complete (MISSION-4 TASK-T1, GHL-3/4/5/6/8) -- **needs a real connected GHL sub-account**
+
+Owner or admin, connected GHL (Settings → Integrations → GHL). Use a test/sandbox GHL sub-account,
+never the real MyHomeBase org's own GHL account for anything that writes (B19.1-B19.6 are all
+read-only pulls; nothing here ever writes back to GHL).
+
+| #     | Step                                                                                                                                                                                                                                                                              | Expected                                                                                                                                                                                                                                                                     | ☐   |
+| ----- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --- |
+| B19.1 | Settings → Integrations → GHL → "Tag/stage → campaign mappings" → add a tag mapping to a real GHL tag + a real campaign. Campaigns → **Sync now**.                                                                                                                                | A toast reports created/updated counts; contacts tagged with that tag in GHL appear in `Contacts` with `ghl_contact_id` set, queued onto the mapped campaign (unless DNC/paused/active elsewhere, same G7 rules).                                                            | ☐   |
+| B19.2 | Same page, "Load pipeline stages from GHL...", add a STAGE mapping (a real pipeline stage with at least one contact in it) to a different campaign. **Sync now** again.                                                                                                           | Contacts at that stage appear with `ghl_pipeline_stage` set to the real stage name (check via Contacts detail or a DB query) and are queued onto the stage's mapped campaign.                                                                                                | ☐   |
+| B19.3 | Settings → Integrations → GHL → "Custom field mapping" → **Suggest from GHL**, then map `business_name`/`website`/`rating`/`review_count` to real GHL custom fields if any exist, save. **Sync now** again for an already-pulled contact whose custom field value changed in GHL. | Suggestions show up for any field whose GHL name matches (e.g. a field literally named "Website"); after sync, the contact's `business_name`/`website`/`rating`/`review_count` columns reflect the GHL value (not a generic JSON blob -- these four have dedicated columns). | ☐   |
+| B19.4 | Team page → "GHL user mapping" → set a member's GHL user id to a real GHL user who owns some contacts (via `assignedTo` in GHL). **Sync now** again for one of their contacts.                                                                                                    | That contact's "assigned owner" (check via a DB query on `contacts.assigned_user_id`, no dedicated UI column yet) resolves to the mapped member -- and the contact still queues/dials completely normally either way (GHL-8: the dialer never assigns owners itself).        | ☐   |
+| B19.5 | Toggle "Enable the 5-minute auto-pull" on. Wait 5-10 minutes without touching anything.                                                                                                                                                                                           | `ghl_last_pull_at` advances on its own (visible in the pull-settings card); a NEW contact added to GHL with the mapped tag/stage in the meantime shows up without clicking Sync now.                                                                                         | ☐   |
+| B19.6 | As an agent, try to reach Settings → Integrations or the GHL mapping UI at all.                                                                                                                                                                                                   | Agent cannot reach Settings (pre-existing route block, unaffected by this feature).                                                                                                                                                                                          | ☐   |
+
+The dedupe/DNC/paused/rate-limit/field-mapping/stage-resolution logic itself is fully covered by
+deno tests (`ghl-client.test.ts`, `ghl-import.test.ts`, `ghl-pull-run.test.ts`,
+`ghl-rate-limit.test.ts`, `ghl-field-mapping.test.ts`, all against a mocked GHL client -- never a
+real GHL call) and the SQL schema/RLS by `audit/T1/dryrun-tests.sql` -- B19 above only covers what
+a real connected GHL sub-account can add on top of that.
+
+**Known open item (not a bug):** GHL has no server-side "updated since" filter for either
+contacts or opportunities (verified against both published specs) -- the 5-minute auto-pull's
+incremental cursor is a CLIENT-SIDE filter applied after an unavoidably full (bounded, ~2,000
+contacts/20 pages per mapping per run) fetch. It saves DB writes on an unchanged contact, not GHL
+API calls; a very large location's auto-pull cost scales with its total matching-tag/stage
+contact count, not with how many actually changed since the last run.
+
+---
+
+### B20 -- Live coaching: listen / whisper / barge (MISSION-4 TASK-T3) -- **needs a real Telnyx call, two browser sessions (manager + intern)**
+
+Owner or admin (the manager, in their own browser session) + an agent (the intern, in a second
+browser session, on a live parallel-dialer call with a real or test contact).
+
+| #     | Step                                                                                                                                                               | Expected                                                                                                                                                                                                                                                                             | ☐   |
+| ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --- |
+| B20.1 | Intern goes live and gets bridged to a contact (any B2-style connected call). Manager: Team page → the intern's live-board row (now "On call") → click **Listen**. | The manager's OWN browser rings and auto-answers (no incoming-call banner -- see coaching-core.ts/useTelnyxCall.ts's own comments for why) into the SAME call, muted. A floating "Live coaching" banner appears in the manager's browser, bottom-right, on EVERY tab, not just Team. | ☐   |
+| B20.2 | While still connected, manager clicks **Whisper** on the banner, then says something.                                                                              | The intern hears the manager (a real, audible voice in their own headset); the contact does NOT (ask the intern to confirm out loud, or check by having a second observer on the contact's simulated line).                                                                          | ☐   |
+| B20.3 | Manager clicks **Barge**.                                                                                                                                          | Both the intern AND the contact can now hear the manager.                                                                                                                                                                                                                            | ☐   |
+| B20.4 | Intern's own Dialer screen, while the manager is in Whisper or Barge mode.                                                                                         | A small "Manager listening" (whisper) or "Manager on the call" (barge) badge appears on the intern's live-call card. Switch the manager back to **Listen** -- the badge disappears (industry default: a plain listen is silent/invisible to the intern).                             | ☐   |
+| B20.5 | Manager clicks **Leave** on the banner.                                                                                                                            | The manager's leg hangs up cleanly; the banner disappears; the intern's own call is completely unaffected (still connected to the contact, timer still running).                                                                                                                     | ☐   |
+| B20.6 | Manager clicks **Listen** on a DIFFERENT intern's row while already coaching one (don't click Leave first).                                                        | A clear `MANAGER_BUSY` error -- the manager has one WebRTC client, one call slot at a time.                                                                                                                                                                                          | ☐   |
+| B20.7 | Manager clicks Listen/Whisper/Barge on an intern who is NOT currently on a call.                                                                                   | A clear `TARGET_NOT_ON_CALL` error, no ringing.                                                                                                                                                                                                                                      | ☐   |
+| B20.8 | Manager is coaching (any mode); the intern's call ends normally (contact hangs up, wrap-up).                                                                       | The coaching leg is left connected to the now-otherwise-idle conference until the manager clicks Leave (NOT-done: no automatic end-when-the-call-ends yet -- see decisions.md's TASK-T3 entry). Confirm this is expected, not a hang.                                                | ☐   |
+| B20.9 | As an agent, try to reach the Team page or click any coaching control.                                                                                             | Agent cannot reach Team (pre-existing route/role gate, unaffected by this feature) -- server-side `dialer-coaching` also 403s an agent directly if attempted via a raw request.                                                                                                      | ☐   |
+
+The mode-mapping/busy/target-not-on-call/stale-target/definitive-vs-not orchestration logic is
+fully covered by deno tests (`coaching-core.test.ts`, against a fake supabase + fake TelnyxClient
+-- never a real Telnyx call) and the RLS/uniqueness by `audit/T3/dryrun-tests.sql` -- B20 above
+only covers what a real Telnyx call + two real browsers can add on top of that.
+
+---
+
 ## C. Evidence to capture
 
 - Screenshots of each `DialerStateBanner` state seen during B2/B3 (Ready, Ringing, Connecting,
@@ -398,3 +452,9 @@ auto-recharge whatever is already on file there.
   purchase time (from the org's current default) and is otherwise only changeable by hand in the
   database — the UI shows it but doesn't offer a per-row editor. Tracked as a minor gap, not a
   launch blocker; the org-level default is the intended day-to-day lever.
+- **Live coaching does not auto-end when the coached call ends** (TASK-T3): a manager coaching a
+  session that then ends normally (contact hangs up) stays connected to that now-idle conference
+  until they click Leave themselves — see decisions.md's TASK-T3 entry for why this was scoped
+  out (it would need either a dialer-engine.ts hook this task deliberately avoided, or a
+  poll-and-auto-hangup watcher that only runs while a specific tab is open). Don't re-report this
+  as a hang; B20.8 exercises it on purpose.

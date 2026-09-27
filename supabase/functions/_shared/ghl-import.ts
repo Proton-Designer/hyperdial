@@ -92,6 +92,22 @@ export interface ExistingContactRow {
   ghl_tags: string[] | null;
 }
 
+/** TASK-T1 (MISSION-4, GHL-3/6/8): the run-wide lookup maps only the CALLER can build, since
+ *  resolving them needs a network round trip or an `org_members` lookup that this pure/
+ *  network-free planner deliberately never does itself. Applied uniformly to every contact in
+ *  one `planGhlImport` call -- built ONCE per run, not once per contact. */
+export interface GhlImportEnrichment {
+  /** GHL custom-field-definition id -> the org's own target key (e.g. "business_name"). Built
+   *  from `org_integrations.ghl_field_mapping` (Settings -> Integrations -> GHL field mapping). */
+  fieldMappingByGhlFieldId?: Record<string, string>;
+  /** GHL user id -> org member's `auth.users.id` (GHL-8). Built from `org_members.ghl_user_id`. */
+  orgMemberIdByGhlUserId?: Record<string, string>;
+  /** GHL pipeline-stage id -> its human name, resolved once per run via `getPipelines`. Only
+   *  meaningful for a stage-mode pull -- a tag/search-mode contact has no opportunity to look a
+   *  stage id up from in the first place, so this map is simply never consulted for those modes. */
+  stageNameByPipelineStageId?: Record<string, string>;
+}
+
 export interface GhlImportContactFields {
   first_name: string | null;
   last_name: string | null;
@@ -102,6 +118,35 @@ export interface GhlImportContactFields {
   /** Only ever `true` -- GHL not-DND never forces an existing contact's dnc back to
    *  false; a human may have set it true for a reason GHL doesn't know about. */
   dnc?: true;
+  /** TASK-T1 (GHL-3): the contact's pipeline stage NAME (not the raw id) -- only ever set for a
+   *  stage-mode pull whose stage id resolved to a real, currently-existing stage this run; absent
+   *  (not overwritten to null) otherwise, so a tag-mode re-import of a contact that already has a
+   *  stored stage from an earlier stage-mode pull never blanks it out. */
+  ghl_pipeline_stage?: string;
+  /** TASK-T1 (GHL-6): mapped custom-field values for target keys with NO dedicated `contacts`
+   *  column (license_number, service_zips, tier, list_source, ...) -- e.g.
+   *  `{license_number: "RF-1234"}`. A target key that DOES have a dedicated column
+   *  (business_name/website/rating/review_count -- see
+   *  `ghl-field-mapping.ts`'s `GHL_FIELD_MAPPING_KNOWN_COLUMNS`) is written onto that column
+   *  directly below instead, never duplicated in here. Absent (not `{}`) when the org has no
+   *  field mapping configured, or every mapped value this run landed on a known column. */
+  ghl_custom_fields?: Record<string, unknown>;
+  /** TASK-T1 (GHL-6): the four target keys with a dedicated `contacts` column (pre-existing, from
+   *  the CSV-import schema) -- only ever set when the org's field mapping resolved a value for
+   *  that key this run; absent otherwise (never overwritten to null), same "don't blank out a
+   *  value this run didn't touch" rule `ghl_pipeline_stage` follows. `rating`/`review_count` are
+   *  parsed from GHL's own (string) custom-field value; an unparseable value is dropped, not
+   *  written as NaN/garbage. */
+  business_name?: string;
+  website?: string;
+  rating?: number;
+  review_count?: number;
+  /** TASK-T1 (GHL-8): the org member this contact's GHL `assignedTo` resolved to, via that
+   *  member's own `org_members.ghl_user_id`. Absent when the contact has no GHL assignee, or the
+   *  assignee's GHL user id isn't mapped to any org member yet -- never guessed. The dialer's own
+   *  queueing/assignment logic never reads this column; it's informational only (GHL-8's own
+   *  explicit "the dialer never assigns owners itself"). */
+  assigned_user_id?: string;
   /** TASK-G7: the contact's raw GHL tags this run, stored verbatim (not normalized) so a future
    *  import can diff against them -- see ExistingContactRow.ghl_tags. Always set (possibly []),
    *  never omitted, so a contact that had all its tags removed in GHL is recorded as such. */
@@ -175,10 +220,14 @@ function firstMatchingTag(tags: string[], wantedSet: ReadonlySet<string>): strin
 }
 
 export interface PlanGhlImportArgs {
-  mode: 'tag' | 'search';
-  /** The tag to match (tag mode) or the query that was already sent to GHL (search
-   *  mode, kept only for symmetry -- search mode does no client-side filtering, GHL
-   *  already filtered server-side). */
+  /** TASK-T1 (GHL-4) adds 'stage': the caller already resolved the matching contacts via
+   *  `searchOpportunities`+`getContact` before calling this planner (GHL has a server-side
+   *  pipeline-stage filter, unlike tags), so 'stage' needs no client-side filtering here --
+   *  same as 'search'. */
+  mode: 'tag' | 'search' | 'stage';
+  /** The tag to match (tag mode) or the query/stage id that was already sent to GHL (search/stage
+   *  mode, kept only for symmetry -- neither mode does client-side filtering, GHL already
+   *  filtered server-side). */
   value: string;
   ghlContacts: GhlContact[];
   existing: ExistingContactRow[];
@@ -186,6 +235,10 @@ export interface PlanGhlImportArgs {
    *  DEFAULT_GHL_DNC_TAGS/DEFAULT_GHL_PAUSED_TAGS when omitted. */
   dncTags?: string[];
   pausedTags?: string[];
+  /** TASK-T1 (GHL-3/6/8): run-wide lookup maps the caller resolved outside this pure planner
+   *  (stage names, custom-field mapping, GHL-user-id -> org-member mapping). Omitted entirely =
+   *  no enrichment applied (every existing caller/test still works unchanged). */
+  enrichment?: GhlImportEnrichment;
 }
 
 /**
@@ -271,6 +324,50 @@ export function planGhlImport(args: PlanGhlImportArgs): GhlImportPlan {
       // either one is enough to mark the contact DNC (TASK-G7, GHL-7).
       ...((gc.dnd === true || matchedDncTag !== undefined) && { dnc: true }),
     };
+
+    // TASK-T1 (GHL-3/6/8): apply the run-wide lookup maps, if the caller provided any. Every
+    // lookup is a plain miss-is-fine `Record` access -- an unmapped stage/field/assignee simply
+    // leaves the corresponding output field unset, never a guess or a thrown error.
+    if (args.enrichment) {
+      const stageId = typeof gc.pipelineStageId === 'string' ? gc.pipelineStageId : undefined;
+      const stageName = stageId ? args.enrichment.stageNameByPipelineStageId?.[stageId] : undefined;
+      if (stageName) fields.ghl_pipeline_stage = stageName;
+
+      const fieldMapping = args.enrichment.fieldMappingByGhlFieldId;
+      if (fieldMapping && Array.isArray(gc.customFields) && gc.customFields.length > 0) {
+        const mappedCustomFields: Record<string, unknown> = {};
+        for (const cf of gc.customFields) {
+          const targetKey = cf && typeof cf.id === 'string' ? fieldMapping[cf.id] : undefined;
+          if (!targetKey) continue;
+          const rawValue = cf.value;
+          // The four keys with a dedicated `contacts` column go straight onto that column;
+          // everything else accumulates into ghl_custom_fields. See GHL_FIELD_MAPPING_KNOWN_
+          // COLUMNS's own header for why these four specifically.
+          if (targetKey === 'business_name' && typeof rawValue === 'string' && rawValue.trim()) {
+            fields.business_name = rawValue.trim();
+          } else if (targetKey === 'website' && typeof rawValue === 'string' && rawValue.trim()) {
+            fields.website = rawValue.trim();
+          } else if (targetKey === 'rating') {
+            const n = Number(rawValue);
+            if (Number.isFinite(n)) fields.rating = n;
+          } else if (targetKey === 'review_count') {
+            const n = Number(rawValue);
+            if (Number.isFinite(n)) fields.review_count = Math.trunc(n);
+          } else {
+            mappedCustomFields[targetKey] = rawValue;
+          }
+        }
+        if (Object.keys(mappedCustomFields).length > 0)
+          fields.ghl_custom_fields = mappedCustomFields;
+      }
+
+      const ownerMap = args.enrichment.orgMemberIdByGhlUserId;
+      if (ownerMap && typeof gc.assignedTo === 'string') {
+        const memberId = ownerMap[gc.assignedTo];
+        if (memberId) fields.assigned_user_id = memberId;
+      }
+    }
+
     if (matchedDncTag !== undefined) {
       dncTagNoteByGhlContactId.set(gc.id, `GHL tag: ${matchedDncTag}`);
     }
@@ -301,4 +398,36 @@ export function planGhlImport(args: PlanGhlImportArgs): GhlImportPlan {
     dncTagNoteByGhlContactId,
     unpausedCount,
   };
+}
+
+// deno-lint-ignore no-explicit-any
+type SupabaseAny = any;
+
+/** Same PostgREST max_rows=1000 pagination gap as contacts-import's existing-contacts lookup
+ *  (TASK-L3 review fix-forward, MAJOR item 5) -- an org with more than 1000 contacts would
+ *  otherwise see any dedupe check silently miss everything past the first page. Moved here
+ *  (TASK-T1, MISSION-4) from being ghl-import/index.ts's own private helper so
+ *  `_shared/ghl-pull-run.ts`'s scheduled/on-demand mapping-driven pulls share the exact same
+ *  paging logic instead of a second hand-copied version. */
+export async function fetchAllExistingContactRows(
+  supabase: SupabaseAny,
+  orgId: string
+): Promise<ExistingContactRow[]> {
+  const PAGE_SIZE = 1000;
+  const all: ExistingContactRow[] = [];
+  for (let offset = 0; ; offset += PAGE_SIZE) {
+    const { data, error } = await supabase
+      .from('contacts')
+      .select('id, phone_number, ghl_contact_id, dnc, ghl_tags')
+      .eq('org_id', orgId)
+      // TASK-L8 review nit: same as contacts-import's own fetchAllContactRows -- .range() paging
+      // with no explicit order isn't guaranteed stable across separate requests.
+      .order('id')
+      .range(offset, offset + PAGE_SIZE - 1);
+    if (error) throw new Error(`existing contacts lookup failed: ${error.message}`);
+    const page = (data ?? []) as ExistingContactRow[];
+    all.push(...page);
+    if (page.length < PAGE_SIZE) break;
+  }
+  return all;
 }
