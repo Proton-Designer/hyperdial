@@ -46,3 +46,36 @@ export function checkInviteAcceptable(invite: InvitableFields): string | null {
 export function isInviteLive(invite: InvitableFields): boolean {
   return checkInviteAcceptable(invite) === null;
 }
+
+export type OrgMemberStatus = 'active' | 'disabled' | 'removed';
+export type OrgMemberRole = 'owner' | 'admin' | 'agent';
+
+export type MembershipConflictResolution =
+  | { action: 'reject_disabled' }
+  | { action: 'reactivate'; role: OrgMemberRole }
+  | { action: 'noop' };
+
+/** MISSION-5 TASK-M5-A3 fix-forward (eng2 review BLOCKER 2, audit/M5-A3/review-eng2.md):
+ *  `org-invite-accept`'s membership insert used to treat ANY `23505` (PK violation on
+ *  (org_id, user_id)) as "already a member, fine" -- but a soft-removed or disabled member's row
+ *  occupies that PK forever (A3's soft-remove design), so their OLD status silently stuck around
+ *  while the endpoint reported success. This is the decision that insert conflict resolves to,
+ *  pulled out as pure logic (same reason as every other function in this file: `org-invite-
+ *  accept/index.ts` itself has no test file and isn't in `npm run test:functions`' scope) --
+ *  `index.ts` does the actual Supabase update/no-op/reject, this function only decides which.
+ *
+ *  - 'disabled': a live, deliberate admin decision -- accepting a new invite must not be a silent
+ *    way to bypass it. `enable` (org-members/index.ts) stays the one intended path back.
+ *  - 'removed': accepting a fresh invite (re-invitable once BLOCKER 1's own fix lands, since
+ *    org_member_emails excludes 'removed' from `already_member`) is the intended second path back
+ *    in once Restore's 72h window has lapsed -- reactivate with the INVITE's own role (an owner
+ *    may deliberately bring a returning agent back as a different role).
+ *  - 'active': a genuinely idempotent retry (e.g. a double-submitted request) -- nothing to do. */
+export function resolveMembershipConflict(
+  existingStatus: OrgMemberStatus,
+  inviteRole: OrgMemberRole
+): MembershipConflictResolution {
+  if (existingStatus === 'disabled') return { action: 'reject_disabled' };
+  if (existingStatus !== 'active') return { action: 'reactivate', role: inviteRole };
+  return { action: 'noop' };
+}

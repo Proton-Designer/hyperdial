@@ -2,7 +2,11 @@ import { createClient } from 'npm:@supabase/supabase-js@2';
 import { corsHeaders, corsPreflightResponse } from '../_shared/cors.ts';
 import { getUserFromRequest } from '../_shared/auth.ts';
 import { logOrgAction } from '../_shared/audit.ts';
-import { deriveInvitePreview, checkInviteAcceptable } from '../_shared/invite-core.ts';
+import {
+  deriveInvitePreview,
+  checkInviteAcceptable,
+  resolveMembershipConflict,
+} from '../_shared/invite-core.ts';
 
 function jsonError(status: number, message: string): Response {
   return new Response(JSON.stringify({ error: message }), {
@@ -119,12 +123,74 @@ Deno.serve(async (req) => {
     .select()
     .single();
   if (memberError) {
-    // Most likely already a member (PK violation) -- treat as idempotent rather than fail the
-    // whole accept, since the invite may have been double-submitted (e.g. a retried request).
+    // 23505 (PK violation on (org_id, user_id)) means an org_members row for this user ALREADY
+    // exists -- the old code treated this as unconditionally idempotent, but a soft-removed or
+    // disabled member's row still occupies that PK forever (A3's soft-remove design), so the OLD
+    // status (fix-A3, eng2 review BLOCKER 2) silently stuck around while this endpoint reported
+    // success: the invitee got a 200, the invite was marked accepted, profiles.active_org_id was
+    // pointed at this org -- but requireOrgRole's own `status = 'active'` filter 401/403'd their
+    // very next request, with no error anywhere telling anyone what happened.
     if (memberError.code !== '23505') {
       console.error('org-invite-accept membership insert error:', memberError.message);
       return jsonError(500, 'Failed to add org membership');
     }
+
+    const { data: existing, error: existingError } = await supabase
+      .from('org_members')
+      .select('status')
+      .eq('org_id', invite.org_id)
+      .eq('user_id', user.id)
+      .maybeSingle<{ status: 'active' | 'disabled' | 'removed' }>();
+    if (existingError || !existing) {
+      console.error(
+        'org-invite-accept: could not look up existing membership after 23505:',
+        existingError?.message
+      );
+      return jsonError(500, 'Failed to add org membership');
+    }
+
+    // The actual decision (reject / reactivate / no-op) is pure logic, tested directly
+    // (invite-core.test.ts) since this index.ts has no test file of its own.
+    const resolution = resolveMembershipConflict(existing.status, invite.role);
+
+    if (resolution.action === 'reject_disabled') {
+      // A DISABLED member is a live, deliberate admin decision -- accepting a new invite link
+      // must not be a silent way to bypass it. `enable` (org-members/index.ts) is the one
+      // intended path back; this invite stays unaccepted (accepted_at is set further below,
+      // never reached here) so the SAME link still works once an admin re-enables them.
+      return jsonError(
+        403,
+        'Your account was disabled in this organization. Ask an owner or admin to re-enable you before accepting a new invite.'
+      );
+    }
+
+    if (resolution.action === 'reactivate') {
+      // 'removed' -- BLOCKER 1's own fix (org_member_emails now excludes 'removed' from
+      // already_member) makes them re-invitable again once Restore's 72h window has lapsed;
+      // accepting that fresh invite is the intended second path back in. Reactivate with the
+      // INVITE's own role (an owner may deliberately bring a returning agent back as a different
+      // role), symmetric with the explicit `restore` action in org-members/index.ts, and
+      // audit-logged the same way every other membership-status change already is.
+      const { error: reactivateError } = await supabase
+        .from('org_members')
+        .update({ status: 'active', role: resolution.role, removed_at: null })
+        .eq('org_id', invite.org_id)
+        .eq('user_id', user.id);
+      if (reactivateError) {
+        console.error('org-invite-accept reactivate error:', reactivateError.message);
+        return jsonError(500, 'Failed to add org membership');
+      }
+      await logOrgAction(supabase, {
+        orgId: invite.org_id,
+        actorUserId: user.id,
+        action: 'member.reactivate_via_invite',
+        targetType: 'org_member',
+        targetId: user.id,
+        details: { previousStatus: existing.status, role: resolution.role },
+      });
+    }
+    // resolution.action === 'noop' -- a genuinely idempotent retry (e.g. a double-submitted
+    // request); nothing further to do, same as the old behavior.
   }
 
   const { error: profileError } = await supabase

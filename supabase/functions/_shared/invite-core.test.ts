@@ -2,7 +2,12 @@
  * MISSION-5 TASK-M5-A2 fix-forward (eng2 review, BLOCKER 1): see `invite-core.ts`'s own header.
  */
 import { assertEquals } from 'jsr:@std/assert@1';
-import { deriveInvitePreview, checkInviteAcceptable, isInviteLive } from './invite-core.ts';
+import {
+  deriveInvitePreview,
+  checkInviteAcceptable,
+  isInviteLive,
+  resolveMembershipConflict,
+} from './invite-core.ts';
 
 const FUTURE = new Date(Date.now() + 60_000).toISOString();
 const PAST = new Date(Date.now() - 60_000).toISOString();
@@ -120,3 +125,39 @@ Deno.test('isInviteLive: an already-accepted invite is not live, regardless of e
     false
   );
 });
+
+// MISSION-5 TASK-M5-A3 fix-forward (eng2 review BLOCKER 2): resolveMembershipConflict is the
+// decision org-invite-accept makes when a fresh invite's membership insert hits an EXISTING
+// (org_id, user_id) row -- see invite-core.ts's own header for the full incident this fixes.
+Deno.test(
+  'resolveMembershipConflict: a disabled member is rejected, not silently reactivated',
+  () => {
+    assertEquals(resolveMembershipConflict('disabled', 'agent'), { action: 'reject_disabled' });
+  }
+);
+
+Deno.test(
+  "resolveMembershipConflict: a removed member is reactivated with the INVITE's own role, not their old one",
+  () => {
+    assertEquals(resolveMembershipConflict('removed', 'admin'), {
+      action: 'reactivate',
+      role: 'admin',
+    });
+  }
+);
+
+Deno.test(
+  'resolveMembershipConflict: an already-active member is a no-op (the genuinely idempotent retry case, unchanged from the old behavior)',
+  () => {
+    assertEquals(resolveMembershipConflict('active', 'agent'), { action: 'noop' });
+  }
+);
+
+Deno.test(
+  'resolveMembershipConflict: positive control -- disabled and removed produce DIFFERENT resolutions (proves this is a real branch, not one status accidentally shadowing the other)',
+  () => {
+    const disabled = resolveMembershipConflict('disabled', 'agent');
+    const removed = resolveMembershipConflict('removed', 'agent');
+    assertEquals(disabled.action === removed.action, false);
+  }
+);
