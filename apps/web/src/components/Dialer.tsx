@@ -23,6 +23,7 @@ import {
   listCampaigns,
   startDialerSession,
   updateMyPresenceHeartbeat,
+  getUserPreferences,
   ActiveSessionExistsError,
   ReconnectAlreadyInFlightError,
   LiveCallInProgressError,
@@ -120,6 +121,20 @@ function DialerBody({
   // same value the Mute button toggles -- see LiveCallPanel.tsx's own header comment.
   const [isMuted, setIsMuted] = useState(false);
   const [showHotkeyHelp, setShowHotkeyHelp] = useState(false);
+  // MISSION-4 TASK-T7 (auto-resume): the agent's own pacing preference (null = never fetched
+  // yet, or no row -- see api.ts's own UserPreferences comment for why that's distinct from the
+  // literal 0). Fetched once; Settings.tsx is a separate tab, so a same-session change while the
+  // Dialer is mounted only takes effect on the NEXT wrap-up, not the one already in flight --
+  // acceptable, this is a pacing preference, not a security control.
+  const [autoResumePref, setAutoResumePref] = useState<0 | 5 | 10 | 15 | null>(null);
+  const [autoResumeSecondsLeft, setAutoResumeSecondsLeft] = useState<number | null>(null);
+  const autoResumeArmedForRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    getUserPreferences()
+      .then((prefs) => setAutoResumePref(prefs?.auto_resume_seconds ?? null))
+      .catch(() => {});
+  }, []);
 
   /** When opening Dialer without launch context, restore active session so parallel UI can show. */
   const [restoredParallelContext, setRestoredParallelContext] = useState<{
@@ -354,6 +369,42 @@ function DialerBody({
       toast.error(e instanceof Error ? e.message : 'Failed to resume');
     }
   }, [parallelSession.resume]);
+
+  // MISSION-4 TASK-T7 (auto-resume): arms a countdown the moment the session enters
+  // paused/post_wrapup (submit_disposition's own new pause, see the migration's header), exactly
+  // once per pause "spell" -- keyed on `session.updated_at`, which `transition_session` always
+  // bumps on every transition (dialer_rpcs.sql), so re-polling the SAME still-paused session never
+  // re-arms a countdown the agent already cancelled or that already ran out. A null/0 preference
+  // arms nothing (stays a bare manual-resume banner, per DialerStateBanner's own branch).
+  useEffect(() => {
+    const session = parallelSession.session;
+    if (!session || session.state !== 'paused' || session.pause_reason !== 'post_wrapup') {
+      setAutoResumeSecondsLeft(null);
+      autoResumeArmedForRef.current = null;
+      return;
+    }
+    const spellKey = `${session.id}:${session.updated_at}`;
+    if (autoResumeArmedForRef.current === spellKey) return;
+    autoResumeArmedForRef.current = spellKey;
+    setAutoResumeSecondsLeft(autoResumePref && autoResumePref > 0 ? autoResumePref : null);
+  }, [parallelSession.session, autoResumePref]);
+
+  useEffect(() => {
+    if (autoResumeSecondsLeft == null) return;
+    if (autoResumeSecondsLeft <= 0) {
+      setAutoResumeSecondsLeft(null);
+      void handleParallelResume();
+      return;
+    }
+    const timer = setTimeout(() => {
+      setAutoResumeSecondsLeft((s) => (s == null ? null : s - 1));
+    }, 1000);
+    return () => clearTimeout(timer);
+  }, [autoResumeSecondsLeft, handleParallelResume]);
+
+  const handleCancelAutoResume = useCallback(() => {
+    setAutoResumeSecondsLeft(null);
+  }, []);
 
   useEffect(() => {
     if (parallelSessionId != null) return;
@@ -770,10 +821,12 @@ function DialerBody({
         return;
       }
       if (e.key === ' ') {
-        // Auto-resume's own countdown/setting doesn't exist yet (separate, unstarted TASK-T7
-        // piece) -- Space is Resume-only for now, not a "Resume/Next" toggle.
+        // "Resume/Next": plain manual pause -> Resume; paused/post_wrapup mid-countdown ->
+        // skip the wait. Clear the countdown FIRST so its own pending setTimeout doesn't also
+        // fire and attempt a second (harmless but confusing, 409-then-toast) resume call.
         if (session.state !== 'paused') return;
         e.preventDefault();
+        setAutoResumeSecondsLeft(null);
         void handleParallelResume();
       }
     };
@@ -855,6 +908,8 @@ function DialerBody({
                 reconnecting={parallelSession.loading}
                 onResume={() => void handleParallelResume()}
                 resuming={parallelSession.loading}
+                autoResumeSecondsLeft={autoResumeSecondsLeft}
+                onCancelAutoResume={handleCancelAutoResume}
               />
               <ParallelDialerUI
                 sessionState={parallelSession.session.state}

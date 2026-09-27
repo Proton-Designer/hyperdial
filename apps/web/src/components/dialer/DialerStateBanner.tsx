@@ -36,6 +36,12 @@ interface DialerStateBannerProps {
   reconnecting: boolean;
   onResume: () => void;
   resuming: boolean;
+  /** MISSION-4 TASK-T7 (auto-resume): only meaningful while `sessionState === 'paused'` and
+   *  `pauseReason === 'post_wrapup'`. `null`/`undefined` means no countdown is running (either
+   *  the agent's own setting is "Manual", or they already clicked Cancel) -- render the bare
+   *  manual-resume banner in that case, same as any other plain `paused` state. */
+  autoResumeSecondsLeft?: number | null;
+  onCancelAutoResume?: () => void;
 }
 
 export function DialerStateBanner({
@@ -49,6 +55,8 @@ export function DialerStateBanner({
   reconnecting,
   onResume,
   resuming,
+  autoResumeSecondsLeft,
+  onCancelAutoResume,
 }: DialerStateBannerProps) {
   if (webrtcError) {
     return (
@@ -143,6 +151,34 @@ export function DialerStateBanner({
           <Button variant="primary" onClick={onResume} disabled={resuming}>
             {resuming ? 'Resuming…' : 'Resume'}
           </Button>
+        }
+      />
+    );
+  }
+
+  if (sessionState === 'paused' && pauseReason === 'post_wrapup') {
+    const counting = typeof autoResumeSecondsLeft === 'number' && autoResumeSecondsLeft > 0;
+    return (
+      <StatusBanner
+        tone="info"
+        icon={<Pause className="w-5 h-5" />}
+        title={counting ? `Next batch in ${autoResumeSecondsLeft}s` : 'Disposition saved'}
+        detail={
+          counting
+            ? 'Press Space or click Resume now to skip the wait.'
+            : 'Click Resume (or press Space) when you’re ready for the next batch.'
+        }
+        action={
+          <div className="flex items-center gap-2">
+            {counting && onCancelAutoResume && (
+              <Button variant="fe-secondary" onClick={onCancelAutoResume}>
+                Cancel
+              </Button>
+            )}
+            <Button variant="primary" onClick={onResume} disabled={resuming}>
+              {resuming ? 'Resuming…' : 'Resume'}
+            </Button>
+          </div>
         }
       />
     );

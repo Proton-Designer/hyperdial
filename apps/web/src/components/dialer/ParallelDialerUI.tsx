@@ -8,8 +8,9 @@ import { TransferModal } from './TransferModal';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/components/ui/utils';
 import { useFocusTrap } from '@/hooks/useFocusTrap';
+import { supabase } from '@/lib/supabase';
 import type { BatchContactPreview, ConnectedContactDetails } from '@/hooks/useDialerSession';
-import { getRecordingUrl } from '@/lib/api';
+import { getRecordingUrl, getUserPreferences, saveUserPreferences } from '@/lib/api';
 import type {
   ActiveTransfer,
   CampaignScriptInfo,
@@ -261,7 +262,8 @@ export function ParallelDialerUI({
               {lines} line{lines === 1 ? '' : 's'} · AMD {amdMode}
             </span>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-3">
+            <AutoResumePrefControl />
             {sessionState === 'paused' ? (
               <Button variant="primary" size="sm" onClick={onResume}>
                 Resume
@@ -384,6 +386,77 @@ function Stat({ label, value }: { label: string; value: React.ReactNode }) {
     <span>
       {label}: <b className="text-text-primary font-semibold">{value}</b>
     </span>
+  );
+}
+
+const AUTO_RESUME_SELECT_OPTIONS: Array<{ value: 0 | 5 | 10 | 15; label: string }> = [
+  { value: 0, label: 'Manual' },
+  { value: 5, label: '5s' },
+  { value: 10, label: '10s' },
+  { value: 15, label: '15s' },
+];
+
+/** MISSION-4 TASK-T7 (auto-resume): a compact, agent-reachable version of the same preference
+ *  Settings.tsx's own AutoResumeSettingsCard edits. The Settings page itself is manager-only
+ *  (TopNavigation.tsx: "the Settings tab is manager-only... fail CLOSED"), so a plain agent --
+ *  this feature's actual audience, per the task's own "intern speed" framing -- could never
+ *  reach that card at all. Self-contained (own fetch/save via api.ts), no new required prop on
+ *  ParallelDialerUI itself. Renders nothing until the initial fetch resolves, and shows no option
+ *  selected for an unconfigured (null) preference -- same "don't misrepresent the true default"
+ *  reasoning as the Settings card's own comment.
+ *
+ *  Reads the current user directly via `supabase.auth.getUser()` rather than `useAuth()`'s React
+ *  context -- `DialerStatesHarness.tsx` (`?dev_dialer_states=1`) mounts this component with NO
+ *  `<AuthProvider>` in the tree at all (`main.tsx`'s dev-harness branch renders it standalone),
+ *  and `useAuth()` throws hard ("must be used within AuthProvider") the instant a component calls
+ *  it outside one -- this would have crashed that harness the moment this control was added. This
+ *  read has no such requirement and degrades gracefully to a no-op save if there's no session. */
+function AutoResumePrefControl() {
+  const [value, setValue] = useState<0 | 5 | 10 | 15 | null>(null);
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    getUserPreferences()
+      .then((prefs) => setValue(prefs?.auto_resume_seconds ?? null))
+      .catch(() => {})
+      .finally(() => setLoaded(true));
+  }, []);
+
+  const handleChange = async (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const next = Number(e.target.value) as 0 | 5 | 10 | 15;
+    const prev = value;
+    setValue(next);
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) return;
+      await saveUserPreferences(user.id, { auto_resume_seconds: next });
+    } catch {
+      setValue(prev);
+    }
+  };
+
+  if (!loaded) return null;
+
+  return (
+    <label className="flex items-center gap-1.5 text-meta text-text-muted">
+      Auto-resume
+      <select
+        value={value ?? ''}
+        onChange={(e) => void handleChange(e)}
+        className="rounded-app-sm border border-border-subtle bg-surface-2 px-1.5 py-1 text-meta text-text-primary"
+      >
+        <option value="" disabled>
+          Default
+        </option>
+        {AUTO_RESUME_SELECT_OPTIONS.map((opt) => (
+          <option key={opt.value} value={opt.value}>
+            {opt.label}
+          </option>
+        ))}
+      </select>
+    </label>
   );
 }
 

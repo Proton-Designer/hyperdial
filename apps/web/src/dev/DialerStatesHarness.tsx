@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { ParallelDialerUI } from '@/components/dialer/ParallelDialerUI';
 import { DialerStateBanner } from '@/components/dialer/DialerStateBanner';
 import { WrapUpModal } from '@/components/dialer/WrapUpModal';
@@ -74,6 +74,30 @@ export function DialerStatesHarness() {
   // TASK-N1: only meaningful for a 'paused' toggle -- a second, independent checkbox rather
   // than a 9th ALL_STATES button, since it's a sub-variant of one existing state, not a new one.
   const [noNumbersAvailable, setNoNumbersAvailable] = useState(false);
+  // MISSION-4 TASK-T7 (auto-resume): a 'paused' sub-variant fixture, same pattern as
+  // noNumbersAvailable just above. 'off' = plain manual pause (unchanged); 'counting' drives a
+  // REAL ticking countdown (not a static fixture number) so the Cancel button has something
+  // genuine to cancel; 'manual' shows the post_wrapup banner with no countdown running at all
+  // (the agent's own "Manual" preference).
+  const [pausedFixture, setPausedFixture] = useState<'off' | 'counting' | 'manual'>('off');
+  const [autoResumeSecondsLeft, setAutoResumeSecondsLeft] = useState<number | null>(null);
+  useEffect(() => {
+    if (pausedFixture !== 'counting') {
+      setAutoResumeSecondsLeft(null);
+      return;
+    }
+    setAutoResumeSecondsLeft(8);
+  }, [pausedFixture]);
+  useEffect(() => {
+    if (autoResumeSecondsLeft == null) return;
+    if (autoResumeSecondsLeft <= 0) {
+      window.alert('Auto-resume fired (fixture, no-op)');
+      setPausedFixture('off');
+      return;
+    }
+    const t = setTimeout(() => setAutoResumeSecondsLeft((s) => (s == null ? null : s - 1)), 1000);
+    return () => clearTimeout(t);
+  }, [autoResumeSecondsLeft]);
   // TASK-T7: real fixture state (not a no-op) so the Mute button visually toggles in this harness.
   const [muted, setMuted] = useState(false);
 
@@ -146,14 +170,43 @@ export function DialerStatesHarness() {
           </p>
         )}
         {selectedState === 'paused' && (
-          <label className="flex items-center gap-2 text-sm text-[#B0BEC5] mt-3">
-            <input
-              type="checkbox"
-              checked={noNumbersAvailable}
-              onChange={(e) => setNoNumbersAvailable(e.target.checked)}
-            />
-            TASK-N1: pause_reason = 'no_numbers_available'
-          </label>
+          <div className="flex flex-col gap-1 mt-3">
+            <label className="flex items-center gap-2 text-sm text-[#B0BEC5]">
+              <input
+                type="checkbox"
+                checked={noNumbersAvailable}
+                onChange={(e) => setNoNumbersAvailable(e.target.checked)}
+              />
+              TASK-N1: pause_reason = 'no_numbers_available'
+            </label>
+            <label className="flex items-center gap-2 text-sm text-[#B0BEC5]">
+              <input
+                type="radio"
+                name="paused-fixture"
+                checked={pausedFixture === 'off'}
+                onChange={() => setPausedFixture('off')}
+              />
+              TASK-T7: no auto-resume (plain manual pause)
+            </label>
+            <label className="flex items-center gap-2 text-sm text-[#B0BEC5]">
+              <input
+                type="radio"
+                name="paused-fixture"
+                checked={pausedFixture === 'counting'}
+                onChange={() => setPausedFixture('counting')}
+              />
+              TASK-T7: pause_reason = 'post_wrapup', counting down
+            </label>
+            <label className="flex items-center gap-2 text-sm text-[#B0BEC5]">
+              <input
+                type="radio"
+                name="paused-fixture"
+                checked={pausedFixture === 'manual'}
+                onChange={() => setPausedFixture('manual')}
+              />
+              TASK-T7: pause_reason = 'post_wrapup', manual (no timer)
+            </label>
+          </div>
         )}
       </div>
 
@@ -161,8 +214,14 @@ export function DialerStatesHarness() {
         <DialerStateBanner
           sessionState={selectedState}
           pauseReason={
-            selectedState === 'paused' && noNumbersAvailable ? 'no_numbers_available' : null
+            selectedState === 'paused' && noNumbersAvailable
+              ? 'no_numbers_available'
+              : selectedState === 'paused' && pausedFixture !== 'off'
+                ? 'post_wrapup'
+                : null
           }
+          autoResumeSecondsLeft={autoResumeSecondsLeft}
+          onCancelAutoResume={() => setAutoResumeSecondsLeft(null)}
           ringingCount={scenario.batchContacts.length}
           connectedContact={
             scenario.connectedContactId

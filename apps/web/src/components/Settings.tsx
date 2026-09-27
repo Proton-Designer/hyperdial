@@ -82,6 +82,8 @@ import {
   setRecordingEnabled,
   getAllowExternalTransfers,
   setAllowExternalTransfers,
+  getUserPreferences,
+  saveUserPreferences,
   getMyVoicemailDrop,
   getOrgDefaultVoicemailDrop,
   uploadMyVoicemailDrop,
@@ -2206,6 +2208,83 @@ function VoicemailDropCard() {
   );
 }
 
+const AUTO_RESUME_OPTIONS: Array<{ value: 0 | 5 | 10 | 15; label: string }> = [
+  { value: 0, label: 'Manual -- I’ll click Resume myself' },
+  { value: 5, label: 'Auto-resume after 5s' },
+  { value: 10, label: 'Auto-resume after 10s' },
+  { value: 15, label: 'Auto-resume after 15s' },
+];
+
+/** MISSION-4 TASK-T7: per-user (not org-admin-gated) pacing preference, same shape as
+ *  `VoicemailDropCard`'s own "Your voicemail drop" subcard just above -- every agent sets their
+ *  own value, no role check. NULL/no row (nothing selected here) is a DISTINCT state from the
+ *  literal `0` on the server (NULL = submit_disposition never pauses at all, the old behaviour;
+ *  `0` = pauses with no timer, a manual Resume click) -- see the migration's own header comment.
+ *  This card leaves every radio unchecked until the agent picks one, rather than defaulting the
+ *  UI to "Manual" (which would misrepresent the true default as a pause when it is actually no
+ *  pause at all). Once touched, there is no way back to NULL from this UI -- picking "Manual"
+ *  explicitly writes `0`, a real behavior change from the untouched default. */
+function AutoResumeSettingsCard() {
+  const { user } = useAuth();
+  const [value, setValue] = useState<0 | 5 | 10 | 15 | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    getUserPreferences()
+      .then((prefs) => setValue(prefs?.auto_resume_seconds ?? null))
+      .catch((e) => setError(String(e)))
+      .finally(() => setLoading(false));
+  }, []);
+
+  const handleChange = async (next: 0 | 5 | 10 | 15) => {
+    if (!user?.id) return;
+    const prev = value;
+    setValue(next);
+    setSaving(true);
+    setError(null);
+    try {
+      await saveUserPreferences(user.id, { auto_resume_seconds: next });
+    } catch (e) {
+      setError(String(e));
+      setValue(prev);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="bg-surface-1 rounded-app-lg p-6 border border-border-subtle max-w-2xl mt-6">
+      <h3 className="text-section-title text-text-primary mb-1">Wrap-up auto-resume</h3>
+      <p className="text-sm text-text-secondary mb-4">
+        After you submit a disposition, choose how the next batch starts: right away after a short
+        countdown, or only when you click Resume (or press Space).
+        {value === null && ' Default: resumes immediately, exactly like before this setting existed.'}
+      </p>
+      {error && <p className="text-sm text-danger mb-3">{error}</p>}
+      {loading ? (
+        <Skeleton className="h-6 w-40" />
+      ) : (
+        <div className="flex flex-col gap-2">
+          {AUTO_RESUME_OPTIONS.map((opt) => (
+            <label key={opt.value} className="flex items-center gap-2 text-sm text-white">
+              <input
+                type="radio"
+                name="auto-resume-seconds"
+                checked={value === opt.value}
+                disabled={saving}
+                onChange={() => void handleChange(opt.value)}
+              />
+              {opt.label}
+            </label>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function DncTab() {
   const { role } = useOrg();
   const isAdmin = role === 'owner' || role === 'admin';
@@ -3685,6 +3764,7 @@ export function Settings() {
                   <RecordingSettingsCard />
                   <ExternalTransferSettingsCard />
                   <VoicemailDropCard />
+                  <AutoResumeSettingsCard />
                 </motion.div>
               )}
 

@@ -931,28 +931,46 @@ export interface UserPreferences {
   team_performance_range?: '7d' | '30d' | 'custom';
   custom_start?: string;
   custom_end?: string;
+  /** MISSION-4 TASK-T7: wrap-up auto-resume delay in seconds. `0` = manual (pause, no timer,
+   *  wait for the agent to click Resume/press Space); 5/10/15 = pause with a visible countdown
+   *  that auto-resumes when it lapses. `undefined`/no row = the OLD behaviour: submit_disposition
+   *  never pauses at all -- see the migration's own header comment for why NULL must stay
+   *  distinct from 0. */
+  auto_resume_seconds?: 0 | 5 | 10 | 15;
 }
 
 export async function getUserPreferences(): Promise<UserPreferences | null> {
   const { data, error } = await supabase
     .from('user_preferences')
-    .select('team_performance_range, custom_start, custom_end')
+    .select('team_performance_range, custom_start, custom_end, auto_resume_seconds')
     .maybeSingle();
   if (error) throw new Error(error.message);
   return data as UserPreferences | null;
 }
 
 export async function saveUserPreferences(userId: string, prefs: UserPreferences): Promise<void> {
-  const { error } = await supabase.from('user_preferences').upsert(
-    {
-      user_id: userId,
-      team_performance_range: prefs.team_performance_range ?? null,
-      custom_start: prefs.custom_start ?? null,
-      custom_end: prefs.custom_end ?? null,
-      updated_at: new Date().toISOString(),
-    },
-    { onConflict: 'user_id' }
-  );
+  // MISSION-4 TASK-T7: this table now backs two independent features (Dashboard's date-range
+  // prefs, this task's auto-resume delay) that each only ever pass THEIR OWN key(s). A blind
+  // `field ?? null` on every column would silently null out whichever feature's field the OTHER
+  // caller didn't mention. Only include a column when the caller's own object actually has that
+  // key (`in`, not just a truthy check -- Dashboard intentionally passes `custom_start: undefined`
+  // to CLEAR it, which must still take effect) so an upsert from one feature never touches the
+  // other's already-saved value.
+  const payload: Record<string, unknown> = {
+    user_id: userId,
+    updated_at: new Date().toISOString(),
+  };
+  if ('team_performance_range' in prefs) {
+    payload.team_performance_range = prefs.team_performance_range ?? null;
+  }
+  if ('custom_start' in prefs) payload.custom_start = prefs.custom_start ?? null;
+  if ('custom_end' in prefs) payload.custom_end = prefs.custom_end ?? null;
+  if ('auto_resume_seconds' in prefs)
+    payload.auto_resume_seconds = prefs.auto_resume_seconds ?? null;
+
+  const { error } = await supabase
+    .from('user_preferences')
+    .upsert(payload, { onConflict: 'user_id' });
   if (error) throw new Error(error.message);
 }
 
@@ -1931,7 +1949,9 @@ export interface DialSessionRecord {
   updated_at: string;
   /** TASK-N1: only meaningful while `state === 'paused'` -- see dialer-engine.ts's own
    *  `pause_reason` field comment for why a stale value from a past pause must be ignored once
-   *  the session has moved on. Today's only real value is 'no_numbers_available'. */
+   *  the session has moved on. Known values: 'no_numbers_available', and (MISSION-4 TASK-T7)
+   *  'post_wrapup' -- set by submit_disposition when the agent has an auto-resume preference
+   *  configured (see the migration's own header comment). */
   pause_reason: string | null;
 }
 
