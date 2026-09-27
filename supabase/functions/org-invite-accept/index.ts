@@ -2,6 +2,7 @@ import { createClient } from 'npm:@supabase/supabase-js@2';
 import { corsHeaders, corsPreflightResponse } from '../_shared/cors.ts';
 import { getUserFromRequest } from '../_shared/auth.ts';
 import { logOrgAction } from '../_shared/audit.ts';
+import { deriveInvitePreview, checkInviteAcceptable } from '../_shared/invite-core.ts';
 
 function jsonError(status: number, message: string): Response {
   return new Response(JSON.stringify({ error: message }), {
@@ -24,6 +25,7 @@ interface InviteRow {
   role: 'owner' | 'admin' | 'agent';
   expires_at: string;
   accepted_at: string | null;
+  revoked_at?: string | null;
   campaign_ids?: string[];
   orgs: { name: string } | { name: string }[] | null;
 }
@@ -47,7 +49,7 @@ Deno.serve(async (req) => {
 
     const { data: invite } = await supabase
       .from('org_invites')
-      .select('email, role, expires_at, accepted_at, orgs(name)')
+      .select('email, role, expires_at, accepted_at, revoked_at, orgs(name)')
       .eq('token_hash', tokenHash)
       .maybeSingle<InviteRow>();
 
@@ -56,8 +58,7 @@ Deno.serve(async (req) => {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
-    const expired = new Date(invite.expires_at).getTime() < Date.now();
-    const valid = !invite.accepted_at && !expired;
+    const { valid, reason } = deriveInvitePreview(invite);
     const orgName = Array.isArray(invite.orgs) ? invite.orgs[0]?.name : invite.orgs?.name;
     return new Response(
       JSON.stringify({
@@ -65,7 +66,7 @@ Deno.serve(async (req) => {
         email: invite.email,
         role: invite.role,
         orgName: orgName ?? null,
-        reason: invite.accepted_at ? 'accepted' : expired ? 'expired' : null,
+        reason,
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
@@ -93,7 +94,7 @@ Deno.serve(async (req) => {
 
   const { data: invite, error: fetchError } = await supabase
     .from('org_invites')
-    .select('id, org_id, email, role, expires_at, accepted_at, campaign_ids')
+    .select('id, org_id, email, role, expires_at, accepted_at, revoked_at, campaign_ids')
     .eq('token_hash', tokenHash)
     .maybeSingle<InviteRow>();
   if (fetchError) {
@@ -101,10 +102,8 @@ Deno.serve(async (req) => {
     return jsonError(500, 'Failed to look up invite');
   }
   if (!invite) return jsonError(404, 'Invite not found');
-  if (invite.accepted_at) return jsonError(400, 'This invite has already been used');
-  if (new Date(invite.expires_at).getTime() < Date.now()) {
-    return jsonError(400, 'This invite has expired');
-  }
+  const rejectReason = checkInviteAcceptable(invite);
+  if (rejectReason) return jsonError(400, rejectReason);
   // The accepting account's email must match the invited email -- otherwise a forwarded invite
   // link would let anyone who intercepts it join under their own identity instead of the
   // invited one. Case-insensitive: email addresses are conventionally compared that way and

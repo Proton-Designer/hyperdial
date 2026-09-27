@@ -433,7 +433,10 @@ function TeamTab() {
     }
   };
 
-  const pendingInvites = invites.filter((i) => i.status === 'pending');
+  // MISSION-5 TASK-M5-A2 fix-forward (eng2 review BLOCKER 2b): an expired invite needs a visible
+  // Resend path too -- it used to be filtered out of this list entirely (status !== 'pending'),
+  // leaving no UI way to fix one without a manual SQL update.
+  const pendingInvites = invites.filter((i) => i.status === 'pending' || i.status === 'expired');
   const seatCounts = {
     active: members.filter((m) => m.status === 'active').length,
     disabled: members.filter((m) => m.status === 'disabled').length,

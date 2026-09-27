@@ -13,6 +13,7 @@ import { createClient } from 'npm:@supabase/supabase-js@2';
 import { corsHeaders, corsPreflightResponse } from '../_shared/cors.ts';
 import { requireOrgRole } from '../_shared/auth.ts';
 import { logOrgAction } from '../_shared/audit.ts';
+import { isInviteLive } from '../_shared/invite-core.ts';
 
 const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const MAX_EMAILS_PER_BATCH = 100;
@@ -298,14 +299,32 @@ Deno.serve(async (req) => {
       .filter((e): e is string => !!e)
   );
 
+  // MISSION-5 TASK-M5-A2 fix-forward (eng2 review BLOCKER 2): this must exclude an EXPIRED row
+  // too, or `already_invited` fires below before the per-email loop's own auto-revoke-expired
+  // block ever gets a chance to run -- that block's query matches the exact same predicate PLUS
+  // `expires_at < now()`, so by the time it could run, this set having already proven no match
+  // means it never does. Net effect before this fix: an email whose only invite expired became
+  // permanently un-invitable through the UI. `isInviteLive` (`_shared/invite-core.ts`) is the
+  // SAME "is this row currently live" definition `checkInviteAcceptable` already uses for
+  // accept -- filtered here in JS (not a DB-level `.gte`) so this set can never drift out of sync
+  // with that definition if it ever changes.
   const { data: liveInvites } = await supabase
     .from('org_invites')
-    .select('email')
+    .select('email, accepted_at, revoked_at, expires_at')
     .eq('org_id', orgId)
     .is('accepted_at', null)
     .is('revoked_at', null);
   const liveInvitedEmails = new Set(
-    ((liveInvites ?? []) as { email: string }[]).map((i) => i.email.toLowerCase())
+    (
+      (liveInvites ?? []) as {
+        email: string;
+        accepted_at: string | null;
+        revoked_at: string | null;
+        expires_at: string;
+      }[]
+    )
+      .filter(isInviteLive)
+      .map((i) => i.email.toLowerCase())
   );
 
   const results: {
@@ -348,11 +367,15 @@ Deno.serve(async (req) => {
     const tokenHash = await hashToken(token);
     const expiresAt = new Date(Date.now() + INVITE_TTL_MS).toISOString();
 
+    // MISSION-5 TASK-M5-A2 fix-forward (NIT): store lower/trimmed, matching the requirement's own
+    // wording and every comparison above (`key`) that already normalizes this way -- otherwise
+    // the same person invited twice can show up with visually-inconsistent casing in the Pending
+    // list, and the stored value silently disagrees with the partial index's own `lower(email)`.
     const { data: invite, error } = await supabase
       .from('org_invites')
       .insert({
         org_id: orgId,
-        email,
+        email: key,
         role,
         token_hash: tokenHash,
         invited_by: user.id,
@@ -373,7 +396,7 @@ Deno.serve(async (req) => {
 
     seenThisBatch.add(key);
     results.push({
-      email,
+      email: key,
       status: 'sent',
       inviteId: invite.id,
       token,
@@ -385,7 +408,7 @@ Deno.serve(async (req) => {
       action: 'invite.create',
       targetType: 'org_invite',
       targetId: invite.id,
-      details: { email, role, campaignIds },
+      details: { email: key, role, campaignIds },
     });
   }
 
