@@ -1247,6 +1247,35 @@ now()+delay_minutes offset") does not exist in either of its two callers
   called directly (e.g. via the Supabase dashboard) to exercise the guard manually — see
   `docs/validation/launch-live-test.md` B24.5.
 
+## 36. `recording_paused_at`/`recording_paused_spans` is only closed on the agent-Hangup path — deferred, audit-trail only (`recording_status` itself stays correct)
+
+- Found by the MISSION-4 cross-task interaction audit (`audit/M4-interaction-audit.md` #1), after
+  eng1's T8 review asked for this fix and it was applied (`0de09c9`) scoped to exactly what that
+  review's own wording said — "the hangup path" — read (reasonably) as `endLiveCall`, this repo's
+  established idiom for "the agent explicitly hung up." `closeOpenPausedRecordingSpan`
+  (`dialer-engine.ts:2470`) is wired into `endLiveCall` (`dialer-engine.ts:2461`) only. Two other
+  end-of-call paths never call it:
+  - **The prospect hangs up first** — `processContactLegEvent`'s `call.hangup` branch
+    (`dialer-engine.ts:1410-1422`), the MOST COMMON way a real call ends, has no reference to
+    `recording_paused_at`/`recording_paused_spans` at all.
+  - **A cold or completed-warm transfer handoff** — `finalizeHandoff` (`transfer-core.ts:713-735`)
+    moves the session to `wrap_up` and clears `active_leg_id` without touching any `recording_*`
+    column on the prospect leg it just handed off.
+- **Effect is bookkeeping-only, not a live-call bug**: `recording_status` itself (`'recording'` ->
+  `'saved'`/`'download_failed'`/etc via `processRecordingEvent`, `dialer-engine.ts:1207-1278`)
+  transitions correctly regardless of this gap — nothing about whether a recording is playing,
+  saved, or accessible is wrong. What's wrong is narrower: if a call was paused and then ended via
+  either path above (not `endLiveCall`), `recording_paused_at` stays stamped with the original
+  pause timestamp forever, and `recording_paused_spans` never gets that final span appended — a
+  saved recording with a permanently open, never-closed pause window in its own audit trail.
+- **DEFERRED to next session** (lead's call, 2026-09-27 ~07:2x): fixing the webhook path touches
+  `telnyx-webhook`/`processContactLegEvent` too close to the night's 07:30 hard stop to risk it
+  live. **If picked up next**: extract the close-span logic already used by
+  `endLiveCall`/`resumeRecording` into one small shared helper, call it from all 3 end-of-call
+  sites (or once inside whatever finalizes a leg's outcome generically, e.g. `apply_leg_outcome`'s
+  own TS-side post-processing if one exists, so every path shares it instead of each duplicating
+  the call). Small, well-scoped — not a new design.
+
 ---
 
 ## Not issues — deliberate, documented elsewhere
