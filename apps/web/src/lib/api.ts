@@ -678,6 +678,111 @@ export async function getTeamLiveBoard(): Promise<TeamLiveBoardRow[]> {
   return (data ?? []) as TeamLiveBoardRow[];
 }
 
+// --- MISSION-4 TASK-T11 (ADM-8 + NEW): dialer analytics -- funnel, best-time-to-call heatmap,
+// connect rate by caller-ID number and by hour. Same "front door read" RPC shape as
+// getTeamDailyStats/getTeamLiveBoard above -- a non-owner/admin (or a p_campaign_id/p_org the
+// caller doesn't manage) gets an empty array back, never a thrown error, since the role check
+// lives inside each SQL function itself. ---
+
+export interface FunnelSummary {
+  dials: number;
+  human_answers: number;
+  conversations: number;
+  wins: number;
+}
+
+/** `campaignId` null = every campaign in the org (or, for an agent, every campaign THEY dialed). */
+export async function getFunnelSummary(
+  campaignId: string | null,
+  start: Date,
+  end: Date
+): Promise<FunnelSummary> {
+  const orgId = await getActiveOrgId();
+  const { data, error } = await supabase.rpc('funnel_summary', {
+    p_org: orgId,
+    p_campaign_id: campaignId,
+    p_start: start.toISOString(),
+    p_end: end.toISOString(),
+  });
+  if (error) throw new Error(error.message);
+  const row = (data ?? [])[0] as FunnelSummary | undefined;
+  return row ?? { dials: 0, human_answers: 0, conversations: 0, wins: 0 };
+}
+
+export interface AnswerRateHeatmapCell {
+  /** 0=Sunday..6=Saturday (Postgres extract(dow)), in the CONTACT's own local time. */
+  weekday: number;
+  /** 0-23, in the CONTACT's own local time. */
+  hour: number;
+  dials: number;
+  human_answers: number;
+}
+
+export async function getAnswerRateHeatmap(
+  campaignId: string | null,
+  start: Date,
+  end: Date
+): Promise<AnswerRateHeatmapCell[]> {
+  const orgId = await getActiveOrgId();
+  const { data, error } = await supabase.rpc('answer_rate_heatmap', {
+    p_org: orgId,
+    p_campaign_id: campaignId,
+    p_start: start.toISOString(),
+    p_end: end.toISOString(),
+  });
+  if (error) throw new Error(error.message);
+  return (data ?? []) as AnswerRateHeatmapCell[];
+}
+
+export interface ConnectRateByNumberRow {
+  /** Null = legs dialed via the legacy campaigns.caller_id_number_id path (pre-number-pool),
+   *  never dropped from the result -- render this row's label as "Campaign default". */
+  from_number_id: string | null;
+  phone_number: string | null;
+  dials: number;
+  human_answers: number;
+}
+
+/** Owner/admin only -- number health is an org-wide concern, not a personal metric (the RPC
+ *  itself refuses an agent entirely, same reasoning as team_daily_stats). */
+export async function getConnectRateByNumber(
+  start: Date,
+  end: Date
+): Promise<ConnectRateByNumberRow[]> {
+  const orgId = await getActiveOrgId();
+  const { data, error } = await supabase.rpc('connect_rate_by_number', {
+    p_org: orgId,
+    p_start: start.toISOString(),
+    p_end: end.toISOString(),
+  });
+  if (error) throw new Error(error.message);
+  return (data ?? []) as ConnectRateByNumberRow[];
+}
+
+export interface ConnectRateByHourRow {
+  /** 0-23, SERVER (UTC) time -- matches this app's own established UTC-bucketing convention for
+   *  every other chart (.brain/domains/analytics.md), deliberately NOT contact-local like the
+   *  heatmap above. */
+  hour: number;
+  dials: number;
+  human_answers: number;
+}
+
+/** Owner/admin only, same reasoning as getConnectRateByNumber. */
+export async function getConnectRateByHour(
+  start: Date,
+  end: Date
+): Promise<ConnectRateByHourRow[]> {
+  const orgId = await getActiveOrgId();
+  const { data, error } = await supabase.rpc('connect_rate_by_hour', {
+    p_org: orgId,
+    p_start: start.toISOString(),
+    p_end: end.toISOString(),
+  });
+  if (error) throw new Error(error.message);
+  return (data ?? []) as ConnectRateByHourRow[];
+}
+
 export type CoachingMode = 'listen' | 'whisper' | 'barge';
 
 export class CoachingActionError extends Error {
@@ -723,6 +828,75 @@ export async function switchCoachingMode(
   if (!res.ok)
     throw new CoachingActionError(data.error || 'Failed to switch coaching mode', data.code);
   return data as { coachingId: string; mode: CoachingMode };
+}
+
+// ---------------------------------------------------------------------------
+// TASK-T4: warm/cold transfer + hold (AUD-6 + NEW).
+// ---------------------------------------------------------------------------
+
+export class TransferActionError extends Error {
+  code?: string;
+  constructor(message: string, code?: string) {
+    super(message);
+    this.name = 'TransferActionError';
+    this.code = code;
+  }
+}
+
+async function callDialerTransfer(body: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const res = await fetch(`${getFunctionsUrl()}/dialer-transfer`, {
+    method: 'POST',
+    headers: await getEdgeFunctionHeaders(),
+    body: JSON.stringify(body),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new TransferActionError(data.error || 'Transfer action failed', data.code);
+  return data;
+}
+
+/** Puts the PROSPECT (never the intern's own leg) on hold, in place, in the session's own
+ *  conference -- Telnyx's hold is per-participant, so the intern hears nothing different.
+ *  Idempotent: calling this while already held just returns the existing `heldAt`. */
+export async function holdCall(sessionId: string): Promise<{ heldAt: string }> {
+  const data = await callDialerTransfer({ action: 'hold', sessionId });
+  return data as { heldAt: string };
+}
+
+export async function resumeCall(sessionId: string): Promise<{ heldAt: null }> {
+  const data = await callDialerTransfer({ action: 'resume', sessionId });
+  return data as { heldAt: null };
+}
+
+/** Dials the transfer target (an org member's WebRTC, or a plain E.164 number). Cold: the
+ *  prospect moves to the target the instant it answers, no further action needed. Warm: the
+ *  prospect is held while the INTERN talks to the target first -- `completeTransfer`/
+ *  `cancelTransfer` are the only two ways a warm transfer resolves once `getDialerSession`'s own
+ *  `activeTransfer.status` reads 'connected'. 409s with `TRANSFER_IN_PROGRESS` if the session
+ *  already has one in flight. */
+export async function startTransfer(args: {
+  sessionId: string;
+  type: 'cold' | 'warm';
+  targetKind: 'member' | 'external';
+  targetUserId?: string;
+  targetNumber?: string;
+}): Promise<{ transferId: string; status: 'dialing' }> {
+  const data = await callDialerTransfer({ action: 'start', ...args });
+  return data as { transferId: string; status: 'dialing' };
+}
+
+/** Warm transfer only, while `activeTransfer.status === 'connected'`: moves the prospect to the
+ *  target and the intern back to their own main conference (empty, ready for the next contact).
+ *  Ends the intern's own session for this contact (-> wrap_up). */
+export async function completeTransfer(transferId: string): Promise<{ status: 'completed' }> {
+  const data = await callDialerTransfer({ action: 'complete', transferId });
+  return data as { status: 'completed' };
+}
+
+/** Warm transfer only: hangs up the target and returns the intern+prospect to exactly where they
+ *  were -- the session stays on_call, unaffected. */
+export async function cancelTransfer(transferId: string): Promise<{ status: 'cancelled' }> {
+  const data = await callDialerTransfer({ action: 'cancel', transferId });
+  return data as { status: 'cancelled' };
 }
 
 export interface UserPreferences {
@@ -1680,12 +1854,31 @@ export interface CallLegRecord {
    *  dialer UI uses to find "the leg still waiting on a disposition" during `wrap_up` (a leg's
    *  own `active_leg_id` reference on the session is already cleared by then). */
   dispositioned_at: string | null;
+  /** TASK-T4 (AUD-6 + warm/cold transfer): set while this leg is held (silent) in whichever
+   *  Telnyx conference it currently sits in. Drives the UI's "On hold mm:ss" timer. */
+  held_at: string | null;
+  /** TASK-T4: set once this leg's call was cold/warm transferred away -- an org member's user
+   *  id, or an E.164 number, depending on `transfer_type`'s own target kind. */
+  transferred_to: string | null;
+  transfer_type: 'cold' | 'warm' | null;
   contact: {
     business_name: string | null;
     first_name: string | null;
     last_name: string | null;
     phone_number: string | null;
   } | null;
+}
+
+/** TASK-T4: mirrors `call_transfers` -- at most one can ever be active per session
+ *  (call_transfers_one_active_per_session), so `getDialerSession`'s own `activeTransfer` field is
+ *  a single row or null, never an array. */
+export interface ActiveTransfer {
+  id: string;
+  type: 'cold' | 'warm';
+  target_kind: 'member' | 'external';
+  target_user_id: string | null;
+  target_number: string | null;
+  status: 'dialing' | 'connected';
 }
 
 /** TASK-I1: the session's CURRENT bridged inbound call, if any (`dialer-session-get`'s own
@@ -1865,6 +2058,10 @@ export async function getDialerSession(sessionId: string): Promise<{
    *  plain 'listen' is deliberately silent -- see coaching-core.ts's own header). Drives
    *  DialerStateBanner's "Manager listening" indicator. */
   coachingMode: 'whisper' | 'barge' | null;
+  /** TASK-T4: the session's own in-flight warm/cold transfer, if any -- drives the Transfer
+   *  control panel (Complete/Cancel for a 'connected' warm transfer; a "Dialing…" state for
+   *  either kind still ringing). Null once a transfer resolves (completed/cancelled/failed). */
+  activeTransfer: ActiveTransfer | null;
 }> {
   const res = await fetch(
     `${getFunctionsUrl()}/dialer-session-get?sessionId=${encodeURIComponent(sessionId)}`,
@@ -1880,6 +2077,7 @@ export async function getDialerSession(sessionId: string): Promise<{
     legs: CallLegRecord[];
     inboundCall: InboundCallInfo | null;
     coachingMode: 'whisper' | 'barge' | null;
+    activeTransfer: ActiveTransfer | null;
   };
 }
 

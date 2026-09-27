@@ -1,6 +1,6 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { motion, useReducedMotion } from 'motion/react';
-import { TrendingUp, TrendingDown, Phone, Clock, Target, Gauge } from 'lucide-react';
+import { TrendingUp, TrendingDown, Phone, Clock, Target, Gauge, Download } from 'lucide-react';
 import {
   BarChart,
   Bar,
@@ -14,7 +14,21 @@ import {
   Legend,
   ResponsiveContainer,
 } from 'recharts';
-import { getAnalyticsSummary, type AnalyticsSummary } from '@/lib/api';
+import {
+  getAnalyticsSummary,
+  getFunnelSummary,
+  getAnswerRateHeatmap,
+  getConnectRateByNumber,
+  getConnectRateByHour,
+  listCampaigns,
+  type AnalyticsSummary,
+  type FunnelSummary,
+  type AnswerRateHeatmapCell,
+  type ConnectRateByNumberRow,
+  type ConnectRateByHourRow,
+  type CampaignWithStats,
+} from '@/lib/api';
+import { rowsToCsv, downloadCsv } from '@/lib/csv';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
 import { PageHeader } from '@/components/app/PageHeader';
@@ -22,6 +36,279 @@ import { StatCard } from '@/components/app/StatCard';
 import { EmptyState } from '@/components/app/EmptyState';
 
 type Range = '7d' | '30d';
+
+const WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+function resolveDateRange(range: Range): { start: Date; end: Date } {
+  const end = new Date();
+  const start = new Date(end.getTime() - (range === '7d' ? 7 : 30) * 24 * 60 * 60 * 1000);
+  return { start, end };
+}
+
+function rate(numerator: number, denominator: number): number {
+  return denominator > 0 ? Math.round((numerator / denominator) * 1000) / 10 : 0;
+}
+
+/** MISSION-4 TASK-T11 (ADM-8 + NEW): per-campaign funnel + best-time-to-call heatmap + connect
+ *  rate by number/hour -- fetched independently of the main `summary` above (its own loading
+ *  state), so a slow funnel query never blocks the existing StatCard row from rendering. Owner/
+ *  admin see every section; an agent only sees the funnel + heatmap (both RPCs scope those to the
+ *  caller's own legs for a non-admin) -- the two connect-rate RPCs return empty for an agent, so
+ *  those two cards are simply omitted rather than shown empty. */
+function FunnelAndInsights({ start, end }: { start: Date; end: Date }) {
+  const [campaigns, setCampaigns] = useState<CampaignWithStats[]>([]);
+  const [campaignId, setCampaignId] = useState<string | null>(null);
+  const [funnel, setFunnel] = useState<FunnelSummary | null>(null);
+  const [heatmap, setHeatmap] = useState<AnswerRateHeatmapCell[] | null>(null);
+  const [byNumber, setByNumber] = useState<ConnectRateByNumberRow[] | null>(null);
+  const [byHour, setByHour] = useState<ConnectRateByHourRow[] | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  useEffect(() => {
+    listCampaigns()
+      .then(setCampaigns)
+      .catch(() => setCampaigns([]));
+  }, []);
+
+  useEffect(() => {
+    setLoading(true);
+    setLoadError(null);
+    Promise.all([
+      getFunnelSummary(campaignId, start, end),
+      getAnswerRateHeatmap(campaignId, start, end),
+      getConnectRateByNumber(start, end).catch(() => []),
+      getConnectRateByHour(start, end).catch(() => []),
+    ])
+      .then(([f, h, n, byh]) => {
+        setFunnel(f);
+        setHeatmap(h);
+        setByNumber(n);
+        setByHour(byh);
+      })
+      .catch((e) => setLoadError(e instanceof Error ? e.message : String(e)))
+      .finally(() => setLoading(false));
+  }, [campaignId, start, end]);
+
+  const heatCellRate = useMemo(() => {
+    const grid = new Map<string, number>();
+    (heatmap ?? []).forEach((c) =>
+      grid.set(`${c.weekday}-${c.hour}`, rate(c.human_answers, c.dials))
+    );
+    return (weekday: number, hour: number) => grid.get(`${weekday}-${hour}`) ?? null;
+  }, [heatmap]);
+
+  const handleExportFunnelCsv = () => {
+    if (!funnel) return;
+    const campaignLabel = campaigns.find((c) => c.id === campaignId)?.name ?? 'All campaigns';
+    const csv = rowsToCsv(
+      [
+        { key: 'stage' as const, label: 'Stage' },
+        { key: 'count' as const, label: 'Count' },
+        { key: 'ratePct' as const, label: 'Rate vs. dials (%)' },
+      ],
+      [
+        { stage: `Dials (${campaignLabel})`, count: funnel.dials, ratePct: 100 },
+        {
+          stage: 'Human answers',
+          count: funnel.human_answers,
+          ratePct: rate(funnel.human_answers, funnel.dials),
+        },
+        {
+          stage: 'Conversations (>=30s)',
+          count: funnel.conversations,
+          ratePct: rate(funnel.conversations, funnel.dials),
+        },
+        { stage: 'Wins', count: funnel.wins, ratePct: rate(funnel.wins, funnel.dials) },
+      ]
+    );
+    downloadCsv(
+      `funnel-${campaignLabel.replace(/\s+/g, '-')}-${new Date().toISOString().slice(0, 10)}.csv`,
+      csv
+    );
+  };
+
+  if (loading) return <Skeleton className="h-[200px] rounded-app-lg mb-8" />;
+  if (loadError) {
+    return (
+      <div className="mb-8 p-4 rounded-app-md bg-danger-soft border border-danger/30 text-danger text-body">
+        {loadError}
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6 mb-8">
+      {/* Funnel */}
+      <div className="rounded-app-lg border border-border-subtle bg-surface-1 p-6 shadow-app-sm">
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
+          <h2 className="text-section-title text-text-primary">Funnel</h2>
+          <div className="flex items-center gap-2">
+            <select
+              value={campaignId ?? '__all__'}
+              onChange={(e) => setCampaignId(e.target.value === '__all__' ? null : e.target.value)}
+              className="bg-surface-2 border border-border-subtle rounded-app-md px-3 py-2 text-meta text-text-primary"
+            >
+              <option value="__all__">All campaigns</option>
+              {campaigns.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+            <Button
+              size="sm"
+              variant="fe-ghost"
+              onClick={handleExportFunnelCsv}
+              disabled={!funnel || funnel.dials === 0}
+              title="Export the funnel as CSV"
+            >
+              <Download className="w-4 h-4" />
+              Export CSV
+            </Button>
+          </div>
+        </div>
+        {!funnel || funnel.dials === 0 ? (
+          <p className="text-meta text-text-secondary">No dials in this range.</p>
+        ) : (
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+            {(
+              [
+                { label: 'Dials', count: funnel.dials, pct: 100 },
+                {
+                  label: 'Human answers',
+                  count: funnel.human_answers,
+                  pct: rate(funnel.human_answers, funnel.dials),
+                },
+                {
+                  label: 'Conversations',
+                  count: funnel.conversations,
+                  pct: rate(funnel.conversations, funnel.dials),
+                },
+                { label: 'Wins', count: funnel.wins, pct: rate(funnel.wins, funnel.dials) },
+              ] as const
+            ).map((stage) => (
+              <div key={stage.label} className="bg-surface-2 rounded-app-md p-4">
+                <div className="text-meta text-text-secondary mb-1">{stage.label}</div>
+                <div className="text-page-title font-semibold text-text-primary">
+                  {stage.count.toLocaleString()}
+                </div>
+                <div className="text-meta text-text-secondary">{stage.pct}% of dials</div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Best-time-to-call heatmap (contact-local time) */}
+      <div className="rounded-app-lg border border-border-subtle bg-surface-1 p-6 shadow-app-sm overflow-x-auto">
+        <h2 className="text-section-title text-text-primary mb-6">
+          Best time to call (contact's local time)
+        </h2>
+        {!heatmap || heatmap.length === 0 ? (
+          <p className="text-meta text-text-secondary">Not enough answered calls in this range.</p>
+        ) : (
+          <table className="text-meta border-collapse">
+            <thead>
+              <tr>
+                <th className="p-1" />
+                {Array.from({ length: 24 }).map((_, h) => (
+                  <th key={h} className="p-1 font-normal text-text-secondary text-center w-8">
+                    {h}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {WEEKDAY_LABELS.map((label, weekday) => (
+                <tr key={label}>
+                  <td className="p-1 pr-2 text-text-secondary whitespace-nowrap">{label}</td>
+                  {Array.from({ length: 24 }).map((_, hour) => {
+                    const r = heatCellRate(weekday, hour);
+                    return (
+                      <td key={hour} className="p-0.5">
+                        <div
+                          className="w-8 h-6 rounded-app-sm"
+                          title={r === null ? 'No data' : `${r}% human-answer rate`}
+                          style={{
+                            backgroundColor:
+                              r === null ? 'rgba(255,255,255,0.03)' : `rgba(0,230,118,${r / 100})`,
+                          }}
+                        />
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      {/* Connect rate by caller-ID number + by hour (owner/admin only -- the RPCs return empty
+          for an agent, so these two cards are simply omitted rather than shown blank). */}
+      {((byNumber && byNumber.length > 0) || (byHour && byHour.length > 0)) && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {byNumber && byNumber.length > 0 && (
+            <div className="rounded-app-lg border border-border-subtle bg-surface-1 p-6 shadow-app-sm">
+              <h2 className="text-section-title text-text-primary mb-4">
+                Connect rate by caller-ID number
+              </h2>
+              <div className="space-y-2">
+                {byNumber.map((row) => (
+                  <div
+                    key={row.from_number_id ?? 'default'}
+                    className="flex items-center justify-between bg-surface-2 rounded-app-md p-3"
+                  >
+                    <span className="text-body text-text-primary">
+                      {row.phone_number ?? 'Campaign default'}
+                    </span>
+                    <span className="text-body font-semibold text-success">
+                      {rate(row.human_answers, row.dials)}%{' '}
+                      <span className="text-text-secondary font-normal">
+                        ({row.dials.toLocaleString()} dials)
+                      </span>
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          {byHour && byHour.length > 0 && (
+            <div className="rounded-app-lg border border-border-subtle bg-surface-1 p-6 shadow-app-sm">
+              <h2 className="text-section-title text-text-primary mb-4">
+                Connect rate by hour (server time)
+              </h2>
+              <ResponsiveContainer width="100%" height={200}>
+                <BarChart
+                  data={byHour.map((r) => ({ hour: r.hour, rate: rate(r.human_answers, r.dials) }))}
+                >
+                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+                  <XAxis dataKey="hour" stroke="#B0BEC5" tick={{ fill: '#B0BEC5' }} />
+                  <YAxis
+                    stroke="#B0BEC5"
+                    tick={{ fill: '#B0BEC5' }}
+                    allowDecimals={false}
+                    unit="%"
+                  />
+                  <Tooltip
+                    contentStyle={{
+                      backgroundColor: '#1A2332',
+                      border: '1px solid rgba(255,255,255,0.1)',
+                      borderRadius: '12px',
+                    }}
+                    itemStyle={{ color: '#fff' }}
+                  />
+                  <Bar dataKey="rate" fill="#0066FF" name="Connect rate %" radius={[8, 8, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 const SLICE_COLORS = ['#00E676', '#FFB300', '#B0BEC5', '#FF3D00', '#0066FF', '#00D9FF', '#9C27B0'];
 
@@ -63,6 +350,7 @@ export function Analytics() {
   }, [range, load]);
 
   const hasData = (summary?.totals.totalCalls ?? 0) > 0;
+  const { start: funnelStart, end: funnelEnd } = useMemo(() => resolveDateRange(range), [range]);
 
   const metrics = summary
     ? [
@@ -298,6 +586,10 @@ export function Analytics() {
                 ))}
               </div>
             </div>
+
+            {/* MISSION-4 TASK-T11: funnel + best-time-to-call heatmap + connect rate by number/
+                hour -- fetched independently of `summary` above, own loading/error state. */}
+            <FunnelAndInsights start={funnelStart} end={funnelEnd} />
           </>
         )
       )}

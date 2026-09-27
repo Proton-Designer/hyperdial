@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { Users, ArrowUpDown, Ear, Mic, Radio } from 'lucide-react';
+import { Users, ArrowUpDown, Ear, Mic, Radio, Download } from 'lucide-react';
+import { rowsToCsv, downloadCsv } from '@/lib/csv';
 import {
   getTeamDailyStats,
   getTeamLiveBoard,
@@ -350,6 +351,14 @@ export function Team() {
     };
   }, []);
 
+  /** ADM-8: exports exactly the sorted, currently-visible rows (not a fresh unsorted fetch) --
+   *  what the export contains matches what the admin is looking at on screen. */
+  const handleExportCsv = () => {
+    if (!sortedDaily || sortedDaily.length === 0) return;
+    const csv = rowsToCsv(COLUMNS, sortedDaily);
+    downloadCsv(`team-daily-${range}-${new Date().toISOString().slice(0, 10)}.csv`, csv);
+  };
+
   const toggleSort = (key: SortKey) => {
     if (key === sortKey) {
       setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
@@ -436,23 +445,35 @@ export function Team() {
       <div>
         <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
           <h2 className="text-section-title text-text-primary">Daily numbers</h2>
-          <div className="flex items-center gap-1 bg-surface-1 rounded-app-md p-1 border border-border-subtle">
-            {(['today', 'yesterday', '7d', 'custom'] as Range[]).map((r) => (
-              <Button
-                key={r}
-                size="sm"
-                variant={range === r ? 'fe-secondary' : 'fe-ghost'}
-                onClick={() => setRange(r)}
-              >
-                {r === 'today'
-                  ? 'Today'
-                  : r === 'yesterday'
-                    ? 'Yesterday'
-                    : r === '7d'
-                      ? 'Last 7 days'
-                      : 'Custom'}
-              </Button>
-            ))}
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-1 bg-surface-1 rounded-app-md p-1 border border-border-subtle">
+              {(['today', 'yesterday', '7d', 'custom'] as Range[]).map((r) => (
+                <Button
+                  key={r}
+                  size="sm"
+                  variant={range === r ? 'fe-secondary' : 'fe-ghost'}
+                  onClick={() => setRange(r)}
+                >
+                  {r === 'today'
+                    ? 'Today'
+                    : r === 'yesterday'
+                      ? 'Yesterday'
+                      : r === '7d'
+                        ? 'Last 7 days'
+                        : 'Custom'}
+                </Button>
+              ))}
+            </div>
+            <Button
+              size="sm"
+              variant="fe-ghost"
+              onClick={handleExportCsv}
+              disabled={!daily || daily.length === 0}
+              title="Export this table as CSV"
+            >
+              <Download className="w-4 h-4" />
+              Export CSV
+            </Button>
           </div>
         </div>
 
