@@ -52,6 +52,9 @@ interface ParallelDialerUIProps {
   connectedContactHistory: ContactHistoryEntry[];
   /** TASK-T5 (CRD-4, card-side): the connected call's own campaign script/objection sheet. */
   campaignScript: CampaignScriptInfo | null;
+  /** TASK-T7: lifted out of LiveCallPanel's own local state so the Dialer's global "M" hotkey
+   *  can read the same value the Mute button itself does. */
+  muted: boolean;
   onPause: () => void;
   onResume: () => void;
   /** BUG-11: `force` is only ever passed `true` from the confirm dialog's "Hang up and stop"
@@ -179,6 +182,7 @@ export function ParallelDialerUI({
   connectedContact,
   connectedContactHistory,
   campaignScript,
+  muted,
   onPause,
   onResume,
   onStop,
@@ -326,6 +330,7 @@ export function ParallelDialerUI({
             onOpenTransfer={() => setShowTransferModal(true)}
             onCompleteTransfer={onCompleteTransfer}
             onCancelTransfer={onCancelTransfer}
+            muted={muted}
             onToggleMute={onMuteChange}
             onEndCall={onEndLiveCall}
           />
@@ -355,6 +360,7 @@ export function ParallelDialerUI({
           answeredAt={inboundCall.answered_at}
           flagLabel="Inbound call"
           coachingMode={coachingMode}
+          muted={muted}
           onToggleMute={onMuteChange}
           onEndCall={onEndLiveCall}
         />

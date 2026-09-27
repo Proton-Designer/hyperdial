@@ -74,6 +74,8 @@ export function DialerStatesHarness() {
   // TASK-N1: only meaningful for a 'paused' toggle -- a second, independent checkbox rather
   // than a 9th ALL_STATES button, since it's a sub-variant of one existing state, not a new one.
   const [noNumbersAvailable, setNoNumbersAvailable] = useState(false);
+  // TASK-T7: real fixture state (not a no-op) so the Mute button visually toggles in this harness.
+  const [muted, setMuted] = useState(false);
 
   const scenario = useMemo(() => {
     switch (selectedState) {
@@ -240,7 +242,8 @@ export function DialerStatesHarness() {
               `Stop confirmed (fixture, no-op)${opts?.force ? ' -- force:true (via confirm dialog)' : ''}`
             )
           }
-          onMuteChange={() => {}}
+          muted={muted}
+          onMuteChange={setMuted}
           onEndLiveCall={() => window.alert('End live call clicked (fixture, no-op)')}
           onHoldCall={() => window.alert('Hold clicked (fixture, no-op)')}
           onResumeCall={() => window.alert('Resume call clicked (fixture, no-op)')}

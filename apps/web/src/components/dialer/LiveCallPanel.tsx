@@ -60,6 +60,10 @@ interface LiveCallPanelProps {
   onOpenTransfer?: () => void;
   onCompleteTransfer?: () => void;
   onCancelTransfer?: () => void;
+  /** TASK-T7: lifted out of this component's own local state so the Dialer's global "M" hotkey
+   *  can read/toggle the same mute state the button itself does -- see Dialer.tsx's own
+   *  `handleToggleMute`. Defaults to `false` is the caller's job now, not this component's. */
+  muted: boolean;
   onToggleMute: (muted: boolean) => void;
   onEndCall: () => void;
 }
@@ -77,10 +81,10 @@ export function LiveCallPanel({
   onOpenTransfer,
   onCompleteTransfer,
   onCancelTransfer,
+  muted,
   onToggleMute,
   onEndCall,
 }: LiveCallPanelProps) {
-  const [muted, setMuted] = useState(false);
   const callTimer = useElapsedSince(answeredAt);
   const holdTimer = useElapsedSince(heldAt ?? null);
 
@@ -144,11 +148,7 @@ export function LiveCallPanel({
               <Button
                 type="button"
                 variant="fe-secondary"
-                onClick={() => {
-                  const next = !muted;
-                  setMuted(next);
-                  onToggleMute(next);
-                }}
+                onClick={() => onToggleMute(!muted)}
               >
                 {muted ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
                 {muted ? 'Unmute' : 'Mute'}

@@ -13,6 +13,8 @@ import { CallForwardingCard } from './dialer/CallForwardingCard';
 import { WrapUpModal } from './dialer/WrapUpModal';
 import { StartSessionPanel } from './dialer/StartSessionPanel';
 import { ManualDialPanel } from './dialer/ManualDialPanel';
+import { HotkeyHelpOverlay } from './dialer/HotkeyHelpOverlay';
+import { isTypingTarget } from '@/lib/keyboard';
 import {
   getActiveDialerSession,
   getDialerSession,
@@ -114,6 +116,10 @@ function DialerBody({
   const [selectedFromNumber, setSelectedFromNumber] = useState<string | null>(null);
   const [callDuration, setCallDuration] = useState(0);
   const [outboundNumber, setOutboundNumber] = useState('');
+  // TASK-T7: lifted out of LiveCallPanel's own local state so the global "M" hotkey can read the
+  // same value the Mute button toggles -- see LiveCallPanel.tsx's own header comment.
+  const [isMuted, setIsMuted] = useState(false);
+  const [showHotkeyHelp, setShowHotkeyHelp] = useState(false);
 
   /** When opening Dialer without launch context, restore active session so parallel UI can show. */
   const [restoredParallelContext, setRestoredParallelContext] = useState<{
@@ -168,6 +174,18 @@ function DialerBody({
     remoteElementId: REMOTE_AUDIO_ID,
     sessionId: effectiveSessionId ?? undefined,
   });
+
+  // TASK-T7: single wrapper so both the Mute button (via ParallelDialerUI/LiveCallPanel's
+  // `onMuteChange`) and the future global "M" hotkey update the same `isMuted` value that
+  // LiveCallPanel now reads as a required prop, while still driving the real WebRTC mute through
+  // useTelnyxCall's own `setMuted`.
+  const handleToggleMute = useCallback(
+    (next: boolean) => {
+      setIsMuted(next);
+      setMuted(next);
+    },
+    [setMuted],
+  );
 
   // TASK-I1 review fix (eng1 review-eng1.md finding #6): resolve the caller's contact name for
   // the incoming-call banner, matched by E.164 within the org -- see lookupContactByPhone's own
@@ -715,6 +733,64 @@ function DialerBody({
     ]
   );
 
+  // TASK-T7: global hotkeys for the parallel dialer -- M (mute), H (hold), Space (resume from
+  // paused), ? (toggle help). Never fires while typing (isTypingTarget guard, see lib/keyboard.ts)
+  // or outside parallel mode -- WrapUpModal's own separate digit-shortcut keydown listener is
+  // untouched; gating M/H on `on_call` means the two never compete for the same keystroke (wrap_up
+  // is a different session state entirely).
+  useEffect(() => {
+    if (!isParallelMode) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (isTypingTarget(document.activeElement)) return;
+      if (e.key === '?') {
+        e.preventDefault();
+        setShowHotkeyHelp((v) => !v);
+        return;
+      }
+      const session = parallelSession.session;
+      if (!session) return;
+      if (e.key === 'm' || e.key === 'M') {
+        if (session.state !== 'on_call') return;
+        e.preventDefault();
+        handleToggleMute(!isMuted);
+        return;
+      }
+      if (e.key === 'h' || e.key === 'H') {
+        if (session.state !== 'on_call') return;
+        // TASK-T4: hold doesn't apply while parked in a warm-connected transfer's side
+        // conference -- mirrors LiveCallPanel's own UI gate for the exact same state.
+        const transfer = parallelSession.activeTransfer;
+        if (transfer?.type === 'warm' && transfer.status === 'connected') return;
+        e.preventDefault();
+        if (parallelSession.heldAt) {
+          void parallelSession.unhold();
+        } else {
+          void parallelSession.hold();
+        }
+        return;
+      }
+      if (e.key === ' ') {
+        // Auto-resume's own countdown/setting doesn't exist yet (separate, unstarted TASK-T7
+        // piece) -- Space is Resume-only for now, not a "Resume/Next" toggle.
+        if (session.state !== 'paused') return;
+        e.preventDefault();
+        void handleParallelResume();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [
+    isParallelMode,
+    parallelSession.session,
+    parallelSession.activeTransfer,
+    parallelSession.heldAt,
+    parallelSession.hold,
+    parallelSession.unhold,
+    isMuted,
+    handleToggleMute,
+    handleParallelResume,
+  ]);
+
   return (
     <div className="flex h-full">
       {/* Remote audio is created in useEffect (outside React tree) to avoid circular ref in Telnyx SDK */}
@@ -805,7 +881,8 @@ function DialerBody({
                 onPause={handleParallelPause}
                 onResume={() => void handleParallelResume()}
                 onStop={(opts) => void handleParallelStop(opts)}
-                onMuteChange={setMuted}
+                muted={isMuted}
+                onMuteChange={handleToggleMute}
                 onEndLiveCall={handleEndLiveCallParallel}
                 onHoldCall={() => void parallelSession.hold()}
                 onResumeCall={() => void parallelSession.unhold()}
@@ -868,6 +945,10 @@ function DialerBody({
           />
         )}
       </div>
+
+      {isParallelMode && showHotkeyHelp && (
+        <HotkeyHelpOverlay onClose={() => setShowHotkeyHelp(false)} />
+      )}
 
       {/* Right Panel - Campaign Stats */}
       <CampaignStats userNumbers={userNumbers} />
