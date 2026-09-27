@@ -272,7 +272,19 @@ begin
     -- p_agent must be exactly their own auth.uid() -- never null, never someone else's -- or this
     -- fails closed (no rows), same "return with no rows rather than raise" shape as every other
     -- gate in this file.
-    if not (private.has_org_role(p_org, array['agent']) and p_agent = auth.uid()) then
+    --
+    -- REAL BUG, caught by the lead's live dry-run before this ever deployed: `p_agent =
+    -- auth.uid()` is NULL (not false) when p_agent is NULL -- SQL's three-valued logic -- so
+    -- `not (true and null)` is also NULL, and a plpgsql `if` treats a NULL condition as FALSE
+    -- (doesn't fire). An agent-role caller omitting p_agent entirely sailed straight past this
+    -- guard and into the main query, whose own `(p_agent is null or e.agent_id = p_agent)` filter
+    -- then matched EVERY agent's rows -- the exact opposite of "an agent may query only their
+    -- own rows". `is distinct from` is NULL-safe (never itself NULL), so this now correctly
+    -- fails closed on a null, wrong, or missing p_agent.
+    if not private.has_org_role(p_org, array['agent'])
+      or p_agent is null
+      or p_agent is distinct from auth.uid()
+    then
       return;
     end if;
   end if;
