@@ -1567,6 +1567,23 @@ pattern `org_transfer_settings` already established. The announcement (`maybeAnn
 runs in `handleWin`, right AFTER recording starts (so the notice is itself part of what it discloses),
 speaking to the winner leg via the same `client.speak()` wrapper `sendAbandonMessage` already uses.
 
+**Fix-forward (eng1's T8 review, MUST-FIX) -- `'all_party_consent_states'` mode's unknown-state
+handling was inverted from the legal requirement and has been corrected.** The original logic
+treated `contactState == null` (an unparseable number, or an area code missing from
+`area-code-state.ts`) as "doesn't match any configured state" and SKIPPED the announcement --
+backwards for a consent disclosure, where an unresolved caller might well be in one of the org's
+listed states. `shouldAnnounceRecordingConsent` (recording-core.ts) now fails TOWARD announcing on
+`null`: only a state that resolves AND is confirmed absent from `all_party_consent_states` skips
+the notice. Covered by unit tests for both a null-phone-number and an unmapped-area-code contact,
+plus the corresponding `dialer-engine.test.ts` wiring-level cases.
+
+**Fix-forward (eng1's T8 review, SHOULD) -- a hangup while recording is paused now closes the open
+`recording_paused_spans` entry.** `endLiveCall` previously left `recording_paused_at` set (and no
+matching `recording_paused_spans` entry ever appended) if the agent hung up without clicking
+Resume first. `endLiveCall` now closes any open span at call-end time via a small best-effort
+helper (`closeOpenPausedRecordingSpan`), same read-then-append shape as `resumeRecording`, and
+never throws (the hangup itself must always complete regardless).
+
 **Decision 3 -- recording pause/resume needed two new `TelnyxClient` methods
 (`recordPause`/`recordResume`) and no CAS/race protection.** Verified against a freshly-curled
 spec3.json (`audit/T8/api-evidence.md`): both `record_pause`/`record_resume` request bodies have

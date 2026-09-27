@@ -49,7 +49,28 @@ Deno.test(
     };
     assertEquals(shouldAnnounceRecordingConsent(row, 'CA'), true);
     assertEquals(shouldAnnounceRecordingConsent(row, 'NY'), false);
-    assertEquals(shouldAnnounceRecordingConsent(row, null), false); // unmapped area code -- never guess
+  }
+);
+
+Deno.test(
+  'shouldAnnounceRecordingConsent: legal fail-safe -- an unresolvable state (null: no phone ' +
+    'number, an unparseable number, or an area code missing from the table) fails TOWARD ' +
+    'announcing in "all_party_consent_states" mode, never away from it',
+  () => {
+    const row = {
+      announce_recording_mode: 'all_party_consent_states' as const,
+      all_party_consent_states: ['CA', 'FL'],
+    };
+    // null state: could be a caller in CA/FL that we simply couldn't resolve -- must announce.
+    assertEquals(shouldAnnounceRecordingConsent(row, null), true);
+    // Same fail-safe applies even when the org's consent-state list is empty.
+    assertEquals(
+      shouldAnnounceRecordingConsent(
+        { announce_recording_mode: 'all_party_consent_states', all_party_consent_states: [] },
+        null
+      ),
+      true
+    );
   }
 );
 

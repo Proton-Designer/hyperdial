@@ -2441,7 +2441,7 @@ export async function endLiveCall(
   if (!session || session.org_id !== orgId || !session.active_leg_id) return false;
   const { data: leg } = await supabase
     .from('call_legs')
-    .select('call_control_id')
+    .select('call_control_id, recording_status, recording_paused_at, recording_paused_spans')
     .eq('id', session.active_leg_id)
     .maybeSingle();
   if (!leg) return false;
@@ -2453,8 +2453,43 @@ export async function endLiveCall(
   // the main conference. Best-effort, never throws -- a failure here must never block the
   // hangup itself. Reuses the client already fetched above, no second Telnyx-context lookup.
   await cancelInFlightTransferForSession(supabase, client, orgId, sessionId, 'agent_hangup');
+  // TASK-T8 review fix-forward (SHOULD): the agent can hang up while recording is paused
+  // (no Resume click) -- close the still-open span now, at the call end, rather than leaving
+  // `recording_paused_at` set with no matching `recording_paused_spans` entry forever. Same
+  // read-then-append shape as `resumeRecording`; best-effort so a failure here never blocks the
+  // hangup itself.
+  await closeOpenPausedRecordingSpan(supabase, session.active_leg_id, leg);
   await client.hangup(leg.call_control_id as string);
   return true;
+}
+
+/** Shared by `endLiveCall`'s hangup-while-paused case: closes the currently-open
+ *  `recording_paused_at` span into `recording_paused_spans`, if one is open. A no-op when the
+ *  leg isn't `'paused'` (the normal case). Never throws -- called from the hangup path, which
+ *  must complete regardless. */
+async function closeOpenPausedRecordingSpan(
+  supabase: SupabaseClient,
+  legId: string,
+  leg: {
+    recording_status?: string | null;
+    recording_paused_at?: string | null;
+    recording_paused_spans?: unknown;
+  }
+): Promise<void> {
+  try {
+    if (leg.recording_status !== 'paused' || !leg.recording_paused_at) return;
+    const spans = Array.isArray(leg.recording_paused_spans) ? leg.recording_paused_spans : [];
+    const nextSpans = [
+      ...spans,
+      { paused_at: leg.recording_paused_at, resumed_at: new Date().toISOString() },
+    ];
+    await supabase
+      .from('call_legs')
+      .update({ recording_paused_at: null, recording_paused_spans: nextSpans })
+      .eq('id', legId);
+  } catch (err) {
+    dialerLog('recording_paused_span_close_failed', { legId, error: String(err) });
+  }
 }
 
 /** MISSION-4 TASK-T8: pauses the currently-recording winner leg's own recording. Only acts on a

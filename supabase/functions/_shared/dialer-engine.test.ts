@@ -1483,6 +1483,79 @@ Deno.test(
 );
 
 Deno.test(
+  'TASK-T8 fix-forward (legal fail-safe): "all_party_consent_states" mode ANNOUNCES when the ' +
+    "contact's area code is unmapped (not in area-code-state.ts) -- unknown must fail toward " +
+    'announcing, never away from it',
+  async () => {
+    const db = new FakeDb();
+    const server = new FakeTelnyxServer();
+    const restoreFetch = stubTelnyxFetch(server);
+    const supabase = createFakeSupabase(db);
+    const { orgId, campaignId, agentId } = seedFixtures(db);
+    db.insert('org_recording_settings', {
+      id: orgId,
+      org_id: orgId,
+      recording_enabled: true,
+      announce_recording_mode: 'all_party_consent_states',
+      all_party_consent_states: ['CA'],
+    });
+    // 999 is not a real NANP area code and is not present in area-code-state.ts -- stateForE164
+    // resolves it to null, same as any other unmapped code.
+    for (const contact of db.table('contacts').values()) {
+      contact.phone_number = '+19995550000';
+    }
+    try {
+      const { winnerCallControlId } = await bootstrapToOnCall(db, supabase, {
+        orgId,
+        campaignId,
+        agentId,
+      });
+      const speakReq = server.requests.find(
+        (r) => r.method === 'POST' && r.path === `/v2/calls/${winnerCallControlId}/actions/speak`
+      );
+      assertExists(speakReq, 'an unmapped area code must fail toward announcing, not away from it');
+    } finally {
+      restoreFetch();
+    }
+  }
+);
+
+Deno.test(
+  'TASK-T8 fix-forward (legal fail-safe): "all_party_consent_states" mode ANNOUNCES when the ' +
+    'contact has no phone number at all (nothing to resolve a state from)',
+  async () => {
+    const db = new FakeDb();
+    const server = new FakeTelnyxServer();
+    const restoreFetch = stubTelnyxFetch(server);
+    const supabase = createFakeSupabase(db);
+    const { orgId, campaignId, agentId } = seedFixtures(db);
+    db.insert('org_recording_settings', {
+      id: orgId,
+      org_id: orgId,
+      recording_enabled: true,
+      announce_recording_mode: 'all_party_consent_states',
+      all_party_consent_states: ['CA'],
+    });
+    for (const contact of db.table('contacts').values()) {
+      contact.phone_number = null;
+    }
+    try {
+      const { winnerCallControlId } = await bootstrapToOnCall(db, supabase, {
+        orgId,
+        campaignId,
+        agentId,
+      });
+      const speakReq = server.requests.find(
+        (r) => r.method === 'POST' && r.path === `/v2/calls/${winnerCallControlId}/actions/speak`
+      );
+      assertExists(speakReq, 'no contact_id (no state to resolve) must fail toward announcing');
+    } finally {
+      restoreFetch();
+    }
+  }
+);
+
+Deno.test(
   'TASK-T8: pauseRecording pauses the active winner leg and stamps recording_paused_at',
   async () => {
     const db = new FakeDb();
@@ -2215,6 +2288,81 @@ Deno.test(
       );
       assertEquals(db.table('call_transfers').get(transferId)!.status, 'cancelled');
       assertEquals(db.table('call_transfers').get(transferId)!.ended_reason, 'agent_hangup');
+    } finally {
+      restoreFetch();
+    }
+  }
+);
+
+Deno.test(
+  'TASK-T8 review fix-forward (SHOULD): endLiveCall closes the open recording_paused_spans ' +
+    'entry when the agent hangs up while recording is paused (no Resume click)',
+  async () => {
+    const db = new FakeDb();
+    const server = new FakeTelnyxServer();
+    const restoreFetch = stubTelnyxFetch(server);
+    const supabase = createFakeSupabase(db);
+    const { orgId, campaignId, agentId } = seedFixtures(db);
+    try {
+      const { sessionId, winnerLegId } = await bootstrapToOnCall(db, supabase, {
+        orgId,
+        campaignId,
+        agentId,
+      });
+      const paused = await pauseRecording(supabase, orgId, sessionId);
+      assertEquals(paused, true);
+      const pausedLeg = db.table('call_legs').get(winnerLegId)!;
+      // Captured now, not read back off `pausedLeg` after the hangup -- `get()` returns a live
+      // reference into the fake DB's own row object, and endLiveCall's update mutates it in
+      // place, so `pausedLeg.recording_paused_at` would read as already-cleared afterward.
+      const pausedAtBeforeHangup = pausedLeg.recording_paused_at as string | null;
+      assertExists(pausedAtBeforeHangup, 'still open before hangup');
+      assertEquals(pausedLeg.recording_paused_spans ?? [], [], 'no closed span yet');
+
+      const ok = await endLiveCall(supabase, orgId, sessionId);
+      assertEquals(ok, true);
+
+      const after = db.table('call_legs').get(winnerLegId)!;
+      assertEquals(
+        after.recording_paused_at,
+        null,
+        'the open span must be closed, not left dangling'
+      );
+      const spans = after.recording_paused_spans as Array<{
+        paused_at: string;
+        resumed_at: string;
+      }>;
+      assertEquals(spans.length, 1, 'exactly one closed span, from the hangup');
+      assertEquals(spans[0].paused_at, pausedAtBeforeHangup);
+      assertExists(
+        spans[0].resumed_at,
+        'closed at the call end, even though the agent never clicked Resume'
+      );
+    } finally {
+      restoreFetch();
+    }
+  }
+);
+
+Deno.test(
+  'TASK-T8 review fix-forward (SHOULD): endLiveCall is a no-op for recording_paused_spans when the leg was never paused',
+  async () => {
+    const db = new FakeDb();
+    const server = new FakeTelnyxServer();
+    const restoreFetch = stubTelnyxFetch(server);
+    const supabase = createFakeSupabase(db);
+    const { orgId, campaignId, agentId } = seedFixtures(db);
+    try {
+      const { sessionId, winnerLegId } = await bootstrapToOnCall(db, supabase, {
+        orgId,
+        campaignId,
+        agentId,
+      });
+      const ok = await endLiveCall(supabase, orgId, sessionId);
+      assertEquals(ok, true);
+      const after = db.table('call_legs').get(winnerLegId)!;
+      assertEquals(after.recording_paused_at ?? null, null);
+      assertEquals(after.recording_paused_spans ?? [], []);
     } finally {
       restoreFetch();
     }

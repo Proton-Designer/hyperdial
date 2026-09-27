@@ -22,9 +22,12 @@ export type AnnounceRecordingMode = 'never' | 'all' | 'all_party_consent_states'
  *  the prospect at bridge time. A missing settings row means the column's own `default 'never'`
  *  (org never touched this setting -- unchanged behaviour, same "missing row = default" contract
  *  as `isRecordingEnabled` above). `contactState` is the best-effort area-code-derived state
- *  (`_shared/area-code-state.ts`); null (unmapped area code, or no phone number at all) can never
- *  match a configured state, so `'all_party_consent_states'` mode safely does nothing for it
- *  rather than guessing. */
+ *  (`_shared/area-code-state.ts`). Legal fail-safe (eng1's T8 review, MUST-FIX): an unknown/
+ *  unmapped state (null -- unparseable number or an area code missing from the table) must fail
+ *  TOWARD announcing, not away from it -- we cannot know the caller is outside every consent
+ *  state, so `'all_party_consent_states'` mode treats "unknown" the same as "assume it might be
+ *  one of them." Only a state we can positively resolve AND confirm is absent from the list
+ *  skips the announcement. */
 export function shouldAnnounceRecordingConsent(
   settingsRow: {
     announce_recording_mode: AnnounceRecordingMode;
@@ -35,9 +38,8 @@ export function shouldAnnounceRecordingConsent(
   const mode = settingsRow?.announce_recording_mode ?? 'never';
   if (mode === 'never') return false;
   if (mode === 'all') return true;
-  return (
-    contactState != null && (settingsRow?.all_party_consent_states ?? []).includes(contactState)
-  );
+  if (contactState == null) return true;
+  return (settingsRow?.all_party_consent_states ?? []).includes(contactState);
 }
 
 export interface ParsedRecordingSaved {
