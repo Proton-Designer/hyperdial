@@ -1220,6 +1220,33 @@ now()+delay_minutes offset") does not exist in either of its two callers
   entirely derived from this org's own `call_legs.outcome` history (the existing
   `outcome = 'connected'` human-answer signal), not a Telnyx API call.
 
+## 34. The high-lines drop-rate guard's auto-reduce only affects FUTURE session starts (TASK-S2, part 1) — consistent with existing behaviour, not a new gap
+
+- `check_high_lines_drop_rate_guard` resets `campaigns.lines` to 7 when a campaign's trailing
+  drop rate trips, but a `dial_sessions` row already `on_call` at 8-10 lines when that happens
+  keeps dialing at its own already-copied `lines` value (taken once at session-start,
+  `dialer-engine.ts`'s `startSession`) until that session ends naturally. Nothing in this repo
+  has ever live-pushed a changed `campaigns.lines` into a running session — an admin editing
+  `lines` mid-shift today has exactly the same "takes effect next session" behaviour. Not fixed
+  here to keep TASK-S2 part 1's blast radius to the guard itself.
+- **If a future task wants the guard to interrupt an already-running high-lines session
+  immediately**: would need to either reduce `dial_sessions.lines` directly for any row with
+  `campaign_id` = the tripped campaign and `state` non-terminal (the sweeper/refill loop already
+  reads `session.lines` fresh from the DB each refill via `refillCount`, so this alone might be
+  enough — unverified) or send an explicit pause/notice to the affected agent.
+
+## 35. `campaign-lines-guard-check`'s pg_cron config is not yet wired to the live project (TASK-S2, part 1) — needs the lead to run the setup RPC
+
+- Same pattern as `reliability-alert-check`/`number-health-check`: `private.
+  set_high_lines_guard_config(p_url, p_secret)` must be called once (with the deployed function's
+  real URL + a freshly generated secret, matching `HIGH_LINES_GUARD_SECRET` in the function's own
+  env) before `private.trigger_high_lines_guard_check`'s 5-minute cron tick does anything —
+  otherwise it's a documented no-op (`if v_url is null or v_secret_id is null then return`). Not
+  something an engineer can do from a dry run; the lead runs this as part of deploying the
+  migration + function together. Until then, `check_high_lines_drop_rate_guard()` can still be
+  called directly (e.g. via the Supabase dashboard) to exercise the guard manually — see
+  `docs/validation/launch-live-test.md` B24.5.
+
 ---
 
 ## Not issues — deliberate, documented elsewhere

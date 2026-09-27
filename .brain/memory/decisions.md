@@ -1627,3 +1627,50 @@ makes a flagged number naturally re-eligible for a fresh health check once its r
 new NANP-only area-code->US-state table, 357 verified rows sourced the same way
 `area_code_timezones` was) adds a third `pick_and_reserve_dial_number` ORDER BY tier behind the
 existing same-area-code tier; signature and concurrency (`for update...skip locked`) unchanged.
+
+## TASK-S2 part 1 (MISSION-4, lines up to 10 + the drop-rate guard -- voicemail rotation, inbound
+## ring group, and AUD-4 are NOT built tonight)
+
+**Decision 1 -- "8-10 lines needs the guard" is a same-row DB CHECK on `campaigns`, not just an
+app-layer convention.** `updateCampaignSettings` (api.ts) writes straight to `campaigns` via
+PostgREST with no edge function in front of it, so an app-layer-only rule would have been
+trivially bypassable by a direct table update. `campaigns_lines_check` now reads
+`lines between 1 and 7 or (lines between 8 and 10 and high_lines_guard_enabled)` -- evaluated
+against the FINAL row after an UPDATE, so a client can flip both columns together in one call, but
+setting `high_lines_guard_enabled=false` while leaving `lines` at 8-10 is rejected outright. This
+gives a useful invariant for free: any row with `lines > 7` NECESSARILY has the guard on right
+now, which is what lets `check_high_lines_drop_rate_guard` filter candidates on `lines > 7` alone
+without also checking the flag.
+
+**Decision 2 -- `dial_sessions.lines`'s own "8-10 needs the guard" rule is enforced by extending
+the EXISTING `enforce_campaign_active_for_session` BEFORE INSERT trigger, not a new trigger or a
+cross-table CHECK (which Postgres doesn't support).** `dial_sessions` has no client INSERT policy
+at all (every write already goes through `startSession`/an RPC per 20260924000700's own comment),
+so a trigger is the only real enforcement point -- same reasoning eng1's original trigger
+(20260924001500, campaign-active check) already used. `create or replace function` on an
+already-applied function in a NEW migration is the normal way to extend one later; the OLD
+migration file itself is never edited.
+
+**Decision 3 -- `campaigns_with_stats` needed a drop + recreate for the 3 new columns to be
+visible at all.** Caught by checking the view's actual definition (explicit column list, not
+`c.*` -- 20260924001500's own header already flagged this as a recurring gap, and 20260926080200
+hit it again for `script_text`/`objection_sheet_text`) before assuming a plain `ALTER TABLE` was
+enough. `getCampaign()`/`listCampaigns()` (api.ts) read this view, not the base table -- skipping
+this would have left the guard columns silently `undefined` in the UI while everything else
+looked done.
+
+**Decision 4 -- the drop-rate window for the guard's own cron check is a hardcoded 60 minutes
+with a 10-human-answer minimum sample, not a per-org settings table (unlike
+`org_number_health_settings`).** The 3% threshold is this task's own literal spec, not a tunable;
+a campaign-level `high_lines_guard_enabled` opt-in (default false) already satisfies "server-side
+guard defaulting off" for this feature. A 30-day window (T8's own `campaign_drop_rate_summary`
+window, used for the Analytics card) would be far too slow to react to or recover from a
+currently-elevated-risk state -- this is a live safety guard, not a historical metric, so it
+reuses the SAME drop-rate math but over a short trailing window computed fresh in its own RPC,
+not a call into `campaign_drop_rate_summary` itself.
+
+**Decision 5 -- tripping the guard snaps `lines` directly to 7, not a slow decrement.** A
+circuit-breaker shape: once the drop rate crosses 3%, dialing above 7 is no longer provably safe
+for this campaign, so it goes straight back to the last known-safe value and the flag turns off,
+requiring a human to review and deliberately re-enable rather than the system quietly limping
+along at 8 or 9.

@@ -261,6 +261,7 @@ export function CampaignManageModal({
           abandon_message_enabled: c.abandon_message_enabled,
           script_text: c.script_text,
           objection_sheet_text: c.objection_sheet_text,
+          high_lines_guard_enabled: c.high_lines_guard_enabled,
         });
       }
     } catch {
@@ -695,17 +696,51 @@ export function CampaignManageModal({
                           className="bg-surface-2 border-white/10"
                           style={{ zIndex: 10001 }}
                         >
-                          {[1, 2, 3, 4, 5, 6, 7].map((n) => (
+                          {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((n) => (
                             <SelectItem
                               key={n}
                               value={String(n)}
+                              disabled={n > 7 && !settingsForm.high_lines_guard_enabled}
                               className="bg-surface-2 hover:bg-white/10 focus:bg-white/10 text-white focus:text-white"
                             >
                               {n}
+                              {n > 7 ? ' (needs the drop-rate guard below)' : ''}
                             </SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
+                      <label className="flex items-center gap-2 text-xs text-text-secondary mt-2">
+                        <input
+                          type="checkbox"
+                          checked={settingsForm.high_lines_guard_enabled ?? false}
+                          onChange={(e) =>
+                            setSettingsForm((f) =>
+                              f
+                                ? {
+                                    ...f,
+                                    high_lines_guard_enabled: e.target.checked,
+                                    // Turning the guard off while lines is still 8-10 would be
+                                    // rejected by the DB (campaigns_lines_check) -- snap lines
+                                    // back to a safe value in the same edit so Save doesn't
+                                    // surprise-fail.
+                                    lines: !e.target.checked && (f.lines ?? 0) > 7 ? 7 : f.lines,
+                                  }
+                                : f
+                            )
+                          }
+                        />
+                        Allow 8-10 lines (auto-reduces back to 7 if drop rate exceeds 3%)
+                      </label>
+                      {campaign?.high_lines_guard_last_triggered_at && (
+                        <p className="text-xs text-amber-400/90 mt-1">
+                          Guard last auto-reduced lines to 7 on{' '}
+                          {new Date(campaign.high_lines_guard_last_triggered_at).toLocaleString()}
+                          {campaign.high_lines_guard_last_drop_rate_pct != null
+                            ? ` (drop rate was ${campaign.high_lines_guard_last_drop_rate_pct}%)`
+                            : ''}
+                          .
+                        </p>
+                      )}
                     </div>
                     <div>
                       <label className="text-sm text-text-secondary block mb-1">

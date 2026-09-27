@@ -48,6 +48,7 @@ product (the contact list, the dialer, the dashboard) is either feeding a campai
 | `campaigns_with_stats` | A Postgres view, not a table — lead counts are computed per read, never cached. Also the only place the E1/P2-P2 dial-settings columns and the soft-delete filter are exposed to the client. |
 | Passthrough | A `campaign_leads.status` value present in the CHECK constraint and the UI, never written by any code. |
 | Dial settings | `lines`, `amd_mode`, `caller_id_number_id`, `max_attempts`, `retry_interval_minutes`, `calling_window_start`, `calling_window_end`, `abandon_message_enabled` — added by TASK-P2-E1 (`20260924000700`), editable via TASK-P2-P2's Settings section (admin+ only). |
+| High-lines guard | `lines` up to 7 always allowed; 8–10 only while `high_lines_guard_enabled` is true (MISSION-4 TASK-S2, `20260926070005`). Enforced by a same-row CHECK on `campaigns` (`campaigns_lines_check`) and by the `dial_sessions` BEFORE INSERT trigger for session-start-time overrides — a client can't bypass it via a direct `updateCampaignSettings` call. A 5-minute cron (`check_high_lines_drop_rate_guard` / `campaign-lines-guard-check`) auto-resets both `lines` (→7) and the flag (→false) if the campaign's trailing-60-minute T8-style drop rate exceeds 3% on ≥10 human answers; a human must re-enable it. `high_lines_guard_last_triggered_at`/`_last_drop_rate_pct` are pure history, never cleared. |
 | Soft delete | `campaigns.deleted_at` (TASK-P2-P2). Hard DELETE is no longer offered — the RLS delete policy was removed — so a "deleted" campaign is really "hidden and inert," not gone. |
 
 ## Where the code lives
@@ -56,6 +57,7 @@ product (the contact list, the dialer, the dashboard) is either feeding a campai
 |---|---|---|
 | Schema + view + RLS | `supabase/migrations/20250207100000_create_campaigns_and_leads.sql` | Both tables, all 8 policies, `campaigns_with_stats` |
 | Dial settings columns | `supabase/migrations/20260924000700_dialer_schema.sql` | `lines`/`amd_mode`/`caller_id_number_id`/etc., plus `campaigns_check_caller_id_org` trigger |
+| High-lines drop-rate guard | `supabase/migrations/20260926070005_high_lines_drop_guard.sql`, `supabase/functions/campaign-lines-guard-check/index.ts` | `campaigns_lines_check` widen, `check_high_lines_drop_rate_guard` RPC, pg_cron every 5 min |
 | Soft delete, settings in the view, session-active guard | `supabase/migrations/20260924001500_campaign_settings_agents_delete.sql` | `deleted_at`, rebuilt `campaigns_with_stats`, `dial_sessions_require_active_campaign` trigger (TASK-P2-P2) |
 | SQL acceptance tests | `supabase/tests/campaign_settings_agents.sql` | Settings RLS, agent assignment, soft-delete, session-guard — 16 assertions |
 | Client data layer | `apps/web/src/lib/api.ts` | Campaigns section, `:354-496`; `startDialerSession` `:564-668`; `updateCampaignSettings`/`deleteCampaign`/`setCampaignAgents` (TASK-P2-P2) |

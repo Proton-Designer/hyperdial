@@ -434,9 +434,12 @@ Records the WINNING contact leg only, never a loser, starting the moment it's ac
   `shouldAnnounceRecordingConsent` (`recording-core.ts`, pure), applied in `handleWin`'s
   `maybeAnnounceRecordingConsent`, right AFTER `maybeStartRecording` -- the notice, if spoken, is
   itself part of the recording. State comes from the contact's phone number via
-  `_shared/area-code-state.ts` (`stateForE164`, best-effort, same caveats as `area-code-tz.ts` --
-  an unmapped/non-`+1` number is null, never a guess, so it can only ever fail to announce, never
-  wrongly announce). Speaks via the SAME `client.speak()` wrapper the abandon message already uses.
+  `_shared/area-code-state.ts` (`stateForE164`, best-effort, same caveats as `area-code-tz.ts`).
+  **Fail-safe direction (fixed post-review, eng1's T8 review MUST-FIX)**: an unmapped/non-`+1`
+  number resolves to null state, and `shouldAnnounceRecordingConsent` treats null as "might be a
+  consent state" -- it fails TOWARD announcing, never away from it. Only a state that resolves
+  AND is confirmed absent from the org's list skips the notice. Speaks via the SAME `client.speak()`
+  wrapper the abandon message already uses.
 - **Pause/resume recording**: two new `TelnyxClient` methods, `recordPause`/`recordResume`
   (`POST /calls/{id}/actions/record_{pause,resume}`, empty body -- see `audit/T8/api-evidence.md`).
   `pauseRecording`/`resumeRecording` (dialer-engine.ts) act on the session's `active_leg_id`; no
@@ -445,8 +448,10 @@ Records the WINNING contact leg only, never a loser, starting the moment it's ac
   `dialer-session-hangup-live`'s shape) is the intern-facing endpoint. `call_legs.recording_status`
   gained `'paused'`; `recording_paused_at` (the currently-open span, if any) + append-only
   `recording_paused_spans jsonb` (closed `{paused_at, resumed_at}` pairs, written on resume) record
-  the history. UI: `LiveCallPanel`'s "Pause/Resume recording" button (next to Hold), wired through
-  `ParallelDialerUI` -> `useDialerSession`'s `toggleRecording`.
+  the history. `endLiveCall` also closes any still-open span at call-end time (`closeOpenPaused
+  RecordingSpan`, review fix-forward) -- an agent hanging up without clicking Resume first no
+  longer leaves a dangling open span. UI: `LiveCallPanel`'s "Pause/Resume recording" button (next
+  to Hold), wired through `ParallelDialerUI` -> `useDialerSession`'s `toggleRecording`.
 - **Drop-rate tracking**: mostly already existed before this task (verify, don't assume) --
   `apply_leg_outcome` already sets `priority_requeue`+`next_attempt_at=now()` for dropped/abandoned
   (queues them first, next batch) and `sendAbandonMessage` already plays a short message gated on
@@ -457,6 +462,38 @@ Records the WINNING contact leg only, never a loser, starting the moment it's ac
 - **QUE-2 (gatekeeper's own shorter retry)**: seeded at 1440 minutes (not the no_answer/voicemail
   4-day default) -- see `.brain/memory/known-issues.md` #32 for why 1440 specifically, and why a
   genuinely same-day retry isn't actually possible today regardless of the value chosen.
+
+### Lines up to 10 + the drop-rate guard (MISSION-4 TASK-S2, part 1 -- lines/guard only; voicemail
+### rotation, inbound ring group, and AUD-4 are NOT built)
+
+- **`campaigns.lines` widened 1-7 -> 1-10, but 8-10 only with `high_lines_guard_enabled`.**
+  Enforced at the DB level, not just in the UI/edge function: `campaigns_lines_check` is a
+  same-row CHECK (`lines between 1 and 7 or (lines between 8 and 10 and high_lines_guard_
+  enabled)`), evaluated against the FINAL row after an UPDATE -- so a client can flip both columns
+  in one `updateCampaignSettings` call, but can never disable the guard while leaving lines above
+  7 (that update is rejected outright). `dial_sessions.lines` widened the same way, but its own
+  "needs the guard" rule is enforced by extending the existing `dial_sessions` BEFORE INSERT
+  trigger (`enforce_campaign_active_for_session`, originally 20260924001500) rather than a second
+  CHECK, since `dial_sessions` has no `high_lines_guard_enabled` column of its own to check
+  against inline. `dialer-session-start/index.ts` also checks proactively for a clean 400
+  (`HIGH_LINES_GUARD_REQUIRED`), same "proactive + DB-enforced defense in depth" shape as the
+  existing deleted/paused-campaign checks.
+- **`check_high_lines_drop_rate_guard`**: a 5-minute cron (`campaign-lines-guard-check`, same
+  pg_cron/pg_net/vault-secret shape as `reliability-alert-check`/`number-health-check`) watches
+  every campaign currently `lines > 7` (implies the guard is on, per the invariant above) and
+  computes the SAME drop-rate definition as T8's `campaign_drop_rate_summary` (dropped+abandoned
+  over connected+dropped+abandoned human answers) over a hardcoded trailing 60-minute window, with
+  a minimum 10-human-answer sample (avoids tripping on a handful of unlucky calls right after
+  enabling the guard). Over 3% -> atomically resets that campaign to `lines=7`,
+  `high_lines_guard_enabled=false`, and stamps `high_lines_guard_last_triggered_at`/
+  `_last_drop_rate_pct` (pure history, shown in `CampaignManageModal.tsx`, never auto-cleared) in
+  the SAME update RETURNING the rows the edge function notifies owners/admins about. A human must
+  re-enable the guard (and re-raise lines) after reviewing what happened -- not self-healing.
+- **Known limitation (documented, not fixed -- see `.brain/memory/known-issues.md`)**: reducing
+  `campaigns.lines` only changes the default for FUTURE session starts. A `dial_sessions` row
+  already `on_call` at 8-10 lines when the guard trips keeps dialing at its own already-copied
+  `lines` value until that session ends -- consistent with how changing `campaigns.lines` has
+  always behaved (never live-pushed to a running session), not a new gap this task introduced.
 
 ## Not covered here
 

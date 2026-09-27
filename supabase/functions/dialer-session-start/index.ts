@@ -31,7 +31,8 @@ type AmdModeOverride = (typeof VALID_AMD_MODES)[number];
 
 interface StartBody {
   campaignId?: string;
-  /** Overrides the campaign's own default `lines` (1-7) for this session only. */
+  /** Overrides the campaign's own default `lines` (1-7, or 1-10 with the campaign's high-lines
+   *  drop-rate guard enabled -- MISSION-4 TASK-S2) for this session only. */
   lines?: number;
   /** Overrides the campaign's own default `amd_mode` for this session only (BUG-7). */
   amdMode?: AmdModeOverride;
@@ -64,7 +65,7 @@ Deno.serve(async (req) => {
     if (!campaignId) return jsonResponse(400, { error: 'campaignId is required' });
 
     const linesOverride =
-      body.lines !== undefined ? Math.max(1, Math.min(7, Math.trunc(body.lines))) : undefined;
+      body.lines !== undefined ? Math.max(1, Math.min(10, Math.trunc(body.lines))) : undefined;
     const amdModeOverride = VALID_AMD_MODES.includes(body.amdMode as AmdModeOverride)
       ? body.amdMode
       : undefined;
@@ -76,7 +77,9 @@ Deno.serve(async (req) => {
 
     const { data: campaign, error: campaignError } = await supabase
       .from('campaigns')
-      .select('id, lines, amd_mode, caller_id_number_id, status, deleted_at')
+      .select(
+        'id, lines, amd_mode, caller_id_number_id, status, deleted_at, high_lines_guard_enabled'
+      )
       .eq('id', campaignId)
       .eq('org_id', orgId)
       .maybeSingle();
@@ -98,6 +101,18 @@ Deno.serve(async (req) => {
       return jsonResponse(400, {
         error: `This campaign is ${campaign.status}, so a dial session cannot be started.`,
         code: 'CAMPAIGN_NOT_ACTIVE',
+      });
+    }
+    // MISSION-4 TASK-S2 (part 1): same rule as campaigns_lines_check / the dial_sessions
+    // BEFORE INSERT trigger (20260926070005) -- checked here too for a clean, specific 4xx
+    // instead of parsing the trigger's raised exception text, same "proactive + DB-enforced
+    // defense in depth" shape as the deleted/status checks just above.
+    const effectiveLines = linesOverride ?? (campaign.lines as number);
+    if (effectiveLines > 7 && !campaign.high_lines_guard_enabled) {
+      return jsonResponse(400, {
+        error:
+          "More than 7 lines requires this campaign's high-lines drop-rate guard to be enabled first (Campaign settings).",
+        code: 'HIGH_LINES_GUARD_REQUIRED',
       });
     }
     // TASK-N1: a pool-only org (no legacy campaign.caller_id_number_id ever set) must still be
@@ -201,6 +216,15 @@ Deno.serve(async (req) => {
       return jsonResponse(400, {
         error: 'This campaign is no longer active, so a dial session cannot be started.',
         code: 'CAMPAIGN_NOT_ACTIVE',
+      });
+    }
+    // MISSION-4 TASK-S2 TOCTOU fallback: an admin turned the guard off (or an earlier request's
+    // own drop-rate trip fired) between the proactive check above and this INSERT.
+    if (msg.includes("unless the campaign's high-lines drop-rate guard is enabled")) {
+      return jsonResponse(400, {
+        error:
+          "More than 7 lines requires this campaign's high-lines drop-rate guard to be enabled first (Campaign settings).",
+        code: 'HIGH_LINES_GUARD_REQUIRED',
       });
     }
     // SEC-8 TOCTOU fallback: another request inserted a session for this same agent between

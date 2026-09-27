@@ -1566,6 +1566,18 @@ export interface Campaign {
    *  invented for a campaign that hasn't configured one. */
   script_text: string | null;
   objection_sheet_text: string | null;
+  /** MISSION-4 TASK-S2 (part 1): opt-in (default false) allowing `lines` up to 10 instead of 7.
+   *  The DB's own `campaigns_lines_check` makes "lines > 7 with this false" impossible -- see
+   *  20260926070005's header. A periodic drop-rate check auto-reduces `lines` back to 7 AND
+   *  flips this back to false if the campaign's T8 drop rate goes over 3%; a human must
+   *  re-enable it after reviewing why. */
+  high_lines_guard_enabled: boolean;
+  /** When the guard last auto-reduced this campaign back to 7 lines, if ever. Purely
+   *  observational history -- never cleared automatically. */
+  high_lines_guard_last_triggered_at: string | null;
+  /** The drop rate (0-100) observed at the moment the guard last tripped. Paired with
+   *  high_lines_guard_last_triggered_at. */
+  high_lines_guard_last_drop_rate_pct: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -1669,8 +1681,12 @@ export async function updateCampaignStatus(
 }
 
 export interface CampaignSettingsInput {
+  /** 1-7 always allowed; 8-10 only when high_lines_guard_enabled is also true (in this same
+   *  update, or already set) -- the DB's campaigns_lines_check rejects the update otherwise. */
   lines?: number;
   amd_mode?: 'off' | 'detect' | 'detect_words' | 'premium';
+  /** MISSION-4 TASK-S2 (part 1). See Campaign.high_lines_guard_enabled. */
+  high_lines_guard_enabled?: boolean;
   /** TASK-F-T3 (VMD-4). */
   voicemail_drop_mode?: 'first_attempt' | 'every_attempt' | 'never';
   caller_id_number_id?: string | null;
@@ -2186,8 +2202,9 @@ export interface SpendWarning {
 
 export async function startDialerSession(args: {
   campaignId: string;
-  /** Overrides the campaign's own default `lines` (1-7) for this session only. */
-  lines?: 1 | 2 | 3 | 4 | 5 | 6 | 7;
+  /** Overrides the campaign's own default `lines` (1-7, or 1-10 with the campaign's high-lines
+   *  drop-rate guard enabled -- MISSION-4 TASK-S2) for this session only. */
+  lines?: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10;
   /** Overrides the campaign's own default `amd_mode` for this session only. */
   amdMode?: 'off' | 'detect' | 'detect_words' | 'premium';
 }): Promise<{ sessionId: string; warning?: SpendWarning }> {

@@ -480,6 +480,12 @@ verify_jwt = false
 # start, same lesson as every cron-worker function in this file.
 verify_jwt = false
 
+[functions.campaign-lines-guard-check]
+# Triggered by pg_net (a cron job), no Supabase JWT at all -- auth is the X-Cron-Secret header.
+# Set from the start (MISSION-4 TASK-S2), same lesson as spend-alert-check/reliability-alert-check/
+# recording-retention/dialer-sweeper/ghl-sync-worker.
+verify_jwt = false
+
 [edge_runtime]
 enabled = true
 # Supported request policies: `oneshot`, `per_worker`.
