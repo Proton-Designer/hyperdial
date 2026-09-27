@@ -206,7 +206,7 @@ function FunnelAndInsights({ start, end }: { start: Date; end: Date }) {
           Best time to call (contact's local time)
         </h2>
         {!heatmap || heatmap.length === 0 ? (
-          <p className="text-meta text-text-secondary">Not enough answered calls in this range.</p>
+          <p className="text-meta text-text-secondary">No dials in this range.</p>
         ) : (
           <table className="text-meta border-collapse">
             <thead>

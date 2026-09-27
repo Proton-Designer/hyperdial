@@ -96,10 +96,15 @@ grant execute on function public.funnel_summary(uuid, uuid, timestamptz, timesta
 -- CONTACT's own local time (falls back to UTC when a contact has no timezone set, same fallback
 -- dialing_hours_today already uses for "no orgs.timezone column" -- here it's per-CONTACT, not
 -- per-org, so a null just means "assume UTC for this one row" rather than a hardcoded org-wide
--- zone). Bucketed on answered_at (only answered legs have a meaningful "time someone picked up"),
--- so a no_answer/busy/failed leg with no answered_at is excluded from BOTH dials and human_answers
--- here -- this view answers "of the calls that got far enough to be answered, human vs machine, by
--- when" not "raw dial volume by hour" (funnel_summary above is where raw dial volume lives). -----
+-- zone). Bucketed on cl.created_at (the DIAL time, not answered_at) -- a "best time to call"
+-- heatmap answers "if I dial during THIS bucket, what fraction of dials reach a human?", so the
+-- denominator (dials) must be EVERY contact leg dialed in that bucket, including no_answer/busy/
+-- failed/machine ones -- bucketing on answered_at and filtering to answered-only (an earlier
+-- revision of this function) silently answered a different, narrower question ("of the calls
+-- that got far enough to be answered, human vs machine") and is wrong for this feature's actual
+-- purpose. Caught by the T11 dry-run's own total-dials assertion expecting all 5 seeded legs and
+-- getting only 3 (the answered ones) -- fixed here rather than in the fixture, since the fixture's
+-- expectation (all 5) was the correct spec, not the bug. -----------------------------------------
 
 create function public.answer_rate_heatmap(
   p_org uuid, p_campaign_id uuid, p_start timestamptz, p_end timestamptz
@@ -120,8 +125,8 @@ begin
 
   return query
   select
-    extract(dow from timezone(coalesce(ct.timezone, 'UTC'), cl.answered_at))::integer as weekday,
-    extract(hour from timezone(coalesce(ct.timezone, 'UTC'), cl.answered_at))::integer as hour,
+    extract(dow from timezone(coalesce(ct.timezone, 'UTC'), cl.created_at))::integer as weekday,
+    extract(hour from timezone(coalesce(ct.timezone, 'UTC'), cl.created_at))::integer as hour,
     count(*)::integer as dials,
     count(*) filter (where cl.outcome in ('connected', 'dropped', 'abandoned'))::integer
       as human_answers
@@ -130,7 +135,6 @@ begin
   left join public.contacts ct on ct.id = cl.contact_id
   where cl.org_id = p_org
     and cl.kind = 'contact'
-    and cl.answered_at is not null
     and cl.created_at >= p_start
     and cl.created_at < p_end
     and (p_campaign_id is null or cl.campaign_id = p_campaign_id)
