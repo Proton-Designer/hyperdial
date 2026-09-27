@@ -589,6 +589,7 @@ language plpgsql
 security definer
 set search_path = ''
 as $$
+#variable_conflict use_column
 begin
   return query
   with settings as (
@@ -621,9 +622,9 @@ begin
     where st.dials >= s.min_sample_dials
   ),
   medians as (
-    select org_id, percentile_cont(0.5) within group (order by rate) as median_rate
-    from eligible
-    group by org_id
+    select el.org_id, percentile_cont(0.5) within group (order by el.rate) as median_rate
+    from eligible el
+    group by el.org_id
   ),
   candidates as (
     select e.number_id, e.org_id, e.phone_number, e.dials, e.rate, m.median_rate,
