@@ -4,6 +4,8 @@ import {
   encodeDialClientState,
   decodeCoachingClientState,
   encodeCoachingClientState,
+  decodeTransferTargetClientState,
+  encodeTransferTargetClientState,
 } from './client-state.ts';
 
 Deno.test(
@@ -190,5 +192,78 @@ Deno.test(
       targetSession: 'session-1',
     });
     assertEquals(decodeDialClientState(coachingEncoded), null);
+  }
+);
+
+// TASK-T4 (warm/cold transfer): TransferTargetClientState encode/decode.
+
+Deno.test('encodeTransferTargetClientState/decodeTransferTargetClientState: round-trips', () => {
+  const state = { org: 'org-1', transfer: 'transfer-1' };
+  const encoded = encodeTransferTargetClientState(state);
+  assertEquals(decodeTransferTargetClientState(encoded), { ...state, kind: 'transfer_target' });
+});
+
+Deno.test('encodeTransferTargetClientState: throws on missing org/transfer', () => {
+  assertThrows(() => encodeTransferTargetClientState({ org: '', transfer: 'transfer-1' }));
+  assertThrows(() => encodeTransferTargetClientState({ org: 'org-1', transfer: '' }));
+});
+
+Deno.test('decodeTransferTargetClientState: null/undefined/empty input returns null', () => {
+  assertEquals(decodeTransferTargetClientState(null), null);
+  assertEquals(decodeTransferTargetClientState(undefined), null);
+  assertEquals(decodeTransferTargetClientState(''), null);
+});
+
+Deno.test(
+  'decodeTransferTargetClientState: non-base64 garbage and non-JSON base64 both return null',
+  () => {
+    assertEquals(decodeTransferTargetClientState('!!!not-base64!!!'), null);
+    assertEquals(decodeTransferTargetClientState(btoa('this is not json')), null);
+  }
+);
+
+Deno.test('decodeTransferTargetClientState: missing kind/org/transfer returns null', () => {
+  assertEquals(
+    decodeTransferTargetClientState(btoa(JSON.stringify({ org: 'org-1', transfer: 't-1' }))),
+    null
+  );
+  assertEquals(
+    decodeTransferTargetClientState(
+      btoa(JSON.stringify({ kind: 'transfer_target', transfer: 't-1' }))
+    ),
+    null
+  );
+  assertEquals(
+    decodeTransferTargetClientState(
+      btoa(JSON.stringify({ kind: 'transfer_target', org: 'org-1' }))
+    ),
+    null
+  );
+});
+
+Deno.test(
+  'decodeTransferTargetClientState: never matches a Dial/Coaching payload (no collision)',
+  () => {
+    const dialEncoded = encodeDialClientState({ org: 'org-1', session: 'session-1', leg: 'leg-1' });
+    const coachingEncoded = encodeCoachingClientState({
+      org: 'org-1',
+      coaching: 'coaching-1',
+      mode: 'listen',
+      targetSession: 'session-1',
+    });
+    assertEquals(decodeTransferTargetClientState(dialEncoded), null);
+    assertEquals(decodeTransferTargetClientState(coachingEncoded), null);
+  }
+);
+
+Deno.test(
+  'decodeDialClientState/decodeCoachingClientState: never match a TransferTargetClientState payload (no collision)',
+  () => {
+    const transferEncoded = encodeTransferTargetClientState({
+      org: 'org-1',
+      transfer: 'transfer-1',
+    });
+    assertEquals(decodeDialClientState(transferEncoded), null);
+    assertEquals(decodeCoachingClientState(transferEncoded), null);
   }
 );

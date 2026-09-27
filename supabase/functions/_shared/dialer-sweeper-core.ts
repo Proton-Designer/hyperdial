@@ -21,6 +21,7 @@
 import type { SupabaseClient } from 'npm:@supabase/supabase-js@2';
 import type { TelnyxClient } from './telnyx-client.ts';
 import { CONTACT_DIAL_TIME_LIMIT_SECS } from './dialer-engine.ts';
+import { unwindWarmTransferToMain } from './transfer-core.ts';
 
 export interface StaleClaimedLegCandidate {
   id: string;
@@ -150,4 +151,87 @@ export async function hangUpReapedCoachingSessions(
     }
   }
   return hungUp;
+}
+
+/**
+ * TASK-T4: the server-side safety net for a stuck warm/cold transfer (`reap_stale_call_transfers`,
+ * `20260926070002_transfer_hold.sql`, has already flipped each returned row to status='failed').
+ * `old_status` (captured BEFORE that update) decides the cleanup:
+ *   - 'dialing': the target leg never answered, so the prospect/agent were never touched at all
+ *     (see the migration's own header) -- nothing to unwind beyond a best-effort hangup of the
+ *     target leg, if it even got a call_control_id before the crash/loss.
+ *   - 'connected' (warm only): the AGENT is stuck in the side conference, unable to take their
+ *     next contact -- reuses transfer-core.ts's own `unwindWarmTransferToMain` (the exact same
+ *     helper `runCancelTransferAction` calls), which needs the session's/agent's own current
+ *     call_control_ids fetched fresh here (the RPC only returns ids, not Telnyx state).
+ */
+export interface ReapedCallTransfer {
+  id: string;
+  org_id: string;
+  session_id: string;
+  contact_leg_id: string;
+  old_status: string;
+  target_call_control_id: string | null;
+  side_conference_id: string | null;
+}
+
+export interface UnwindReapedCallTransfersDeps {
+  supabase: SupabaseClient;
+  resolveClient: (orgId: string) => Promise<TelnyxClient | null>;
+}
+
+export async function unwindReapedCallTransfers(
+  rows: ReapedCallTransfer[],
+  deps: UnwindReapedCallTransfersDeps
+): Promise<number> {
+  let unwound = 0;
+  for (const row of rows) {
+    const client = await deps.resolveClient(row.org_id);
+    if (!client) continue;
+
+    if (row.target_call_control_id) {
+      try {
+        await client.hangup(row.target_call_control_id);
+      } catch {
+        // Best-effort -- our own bookkeeping already reads 'failed' regardless.
+      }
+    }
+
+    if (row.old_status === 'connected') {
+      const { data: session } = await deps.supabase
+        .from('dial_sessions')
+        .select('conference_id, agent_leg_id')
+        .eq('id', row.session_id)
+        .maybeSingle();
+      const { data: leg } = await deps.supabase
+        .from('call_legs')
+        .select('call_control_id')
+        .eq('id', row.contact_leg_id)
+        .maybeSingle();
+      const prospectCallControlId = leg?.call_control_id as string | undefined;
+      if (session?.conference_id && prospectCallControlId) {
+        let agentCallControlId: string | null = null;
+        if (session.agent_leg_id) {
+          const { data: agentLeg } = await deps.supabase
+            .from('call_legs')
+            .select('call_control_id')
+            .eq('id', session.agent_leg_id as string)
+            .maybeSingle();
+          agentCallControlId = (agentLeg?.call_control_id as string | undefined) ?? null;
+        }
+        await unwindWarmTransferToMain(client, {
+          mainConferenceId: session.conference_id as string,
+          sideConferenceId: row.side_conference_id,
+          agentCallControlId,
+          prospectCallControlId,
+        });
+        await deps.supabase
+          .from('call_legs')
+          .update({ held_at: null })
+          .eq('id', row.contact_leg_id);
+      }
+    }
+    unwound++;
+  }
+  return unwound;
 }

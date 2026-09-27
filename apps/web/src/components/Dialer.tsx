@@ -797,11 +797,20 @@ function DialerBody({
                 connectedAnsweredAt={parallelSession.connectedAnsweredAt}
                 inboundCall={parallelSession.inboundCall}
                 coachingMode={parallelSession.coachingMode}
+                heldAt={parallelSession.heldAt}
+                activeTransfer={parallelSession.activeTransfer}
                 onPause={handleParallelPause}
                 onResume={() => void handleParallelResume()}
                 onStop={(opts) => void handleParallelStop(opts)}
                 onMuteChange={setMuted}
                 onEndLiveCall={handleEndLiveCallParallel}
+                onHoldCall={() => void parallelSession.hold()}
+                onResumeCall={() => void parallelSession.unhold()}
+                onStartTransfer={async (args) => {
+                  await parallelSession.beginTransfer(args);
+                }}
+                onCompleteTransfer={() => void parallelSession.completeActiveTransfer()}
+                onCancelTransfer={() => void parallelSession.cancelActiveTransfer()}
               />
               {/* wrap_up (TASK-L2b): the modal is the ONLY way out (no "Continue" bypass) --
                 submit_disposition (SQL) moves the session wrap_up -> dialing itself; onSubmitted

@@ -116,6 +116,58 @@ export function decodeCoachingClientState(
   return { org: decoded.org, coaching: decoded.coaching, kind: 'coaching', mode, targetSession };
 }
 
+/**
+ * TASK-T4 (warm/cold transfer): the client_state for a dialed TRANSFER TARGET leg -- a distinct
+ * shape from all three above, same "kept out of call_legs entirely" design T3's coaching leg
+ * established (see `transfer-core.ts`'s own header for why: the target leg is tracked ONLY on
+ * `call_transfers.target_call_control_id`, never given a `call_legs` row of its own, so every
+ * kind-agnostic consumer of that table stays structurally unaffected). `transfer` is
+ * `call_transfers.id` -- the webhook handler looks the row up by this id, never by session/leg.
+ */
+export interface TransferTargetClientState {
+  org: string;
+  transfer: string;
+  kind: 'transfer_target';
+}
+
+/** Throws on invalid input -- same contract as encodeCoachingClientState. */
+export function encodeTransferTargetClientState(
+  state: Omit<TransferTargetClientState, 'kind'>
+): string {
+  if (!isNonEmptyString(state.org) || !isNonEmptyString(state.transfer)) {
+    throw new Error(
+      'encodeTransferTargetClientState: org and transfer are required non-empty strings'
+    );
+  }
+  return btoa(
+    JSON.stringify({ org: state.org, transfer: state.transfer, kind: 'transfer_target' })
+  );
+}
+
+/** Never throws -- untrusted input from a webhook. Returns null on anything malformed, or on a
+ *  well-formed DialClientState/InboundClientState/CoachingClientState (none of which ever set a
+ *  `transfer` key), so a single client_state value can be tried against all four decoders
+ *  safely. */
+export function decodeTransferTargetClientState(
+  value: string | null | undefined
+): TransferTargetClientState | null {
+  if (!value) return null;
+  let decoded: Record<string, unknown>;
+  try {
+    decoded = JSON.parse(atob(value)) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+  if (
+    decoded.kind !== 'transfer_target' ||
+    !isNonEmptyString(decoded.org) ||
+    !isNonEmptyString(decoded.transfer)
+  ) {
+    return null;
+  }
+  return { org: decoded.org, transfer: decoded.transfer, kind: 'transfer_target' };
+}
+
 /** Throws on invalid input — callers build this from trusted, already-validated IDs.
  *  `kind` defaults to 'contact' (every call site before TASK-L1 dialed a contact). */
 export function encodeDialClientState(

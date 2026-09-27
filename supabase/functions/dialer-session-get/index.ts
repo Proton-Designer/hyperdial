@@ -63,7 +63,7 @@ Deno.serve(async (req) => {
     const { data: legs, error: legsError } = await supabase
       .from('call_legs')
       .select(
-        'id, kind, state, outcome, contact_id, lead_id, call_control_id, amd_result, hangup_cause, answered_at, claimed_at, ended_at, created_at, dispositioned_at, ' +
+        'id, kind, state, outcome, contact_id, lead_id, call_control_id, amd_result, hangup_cause, answered_at, claimed_at, ended_at, created_at, dispositioned_at, held_at, transferred_to, transfer_type, ' +
           'contact:contacts(business_name, first_name, last_name, phone_number)'
       )
       .eq('session_id', sessionId)
@@ -129,12 +129,30 @@ Deno.serve(async (req) => {
         ? 'whisper'
         : null;
 
+    // TASK-T4: at most one row can ever match (call_transfers_one_active_per_session), so this
+    // drives the UI's warm-transfer control panel (Complete/Cancel) directly -- 'dialing'/
+    // 'connected' are the only two live states, everything else (completed/cancelled/failed) is
+    // history, not something the UI needs to poll for.
+    const { data: activeTransfer, error: transferError } = await supabase
+      .from('call_transfers')
+      .select('id, type, target_kind, target_user_id, target_number, status')
+      .eq('session_id', sessionId)
+      .in('status', ['dialing', 'connected'])
+      .maybeSingle();
+    if (transferError) {
+      return new Response(JSON.stringify({ error: transferError.message }), {
+        status: 500,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
     return new Response(
       JSON.stringify({
         session,
         legs: legs ?? [],
         inboundCall: inboundCall ?? null,
         coachingMode,
+        activeTransfer: activeTransfer ?? null,
       }),
       {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },

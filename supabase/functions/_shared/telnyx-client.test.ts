@@ -466,6 +466,72 @@ Deno.test(
 );
 
 Deno.test(
+  'createTelnyxClient.holdConferenceParticipants: hits /conferences/{id}/actions/hold with call_control_ids, audio_url omitted when not given (TASK-T4)',
+  async () => {
+    let seenUrl = '';
+    let seenBody: unknown = null;
+    const restore = stubFetch((url, init) => {
+      seenUrl = url;
+      seenBody = JSON.parse(String(init?.body ?? '{}'));
+      return new Response(JSON.stringify({ data: {} }), { status: 200 });
+    });
+    try {
+      const client = createTelnyxClient('test-api-key');
+      await client.holdConferenceParticipants('conf-1', { callControlIds: ['call-prospect'] });
+      assertEquals(seenUrl, 'https://api.telnyx.com/v2/conferences/conf-1/actions/hold');
+      assertEquals(seenBody, { call_control_ids: ['call-prospect'] });
+    } finally {
+      restore();
+    }
+  }
+);
+
+Deno.test(
+  'createTelnyxClient.holdConferenceParticipants: audio_url is included when given',
+  async () => {
+    let seenBody: unknown = null;
+    const restore = stubFetch((url, init) => {
+      seenBody = JSON.parse(String(init?.body ?? '{}'));
+      return new Response(JSON.stringify({ data: {} }), { status: 200 });
+    });
+    try {
+      const client = createTelnyxClient('test-api-key');
+      await client.holdConferenceParticipants('conf-1', {
+        callControlIds: ['call-prospect'],
+        audioUrl: 'https://example.com/hold.mp3',
+      });
+      assertEquals(seenBody, {
+        call_control_ids: ['call-prospect'],
+        audio_url: 'https://example.com/hold.mp3',
+      });
+    } finally {
+      restore();
+    }
+  }
+);
+
+Deno.test(
+  'createTelnyxClient.unholdConferenceParticipants: hits /conferences/{id}/actions/unhold with call_control_ids (TASK-T4)',
+  async () => {
+    let seenUrl = '';
+    let seenBody: unknown = null;
+    const restore = stubFetch((url, init) => {
+      seenUrl = url;
+      seenBody = JSON.parse(String(init?.body ?? '{}'));
+      return new Response(JSON.stringify({ data: {} }), { status: 200 });
+    });
+    try {
+      const client = createTelnyxClient('test-api-key');
+      await client.unholdConferenceParticipants('conf-1', { callControlIds: ['call-prospect'] });
+      assertEquals(seenUrl, 'https://api.telnyx.com/v2/conferences/conf-1/actions/unhold');
+      assertEquals(seenBody, { call_control_ids: ['call-prospect'] });
+    } finally {
+      restore();
+    }
+  }
+);
+
+Deno.test(
   'createTelnyxClient.playbackStart: hits /calls/{id}/actions/playback_start with audio_url',
   async () => {
     let seenUrl = '';

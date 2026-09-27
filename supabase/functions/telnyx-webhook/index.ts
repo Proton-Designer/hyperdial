@@ -3,15 +3,18 @@ import { corsHeaders, corsPreflightResponse } from '../_shared/cors.ts';
 import { processTelnyxDialerEvent } from '../_shared/dialer-engine.ts';
 import { processTelnyxInboundEvent } from '../_shared/inbound-engine.ts';
 import { processTelnyxCoachingEvent } from '../_shared/coaching-core.ts';
+import { processTelnyxTransferEvent } from '../_shared/transfer-core.ts';
 import { getConnectedOrgTelnyxContext } from '../_shared/telnyx-org-context.ts';
 import { verifyTelnyxSignature } from '../_shared/webhook-verify.ts';
 import {
   decodeDialClientState,
   decodeInboundClientState,
   decodeCoachingClientState,
+  decodeTransferTargetClientState,
   type DialClientState,
   type InboundClientState,
   type CoachingClientState,
+  type TransferTargetClientState,
 } from '../_shared/client-state.ts';
 
 type WebhookBody = {
@@ -98,7 +101,8 @@ async function processWebhook(
   orgId: string,
   dialClientState: DialClientState | null,
   inboundClientState: InboundClientState | null,
-  coachingClientState: CoachingClientState | null
+  coachingClientState: CoachingClientState | null,
+  transferTargetClientState: TransferTargetClientState | null
 ): Promise<void> {
   const eventType = body?.data?.event_type ?? '';
   const eventId = body?.data?.id ?? '';
@@ -111,11 +115,37 @@ async function processWebhook(
     eventId,
     occurredAt,
     callControlId,
-    hasClientState: Boolean(dialClientState || inboundClientState || coachingClientState),
+    hasClientState: Boolean(
+      dialClientState || inboundClientState || coachingClientState || transferTargetClientState
+    ),
   });
 
   if (!eventType.startsWith('call.')) {
     webhookLog('event_ignored_not_a_call_event', { eventType });
+    return;
+  }
+
+  if (transferTargetClientState) {
+    // TASK-T4: a transfer target leg is neither a dial-engine leg nor an inbound-routing leg --
+    // see transfer-core.ts's own header for why it deliberately has no call_legs row at all.
+    // Only `call.answered`/`call.hangup` are interesting; processTelnyxTransferEvent no-ops on
+    // anything else and on an already-resolved row (idempotent against Telnyx's own retries).
+    if (!callControlId) {
+      webhookLog('transfer_event_ignored_missing_call_control_id', { eventType });
+      return;
+    }
+    const supabase = getSupabaseAdmin();
+    const { client, error } = await getConnectedOrgTelnyxContext(supabase, orgId);
+    if (!client) {
+      webhookLog('transfer_event_no_telnyx_client', { orgId, errorStatus: error?.status });
+      return;
+    }
+    await processTelnyxTransferEvent(supabase, client, {
+      orgId,
+      eventType,
+      callControlId,
+      transferId: transferTargetClientState.transfer,
+    });
     return;
   }
 
@@ -256,17 +286,23 @@ Deno.serve(async (req: Request) => {
     const dialClientState = decodeDialClientState(rawClientState);
     const inboundClientState = decodeInboundClientState(rawClientState);
     const coachingClientState = decodeCoachingClientState(rawClientState);
+    const transferTargetClientState = decodeTransferTargetClientState(rawClientState);
     const recognized =
       (dialClientState && dialClientState.org === orgId) ||
       (inboundClientState && inboundClientState.org === orgId) ||
       (coachingClientState && coachingClientState.org === orgId) ||
+      (transferTargetClientState && transferTargetClientState.org === orgId) ||
       isFreshInboundCall(eventType, payloadForGate);
     if (eventType.startsWith('call.') && !recognized) {
       webhookLog('ignored_client_state_missing_or_org_mismatch', {
         orgId,
         eventType,
         clientStateOrg:
-          dialClientState?.org ?? inboundClientState?.org ?? coachingClientState?.org ?? null,
+          dialClientState?.org ??
+          inboundClientState?.org ??
+          coachingClientState?.org ??
+          transferTargetClientState?.org ??
+          null,
       });
       return new Response(JSON.stringify({ received: true, ignored: true }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -285,7 +321,8 @@ Deno.serve(async (req: Request) => {
       orgId,
       dialClientState,
       inboundClientState,
-      coachingClientState
+      coachingClientState,
+      transferTargetClientState
     ).catch((err) => console.error('telnyx-webhook async processing error:', err));
     if (typeof EdgeRuntime !== 'undefined') {
       // Ack 200 immediately; EdgeRuntime keeps processingPromise alive past the response.

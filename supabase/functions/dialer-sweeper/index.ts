@@ -27,8 +27,10 @@ import { getConnectedOrgTelnyxContext } from '../_shared/telnyx-org-context.ts';
 import {
   reconcileStaleClaimedLeg,
   hangUpReapedCoachingSessions,
+  unwindReapedCallTransfers,
   type StaleClaimedLegCandidate,
   type ReapedCoachingSession,
+  type ReapedCallTransfer,
 } from '../_shared/dialer-sweeper-core.ts';
 import type { TelnyxClient } from '../_shared/telnyx-client.ts';
 import { VOICEMAIL_DROP_SWEEP_TIMEOUT_SECONDS } from '../_shared/voicemail-core.ts';
@@ -45,6 +47,13 @@ const COACHING_STUCK_AFTER_SECONDS = 60;
 // manager leg is real per-minute Telnyx billing, so this never waits forever even if the
 // target session's state somehow never leaves on_call.
 const COACHING_HARD_CAP_SECONDS = 2 * 60 * 60;
+// TASK-T4: a 'dialing' transfer this old (well past TRANSFER_DIAL_TIMEOUT_SECS' own 30s ring +
+// generous grace) almost certainly lost its own call.hangup webhook.
+const TRANSFER_DIALING_STUCK_AFTER_SECONDS = 5 * 60;
+// A 'connected' (warm) transfer this old leaves the AGENT stuck in a side conference,
+// unable to take their next contact -- an absolute ceiling, not a webhook-loss heuristic (a
+// real warm-transfer conversation could otherwise run indefinitely).
+const TRANSFER_CONNECTED_HARD_CAP_SECONDS = 2 * 60 * 60;
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -174,6 +183,30 @@ Deno.serve(async (req: Request) => {
     },
   });
 
+  // TASK-T4: same split as the coaching reap above -- SQL has already flipped each returned row
+  // to status='failed'; this is the best-effort Telnyx cleanup (target hangup, and for a
+  // 'connected' row, unwinding the agent out of the side conference back to their main one).
+  const { data: reapedTransferData, error: transferReapError } = await supabase.rpc(
+    'reap_stale_call_transfers',
+    {
+      p_dialing_after_seconds: TRANSFER_DIALING_STUCK_AFTER_SECONDS,
+      p_connected_hard_cap_seconds: TRANSFER_CONNECTED_HARD_CAP_SECONDS,
+    }
+  );
+  if (transferReapError) {
+    console.error('[dialer-sweeper] reap_stale_call_transfers failed', transferReapError.message);
+  }
+  const reapedCallTransfers = (reapedTransferData ?? []) as ReapedCallTransfer[];
+  const transfersUnwound = await unwindReapedCallTransfers(reapedCallTransfers, {
+    supabase,
+    resolveClient: async (orgId) => {
+      if (!orgClients.has(orgId)) {
+        orgClients.set(orgId, await getConnectedOrgTelnyxContext(supabase, orgId));
+      }
+      return orgClients.get(orgId)?.client ?? null;
+    },
+  });
+
   console.log('[dialer-sweeper] sweep_done', {
     reaped: result.reaped_legs?.length ?? 0,
     hungUp,
@@ -186,6 +219,8 @@ Deno.serve(async (req: Request) => {
     claimedLeftAlone,
     reapedCoachingSessions: reapedCoachingSessions.length,
     coachingHungUp,
+    reapedCallTransfers: reapedCallTransfers.length,
+    transfersUnwound,
   });
 
   return jsonResponse({
@@ -200,5 +235,7 @@ Deno.serve(async (req: Request) => {
     claimedLeftAlone,
     reapedCoachingSessions: reapedCoachingSessions.length,
     coachingHungUp,
+    reapedCallTransfers: reapedCallTransfers.length,
+    transfersUnwound,
   });
 });

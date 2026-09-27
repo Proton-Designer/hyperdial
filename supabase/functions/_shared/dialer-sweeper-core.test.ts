@@ -8,12 +8,14 @@
  * positive control: proving each branch really does or doesn't call the RPC, not just that the
  * function happens to return the right label).
  */
-import { assertEquals } from 'jsr:@std/assert@1';
+import { assertEquals, assertExists } from 'jsr:@std/assert@1';
 import {
   reconcileStaleClaimedLeg,
   hangUpReapedCoachingSessions,
+  unwindReapedCallTransfers,
   type StaleClaimedLegCandidate,
   type ReapedCoachingSession,
+  type ReapedCallTransfer,
 } from './dialer-sweeper-core.ts';
 import type { TelnyxClient } from './telnyx-client.ts';
 
@@ -341,5 +343,174 @@ Deno.test(
     // proves the failure is caught per-row, not one that aborts the whole loop.
     assertEquals(hungUp, 1);
     assertEquals(hangupCalls, ['call-mgr-2']);
+  }
+);
+
+// TASK-T4: unwindReapedCallTransfers.
+
+function fakeSupabaseForUnwind(cfg: {
+  session?: { conference_id: string | null; agent_leg_id: string | null } | null;
+  legs?: Record<string, { call_control_id: string } | null>;
+}) {
+  const writes: { table: string; id: string; patch: Record<string, unknown> }[] = [];
+  // deno-lint-ignore no-explicit-any
+  const supabase: any = {
+    from(table: string) {
+      if (table === 'dial_sessions') {
+        return {
+          select: () => ({
+            eq: () => ({
+              maybeSingle: async () => ({ data: cfg.session ?? null, error: null }),
+            }),
+          }),
+        };
+      }
+      if (table === 'call_legs') {
+        return {
+          select: () => ({
+            eq: (_col: string, id: string) => ({
+              maybeSingle: async () => ({ data: cfg.legs?.[id] ?? null, error: null }),
+            }),
+          }),
+          update: (patch: Record<string, unknown>) => ({
+            eq: async (_col: string, id: string) => {
+              writes.push({ table, id, patch });
+              return { error: null };
+            },
+          }),
+        };
+      }
+      throw new Error(`fake supabase: unexpected table ${table}`);
+    },
+  };
+  return { supabase, writes };
+}
+
+function fakeTelnyxUnwindClient(overrides: Partial<Record<string, unknown>> = {}) {
+  const calls: { method: string; args: unknown[] }[] = [];
+  const client = {
+    hangup: async (id: string) => calls.push({ method: 'hangup', args: [id] }),
+    leaveConference: async (conferenceId: string, callControlId: string) =>
+      calls.push({ method: 'leaveConference', args: [conferenceId, callControlId] }),
+    joinConference: async (conferenceId: string, args: unknown) =>
+      calls.push({ method: 'joinConference', args: [conferenceId, args] }),
+    unholdConferenceParticipants: async (conferenceId: string, args: unknown) =>
+      calls.push({ method: 'unholdConferenceParticipants', args: [conferenceId, args] }),
+    ...overrides,
+    // deno-lint-ignore no-explicit-any
+  } as any;
+  return { client, calls };
+}
+
+Deno.test(
+  'unwindReapedCallTransfers: old_status "dialing" -- only hangs up the target, never touches the conference',
+  async () => {
+    const { supabase } = fakeSupabaseForUnwind({});
+    const { client, calls } = fakeTelnyxUnwindClient();
+    const rows: ReapedCallTransfer[] = [
+      {
+        id: 't-1',
+        org_id: 'org-1',
+        session_id: 's-1',
+        contact_leg_id: 'leg-1',
+        old_status: 'dialing',
+        target_call_control_id: 'call-target-1',
+        side_conference_id: null,
+      },
+    ];
+    const unwound = await unwindReapedCallTransfers(rows, {
+      supabase,
+      resolveClient: () => Promise.resolve(client),
+    });
+    assertEquals(unwound, 1);
+    assertEquals(calls, [{ method: 'hangup', args: ['call-target-1'] }]);
+  }
+);
+
+Deno.test(
+  'unwindReapedCallTransfers: old_status "dialing" with no target_call_control_id yet -- nothing to hang up, still counted',
+  async () => {
+    const { supabase } = fakeSupabaseForUnwind({});
+    const { client, calls } = fakeTelnyxUnwindClient();
+    const rows: ReapedCallTransfer[] = [
+      {
+        id: 't-1',
+        org_id: 'org-1',
+        session_id: 's-1',
+        contact_leg_id: 'leg-1',
+        old_status: 'dialing',
+        target_call_control_id: null,
+        side_conference_id: null,
+      },
+    ];
+    const unwound = await unwindReapedCallTransfers(rows, {
+      supabase,
+      resolveClient: () => Promise.resolve(client),
+    });
+    assertEquals(unwound, 1);
+    assertEquals(calls.length, 0);
+  }
+);
+
+Deno.test(
+  'unwindReapedCallTransfers: old_status "connected" -- hangs up the target AND unwinds the agent back to the main conference',
+  async () => {
+    const { supabase, writes } = fakeSupabaseForUnwind({
+      session: { conference_id: 'conf-main', agent_leg_id: 'leg-agent-1' },
+      legs: {
+        'leg-1': { call_control_id: 'call-prospect-1' },
+        'leg-agent-1': { call_control_id: 'call-agent-1' },
+      },
+    });
+    const { client, calls } = fakeTelnyxUnwindClient();
+    const rows: ReapedCallTransfer[] = [
+      {
+        id: 't-1',
+        org_id: 'org-1',
+        session_id: 's-1',
+        contact_leg_id: 'leg-1',
+        old_status: 'connected',
+        target_call_control_id: 'call-target-1',
+        side_conference_id: 'conf-side-1',
+      },
+    ];
+    const unwound = await unwindReapedCallTransfers(rows, {
+      supabase,
+      resolveClient: () => Promise.resolve(client),
+    });
+    assertEquals(unwound, 1);
+    assertEquals(
+      calls.map((c) => c.method),
+      ['hangup', 'leaveConference', 'joinConference', 'unholdConferenceParticipants']
+    );
+    assertEquals(calls[1].args, ['conf-side-1', 'call-agent-1']);
+    assertEquals(calls[2].args, ['conf-main', { callControlId: 'call-agent-1' }]);
+    assertEquals(calls[3].args, ['conf-main', { callControlIds: ['call-prospect-1'] }]);
+    const held = writes.find((w) => w.id === 'leg-1');
+    assertExists(held);
+    assertEquals(held!.patch.held_at, null);
+  }
+);
+
+Deno.test(
+  'unwindReapedCallTransfers: no connected client for the org -- skipped entirely, not a crash',
+  async () => {
+    const { supabase } = fakeSupabaseForUnwind({});
+    const rows: ReapedCallTransfer[] = [
+      {
+        id: 't-1',
+        org_id: 'org-1',
+        session_id: 's-1',
+        contact_leg_id: 'leg-1',
+        old_status: 'dialing',
+        target_call_control_id: 'call-target-1',
+        side_conference_id: null,
+      },
+    ];
+    const unwound = await unwindReapedCallTransfers(rows, {
+      supabase,
+      resolveClient: () => Promise.resolve(null),
+    });
+    assertEquals(unwound, 0);
   }
 );

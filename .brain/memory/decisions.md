@@ -1350,3 +1350,82 @@ this is deliberate, matching every other optional step in this file (tag/task/dn
 same "no-op but still done" thing). Don't add an early-return that skips setting the progress
 flag when there's nothing to push; that would make a retry re-check the same no-op forever
 instead of marking it complete once.
+
+## TASK-T4 -- Warm/cold transfer + hold (AUD-6 + NEW, MISSION-4), 2026-09-27
+
+**User order (verbatim):** "give me everything that relates to the parallel dialer and making it
+as powerful and industry level as possible." HIGH risk (real-time conference control on a live
+call, moving legs between conferences) -- built and deno-tested against a fake TelnyxClient; no
+real Telnyx call was made from this session (NEEDS-LIVE-VERIFY, `launch-live-test.md` B22).
+
+**Decision 1 -- Telnyx's `transfer` command was deliberately REJECTED as the transfer primitive,
+in favor of conference-native join/leave/hold/unhold.** `transfer`'s own schema
+(`TransferCallRequest`, verified against a fresh spec3.json) is entirely bridge-shaped (`to`/
+`from`/`park_after_unbridge`) and says nothing about its behavior on a leg that's currently a
+CONFERENCE PARTICIPANT -- the only existing usage in this codebase (`inbound-engine.ts`) is on a
+PARKED, not-yet-conferenced leg, a structurally different case. The agent's own
+`dial_sessions.conference_id` is a PERSISTENT room reused across the whole shift (created once,
+around the agent leg); an unverified assumption about `transfer`'s conference-membership
+side-effects could silently strand that room in a state a future contact gets wrongly bridged
+into. Everything here is built instead from `join`/`leave`/`hold`/`unhold` -- primitives with
+fully verified, unambiguous schemas -- even though it costs more Telnyx calls per transfer.
+
+**Decision 2 -- Telnyx's conference hold is PER-PARTICIPANT, not conference-wide, and that fact
+is what makes warm transfer work without a THIRD conference.** `ConferenceHoldRequest`'s own
+field description ("When call_control_ids is empty, ALL participants... ") implies (and this
+task relies on) the non-empty case holding ONLY the named participant(s) -- everyone else in the
+same conference keeps talking normally. So warm transfer's "the intern talks to the target
+privately while the prospect can't hear" need is met by holding the PROSPECT in the MAIN
+conference and moving the AGENT (not the prospect) into a fresh "side" conference with the
+target -- never a bridge/mute trick, never a third always-alive conference per org.
+
+**Decision 3 -- cold and warm transfer share one mechanism, differing only in WHO moves into the
+side conference and WHEN.** Cold: once the target answers, the PROSPECT moves straight into the
+side conference (agent's own leg never touched at all -- literally the simplest case). Warm:
+the AGENT moves into the side conference first (prospect held in main); "Complete transfer"
+then moves the prospect INTO the side conference (unheld) and the agent BACK to main (empty,
+ready for the next contact); "Cancel" hangs up the target and moves the agent back, unholding
+the prospect in main -- the original call resumes untouched. One `processTelnyxTransferEvent`
+webhook handler and one `unwindWarmTransferToMain` helper cover every resolution path.
+
+**Decision 4 -- a failed/never-answered target leg needs NO explicit recovery step.** Neither
+the prospect nor the agent's own leg is touched at all until the target actually ANSWERS (no
+pre-emptive hold "just in case" during dialing) -- so "a failed target leg returns the prospect
+to the intern" (the task's own explicit requirement) is satisfied by construction: there's
+nothing to undo, since nothing was ever done. This also means no dead air during dialing --the
+intern and prospect can keep talking normally while the target rings, exactly like a real phone
+transfer.
+
+**Decision 5 -- the target leg is deliberately NOT a `call_legs` row, same move as TASK-T3's
+coaching leg.** Tracked only on `call_transfers.target_call_control_id`. This lane's own
+documented history (LANE-eng2.md) of a new leg shape breaking kind-agnostic dial-loop code
+(`loadActiveLegs`/`refillCount`/`loserActions`/analytics views) made this the obvious choice a
+second time -- see TASK-T3's own Decision 2 for the fuller rationale, unchanged here.
+
+**Decision 6 -- Hold (AUD-6) is a single nullable timestamp on the EXISTING `call_legs` row
+(`held_at`), not a new table, not a new `state`/`kind` value.** It's pure side-metadata (like
+`bridged_at`/`voicemail_drop_path` already are) with no CAS/state-machine implications -- setting
+it twice, or clearing it when already clear, is harmless by construction. Shared unchanged by
+both the standalone Hold button AND warm transfer's own "hold the prospect while I talk to the
+target" step -- one primitive, two callers, per this lane's "reuse, don't reinvent" convention.
+
+**Decision 7 (disclosed gap) -- no default hold-music asset exists.** `holdConferenceParticipants`
+accepts an optional `audioUrl`; every call site in this task omits it, so a held prospect hears
+Telnyx's own silence, not music. Building real audio-asset infrastructure (upload/storage) for
+this one field felt out of scope for tonight; flagged here rather than silently shipped as if it
+were a deliberate final choice.
+
+**Decision 8 -- a sweeper safety net was added for stuck transfers, mirroring TASK-T3's own
+review-fix-forward pattern for coaching.** `reap_stale_call_transfers` (SQL) + `dialer-sweeper`
+reap a 'dialing' transfer whose target leg's own webhook was lost (a hangup that never arrived),
+and a 'connected' (warm) transfer whose "Complete"/"Cancel" never got clicked (a crashed
+manager tab) -- the latter matters because it leaves the AGENT stuck in a side conference,
+unable to take their next contact, unlike a merely-slow real conversation.
+
+**Do not undo without understanding:** the AGENT's own leg must NEVER be moved into (or left
+inside) a conference other than `dial_sessions.conference_id` without a plan to move it back --
+every code path that puts the agent into the side conference (warm transfer's own
+`processTelnyxTransferEvent` branch) has a matching path back to main (`runCompleteTransferAction`/
+`runCancelTransferAction`/the sweeper's `unwindWarmTransferToMain`). Adding a new warm-transfer
+exit path later must preserve this invariant, or a future contact's winning leg can get bridged
+into a conference the agent already abandoned.

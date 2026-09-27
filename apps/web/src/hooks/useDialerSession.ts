@@ -7,6 +7,12 @@ import {
   resumeDialerSession,
   startDialerSession,
   stopDialerSession,
+  holdCall,
+  resumeCall,
+  startTransfer,
+  completeTransfer,
+  cancelTransfer,
+  type ActiveTransfer,
   type CallLegRecord,
   type DialSessionRecord,
   type InboundCallInfo,
@@ -48,6 +54,9 @@ interface DialerHookState {
   /** TASK-T3: 'whisper'/'barge' only -- see getDialerSession's own comment (api.ts). Drives
    *  DialerStateBanner's "Manager listening" indicator. */
   coachingMode: 'whisper' | 'barge' | null;
+  /** TASK-T4: the session's in-flight warm/cold transfer, if any -- see getDialerSession's own
+   *  comment (api.ts). */
+  activeTransfer: ActiveTransfer | null;
   loading: boolean;
   error: string | null;
 }
@@ -92,6 +101,7 @@ export function useDialerSession(initialSessionId: string | null = null) {
     legs: [],
     inboundCall: null,
     coachingMode: null,
+    activeTransfer: null,
     loading: false,
     error: null,
   });
@@ -100,8 +110,17 @@ export function useDialerSession(initialSessionId: string | null = null) {
   const loadSession = useCallback(async (sessionId: string) => {
     setState((prev) => ({ ...prev, loading: true, error: null }));
     try {
-      const { session, legs, inboundCall, coachingMode } = await getDialerSession(sessionId);
-      setState((prev) => ({ ...prev, session, sessionId, legs, inboundCall, coachingMode }));
+      const { session, legs, inboundCall, coachingMode, activeTransfer } =
+        await getDialerSession(sessionId);
+      setState((prev) => ({
+        ...prev,
+        session,
+        sessionId,
+        legs,
+        inboundCall,
+        coachingMode,
+        activeTransfer,
+      }));
     } catch (e) {
       setState((prev) => ({
         ...prev,
@@ -173,6 +192,53 @@ export function useDialerSession(initialSessionId: string | null = null) {
     await loadSession(state.sessionId);
   }, [loadSession, state.sessionId]);
 
+  // TASK-T4 (AUD-6 + warm/cold transfer). Each action re-loads the session afterward, same
+  // "call the API, then refresh from the server's own resulting state" shape as pause/resume
+  // above -- the poll loop would eventually catch up anyway, but an immediate refresh is what
+  // makes the button's own effect feel instant rather than laggy.
+  const hold = useCallback(async () => {
+    if (!state.sessionId) return null;
+    const res = await holdCall(state.sessionId);
+    await loadSession(state.sessionId);
+    return res;
+  }, [loadSession, state.sessionId]);
+
+  const unhold = useCallback(async () => {
+    if (!state.sessionId) return null;
+    const res = await resumeCall(state.sessionId);
+    await loadSession(state.sessionId);
+    return res;
+  }, [loadSession, state.sessionId]);
+
+  const beginTransfer = useCallback(
+    async (args: {
+      type: 'cold' | 'warm';
+      targetKind: 'member' | 'external';
+      targetUserId?: string;
+      targetNumber?: string;
+    }) => {
+      if (!state.sessionId) return null;
+      const res = await startTransfer({ sessionId: state.sessionId, ...args });
+      await loadSession(state.sessionId);
+      return res;
+    },
+    [loadSession, state.sessionId]
+  );
+
+  const completeActiveTransfer = useCallback(async () => {
+    if (!state.activeTransfer) return null;
+    const res = await completeTransfer(state.activeTransfer.id);
+    if (state.sessionId) await loadSession(state.sessionId);
+    return res;
+  }, [loadSession, state.sessionId, state.activeTransfer]);
+
+  const cancelActiveTransfer = useCallback(async () => {
+    if (!state.activeTransfer) return null;
+    const res = await cancelTransfer(state.activeTransfer.id);
+    if (state.sessionId) await loadSession(state.sessionId);
+    return res;
+  }, [loadSession, state.sessionId, state.activeTransfer]);
+
   useEffect(() => {
     if (initialSessionId) loadSession(initialSessionId);
   }, [initialSessionId, loadSession]);
@@ -217,6 +283,8 @@ export function useDialerSession(initialSessionId: string | null = null) {
     );
     const connectedContactId = activeLeg?.contact_id ?? null;
     const connectedAnsweredAt = activeLeg?.answered_at ?? null;
+    // TASK-T4: 'On hold mm:ss' timer anchor -- null whenever the active leg isn't held.
+    const heldAt = activeLeg?.held_at ?? null;
     const answeringLeg = contactLegs.find(
       (l) => l.state === 'answered' || l.state === 'amd_pending'
     );
@@ -274,6 +342,7 @@ export function useDialerSession(initialSessionId: string | null = null) {
       currentBatchContacts,
       wrapUpLeg,
       progress,
+      heldAt,
     };
   }, [state.legs, state.session]);
 
@@ -286,6 +355,11 @@ export function useDialerSession(initialSessionId: string | null = null) {
     resume,
     reconnect,
     endLiveCall,
+    hold,
+    unhold,
+    beginTransfer,
+    completeActiveTransfer,
+    cancelActiveTransfer,
     loadSession,
   };
 }

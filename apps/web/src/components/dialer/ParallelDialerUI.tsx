@@ -3,11 +3,12 @@ import { createPortal } from 'react-dom';
 import { motion } from 'motion/react';
 import { ContactBatchCard } from './ContactBatchCard';
 import { LiveCallPanel } from './LiveCallPanel';
+import { TransferModal } from './TransferModal';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/components/ui/utils';
 import { useFocusTrap } from '@/hooks/useFocusTrap';
 import type { BatchContactPreview } from '@/hooks/useDialerSession';
-import type { DialSessionState, InboundCallInfo } from '@/lib/api';
+import type { ActiveTransfer, DialSessionState, InboundCallInfo } from '@/lib/api';
 
 interface ParallelDialerUIProps {
   sessionState: DialSessionState;
@@ -31,6 +32,10 @@ interface ParallelDialerUIProps {
   inboundCall: InboundCallInfo | null;
   /** TASK-T3: see LiveCallPanel's own `coachingMode` comment. */
   coachingMode: 'whisper' | 'barge' | null;
+  /** TASK-T4 (AUD-6): the connected contact leg's own `held_at`, if any. */
+  heldAt: string | null;
+  /** TASK-T4: the session's in-flight warm/cold transfer, if any. */
+  activeTransfer: ActiveTransfer | null;
   onPause: () => void;
   onResume: () => void;
   /** BUG-11: `force` is only ever passed `true` from the confirm dialog's "Hang up and stop"
@@ -38,6 +43,16 @@ interface ParallelDialerUIProps {
   onStop: (opts?: { force?: boolean }) => void;
   onMuteChange: (muted: boolean) => void;
   onEndLiveCall: () => void;
+  onHoldCall: () => void;
+  onResumeCall: () => void;
+  onStartTransfer: (args: {
+    type: 'cold' | 'warm';
+    targetKind: 'member' | 'external';
+    targetUserId?: string;
+    targetNumber?: string;
+  }) => Promise<void>;
+  onCompleteTransfer: () => void;
+  onCancelTransfer: () => void;
 }
 
 /** BUG-11: "A prospect is on the line" confirm dialog, same portal/focus-trap/motion shape as
@@ -143,12 +158,30 @@ export function ParallelDialerUI({
   connectedAnsweredAt,
   inboundCall,
   coachingMode,
+  heldAt,
+  activeTransfer,
   onPause,
   onResume,
   onStop,
   onMuteChange,
   onEndLiveCall,
+  onHoldCall,
+  onResumeCall,
+  onStartTransfer,
+  onCompleteTransfer,
+  onCancelTransfer,
 }: ParallelDialerUIProps) {
+  const [showTransferModal, setShowTransferModal] = useState(false);
+  const activeTransferForPanel = activeTransfer
+    ? {
+        type: activeTransfer.type,
+        status: activeTransfer.status,
+        targetLabel:
+          activeTransfer.target_kind === 'member'
+            ? 'the teammate'
+            : (activeTransfer.target_number ?? ''),
+      }
+    : null;
   const connectedContact = batchContacts.find((c) => c.id === connectedContactId) ?? null;
   const inboundContactName = inboundCall
     ? inboundCall.contact
@@ -262,8 +295,24 @@ export function ParallelDialerUI({
           phone={connectedContact.phone}
           answeredAt={connectedAnsweredAt}
           coachingMode={coachingMode}
+          heldAt={heldAt}
+          onHold={onHoldCall}
+          onResume={onResumeCall}
+          activeTransfer={activeTransferForPanel}
+          onOpenTransfer={() => setShowTransferModal(true)}
+          onCompleteTransfer={onCompleteTransfer}
+          onCancelTransfer={onCancelTransfer}
           onToggleMute={onMuteChange}
           onEndCall={onEndLiveCall}
+        />
+      )}
+
+      {showTransferModal && (
+        <TransferModal
+          onClose={() => setShowTransferModal(false)}
+          onStart={async (args) => {
+            await onStartTransfer(args);
+          }}
         />
       )}
 

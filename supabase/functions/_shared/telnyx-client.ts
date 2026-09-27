@@ -463,6 +463,28 @@ export interface TelnyxClient {
       whisperCallControlIds?: string[];
     }
   ): Promise<void>;
+  /**
+   * TASK-T4 (AUD-6 + warm/cold transfer): `POST /conferences/{id}/actions/hold` -- verified
+   * against spec3.json's `ConferenceHoldRequest`. `callControlIds` is the SPECIFIC participant(s)
+   * to hold -- everyone else in the same conference keeps talking normally (per-participant, not
+   * conference-wide, per the schema's own "When empty all participants will be placed on hold"
+   * wording -- we always pass a non-empty list, exactly the ones we mean to hold). `audioUrl` is
+   * optional (Telnyx plays silence when omitted) -- no hold-music asset exists in this codebase
+   * yet, disclosed in decisions.md rather than built out of scope tonight.
+   */
+  holdConferenceParticipants(
+    conferenceId: string,
+    args: { callControlIds: string[]; audioUrl?: string }
+  ): Promise<void>;
+  /**
+   * TASK-T4: `POST /conferences/{id}/actions/unhold` -- verified against spec3.json's
+   * `ConferenceUnholdRequest`, whose `call_control_ids` field is REQUIRED (unlike hold's own
+   * optional-meaning-\"everyone\" list) -- there is no "unhold everyone" shorthand.
+   */
+  unholdConferenceParticipants(
+    conferenceId: string,
+    args: { callControlIds: string[] }
+  ): Promise<void>;
 
   recordStart(callControlId: string, args: RecordStartArgs): Promise<void>;
   transcriptionStart(callControlId: string, args?: TranscriptionStartArgs): Promise<void>;
@@ -647,6 +669,23 @@ export function createTelnyxClient(
             ? { whisper_call_control_ids: args.whisperCallControlIds }
             : {}),
         }),
+      });
+    },
+
+    async holdConferenceParticipants(conferenceId, args) {
+      await req(`/conferences/${encodeURIComponent(conferenceId)}/actions/hold`, {
+        method: 'POST',
+        body: JSON.stringify({
+          call_control_ids: args.callControlIds,
+          ...(args.audioUrl ? { audio_url: args.audioUrl } : {}),
+        }),
+      });
+    },
+
+    async unholdConferenceParticipants(conferenceId, args) {
+      await req(`/conferences/${encodeURIComponent(conferenceId)}/actions/unhold`, {
+        method: 'POST',
+        body: JSON.stringify({ call_control_ids: args.callControlIds }),
       });
     },
 
