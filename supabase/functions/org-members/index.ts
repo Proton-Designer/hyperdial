@@ -1,7 +1,8 @@
-import { createClient } from 'npm:@supabase/supabase-js@2';
+import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2';
 import { corsHeaders, corsPreflightResponse } from '../_shared/cors.ts';
 import { requireOrgRole, type OrgRole } from '../_shared/auth.ts';
 import { logOrgAction } from '../_shared/audit.ts';
+import { haltIntakeForOffboarding } from '../_shared/dialer-engine.ts';
 
 function jsonError(status: number, message: string): Response {
   return new Response(JSON.stringify({ error: message }), {
@@ -13,9 +14,99 @@ function jsonError(status: number, message: string): Response {
 interface MemberRow {
   user_id: string;
   role: OrgRole;
-  status: 'active' | 'disabled';
+  status: 'active' | 'disabled' | 'removed';
   created_at: string;
   ghl_user_id: string | null;
+  removed_at: string | null;
+}
+
+// MISSION-5 TASK-M5-A3: soft-removed members are only restorable for this long -- matches the
+// column comment on org_members.removed_at (20260927080002). Enforced here, not in SQL: it's a
+// plain UPDATE through the pre-existing RLS on this table, no new SQL needed for the check.
+const RESTORE_WINDOW_MS = 72 * 60 * 60 * 1000;
+
+/** MISSION-5 TASK-M5-A3: "only the owner can change, disable or remove ANOTHER admin" (self is a
+ *  separate path below) + "nobody can demote/disable/remove the org down to zero active
+ *  owner/admin" -- both checked against the CURRENT (pre-action) roster, excluding the target
+ *  row itself, since the action under consideration is exactly what would remove its coverage. */
+async function activeOwnerAdminCountExcluding(
+  supabase: SupabaseClient,
+  orgId: string,
+  excludeUserId: string
+): Promise<number> {
+  const { count, error } = await supabase
+    .from('org_members')
+    .select('user_id', { count: 'exact', head: true })
+    .eq('org_id', orgId)
+    .eq('status', 'active')
+    .in('role', ['owner', 'admin'])
+    .neq('user_id', excludeUserId);
+  if (error) throw new Error(`activeOwnerAdminCountExcluding: ${error.message}`);
+  return count ?? 0;
+}
+
+/** Guards `change_role` (demote), `disable`, and `remove` against an admin target. Returns an
+ *  error Response to send back, or null to proceed. `callerRole`/`callerUserId` are the ACTOR
+ *  (already resolved by requireOrgRole), `target` is the row being acted on before the change. */
+async function checkAdminGuard(
+  supabase: SupabaseClient,
+  orgId: string,
+  callerRole: OrgRole,
+  callerUserId: string,
+  targetUserId: string,
+  target: { role: OrgRole; status: string }
+): Promise<Response | null> {
+  if (target.role !== 'admin') return null; // only admin targets are guarded (owner is already
+  // fully blocked earlier; demoting/disabling/removing a plain agent never affects the
+  // owner/admin count).
+
+  const isSelf = targetUserId === callerUserId;
+  if (!isSelf && callerRole !== 'owner') {
+    return jsonError(403, 'Only the org owner can change, disable, or remove another admin');
+  }
+
+  if (target.status === 'active') {
+    const remaining = await activeOwnerAdminCountExcluding(supabase, orgId, targetUserId);
+    if (remaining === 0) {
+      return jsonError(
+        409,
+        "Can't leave the org with no active owner or admin -- promote someone else first"
+      );
+    }
+  }
+  return null;
+}
+
+/** MISSION-5 TASK-M5-A3: the disable/remove cascade. Halts new-batch dialing (a live call is
+ *  allowed to finish -- see haltIntakeForOffboarding's own comment) and releases every number
+ *  currently assigned to this member back to the pool (`assigned_user_id = null`, same meaning
+ *  as an org admin manually unassigning one via the Number Pool UI). Best-effort on the session
+ *  halt (logged, never blocks the member-row update) -- a stale or already-terminal session is
+ *  not a reason to fail the actual disable/remove action the admin asked for. */
+async function cascadeOffboard(
+  supabase: SupabaseClient,
+  orgId: string,
+  targetUserId: string
+): Promise<{ sessionHalted: boolean; numbersReleased: number }> {
+  let sessionHalted = false;
+  try {
+    const result = await haltIntakeForOffboarding(supabase, orgId, targetUserId);
+    sessionHalted = result?.halted ?? false;
+  } catch (err) {
+    console.error('org-members cascadeOffboard: session halt failed', String(err));
+  }
+
+  const { data: releasedNumbers, error: releaseError } = await supabase
+    .from('user_phone_numbers')
+    .update({ assigned_user_id: null })
+    .eq('org_id', orgId)
+    .eq('assigned_user_id', targetUserId)
+    .select('id');
+  if (releaseError) {
+    console.error('org-members cascadeOffboard: number release failed', releaseError.message);
+  }
+
+  return { sessionHalted, numbersReleased: releasedNumbers?.length ?? 0 };
 }
 
 Deno.serve(async (req) => {
@@ -31,11 +122,20 @@ Deno.serve(async (req) => {
     const { orgId, error: authError } = await requireOrgRole(req, ['owner', 'admin', 'agent']);
     if (authError) return authError;
 
-    const { data: members, error } = await supabase
+    // MISSION-5 TASK-M5-A3: "hidden from the roster by default" -- a removed member only shows
+    // up when the caller explicitly asks for it (the Settings UI's "Show removed" toggle, which
+    // is how an owner/admin gets to the Restore button within the 72h window).
+    const showRemoved = new URL(req.url).searchParams.get('include_removed') === 'true';
+
+    let query = supabase
       .from('org_members')
-      .select('user_id, role, status, created_at, ghl_user_id')
+      .select('user_id, role, status, created_at, ghl_user_id, removed_at')
       .eq('org_id', orgId)
       .order('created_at', { ascending: true });
+    if (!showRemoved) {
+      query = query.neq('status', 'removed');
+    }
+    const { data: members, error } = await query;
     if (error) {
       console.error('org-members list error:', error.message);
       return jsonError(500, 'Failed to list members');
@@ -85,6 +185,11 @@ Deno.serve(async (req) => {
         last_name: profile?.last_name ?? null,
         email: emailMap.get(m.user_id) ?? null,
         ghl_user_id: m.ghl_user_id,
+        removed_at: m.removed_at,
+        restorable_until:
+          m.status === 'removed' && m.removed_at
+            ? new Date(new Date(m.removed_at).getTime() + RESTORE_WINDOW_MS).toISOString()
+            : null,
       };
     });
 
@@ -96,7 +201,12 @@ Deno.serve(async (req) => {
   if (req.method !== 'POST') return jsonError(405, 'Method not allowed');
 
   // Design §2: "Invite/remove/change role of members" is owner/admin only.
-  const { user, orgId, error: authError } = await requireOrgRole(req, ['owner', 'admin']);
+  const {
+    user,
+    orgId,
+    role: callerRole,
+    error: authError,
+  } = await requireOrgRole(req, ['owner', 'admin']);
   if (authError) return authError;
 
   let body: { action?: string; user_id?: string; role?: string; ghl_user_id?: string | null };
@@ -108,9 +218,73 @@ Deno.serve(async (req) => {
   const targetUserId = body.user_id?.trim();
   if (!targetUserId) return jsonError(400, 'Missing user_id');
 
+  // MISSION-5 TASK-M5-A3: read-only, no target-row mutation guard needed -- what an offboarding
+  // wizard shows before the admin commits to disable/remove. Leads/callbacks queried by
+  // `assigned_agent_id` (however they got assigned: TASK-T6's slice assignment, or
+  // submit_disposition's own callback-ownership write) is "what they hold" regardless of
+  // mechanism.
+  if (body.action === 'offboard_preview') {
+    const [{ data: leadRows, error: leadErr }, { data: numberRows }, { data: campaignRows }] =
+      await Promise.all([
+        supabase
+          .from('campaign_leads')
+          .select('campaign_id, status, campaigns!inner(name, org_id)')
+          .eq('assigned_agent_id', targetUserId)
+          .eq('campaigns.org_id', orgId)
+          .in('status', ['queued', 'callback']),
+        supabase
+          .from('user_phone_numbers')
+          .select('id, phone_number')
+          .eq('org_id', orgId)
+          .eq('assigned_user_id', targetUserId),
+        supabase
+          .from('campaign_agents')
+          .select('campaign_id, campaigns!inner(name, org_id)')
+          .eq('user_id', targetUserId)
+          .eq('campaigns.org_id', orgId),
+      ]);
+    if (leadErr) {
+      console.error('org-members offboard_preview error:', leadErr.message);
+      return jsonError(500, 'Failed to load offboard preview');
+    }
+    type LeadPreviewRow = {
+      campaign_id: string;
+      status: 'queued' | 'callback';
+      campaigns: { name: string };
+    };
+    const byCampaign = new Map<
+      string,
+      { campaign_id: string; campaign_name: string; queued_leads: number; callbacks: number }
+    >();
+    for (const row of (leadRows ?? []) as unknown as LeadPreviewRow[]) {
+      const entry = byCampaign.get(row.campaign_id) ?? {
+        campaign_id: row.campaign_id,
+        campaign_name: row.campaigns.name,
+        queued_leads: 0,
+        callbacks: 0,
+      };
+      if (row.status === 'queued') entry.queued_leads += 1;
+      else entry.callbacks += 1;
+      byCampaign.set(row.campaign_id, entry);
+    }
+    return new Response(
+      JSON.stringify({
+        held_leads: Array.from(byCampaign.values()),
+        numbers: (numberRows ?? []).map((n: { id: string; phone_number: string }) => ({
+          id: n.id,
+          phone_number: n.phone_number,
+        })),
+        campaigns: ((campaignRows ?? []) as unknown as { campaigns: { name: string } }[]).map(
+          (c) => c.campaigns.name
+        ),
+      }),
+      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    );
+  }
+
   const { data: target, error: targetError } = await supabase
     .from('org_members')
-    .select('role, status')
+    .select('role, status, removed_at')
     .eq('org_id', orgId)
     .eq('user_id', targetUserId)
     .maybeSingle();
@@ -134,6 +308,17 @@ Deno.serve(async (req) => {
       if (body.role !== 'admin' && body.role !== 'agent') {
         return jsonError(400, "role must be 'admin' or 'agent'");
       }
+      if (body.role === 'agent') {
+        const guardError = await checkAdminGuard(
+          supabase,
+          orgId,
+          callerRole,
+          user.id,
+          targetUserId,
+          target
+        );
+        if (guardError) return guardError;
+      }
       const { error } = await supabase
         .from('org_members')
         .update({ role: body.role })
@@ -154,6 +339,15 @@ Deno.serve(async (req) => {
       break;
     }
     case 'disable': {
+      const guardError = await checkAdminGuard(
+        supabase,
+        orgId,
+        callerRole,
+        user.id,
+        targetUserId,
+        target
+      );
+      if (guardError) return guardError;
       const { error } = await supabase
         .from('org_members')
         .update({ status: 'disabled' })
@@ -163,20 +357,21 @@ Deno.serve(async (req) => {
         console.error('org-members disable error:', error.message);
         return jsonError(500, 'Failed to disable member');
       }
+      const cascade = await cascadeOffboard(supabase, orgId, targetUserId);
       await logOrgAction(supabase, {
         orgId,
         actorUserId: user.id,
         action: 'member.disable',
         targetType: 'org_member',
         targetId: targetUserId,
-        details: { role: target.role },
+        details: { role: target.role, ...cascade },
       });
       break;
     }
     case 'enable': {
       const { error } = await supabase
         .from('org_members')
-        .update({ status: 'active' })
+        .update({ status: 'active', removed_at: null })
         .eq('org_id', orgId)
         .eq('user_id', targetUserId);
       if (error) {
@@ -193,20 +388,93 @@ Deno.serve(async (req) => {
       });
       break;
     }
+    // MISSION-5 TASK-M5-A3: soft-remove, not `.delete()` -- history (team_daily_stats,
+    // dispositions, recordings) needs this row and the profiles row it joins to for the person's
+    // name to keep showing up. Queued leads/callbacks are NOT auto-released here -- the
+    // offboarding wizard's "release queued leads to the pool" is its own explicit step (action
+    // 'release_queued_leads' below), callable before or after this action, so an admin who's
+    // still deciding where leads should go isn't forced into it by clicking Remove.
     case 'remove': {
+      const guardError = await checkAdminGuard(
+        supabase,
+        orgId,
+        callerRole,
+        user.id,
+        targetUserId,
+        target
+      );
+      if (guardError) return guardError;
+
       const { error } = await supabase
         .from('org_members')
-        .delete()
+        .update({ status: 'removed', removed_at: new Date().toISOString() })
         .eq('org_id', orgId)
         .eq('user_id', targetUserId);
       if (error) {
         console.error('org-members remove error:', error.message);
         return jsonError(500, 'Failed to remove member');
       }
+      const cascade = await cascadeOffboard(supabase, orgId, targetUserId);
       await logOrgAction(supabase, {
         orgId,
         actorUserId: user.id,
         action: 'member.remove',
+        targetType: 'org_member',
+        targetId: targetUserId,
+        details: { role: target.role, ...cascade },
+      });
+      break;
+    }
+    // MISSION-5 TASK-M5-A3: the offboarding wizard's "release queued leads to the pool" step --
+    // a distinct action from disable/remove (see those cases' own comments), callable against
+    // any member (not gated on their current status) since an admin may want to redistribute a
+    // still-active member's slice too. Due/future callbacks are intentionally not touched here
+    // (B3's job); `release_agent_queued_leads` is scoped to `status = 'queued'` only.
+    case 'release_queued_leads': {
+      const { data: releasedCount, error } = await supabase.rpc('release_agent_queued_leads', {
+        p_org: orgId,
+        p_agent: targetUserId,
+      });
+      if (error) {
+        console.error('org-members release_queued_leads error:', error.message);
+        return jsonError(500, 'Failed to release queued leads');
+      }
+      await logOrgAction(supabase, {
+        orgId,
+        actorUserId: user.id,
+        action: 'member.release_queued_leads',
+        targetType: 'org_member',
+        targetId: targetUserId,
+        details: { queuedLeadsReleased: releasedCount ?? 0 },
+      });
+      return new Response(JSON.stringify({ ok: true, released: releasedCount ?? 0 }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+    // MISSION-5 TASK-M5-A3: restorable only within RESTORE_WINDOW_MS of removed_at -- after that
+    // this 403s and the member stays 'removed' permanently (the row itself is never deleted
+    // either way, so history is unaffected regardless of whether this ever gets called).
+    case 'restore': {
+      if (target.status !== 'removed') {
+        return jsonError(400, 'Member is not in a removed state');
+      }
+      const removedAt = target.removed_at ? new Date(target.removed_at).getTime() : 0;
+      if (Date.now() - removedAt > RESTORE_WINDOW_MS) {
+        return jsonError(410, 'The 72-hour restore window for this member has passed');
+      }
+      const { error } = await supabase
+        .from('org_members')
+        .update({ status: 'active', removed_at: null })
+        .eq('org_id', orgId)
+        .eq('user_id', targetUserId);
+      if (error) {
+        console.error('org-members restore error:', error.message);
+        return jsonError(500, 'Failed to restore member');
+      }
+      await logOrgAction(supabase, {
+        orgId,
+        actorUserId: user.id,
+        action: 'member.restore',
         targetType: 'org_member',
         targetId: targetUserId,
         details: { role: target.role },
@@ -247,7 +515,8 @@ Deno.serve(async (req) => {
     default:
       return jsonError(
         400,
-        "action must be one of 'change_role', 'disable', 'enable', 'remove', 'set_ghl_user_id'"
+        "action must be one of 'change_role', 'disable', 'enable', 'remove', 'restore', " +
+          "'release_queued_leads', 'set_ghl_user_id', 'offboard_preview'"
       );
   }
 

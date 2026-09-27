@@ -39,6 +39,7 @@ import {
   endLiveCall,
   pauseRecording,
   resumeRecording,
+  haltIntakeForOffboarding,
   AGENT_DIAL_TIMEOUT_SECS,
   AGENT_DIAL_TIME_LIMIT_SECS,
   type RawTelnyxEvent,
@@ -2802,5 +2803,60 @@ Deno.test(
     } finally {
       restoreFetch();
     }
+  }
+);
+
+Deno.test(
+  'MISSION-5 TASK-M5-A3: haltIntakeForOffboarding pauses a dialing session immediately, leaves an on_call session alone, and is a no-op with no active session',
+  async () => {
+    const db = new FakeDb();
+    const { orgId, agentId, campaignId } = seedFixtures(db);
+    const supabase = createFakeSupabase(db);
+
+    // No non-terminal session at all yet -- nothing to halt, not an error.
+    const noneResult = await haltIntakeForOffboarding(supabase, orgId, agentId);
+    assertEquals(noneResult, null);
+
+    // Actively dialing: must be paused immediately (this is exactly the "still taking new
+    // batches" case the whole function exists for).
+    const dialingSessionId = 'session-a3-dialing';
+    db.insert('dial_sessions', {
+      id: dialingSessionId,
+      org_id: orgId,
+      campaign_id: campaignId,
+      agent_id: agentId,
+      state: 'dialing',
+      lines: 3,
+    });
+    const dialingResult = await haltIntakeForOffboarding(supabase, orgId, agentId);
+    assertEquals(dialingResult, { sessionId: dialingSessionId, halted: true });
+    assertEquals(db.table('dial_sessions').get(dialingSessionId)!.state, 'paused');
+    assertEquals(
+      db.table('dial_sessions').get(dialingSessionId)!.pause_reason,
+      'Member offboarded'
+    );
+
+    // Positive control: end this session so the next case starts from a clean slate (only one
+    // non-terminal session per agent is a real DB invariant this fake doesn't enforce, but the
+    // function itself only ever expects one -- `.maybeSingle()` would throw on two).
+    db.table('dial_sessions').get(dialingSessionId)!.state = 'stopped';
+
+    // on_call: a live call is allowed to finish -- must NOT be touched.
+    const onCallSessionId = 'session-a3-on-call';
+    db.insert('dial_sessions', {
+      id: onCallSessionId,
+      org_id: orgId,
+      campaign_id: campaignId,
+      agent_id: agentId,
+      state: 'on_call',
+      lines: 3,
+    });
+    const onCallResult = await haltIntakeForOffboarding(supabase, orgId, agentId);
+    assertEquals(onCallResult, { sessionId: onCallSessionId, halted: false });
+    assertEquals(
+      db.table('dial_sessions').get(onCallSessionId)!.state,
+      'on_call',
+      'a live call must never be interrupted by offboarding'
+    );
   }
 );

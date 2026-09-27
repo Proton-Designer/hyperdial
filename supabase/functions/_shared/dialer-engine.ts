@@ -2432,6 +2432,58 @@ export async function resumeToDialing(
   return Boolean(data);
 }
 
+/**
+ * MISSION-5 TASK-M5-A3: the disable/remove cascade's "stops taking new batches immediately"
+ * half. Unlike `pauseSession`/`stopSession` (both take a `sessionId` the caller already knows --
+ * the agent's own browser, mid-session), this is ADMIN-initiated against a different user's
+ * session, found by `agent_id` (there is at most one non-terminal row per agent --
+ * `dial_sessions_one_active_per_agent`), and needs to also catch `ready_pending` -- the
+ * transient boot-up state between `startSession`'s insert and the engine's own first
+ * confirmation, which `pauseSession`'s own expected-state list (`['dialing', 'ready']`) never
+ * needed to cover since its only real caller (the agent's own Pause button) can't click it that
+ * fast.
+ *
+ * `refillSession` only ever dials while `state === 'dialing'` (checked at its own top), so moving
+ * the session out of `ready_pending`/`ready`/`dialing` is sufficient to stop new batches from
+ * being claimed. `on_call`/`wrap_up` are deliberately left alone -- a live call is allowed to
+ * finish -- and they can never transition back to `dialing` on their own after this point: the
+ * only path back (`resumeToDialing`, via `dialer-session-resume`) requires the member's own
+ * authenticated call, and `requireOrgRole`/`requireTelnyxOrgRole` both already refuse a
+ * non-`'active'` `org_members.status` before any handler runs.
+ *
+ * Returns `null` if the agent has no non-terminal session at all (nothing to do -- a common
+ * case, most members aren't mid-shift when disabled/removed).
+ */
+export async function haltIntakeForOffboarding(
+  supabase: SupabaseClient,
+  orgId: string,
+  agentId: string
+): Promise<{ sessionId: string; halted: boolean } | null> {
+  const { data, error } = await supabase
+    .from('dial_sessions')
+    .select('id, state')
+    .eq('org_id', orgId)
+    .eq('agent_id', agentId)
+    .neq('state', 'stopped')
+    .neq('state', 'completed')
+    .maybeSingle();
+  if (error) throw new Error(`haltIntakeForOffboarding: ${error.message}`);
+  if (!data) return null;
+
+  if (!['ready_pending', 'ready', 'dialing'].includes(data.state)) {
+    return { sessionId: data.id, halted: false };
+  }
+
+  const { data: ok, error: transErr } = await supabase.rpc('transition_session', {
+    p_session: data.id,
+    p_expected_states: ['ready_pending', 'ready', 'dialing'],
+    p_new_state: 'paused',
+    p_fields: { pause_reason: 'Member offboarded' },
+  });
+  if (transErr) throw new Error(`haltIntakeForOffboarding: ${transErr.message}`);
+  return { sessionId: data.id, halted: Boolean(ok) };
+}
+
 export async function endLiveCall(
   supabase: SupabaseClient,
   orgId: string,

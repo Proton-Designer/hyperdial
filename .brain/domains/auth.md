@@ -14,6 +14,9 @@ sources:
   - supabase/config.toml
   - supabase/migrations/*.sql
   - supabase/migrations/20260927080000_org_audit_log.sql
+  - supabase/migrations/20260927080002_org_member_offboarding.sql
+  - supabase/functions/org-members/index.ts
+  - supabase/functions/_shared/dialer-engine.ts
   - apps/web/src/contexts/AuthContext.tsx
   - apps/web/src/components/AuthScreen.tsx
   - apps/web/src/components/Settings.tsx
@@ -31,9 +34,10 @@ answers:
   - "what user metadata is collected at signup"
   - "how does org/tenant scoping work now"
   - "what are the RLS helper functions and why do they exist"
-covers: "Supabase auth, session handling, the two-layer Edge Function authorization model, service-role usage, org tenancy, and the per-table RLS inventory."
+  - "what happens when a team member is disabled or removed"
+covers: "Supabase auth, session handling, the two-layer Edge Function authorization model, service-role usage, org tenancy, the per-table RLS inventory, and member offboarding (disable/remove/restore)."
 excludes: "Telnyx webhook signature mechanics (domain.telephony); dial-loop ownership checks (domain.dialer)."
-tokens_est: 4750
+tokens_est: 5550
 source_hash: b8d3fd311248f16889b10f531365423ec36488c32179946d09361fb21c5ce0c5
 ---
 
@@ -143,9 +147,23 @@ are the deliberate exceptions: personal, not org-shared (see `20260924000300`'s 
 
 **Client read/write surface**: `supabase/functions/org-audit-log` — GET (owner/admin, filters: actor/action/date range, paged, resolves actor names via one bulk `profiles` lookup, never `auth.admin.getUserById` per row) backs Settings → **Activity** (`Settings.tsx`'s `ActivityTab`). POST accepts only an allowlisted `name` (`export.team_csv`, `export.analytics_csv` today) — the one gap neither writer above covers, since a CSV export never round-trips to a server on its own (`apps/web/src/lib/csv.ts`'s own header) — wired from `Team.tsx`/`Analytics.tsx`'s own export handlers via `api.ts`'s `logAuditEvent`.
 
-**Action name registry** (add a row here — and to `Settings.tsx`'s `AUDIT_ACTION_LABELS` — whenever a new action is wired in): `member.role_change`, `member.disable`, `member.enable`, `member.remove`, `member.set_ghl_user_id`, `invite.create`, `campaign_leads.assign`, `coaching.start`, `coaching.end`, `ghl.connect`, `ghl.disconnect`, `ghl.update_blocked_tags`, `ghl.update_pull_settings`, `settings.spend.update`, `settings.reliability_alerts.update`, `settings.recording.update`, `settings.transfer.update`, `export.team_csv`, `export.analytics_csv`.
+**Action name registry** (add a row here — and to `Settings.tsx`'s `AUDIT_ACTION_LABELS` — whenever a new action is wired in): `member.role_change`, `member.disable`, `member.enable`, `member.remove`, `member.restore`, `member.release_queued_leads`, `member.set_ghl_user_id`, `invite.create`, `campaign_leads.assign`, `coaching.start`, `coaching.end`, `ghl.connect`, `ghl.disconnect`, `ghl.update_blocked_tags`, `ghl.update_pull_settings`, `settings.spend.update`, `settings.reliability_alerts.update`, `settings.recording.update`, `settings.transfer.update`, `export.team_csv`, `export.analytics_csv`.
 
 **Retention**: keep 1 year, documented not enforced — no cron yet (row volume is trivial at current org sizes; revisit with a scheduled prune if that changes).
+
+## Member offboarding (MISSION-5 TASK-A3)
+
+`org_members.status` gained a third value, `'removed'` (`20260927080002_org_member_offboarding.sql`), alongside a nullable `removed_at`. `private.is_org_member`/`private.has_org_role` already only ever match `status = 'active'`, so `'removed'` is refused everywhere `'disabled'` already was, with no code change to either helper — verified directly (authenticating as a freshly-removed member and calling both helpers) in `audit/M5-A3/dryrun-tests.sql`, not assumed from the pre-existing SQL.
+
+**Soft-remove, not `.delete()`**: `org-members`'s `remove` action flips `status`/`removed_at`; the row (and the `profiles` row it joins to) is never deleted, so a removed member's name still resolves everywhere `team_daily_stats`/dispositions/recordings already look it up. **Restorable for 72h**: action `restore` flips back to `active`/`null` — enforced by comparing `now() - removed_at` in the Edge Function (`org-members/index.ts`, `RESTORE_WINDOW_MS`), not in SQL; past the window it 410s and the member stays `removed` permanently (no data is ever purged either way). GET on `org-members` hides `status = 'removed'` rows by default — pass `?include_removed=true` (`Settings.tsx`'s "Show removed members" toggle) to see them and reach Restore.
+
+**Disable/remove cascade** (`org-members/index.ts`'s `cascadeOffboard`, both actions): (1) halts new-batch dialing immediately via `_shared/dialer-engine.ts`'s `haltIntakeForOffboarding` — finds the member's one non-terminal `dial_sessions` row (if any) and pauses it out of `ready_pending`/`ready`/`dialing`; `on_call`/`wrap_up` are deliberately left alone (a live call is allowed to finish) and can never resume on their own afterward since `requireOrgRole`/`requireTelnyxOrgRole` already refuse a non-`'active'` status on the member's own next request. (2) releases every `user_phone_numbers` row `assigned_user_id`-linked to them back to the pool (plain `assigned_user_id = null` UPDATE). Both best-effort/logged, never block the actual disable/remove write.
+
+**Queued leads vs. callbacks — a real split, not yet fully closed.** A new RPC, `public.release_agent_queued_leads(p_org, p_agent)`, unassigns exactly this agent's own `campaign_leads.status = 'queued'` rows back to the pool (`assigned_agent_id = null`) — a distinct, explicitly-triggered action (`release_queued_leads`), not an automatic side effect of disable/remove, so an admin isn't forced to decide before clicking either button. **Deliberately does NOT reuse `assign_campaign_leads`** (TASK-T6): that RPC's own `candidates` CTE matches every queued lead in the campaign regardless of current assignment, so calling it with `p_agent_id := null` to "release just this agent" would also unassign every OTHER agent's own slice on a shared campaign — confirmed as a real, avoided bug via a dry-run fixture with two agents holding leads on the same campaign. Due/future **callbacks** (`campaign_leads.status = 'callback'`) have no reassignment path at all yet — that's B3's job (eng2, distribution guards); `getOffboardPreview`/the offboarding-wizard modal (`Settings.tsx`) show the count but no action button until it lands.
+
+**Admin lock-out guard** (`org-members/index.ts`'s `checkAdminGuard`, Edge-Function-level, not a DB trigger — the only client write path): acting on an `admin` target needs the ORG OWNER, unless the actor is acting on **themselves** (a self-demote is allowed to reach the next check instead of being blanket-refused); either way, the action is refused if it would drop the org's active `owner`+`admin` headcount to zero. The owner's own row remains fully untouchable through this endpoint (pre-existing check, unchanged).
+
+**`team_daily_stats` historical-range fix**: its `members` CTE used to filter to `status = 'active'` only, so a member disabled/removed AFTER the fact would silently vanish from every past date-range query too — not just today's roster. Fixed to also include a non-active member whose own `dial_sessions` actually overlaps the queried `[p_start, p_end)` window (same overlap test the `hours` CTE already used) — a member removed long before an unrelated query window still doesn't clutter it. `team_live_board` (the CURRENT, right-now board) was correctly untouched: a disabled/removed agent isn't "live" and already renders as `'offline'`.
 
 ## Constraints & gotchas
 

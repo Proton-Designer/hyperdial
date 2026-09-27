@@ -58,6 +58,10 @@ import {
   disableMember,
   enableMember,
   removeMember,
+  restoreMember,
+  getOffboardPreview,
+  releaseQueuedLeads,
+  type OffboardPreview,
   updateMemberGhlUserId,
   getGhlIntegrationStatus,
   connectGhl,
@@ -322,13 +326,20 @@ function TeamTab() {
   const [inviteSubmitting, setInviteSubmitting] = useState(false);
   const [bulkResults, setBulkResults] = useState<BulkInviteResult[] | null>(null);
   const [copiedToken, setCopiedToken] = useState<string | null>(null);
+  // MISSION-5 TASK-M5-A3: 'removed' members are hidden by default -- this toggle is the only way
+  // an owner/admin reaches the Restore button within the 72h window.
+  const [showRemoved, setShowRemoved] = useState(false);
+  const [offboardTarget, setOffboardTarget] = useState<{
+    member: OrgMember;
+    mode: 'disable' | 'remove';
+  } | null>(null);
 
   const canManage = role === 'owner' || role === 'admin';
 
   const load = useCallback(() => {
     setLoading(true);
     Promise.all([
-      listOrgMembers(),
+      listOrgMembers(showRemoved),
       canManage ? listOrgInvites() : Promise.resolve([]),
       canManage ? listCampaigns() : Promise.resolve([]),
     ])
@@ -339,7 +350,7 @@ function TeamTab() {
       })
       .catch((e) => setError(String(e)))
       .finally(() => setLoading(false));
-  }, [canManage]);
+  }, [canManage, showRemoved]);
 
   useEffect(() => {
     load();
@@ -377,7 +388,7 @@ function TeamTab() {
     }
   };
 
-  const runAction = async (userId: string, fn: () => Promise<void>) => {
+  const runAction = async (userId: string, fn: () => Promise<unknown>) => {
     setBusyUserId(userId);
     setActionError(null);
     try {
@@ -388,6 +399,10 @@ function TeamTab() {
     } finally {
       setBusyUserId(null);
     }
+  };
+
+  const handleRestore = (m: OrgMember) => {
+    runAction(m.user_id, () => restoreMember(m.user_id));
   };
 
   const handleResendInvite = async (inviteId: string) => {
@@ -643,6 +658,18 @@ function TeamTab() {
         </div>
       )}
 
+      {canManage && (
+        <label className="mb-3 flex items-center gap-2 text-meta text-text-secondary">
+          <input
+            type="checkbox"
+            checked={showRemoved}
+            onChange={(e) => setShowRemoved(e.target.checked)}
+            className="rounded border-border-subtle"
+          />
+          Show removed members (restorable for 72h)
+        </label>
+      )}
+
       {loading ? (
         isDesktop ? (
           <TableSkeleton rows={4} columns={4} />
@@ -687,16 +714,27 @@ function TeamTab() {
                       <span
                         className={cn(
                           'px-2.5 py-1 rounded-full text-xs border',
-                          m.status === 'disabled'
-                            ? 'bg-white/5 text-text-secondary border-white/10'
-                            : 'bg-success/10 text-success border-success/20'
+                          m.status === 'removed'
+                            ? 'bg-danger/10 text-danger border-danger/20'
+                            : m.status === 'disabled'
+                              ? 'bg-white/5 text-text-secondary border-white/10'
+                              : 'bg-success/10 text-success border-success/20'
                         )}
                       >
-                        {m.status === 'disabled' ? 'Disabled' : 'Active'}
+                        {m.status === 'removed'
+                          ? 'Removed'
+                          : m.status === 'disabled'
+                            ? 'Disabled'
+                            : 'Active'}
                       </span>
+                      {m.status === 'removed' && m.restorable_until && (
+                        <div className="text-meta text-text-secondary mt-1">
+                          {restorableLabel(m.restorable_until)}
+                        </div>
+                      )}
                     </TableCell>
                     <TableCell>
-                      {canManage && !isOwner ? (
+                      {canManage && !isOwner && m.status !== 'removed' ? (
                         <select
                           value={m.role}
                           disabled={busy}
@@ -717,36 +755,43 @@ function TeamTab() {
                     <TableCell>
                       {canManage && !isOwner && (
                         <div className="flex items-center justify-end gap-1">
-                          <button
-                            disabled={busy}
-                            onClick={() =>
-                              runAction(m.user_id, () =>
-                                m.status === 'disabled'
-                                  ? enableMember(m.user_id)
-                                  : disableMember(m.user_id)
-                              )
-                            }
-                            title={m.status === 'disabled' ? 'Enable' : 'Disable'}
-                            className="p-2 rounded-app-sm hover:bg-white/5 text-text-secondary hover:text-text-primary transition-colors disabled:opacity-50"
-                          >
-                            {m.status === 'disabled' ? (
+                          {m.status === 'removed' ? (
+                            <button
+                              disabled={busy}
+                              onClick={() => handleRestore(m)}
+                              title="Restore"
+                              className="p-2 rounded-app-sm hover:bg-white/5 text-text-secondary hover:text-text-primary transition-colors disabled:opacity-50"
+                            >
                               <UserCheck className="w-4 h-4" />
-                            ) : (
-                              <UserX className="w-4 h-4" />
-                            )}
-                          </button>
-                          <button
-                            disabled={busy}
-                            onClick={() => {
-                              if (confirm(`Remove ${name} from the team?`)) {
-                                runAction(m.user_id, () => removeMember(m.user_id));
-                              }
-                            }}
-                            title="Remove"
-                            className="p-2 rounded-app-sm hover:bg-danger/10 text-text-secondary hover:text-danger transition-colors disabled:opacity-50"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
+                            </button>
+                          ) : (
+                            <>
+                              <button
+                                disabled={busy}
+                                onClick={() =>
+                                  m.status === 'disabled'
+                                    ? runAction(m.user_id, () => enableMember(m.user_id))
+                                    : setOffboardTarget({ member: m, mode: 'disable' })
+                                }
+                                title={m.status === 'disabled' ? 'Enable' : 'Disable'}
+                                className="p-2 rounded-app-sm hover:bg-white/5 text-text-secondary hover:text-text-primary transition-colors disabled:opacity-50"
+                              >
+                                {m.status === 'disabled' ? (
+                                  <UserCheck className="w-4 h-4" />
+                                ) : (
+                                  <UserX className="w-4 h-4" />
+                                )}
+                              </button>
+                              <button
+                                disabled={busy}
+                                onClick={() => setOffboardTarget({ member: m, mode: 'remove' })}
+                                title="Remove"
+                                className="p-2 rounded-app-sm hover:bg-danger/10 text-text-secondary hover:text-danger transition-colors disabled:opacity-50"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </>
+                          )}
                         </div>
                       )}
                     </TableCell>
@@ -781,63 +826,81 @@ function TeamTab() {
                   </div>
                 </div>
                 <div className="flex items-center gap-3 flex-shrink-0">
-                  <span
-                    className={cn(
-                      'px-2.5 py-1 rounded-full text-xs border',
-                      m.status === 'disabled'
-                        ? 'bg-white/5 text-text-secondary border-white/10'
-                        : 'bg-success/10 text-success border-success/20'
+                  <div className="flex flex-col items-end">
+                    <span
+                      className={cn(
+                        'px-2.5 py-1 rounded-full text-xs border',
+                        m.status === 'removed'
+                          ? 'bg-danger/10 text-danger border-danger/20'
+                          : m.status === 'disabled'
+                            ? 'bg-white/5 text-text-secondary border-white/10'
+                            : 'bg-success/10 text-success border-success/20'
+                      )}
+                    >
+                      {m.status === 'removed'
+                        ? 'Removed'
+                        : m.status === 'disabled'
+                          ? 'Disabled'
+                          : 'Active'}
+                    </span>
+                    {m.status === 'removed' && m.restorable_until && (
+                      <div className="text-meta text-text-secondary mt-1">
+                        {restorableLabel(m.restorable_until)}
+                      </div>
                     )}
-                  >
-                    {m.status === 'disabled' ? 'Disabled' : 'Active'}
-                  </span>
+                  </div>
 
                   {canManage && !isOwner ? (
-                    <>
-                      <select
-                        value={m.role}
-                        disabled={busy}
-                        onChange={(e) =>
-                          runAction(m.user_id, () =>
-                            changeMemberRole(m.user_id, e.target.value as 'admin' | 'agent')
-                          )
-                        }
-                        className="bg-surface-2 border border-border-subtle rounded-app-sm px-3 py-1.5 text-text-primary text-sm focus:outline-none focus:border-accent-to"
-                      >
-                        <option value="admin">Admin</option>
-                        <option value="agent">Agent</option>
-                      </select>
+                    m.status === 'removed' ? (
                       <button
                         disabled={busy}
-                        onClick={() =>
-                          runAction(m.user_id, () =>
-                            m.status === 'disabled'
-                              ? enableMember(m.user_id)
-                              : disableMember(m.user_id)
-                          )
-                        }
-                        title={m.status === 'disabled' ? 'Enable' : 'Disable'}
+                        onClick={() => handleRestore(m)}
+                        title="Restore"
                         className="p-2 rounded-app-sm hover:bg-white/5 text-text-secondary hover:text-text-primary transition-colors disabled:opacity-50"
                       >
-                        {m.status === 'disabled' ? (
-                          <UserCheck className="w-4 h-4" />
-                        ) : (
-                          <UserX className="w-4 h-4" />
-                        )}
+                        <UserCheck className="w-4 h-4" />
                       </button>
-                      <button
-                        disabled={busy}
-                        onClick={() => {
-                          if (confirm(`Remove ${name} from the team?`)) {
-                            runAction(m.user_id, () => removeMember(m.user_id));
+                    ) : (
+                      <>
+                        <select
+                          value={m.role}
+                          disabled={busy}
+                          onChange={(e) =>
+                            runAction(m.user_id, () =>
+                              changeMemberRole(m.user_id, e.target.value as 'admin' | 'agent')
+                            )
                           }
-                        }}
-                        title="Remove"
-                        className="p-2 rounded-app-sm hover:bg-danger/10 text-text-secondary hover:text-danger transition-colors disabled:opacity-50"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </>
+                          className="bg-surface-2 border border-border-subtle rounded-app-sm px-3 py-1.5 text-text-primary text-sm focus:outline-none focus:border-accent-to"
+                        >
+                          <option value="admin">Admin</option>
+                          <option value="agent">Agent</option>
+                        </select>
+                        <button
+                          disabled={busy}
+                          onClick={() =>
+                            m.status === 'disabled'
+                              ? runAction(m.user_id, () => enableMember(m.user_id))
+                              : setOffboardTarget({ member: m, mode: 'disable' })
+                          }
+                          title={m.status === 'disabled' ? 'Enable' : 'Disable'}
+                          className="p-2 rounded-app-sm hover:bg-white/5 text-text-secondary hover:text-text-primary transition-colors disabled:opacity-50"
+                        >
+                          {m.status === 'disabled' ? (
+                            <UserCheck className="w-4 h-4" />
+                          ) : (
+                            <UserX className="w-4 h-4" />
+                          )}
+                        </button>
+                        <button
+                          disabled={busy}
+                          onClick={() => setOffboardTarget({ member: m, mode: 'remove' })}
+                          title="Remove"
+                          className="p-2 rounded-app-sm hover:bg-danger/10 text-text-secondary hover:text-danger transition-colors disabled:opacity-50"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </>
+                    )
                   ) : (
                     <span className="text-sm text-text-secondary px-2">{ROLE_LABEL[m.role]}</span>
                   )}
@@ -851,7 +914,198 @@ function TeamTab() {
       {canManage && members.length > 0 && (
         <GhlMemberMappingSection members={members} onSaved={load} />
       )}
+
+      <OffboardWizardModal
+        open={offboardTarget !== null}
+        member={offboardTarget?.member ?? null}
+        mode={offboardTarget?.mode ?? 'disable'}
+        onClose={() => setOffboardTarget(null)}
+        onDone={load}
+      />
     </motion.div>
+  );
+}
+
+/** MISSION-5 TASK-M5-A3: `restorable_until` -> "Restorable for Nh"/"Restorable for Nm" -- coarse
+ *  on purpose, this is a countdown hint next to a status chip, not a precise timer. */
+function restorableLabel(restorableUntilIso: string): string {
+  const msLeft = new Date(restorableUntilIso).getTime() - Date.now();
+  if (msLeft <= 0) return 'Restore window passed';
+  const hoursLeft = Math.floor(msLeft / (60 * 60 * 1000));
+  if (hoursLeft >= 1) return `Restorable for ${hoursLeft}h`;
+  const minutesLeft = Math.max(1, Math.floor(msLeft / (60 * 1000)));
+  return `Restorable for ${minutesLeft}m`;
+}
+
+/** MISSION-5 TASK-M5-A3: the offboarding wizard -- opened by the Disable/Remove buttons above.
+ *  Shows what the member currently holds (leads, callbacks, numbers, campaigns) before the admin
+ *  commits, with a "release queued leads to the pool" step available now (B3's reassign RPC
+ *  isn't built yet, so due/future callbacks are shown but have no action button here -- see
+ *  `getOffboardPreview`'s own doc comment in api.ts). Built around `getOffboardPreview`/
+ *  `releaseQueuedLeads` as swappable pieces: once B3 lands, a callback-reassignment step slots in
+ *  here without changing this modal's own shape. */
+function OffboardWizardModal({
+  open,
+  member,
+  mode,
+  onClose,
+  onDone,
+}: {
+  open: boolean;
+  member: OrgMember | null;
+  mode: 'disable' | 'remove';
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const modalRef = useRef<HTMLDivElement | null>(null);
+  useFocusTrap(modalRef, open);
+  const [preview, setPreview] = useState<OffboardPreview | null>(null);
+  const [loadingPreview, setLoadingPreview] = useState(false);
+  const [releasing, setReleasing] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!open || !member) return;
+    setPreview(null);
+    setError(null);
+    setLoadingPreview(true);
+    getOffboardPreview(member.user_id)
+      .then(setPreview)
+      .catch((e) => setError(e instanceof Error ? e.message : String(e)))
+      .finally(() => setLoadingPreview(false));
+    // Re-fetch keyed on the member id + open transition only -- not on `preview` itself (that
+    // would refetch every time handleReleaseLeads updates it below).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, member?.user_id]);
+
+  if (!open || !member) return null;
+
+  const name =
+    [member.first_name, member.last_name].filter(Boolean).join(' ') ||
+    member.email ||
+    'this member';
+  const totalQueued = preview?.held_leads.reduce((sum, r) => sum + r.queued_leads, 0) ?? 0;
+  const totalCallbacks = preview?.held_leads.reduce((sum, r) => sum + r.callbacks, 0) ?? 0;
+
+  const handleReleaseLeads = async () => {
+    setReleasing(true);
+    setError(null);
+    try {
+      await releaseQueuedLeads(member.user_id);
+      setPreview(await getOffboardPreview(member.user_id));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setReleasing(false);
+    }
+  };
+
+  const handleConfirm = async () => {
+    setSubmitting(true);
+    setError(null);
+    try {
+      if (mode === 'disable') await disableMember(member.user_id);
+      else await removeMember(member.user_id);
+      onDone();
+      onClose();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : `Failed to ${mode} member`);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return createPortal(
+    <div
+      className="fixed inset-0 flex items-center justify-center p-4"
+      style={{ zIndex: 10000 }}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="offboard-wizard-title"
+    >
+      <div className="absolute inset-0 bg-black/60" onClick={onClose} aria-hidden="true" />
+      <motion.div
+        ref={modalRef}
+        tabIndex={-1}
+        initial={{ opacity: 0, scale: 0.95 }}
+        animate={{ opacity: 1, scale: 1 }}
+        className="relative z-[1] w-full max-w-md rounded-app-lg border border-border-subtle bg-surface-1 p-5 shadow-app-md outline-none"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h2 id="offboard-wizard-title" className="text-page-title text-text-primary mb-1">
+          {mode === 'disable' ? 'Disable' : 'Remove'} {name}
+        </h2>
+        <p className="text-sm text-text-secondary mb-4">
+          {mode === 'disable'
+            ? 'Their session stops taking new calls immediately -- a live call is allowed to finish. Their numbers return to the pool.'
+            : 'Soft-removed -- restorable for 72 hours. Historical stats, dispositions and recordings keep their name.'}
+        </p>
+
+        {error && (
+          <div className="mb-4 p-3 rounded-app-md bg-danger/10 border border-danger/30 text-danger text-sm">
+            {error}
+          </div>
+        )}
+
+        {loadingPreview ? (
+          <div className="text-sm text-text-secondary mb-4">Loading what they currently hold…</div>
+        ) : (
+          preview && (
+            <div className="mb-4 space-y-2 text-sm">
+              <div className="text-text-secondary">Currently holds:</div>
+              <ul className="space-y-1 text-text-primary">
+                <li>
+                  {preview.numbers.length} number{preview.numbers.length === 1 ? '' : 's'}{' '}
+                  <span className="text-text-secondary">(released to the pool automatically)</span>
+                </li>
+                <li>
+                  {totalQueued} queued lead{totalQueued === 1 ? '' : 's'}
+                </li>
+                <li>
+                  {totalCallbacks} due/future callback{totalCallbacks === 1 ? '' : 's'}
+                </li>
+                <li>
+                  {preview.campaigns.length} campaign{preview.campaigns.length === 1 ? '' : 's'}
+                  {preview.campaigns.length > 0 && `: ${preview.campaigns.join(', ')}`}
+                </li>
+              </ul>
+              {totalQueued > 0 && (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  disabled={releasing}
+                  onClick={handleReleaseLeads}
+                >
+                  {releasing ? 'Releasing…' : 'Release queued leads to the pool'}
+                </Button>
+              )}
+              {totalCallbacks > 0 && (
+                <p className="text-xs text-text-secondary">
+                  Callback reassignment isn't built yet -- these stay assigned to {name} until a
+                  follow-up task ships.
+                </p>
+              )}
+            </div>
+          )
+        )}
+
+        <div className="flex justify-end gap-2 mt-4">
+          <Button variant="ghost" size="sm" onClick={onClose} disabled={submitting}>
+            Cancel
+          </Button>
+          <Button
+            variant={mode === 'remove' ? 'danger' : 'warning-soft'}
+            size="sm"
+            disabled={submitting}
+            onClick={handleConfirm}
+          >
+            {submitting ? 'Working…' : mode === 'disable' ? 'Disable member' : 'Remove member'}
+          </Button>
+        </div>
+      </motion.div>
+    </div>,
+    document.body
   );
 }
 

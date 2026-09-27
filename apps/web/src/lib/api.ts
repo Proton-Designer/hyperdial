@@ -1175,7 +1175,7 @@ export async function markAllNotificationsRead(): Promise<void> {
 export interface OrgMember {
   user_id: string;
   role: 'owner' | 'admin' | 'agent';
-  status: 'active' | 'disabled';
+  status: 'active' | 'disabled' | 'removed';
   created_at: string;
   first_name: string | null;
   last_name: string | null;
@@ -1183,10 +1183,20 @@ export interface OrgMember {
   /** MISSION-4 TASK-T1 (GHL-8): this member's GHL user id, owner/admin-set. Null until mapped.
    *  Informational only -- the dialer's own queueing/assignment logic never reads it. */
   ghl_user_id: string | null;
+  /** MISSION-5 TASK-M5-A3: set when status is 'removed'. */
+  removed_at: string | null;
+  /** MISSION-5 TASK-M5-A3: `restore` 403s past this instant (72h after removed_at); null unless
+   *  status is 'removed'. */
+  restorable_until: string | null;
 }
 
-export async function listOrgMembers(): Promise<OrgMember[]> {
-  const res = await fetch(`${getFunctionsUrl()}/org-members`, {
+/** MISSION-5 TASK-M5-A3: a 'removed' member is excluded by default ("hidden from the roster by
+ *  default") -- pass `includeRemoved` for the Settings UI's own "Show removed" toggle, the only
+ *  place that needs to see them (to offer Restore within the 72h window). */
+export async function listOrgMembers(includeRemoved = false): Promise<OrgMember[]> {
+  const url = new URL(`${getFunctionsUrl()}/org-members`);
+  if (includeRemoved) url.searchParams.set('include_removed', 'true');
+  const res = await fetch(url.toString(), {
     method: 'GET',
     headers: await getEdgeFunctionHeaders(),
   });
@@ -1195,7 +1205,7 @@ export async function listOrgMembers(): Promise<OrgMember[]> {
   return (data.members ?? []) as OrgMember[];
 }
 
-async function orgMembersAction(body: Record<string, unknown>): Promise<void> {
+async function orgMembersAction(body: Record<string, unknown>): Promise<Record<string, unknown>> {
   const res = await fetch(`${getFunctionsUrl()}/org-members`, {
     method: 'POST',
     headers: await getEdgeFunctionHeaders(),
@@ -1203,19 +1213,62 @@ async function orgMembersAction(body: Record<string, unknown>): Promise<void> {
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || 'Failed to update member');
+  return data;
 }
 
 export const changeMemberRole = (userId: string, role: 'admin' | 'agent') =>
   orgMembersAction({ action: 'change_role', user_id: userId, role });
+/** MISSION-5 TASK-M5-A3: halts new-batch dialing immediately (a live call is allowed to finish)
+ *  and releases this member's assigned numbers back to the pool -- both server-side, part of the
+ *  same request. */
 export const disableMember = (userId: string) =>
   orgMembersAction({ action: 'disable', user_id: userId });
 export const enableMember = (userId: string) =>
   orgMembersAction({ action: 'enable', user_id: userId });
+/** MISSION-5 TASK-M5-A3: soft-remove (restorable for 72h via `restoreMember`) -- same
+ *  session-halt + number-release cascade as `disableMember`. Does NOT release queued leads/
+ *  callbacks; call `releaseQueuedLeads` separately (the offboarding wizard's own explicit step --
+ *  callback reassignment isn't built yet, see `getOffboardPreview`'s own doc comment). */
 export const removeMember = (userId: string) =>
   orgMembersAction({ action: 'remove', user_id: userId });
+/** MISSION-5 TASK-M5-A3: 403s once `restorable_until` has passed. */
+export const restoreMember = (userId: string) =>
+  orgMembersAction({ action: 'restore', user_id: userId });
 /** MISSION-4 TASK-T1 (GHL-8). Pass an empty string/null to clear the mapping. */
 export const updateMemberGhlUserId = (userId: string, ghlUserId: string | null) =>
   orgMembersAction({ action: 'set_ghl_user_id', user_id: userId, ghl_user_id: ghlUserId });
+
+// --- MISSION-5 TASK-M5-A3: offboarding wizard ---
+
+export interface OffboardHeldLeads {
+  campaign_id: string;
+  campaign_name: string;
+  queued_leads: number;
+  callbacks: number;
+}
+
+export interface OffboardPreview {
+  held_leads: OffboardHeldLeads[];
+  numbers: { id: string; phone_number: string }[];
+  campaigns: string[];
+}
+
+/** MISSION-5 TASK-M5-A3: "show what they held" -- read-only, safe to call before the admin has
+ *  decided whether to disable or remove. `held_leads[].callbacks` has no reassignment action
+ *  yet (B3's reassign RPC isn't built) -- the wizard shows the count but no button for it. */
+export async function getOffboardPreview(userId: string): Promise<OffboardPreview> {
+  const data = await orgMembersAction({ action: 'offboard_preview', user_id: userId });
+  return data as unknown as OffboardPreview;
+}
+
+/** MISSION-5 TASK-M5-A3: releases this member's own QUEUED leads (not callbacks -- see
+ *  `getOffboardPreview`'s doc comment) back to the pool, across every campaign they hold any in.
+ *  A distinct step from disable/remove, callable independently (e.g. redistributing a still-
+ *  active member's slice) -- returns how many leads were actually released. */
+export async function releaseQueuedLeads(userId: string): Promise<number> {
+  const data = await orgMembersAction({ action: 'release_queued_leads', user_id: userId });
+  return (data.released as number) ?? 0;
+}
 
 // --- MISSION-5 TASK-A1: audit log ---
 
