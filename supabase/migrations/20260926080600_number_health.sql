@@ -603,7 +603,7 @@ begin
       upn.id as number_id,
       upn.org_id,
       upn.phone_number,
-      count(cl.id) as dials,
+      count(cl.id)::int as dials,  -- (lead) the RETURNS TABLE sample_dials is int; count() is bigint
       count(cl.id) filter (where cl.outcome = 'connected')::numeric
         / nullif(count(cl.id), 0) as rate
     from public.user_phone_numbers upn
