@@ -380,6 +380,13 @@ create index org_broadcasts_pod_idx on public.org_broadcasts(org_id, pod_id);
 
 alter table public.org_broadcasts enable row level security;
 
+-- Fix-forward (fix-A6, live dry-run 31/32, real failure): the original policy only matched a
+-- manager's ROSTER pod (org_members.pod_id) -- a manager's actual SCOPE (which pod(s) they may
+-- post to/manage) is org_manager_pods, a separate relationship (same distinction org_goals'
+-- policy already got right from the start, see its own header). A manager posting to a pod they
+-- supervise but aren't a roster member of couldn't see their own just-created broadcast. Added:
+-- created_by = auth.uid() (a poster can always see their own post, any pod) and the
+-- org_manager_pods branch (mirrors org_goals' policy exactly).
 create policy "org members see broadcasts for everyone or their own pod; owner/admin see all"
   on public.org_broadcasts for select
   using (
@@ -387,9 +394,14 @@ create policy "org members see broadcasts for everyone or their own pod; owner/a
     and (
       pod_id is null
       or private.has_org_role(org_id, array['owner', 'admin'])
+      or created_by = auth.uid()
       or exists (
         select 1 from public.org_members m
         where m.org_id = org_broadcasts.org_id and m.user_id = auth.uid() and m.pod_id = org_broadcasts.pod_id
+      )
+      or exists (
+        select 1 from public.org_manager_pods mp
+        where mp.org_id = org_broadcasts.org_id and mp.manager_user_id = auth.uid() and mp.pod_id = org_broadcasts.pod_id
       )
     )
   );
@@ -543,7 +555,18 @@ begin
   from public.org_broadcasts b
   where b.org_id = p_org
     and (b.expires_at is null or b.expires_at > now())
-    and (b.pod_id is null or b.pod_id = v_pod_id)
+    and (
+      b.pod_id is null
+      or b.pod_id = v_pod_id
+      or b.created_by = v_caller
+      -- fix-A6: same org_manager_pods gap as the table's own SELECT policy -- a manager viewing
+      -- their own feed should also see a broadcast targeting a pod they supervise, even when
+      -- they aren't a roster member of it (mem.pod_id above only covers roster membership).
+      or exists (
+        select 1 from public.org_manager_pods mp
+        where mp.org_id = p_org and mp.manager_user_id = v_caller and mp.pod_id = b.pod_id
+      )
+    )
     and not exists (
       select 1 from public.org_broadcast_dismissals d
       where d.broadcast_id = b.id and d.user_id = v_caller
