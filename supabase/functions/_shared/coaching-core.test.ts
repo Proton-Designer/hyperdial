@@ -94,6 +94,15 @@ function makeFakeSupabase(cfg: {
             update: (patch: Record<string, unknown>) =>
               updateChain(() => writes.push({ table, patch })),
           };
+        // TASK-A1: logOrgAction's own insert -- a plain fire-and-forget write, modeled the same
+        // "capture into _writes, always succeed" way as every other insert in this fake.
+        case 'org_audit_log':
+          return {
+            insert: (row: Record<string, unknown>) => {
+              writes.push({ table: 'org_audit_log:insert', patch: row });
+              return Promise.resolve({ error: null });
+            },
+          };
         default:
           throw new Error(`fake supabase: unexpected table ${table}`);
       }
@@ -318,6 +327,14 @@ Deno.test(
       mode: 'whisper',
       targetSession: 's-target',
     });
+    // TASK-A1: a successful start is audit-logged.
+    const auditWrite = supabase._writes.find(
+      (w: { table: string; patch: Record<string, unknown> }) => w.table === 'org_audit_log:insert'
+    );
+    assertExists(auditWrite);
+    assertEquals(auditWrite.patch.action, 'coaching.start');
+    assertEquals(auditWrite.patch.actor_user_id, 'mgr-1');
+    assertEquals(auditWrite.patch.target_id, 's-target');
   }
 );
 
@@ -462,7 +479,13 @@ Deno.test(
 Deno.test('processTelnyxCoachingEvent: call.hangup ends the row (manager_hangup)', async () => {
   const supabase = makeFakeSupabase({
     coachingSelect: [
-      OK({ id: 'coaching-1', target_session_id: 's-target', mode: 'listen', status: 'active' }),
+      OK({
+        id: 'coaching-1',
+        target_session_id: 's-target',
+        manager_id: 'mgr-1',
+        mode: 'listen',
+        status: 'active',
+      }),
     ],
   });
   const { client } = makeFakeTelnyxClient();
@@ -478,6 +501,14 @@ Deno.test('processTelnyxCoachingEvent: call.hangup ends the row (manager_hangup)
   assertExists(write);
   assertEquals(write.patch.status, 'ended');
   assertEquals(write.patch.ended_reason, 'manager_hangup');
+  // TASK-A1: the end is also audit-logged, attributed to the coaching manager (not the target
+  // agent whose hangup webhook this technically is).
+  const auditWrite = supabase._writes.find(
+    (w: { table: string; patch: Record<string, unknown> }) => w.table === 'org_audit_log:insert'
+  );
+  assertExists(auditWrite);
+  assertEquals(auditWrite.patch.action, 'coaching.end');
+  assertEquals(auditWrite.patch.actor_user_id, 'mgr-1');
 });
 
 Deno.test('processTelnyxCoachingEvent: already-ended row is a pure no-op', async () => {

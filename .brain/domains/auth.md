@@ -5,14 +5,18 @@ layer: L2
 type: domain
 status: canonical
 owner: maintainer
-updated: 2026-09-24
+updated: 2026-09-27
 sources:
   - supabase/functions/_shared/auth.ts
   - supabase/functions/_shared/cors.ts
+  - supabase/functions/_shared/audit.ts
+  - supabase/functions/org-audit-log/index.ts
   - supabase/config.toml
   - supabase/migrations/*.sql
+  - supabase/migrations/20260927080000_org_audit_log.sql
   - apps/web/src/contexts/AuthContext.tsx
   - apps/web/src/components/AuthScreen.tsx
+  - apps/web/src/components/Settings.tsx
 related:
   - domain.dialer
   - domain.contacts
@@ -29,7 +33,7 @@ answers:
   - "what are the RLS helper functions and why do they exist"
 covers: "Supabase auth, session handling, the two-layer Edge Function authorization model, service-role usage, org tenancy, and the per-table RLS inventory."
 excludes: "Telnyx webhook signature mechanics (domain.telephony); dial-loop ownership checks (domain.dialer)."
-tokens_est: 3880
+tokens_est: 4750
 source_hash: b8d3fd311248f16889b10f531365423ec36488c32179946d09361fb21c5ce0c5
 ---
 
@@ -127,6 +131,21 @@ are the deliberate exceptions: personal, not org-shared (see `20260924000300`'s 
 | `dialer_sessions` | SELECT: owner/admin see all; agent sees only their own. All writes via Edge Functions. |
 | `call_logs` | Same shape as `dialer_sessions`. |
 | `campaigns_with_stats` (view) | `security_invoker = on`, recreated to carry `org_id` through — caller's (now org-scoped) RLS on `campaigns` applies. |
+
+## Audit log (MISSION-5 TASK-A1)
+
+`org_audit_log(id, org_id, actor_user_id, action, target_type, target_id, details jsonb, created_at)` — `20260927080000_org_audit_log.sql`. RLS: owner/admin SELECT their own org's rows only; **no client INSERT/UPDATE/DELETE policy exists at all** (writes only ever come from the two paths below, both bypassing RLS by construction) — verified live via `audit/M5-A1/dryrun-tests.sql` (an owner's own direct INSERT/UPDATE/DELETE against the table is denied/no-ops even though they can freely SELECT it).
+
+**Two writers, add to both places when you add a new team-management action:**
+1. **SQL RPCs**: `perform private.log_org_action(p_org, p_action, p_target_type, p_target_id, p_details, p_actor default auth.uid())`. SECURITY DEFINER, **deliberately not granted to `authenticated`** (unlike `is_org_member`/`has_org_role`) — it does no membership check of its own, so granting it to a signed-in client would let anyone forge a row in any org. Only reachable from another SECURITY DEFINER function already owned by the migration role (an internal call runs as the *owner*, which needs no grant) or directly by `postgres`/`service_role`. Wired into `assign_campaign_leads` today.
+2. **Edge Functions**: `logOrgAction(supabase, {orgId, actorUserId, action, targetType?, targetId?, details?})` from `supabase/functions/_shared/audit.ts` — a plain service-role INSERT (service-role already bypasses RLS). Best-effort/fire-and-forget: call it AFTER your own mutation has already committed; a logging failure is swallowed (console.error only), never fails the caller's real action. Wired into `org-members` (all 5 actions), `org-invite-create`, `ghl-connect`/`-disconnect`/`-update-blocked-tags`/`-update-pull-settings`, and `dialer-coaching` (via `_shared/coaching-core.ts`'s `runStartCoachingAction`/`processTelnyxCoachingEvent`, actions `coaching.start`/`coaching.end`).
+3. **Passive third source — settings-change trigger**: `private.audit_log_settings_change_trigger()`, one generic function attached (`after insert or update ... for each row execute function private.audit_log_settings_change_trigger('<action>', '<target_type>')`) to every per-org settings table an owner/admin can write **directly** via RLS with no Edge Function in between: `org_spend_settings`, `org_reliability_alert_settings`, `org_recording_settings`, `org_transfer_settings`. Guarded by `auth.role() is distinct from 'authenticated'` so a system/service-role write (the seed-on-org-create triggers, a migration backfill) is never logged, only a real signed-in client's own save. Also no-ops on a byte-identical re-save (comparing `to_jsonb(new) - 'updated_at'` against the old row — `updated_at` is excluded on purpose, since every one of these tables' own `api.ts` upsert stamps a fresh one on *every* save, even a no-op one).
+
+**Client read/write surface**: `supabase/functions/org-audit-log` — GET (owner/admin, filters: actor/action/date range, paged, resolves actor names via one bulk `profiles` lookup, never `auth.admin.getUserById` per row) backs Settings → **Activity** (`Settings.tsx`'s `ActivityTab`). POST accepts only an allowlisted `name` (`export.team_csv`, `export.analytics_csv` today) — the one gap neither writer above covers, since a CSV export never round-trips to a server on its own (`apps/web/src/lib/csv.ts`'s own header) — wired from `Team.tsx`/`Analytics.tsx`'s own export handlers via `api.ts`'s `logAuditEvent`.
+
+**Action name registry** (add a row here — and to `Settings.tsx`'s `AUDIT_ACTION_LABELS` — whenever a new action is wired in): `member.role_change`, `member.disable`, `member.enable`, `member.remove`, `member.set_ghl_user_id`, `invite.create`, `campaign_leads.assign`, `coaching.start`, `coaching.end`, `ghl.connect`, `ghl.disconnect`, `ghl.update_blocked_tags`, `ghl.update_pull_settings`, `settings.spend.update`, `settings.reliability_alerts.update`, `settings.recording.update`, `settings.transfer.update`, `export.team_csv`, `export.analytics_csv`.
+
+**Retention**: keep 1 year, documented not enforced — no cron yet (row volume is trivial at current org sizes; revisit with a scheduled prune if that changes).
 
 ## Constraints & gotchas
 

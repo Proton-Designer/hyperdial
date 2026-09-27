@@ -26,6 +26,8 @@ import {
   ChevronUp,
   ChevronDown,
   Trophy,
+  History,
+  Download,
 } from 'lucide-react';
 import { usePhoneNumbers } from '@/contexts/PhoneNumbersContext';
 import { useAuth } from '@/contexts/AuthContext';
@@ -79,6 +81,8 @@ import {
   listDncNumbers,
   addDncNumber,
   removeDncNumber,
+  listAuditLog,
+  type AuditLogEntry,
   getRecordingEnabled,
   setRecordingEnabled,
   getRecordingConsentSettings,
@@ -129,10 +133,11 @@ import {
 } from '@/lib/api';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ListSkeleton, TableSkeleton } from '@/components/app/skeletons';
+import { rowsToCsv, downloadCsv } from '@/lib/csv';
 import { normalizePhoneStrict } from '@/lib/phone-normalize';
 
 type SettingsTab =
-  'profile' | 'phone' | 'team' | 'integrations' | 'dispositions' | 'dnc' | 'security';
+  'profile' | 'phone' | 'team' | 'integrations' | 'dispositions' | 'dnc' | 'activity' | 'security';
 
 function ProfileTab() {
   const { user } = useAuth();
@@ -2380,6 +2385,264 @@ function AutoResumeSettingsCard() {
   );
 }
 
+/** MISSION-5 TASK-A1: the Activity page -- newest first, filters (person/action/date range),
+ *  paging, CSV export. Owner/admin only (route-gated the same way as every other manager-only
+ *  tab in this file -- `!isAgent` in the `tabs` array below); `org-audit-log`'s own
+ *  `requireOrgRole` is the real enforcement, this is cosmetic narrowing same as every other tab
+ *  here (see NumberPoolCard's own comment on this exact pattern). */
+const ACTIVITY_PAGE_SIZE = 50;
+const ACTIVITY_EXPORT_LIMIT = 200;
+
+const AUDIT_ACTION_LABELS: Record<string, string> = {
+  'member.role_change': 'Changed a member role',
+  'member.disable': 'Disabled a member',
+  'member.enable': 'Re-enabled a member',
+  'member.remove': 'Removed a member',
+  'member.set_ghl_user_id': 'Set a member GHL mapping',
+  'invite.create': 'Created an invite',
+  'campaign_leads.assign': 'Assigned leads',
+  'coaching.start': 'Started coaching a call',
+  'coaching.end': 'Ended a coaching call',
+  'ghl.connect': 'Connected GHL',
+  'ghl.disconnect': 'Disconnected GHL',
+  'ghl.update_blocked_tags': 'Updated GHL blocked tags',
+  'ghl.update_pull_settings': 'Updated GHL pull settings',
+  'settings.spend.update': 'Updated spend settings',
+  'settings.reliability_alerts.update': 'Updated reliability alert settings',
+  'settings.recording.update': 'Updated recording/consent settings',
+  'settings.transfer.update': 'Updated transfer settings',
+  'export.team_csv': 'Exported the team daily CSV',
+  'export.analytics_csv': 'Exported the analytics CSV',
+};
+
+function ActivityTab() {
+  const [members, setMembers] = useState<OrgMember[]>([]);
+  const [entries, setEntries] = useState<AuditLogEntry[] | null>(null);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
+
+  const [actorFilter, setActorFilter] = useState('');
+  const [actionFilter, setActionFilter] = useState('');
+  const [fromFilter, setFromFilter] = useState('');
+  const [toFilter, setToFilter] = useState('');
+  const [page, setPage] = useState(0);
+
+  useEffect(() => {
+    listOrgMembers()
+      .then(setMembers)
+      .catch(() => {
+        /* non-fatal -- the table still renders with raw actor names it already got back */
+      });
+  }, []);
+
+  const load = useCallback(() => {
+    setLoading(true);
+    setError(null);
+    listAuditLog({
+      actor: actorFilter || undefined,
+      action: actionFilter || undefined,
+      from: fromFilter ? new Date(fromFilter).toISOString() : undefined,
+      to: toFilter ? new Date(new Date(toFilter).getTime() + 86400000).toISOString() : undefined,
+      limit: ACTIVITY_PAGE_SIZE,
+      offset: page * ACTIVITY_PAGE_SIZE,
+    })
+      .then((res) => {
+        setEntries(res.entries);
+        setTotal(res.total);
+      })
+      .catch((e) => setError(e instanceof Error ? e.message : String(e)))
+      .finally(() => setLoading(false));
+  }, [actorFilter, actionFilter, fromFilter, toFilter, page]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  // Any filter change resets to page 0 -- a stale offset into a now-different result set would
+  // otherwise silently show the wrong page (or an empty one) with no indication why.
+  useEffect(() => {
+    setPage(0);
+  }, [actorFilter, actionFilter, fromFilter, toFilter]);
+
+  const memberLabel = (userId: string | null, fallback: string | null): string => {
+    if (!userId) return 'System';
+    const m = members.find((mm) => mm.user_id === userId);
+    if (!m) return fallback || 'Former member';
+    return [m.first_name, m.last_name].filter(Boolean).join(' ') || m.email || 'Unknown member';
+  };
+
+  const handleExportCsv = async () => {
+    setExporting(true);
+    setError(null);
+    try {
+      const res = await listAuditLog({
+        actor: actorFilter || undefined,
+        action: actionFilter || undefined,
+        from: fromFilter ? new Date(fromFilter).toISOString() : undefined,
+        to: toFilter ? new Date(new Date(toFilter).getTime() + 86400000).toISOString() : undefined,
+        limit: ACTIVITY_EXPORT_LIMIT,
+        offset: 0,
+      });
+      const csv = rowsToCsv(
+        [
+          { key: 'createdAt' as const, label: 'When' },
+          { key: 'actorName' as const, label: 'Who' },
+          { key: 'action' as const, label: 'Action' },
+          { key: 'targetType' as const, label: 'Target type' },
+          { key: 'targetId' as const, label: 'Target id' },
+        ],
+        res.entries.map((e) => ({
+          ...e,
+          actorName: memberLabel(e.actorUserId, e.actorName),
+        }))
+      );
+      downloadCsv(`activity-${new Date().toISOString().slice(0, 10)}.csv`, csv);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const totalPages = Math.max(1, Math.ceil(total / ACTIVITY_PAGE_SIZE));
+
+  return (
+    <div>
+      <PageHeader
+        title="Activity"
+        description="Who did what, when -- role changes, invites, coaching, integrations and settings"
+      />
+
+      <div className="flex flex-wrap items-end gap-3 mb-4">
+        <div>
+          <label className="block text-meta text-text-secondary mb-1">Person</label>
+          <select
+            value={actorFilter}
+            onChange={(e) => setActorFilter(e.target.value)}
+            className="bg-surface-2 border border-white/10 rounded-app-md px-3 py-2 text-white focus:outline-none focus:border-accent-to min-w-[160px]"
+          >
+            <option value="">Everyone</option>
+            {members.map((m) => (
+              <option key={m.user_id} value={m.user_id}>
+                {[m.first_name, m.last_name].filter(Boolean).join(' ') || m.email || m.user_id}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className="block text-meta text-text-secondary mb-1">Action</label>
+          <select
+            value={actionFilter}
+            onChange={(e) => setActionFilter(e.target.value)}
+            className="bg-surface-2 border border-white/10 rounded-app-md px-3 py-2 text-white focus:outline-none focus:border-accent-to min-w-[180px]"
+          >
+            <option value="">All actions</option>
+            {Object.entries(AUDIT_ACTION_LABELS).map(([key, label]) => (
+              <option key={key} value={key}>
+                {label}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className="block text-meta text-text-secondary mb-1">From</label>
+          <input
+            type="date"
+            value={fromFilter}
+            onChange={(e) => setFromFilter(e.target.value)}
+            className="bg-surface-2 border border-white/10 rounded-app-md px-3 py-2 text-white focus:outline-none focus:border-accent-to"
+          />
+        </div>
+        <div>
+          <label className="block text-meta text-text-secondary mb-1">To</label>
+          <input
+            type="date"
+            value={toFilter}
+            onChange={(e) => setToFilter(e.target.value)}
+            className="bg-surface-2 border border-white/10 rounded-app-md px-3 py-2 text-white focus:outline-none focus:border-accent-to"
+          />
+        </div>
+        <Button size="sm" variant="fe-ghost" onClick={handleExportCsv} disabled={exporting}>
+          <Download className="w-4 h-4" />
+          Export CSV
+        </Button>
+      </div>
+
+      {error && (
+        <div className="mb-4 p-4 rounded-app-md bg-danger/10 border border-danger/30 text-danger text-sm">
+          {error}
+        </div>
+      )}
+
+      {loading ? (
+        <ListSkeleton rows={5} />
+      ) : !entries || entries.length === 0 ? (
+        <EmptyState
+          icon={ListChecks}
+          title="No activity yet"
+          body="Role changes, invites, coaching sessions and settings changes will show up here."
+        />
+      ) : (
+        <>
+          <div className="bg-surface-1 rounded-app-lg border border-border-subtle overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="text-text-secondary">When</TableHead>
+                  <TableHead className="text-text-secondary">Who</TableHead>
+                  <TableHead className="text-text-secondary">Action</TableHead>
+                  <TableHead className="text-text-secondary">Target</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {entries.map((e) => (
+                  <TableRow key={e.id}>
+                    <TableCell className="text-text-secondary whitespace-nowrap">
+                      {new Date(e.createdAt).toLocaleString()}
+                    </TableCell>
+                    <TableCell className="text-white">
+                      {memberLabel(e.actorUserId, e.actorName)}
+                    </TableCell>
+                    <TableCell className="text-text-secondary">
+                      {AUDIT_ACTION_LABELS[e.action] ?? e.action}
+                    </TableCell>
+                    <TableCell className="text-text-secondary">{e.targetType ?? '—'}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+          <div className="flex items-center justify-between mt-4">
+            <p className="text-meta text-text-muted">
+              {total} total &middot; page {page + 1} of {totalPages}
+            </p>
+            <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                variant="fe-ghost"
+                disabled={page === 0}
+                onClick={() => setPage((p) => Math.max(0, p - 1))}
+              >
+                Previous
+              </Button>
+              <Button
+                size="sm"
+                variant="fe-ghost"
+                disabled={page + 1 >= totalPages}
+                onClick={() => setPage((p) => p + 1)}
+              >
+                Next
+              </Button>
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function DncTab() {
   const { role } = useOrg();
   const isAdmin = role === 'owner' || role === 'admin';
@@ -3542,6 +3805,7 @@ export function Settings() {
       ? [{ id: 'dispositions' as SettingsTab, label: 'Dispositions', icon: ListChecks }]
       : []),
     ...(!isAgent ? [{ id: 'dnc' as SettingsTab, label: 'Do-not-call list', icon: PhoneOff }] : []),
+    ...(!isAgent ? [{ id: 'activity' as SettingsTab, label: 'Activity', icon: History }] : []),
     { id: 'security' as SettingsTab, label: 'Security', icon: Shield },
   ];
 
@@ -3552,7 +3816,8 @@ export function Settings() {
         activeTab === 'team' ||
         activeTab === 'integrations' ||
         activeTab === 'dispositions' ||
-        activeTab === 'dnc')
+        activeTab === 'dnc' ||
+        activeTab === 'activity')
     ) {
       setActiveTab('profile');
     }
@@ -3872,6 +4137,8 @@ export function Settings() {
               {activeTab === 'dispositions' && !isAgent && <DispositionsTab />}
 
               {activeTab === 'dnc' && !isAgent && <DncTab />}
+
+              {activeTab === 'activity' && !isAgent && <ActivityTab />}
 
               {activeTab === 'security' ? (
                 <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>

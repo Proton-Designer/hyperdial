@@ -9,6 +9,7 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { corsHeaders, corsPreflightResponse } from '../_shared/cors.ts';
 import { getUserFromRequest } from '../_shared/auth.ts';
+import { logOrgAction } from '../_shared/audit.ts';
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -63,6 +64,14 @@ Deno.serve(async (req: Request) => {
     console.error('[ghl-disconnect] update failed', updateError.message);
     return jsonResponse({ error: 'Failed to disconnect' }, 500);
   }
+
+  await logOrgAction(supabase, {
+    orgId,
+    actorUserId: user.id,
+    action: 'ghl.disconnect',
+    targetType: 'org_integrations',
+    targetId: orgId,
+  });
 
   return jsonResponse({ status: 'disconnected' });
 });

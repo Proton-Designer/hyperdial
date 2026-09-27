@@ -14,6 +14,7 @@ import { createClient } from 'npm:@supabase/supabase-js@2';
 import { corsHeaders, corsPreflightResponse } from '../_shared/cors.ts';
 import { getUserFromRequest } from '../_shared/auth.ts';
 import { createGhlClient } from '../_shared/ghl-client.ts';
+import { logOrgAction } from '../_shared/audit.ts';
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -101,6 +102,15 @@ Deno.serve(async (req: Request) => {
     console.error('[ghl-connect] set_org_ghl_token failed', setTokenError.message);
     return jsonResponse({ error: 'Failed to store the GHL token' }, 500);
   }
+
+  await logOrgAction(supabase, {
+    orgId,
+    actorUserId: user.id,
+    action: 'ghl.connect',
+    targetType: 'org_integrations',
+    targetId: orgId,
+    details: { locationId: location.id, locationName: location.name },
+  });
 
   return jsonResponse({
     status: 'connected',

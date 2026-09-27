@@ -1,6 +1,7 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { corsHeaders, corsPreflightResponse } from '../_shared/cors.ts';
 import { requireOrgRole } from '../_shared/auth.ts';
+import { logOrgAction } from '../_shared/audit.ts';
 
 const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -81,6 +82,15 @@ Deno.serve(async (req) => {
     console.error('org-invite-create insert error:', error.message);
     return jsonError(500, 'Failed to create invite');
   }
+
+  await logOrgAction(supabase, {
+    orgId,
+    actorUserId: user.id,
+    action: 'invite.create',
+    targetType: 'org_invite',
+    targetId: invite.id,
+    details: { email, role },
+  });
 
   // The raw token is returned exactly once -- only token_hash is ever persisted, so this
   // response is the only place a caller can retrieve a usable invite link.

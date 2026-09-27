@@ -486,6 +486,18 @@ verify_jwt = false
 # recording-retention/dialer-sweeper/ghl-sync-worker.
 verify_jwt = false
 
+[functions.dialer-coaching]
+# Pre-existing gap, found while adding this task's own entry below: MISSION-4 TASK-T3 shipped
+# this function using the same custom-auth (requireTelnyxOrgRole) pattern as every other
+# dialer-session-*/recording-url function but never added its config.toml entry -- same class of
+# bug as dialer-session-hangup-live's own fix-forward, noted earlier in this file. Fixed
+# proactively (MISSION-5 TASK-A1) rather than filing it and moving on.
+verify_jwt = false
+
+[functions.org-audit-log]
+# Custom auth (requireOrgRole), same pattern as org-members/org-invite-create above.
+verify_jwt = false
+
 [edge_runtime]
 enabled = true
 # Supported request policies: `oneshot`, `per_worker`.

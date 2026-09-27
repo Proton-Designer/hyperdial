@@ -22,6 +22,7 @@ import {
   getConnectRateByNumber,
   getConnectRateByHour,
   listCampaigns,
+  logAuditEvent,
   type AnalyticsSummary,
   type FunnelSummary,
   type DropRateSummary,
@@ -142,6 +143,7 @@ function FunnelAndInsights({ start, end }: { start: Date; end: Date }) {
       `funnel-${campaignLabel.replace(/\s+/g, '-')}-${new Date().toISOString().slice(0, 10)}.csv`,
       csv
     );
+    void logAuditEvent('export.analytics_csv', { campaignId: campaignId ?? 'all' });
   };
 
   if (loading) return <Skeleton className="h-[200px] rounded-app-lg mb-8" />;

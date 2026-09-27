@@ -724,6 +724,9 @@ export interface TeamLiveBoardRow {
   session_started_at: string | null;
   calls_today: number;
   conversations_today: number;
+  /** MISSION-5 TASK-M5-B1: the session's dial_sessions.pause_reason, only non-null while
+   *  status === 'paused'. */
+  pause_reason: string | null;
 }
 
 /** Poll every 5s (ADM-7) -- a single RPC round trip per poll, not N queries. */
@@ -732,6 +735,67 @@ export async function getTeamLiveBoard(): Promise<TeamLiveBoardRow[]> {
   const { data, error } = await supabase.rpc('team_live_board', { p_org: orgId });
   if (error) throw new Error(error.message);
   return (data ?? []) as TeamLiveBoardRow[];
+}
+
+/** MISSION-5 TASK-M5-B1: per agent/day seconds by state and pause reason -- consumed by
+ *  TASK-M5-A4's attendance tab. Owner/admin only (server-enforced inside the RPC, not just
+ *  client-gated); `agentId` narrows an owner/admin's own query, it is not a self-view for an
+ *  agent (see the RPC's own header comment). `tz` defaults to 'America/Chicago' until A4 adds a
+ *  real org timezone to pass instead. */
+export interface AgentTimeInStateRow {
+  agent_id: string;
+  day: string;
+  state: string;
+  reason: string | null;
+  seconds: number;
+}
+
+export async function getAgentTimeInState(
+  from: Date,
+  to: Date,
+  agentId?: string,
+  tz?: string
+): Promise<AgentTimeInStateRow[]> {
+  const orgId = await getActiveOrgId();
+  const { data, error } = await supabase.rpc('agent_time_in_state', {
+    p_org: orgId,
+    p_from: from.toISOString(),
+    p_to: to.toISOString(),
+    p_agent: agentId ?? null,
+    p_tz: tz ?? 'America/Chicago',
+  });
+  if (error) throw new Error(error.message);
+  return (data ?? []) as AgentTimeInStateRow[];
+}
+
+/** MISSION-5 TASK-M5-B1: org-level pause reason list (Dialer's pause-reason picker). Every org
+ *  gets a seeded row on creation/migration (org_pause_reason_settings' own trigger + backfill),
+ *  but this still falls back to the same hardcoded default list client-side, defensively, rather
+ *  than ever showing an empty picker. */
+export const DEFAULT_PAUSE_REASONS = ['Break', 'Lunch', 'Training', 'Meeting', 'Admin', 'Other'];
+
+export async function getOrgPauseReasons(): Promise<string[]> {
+  const orgId = await getActiveOrgId();
+  const { data, error } = await supabase
+    .from('org_pause_reason_settings')
+    .select('reasons')
+    .eq('org_id', orgId)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  const reasons = (data?.reasons ?? []) as string[];
+  return reasons.length > 0 ? reasons : DEFAULT_PAUSE_REASONS;
+}
+
+/** Owner/admin only -- enforced by org_pause_reason_settings' own RLS UPDATE policy, not just
+ *  this function trusting the caller. */
+export async function updateOrgPauseReasons(reasons: string[]): Promise<void> {
+  const orgId = await getActiveOrgId();
+  const { error } = await supabase.from('org_pause_reason_settings').upsert({
+    org_id: orgId,
+    reasons,
+    updated_at: new Date().toISOString(),
+  });
+  if (error) throw new Error(error.message);
 }
 
 // --- MISSION-4 TASK-T11 (ADM-8 + NEW): dialer analytics -- funnel, best-time-to-call heatmap,
@@ -1152,6 +1216,68 @@ export const removeMember = (userId: string) =>
 /** MISSION-4 TASK-T1 (GHL-8). Pass an empty string/null to clear the mapping. */
 export const updateMemberGhlUserId = (userId: string, ghlUserId: string | null) =>
   orgMembersAction({ action: 'set_ghl_user_id', user_id: userId, ghl_user_id: ghlUserId });
+
+// --- MISSION-5 TASK-A1: audit log ---
+
+export interface AuditLogEntry {
+  id: string;
+  actorUserId: string | null;
+  actorName: string | null;
+  action: string;
+  targetType: string | null;
+  targetId: string | null;
+  details: Record<string, unknown>;
+  createdAt: string;
+}
+
+export interface AuditLogFilters {
+  actor?: string;
+  action?: string;
+  from?: string;
+  to?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export async function listAuditLog(
+  filters: AuditLogFilters = {}
+): Promise<{ entries: AuditLogEntry[]; total: number }> {
+  const params = new URLSearchParams();
+  if (filters.actor) params.set('actor', filters.actor);
+  if (filters.action) params.set('action', filters.action);
+  if (filters.from) params.set('from', filters.from);
+  if (filters.to) params.set('to', filters.to);
+  params.set('limit', String(filters.limit ?? 50));
+  params.set('offset', String(filters.offset ?? 0));
+
+  const res = await fetch(`${getFunctionsUrl()}/org-audit-log?${params.toString()}`, {
+    method: 'GET',
+    headers: await getEdgeFunctionHeaders(),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Failed to load activity');
+  return data as { entries: AuditLogEntry[]; total: number };
+}
+
+/** The two client-only actions worth an audit row today -- both already gated behind an
+ *  owner/admin-only route (Team, Analytics), so no separate role check happens client-side here;
+ *  `org-audit-log`'s own `requireOrgRole` is the real enforcement. Best-effort: a rejected promise
+ *  here is swallowed by the caller (the export itself already happened locally), never blocks the
+ *  download the user just triggered. */
+export async function logAuditEvent(
+  name: 'export.team_csv' | 'export.analytics_csv',
+  details?: Record<string, unknown>
+): Promise<void> {
+  const res = await fetch(`${getFunctionsUrl()}/org-audit-log`, {
+    method: 'POST',
+    headers: await getEdgeFunctionHeaders(),
+    body: JSON.stringify({ name, details }),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    console.error('logAuditEvent failed:', data.error || res.statusText);
+  }
+}
 
 export interface CreatedInvite {
   inviteId: string;
@@ -2253,11 +2379,16 @@ export async function stopDialerSession(
   return data as { status: 'stopped' };
 }
 
-export async function pauseDialerSession(sessionId: string): Promise<{ status: 'paused' }> {
+/** MISSION-5 TASK-M5-B1: `reason` is optional so every existing caller keeps working unchanged --
+ *  the endpoint itself defaults to 'Other' server-side when omitted. */
+export async function pauseDialerSession(
+  sessionId: string,
+  reason?: string
+): Promise<{ status: 'paused' }> {
   const res = await fetch(`${getFunctionsUrl()}/dialer-session-pause`, {
     method: 'POST',
     headers: await getEdgeFunctionHeaders(),
-    body: JSON.stringify({ sessionId }),
+    body: JSON.stringify({ sessionId, reason }),
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || 'Failed to pause dialer session');

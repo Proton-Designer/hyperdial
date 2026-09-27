@@ -33,6 +33,7 @@ import type { TelnyxClient } from './telnyx-client.ts';
 import { agentSipUri } from './dialer-engine.ts';
 import { encodeCoachingClientState, type CoachingMode } from './client-state.ts';
 import { webhookUrlForOrg } from './telnyx-provision.ts';
+import { logOrgAction } from './audit.ts';
 
 export type { CoachingMode };
 const COACHING_MODES: CoachingMode[] = ['listen', 'whisper', 'barge'];
@@ -229,6 +230,18 @@ export async function runStartCoachingAction(
     return { status: 502, body: { error: 'Failed to reach your phone line. Please try again.' } };
   }
 
+  // TASK-A1: logged at the manager's own dial attempt, not at the later call.answered join --
+  // this is the point the manager took the action, regardless of whether the target's leg is
+  // still there by the time the manager's own phone actually answers.
+  await logOrgAction(supabase, {
+    orgId,
+    actorUserId: managerId,
+    action: 'coaching.start',
+    targetType: 'dial_session',
+    targetId: targetSession.id,
+    details: { targetUserId, mode },
+  });
+
   return { status: 200, body: { coachingId, mode } };
 }
 
@@ -331,7 +344,7 @@ export async function processTelnyxCoachingEvent(
 ): Promise<void> {
   const { data: row, error } = await supabase
     .from('coaching_sessions')
-    .select('id, target_session_id, mode, status')
+    .select('id, target_session_id, manager_id, mode, status')
     .eq('id', args.coachingId)
     .eq('org_id', args.orgId)
     .maybeSingle();
@@ -355,6 +368,14 @@ export async function processTelnyxCoachingEvent(
       })
       .eq('id', row.id)
       .neq('status', 'ended');
+    await logOrgAction(supabase, {
+      orgId: args.orgId,
+      actorUserId: row.manager_id as string,
+      action: 'coaching.end',
+      targetType: 'dial_session',
+      targetId: row.target_session_id as string,
+      details: { mode: row.mode, reason: 'manager_hangup' },
+    });
     return;
   }
 

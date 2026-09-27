@@ -1,6 +1,7 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { corsHeaders, corsPreflightResponse } from '../_shared/cors.ts';
 import { requireOrgRole, type OrgRole } from '../_shared/auth.ts';
+import { logOrgAction } from '../_shared/audit.ts';
 
 function jsonError(status: number, message: string): Response {
   return new Response(JSON.stringify({ error: message }), {
@@ -90,7 +91,7 @@ Deno.serve(async (req) => {
   if (req.method !== 'POST') return jsonError(405, 'Method not allowed');
 
   // Design §2: "Invite/remove/change role of members" is owner/admin only.
-  const { orgId, error: authError } = await requireOrgRole(req, ['owner', 'admin']);
+  const { user, orgId, error: authError } = await requireOrgRole(req, ['owner', 'admin']);
   if (authError) return authError;
 
   let body: { action?: string; user_id?: string; role?: string; ghl_user_id?: string | null };
@@ -137,6 +138,14 @@ Deno.serve(async (req) => {
         console.error('org-members change_role error:', error.message);
         return jsonError(500, 'Failed to change role');
       }
+      await logOrgAction(supabase, {
+        orgId,
+        actorUserId: user.id,
+        action: 'member.role_change',
+        targetType: 'org_member',
+        targetId: targetUserId,
+        details: { from: target.role, to: body.role },
+      });
       break;
     }
     case 'disable': {
@@ -149,6 +158,14 @@ Deno.serve(async (req) => {
         console.error('org-members disable error:', error.message);
         return jsonError(500, 'Failed to disable member');
       }
+      await logOrgAction(supabase, {
+        orgId,
+        actorUserId: user.id,
+        action: 'member.disable',
+        targetType: 'org_member',
+        targetId: targetUserId,
+        details: { role: target.role },
+      });
       break;
     }
     case 'enable': {
@@ -161,6 +178,14 @@ Deno.serve(async (req) => {
         console.error('org-members enable error:', error.message);
         return jsonError(500, 'Failed to enable member');
       }
+      await logOrgAction(supabase, {
+        orgId,
+        actorUserId: user.id,
+        action: 'member.enable',
+        targetType: 'org_member',
+        targetId: targetUserId,
+        details: { role: target.role },
+      });
       break;
     }
     case 'remove': {
@@ -173,6 +198,14 @@ Deno.serve(async (req) => {
         console.error('org-members remove error:', error.message);
         return jsonError(500, 'Failed to remove member');
       }
+      await logOrgAction(supabase, {
+        orgId,
+        actorUserId: user.id,
+        action: 'member.remove',
+        targetType: 'org_member',
+        targetId: targetUserId,
+        details: { role: target.role },
+      });
       break;
     }
     // MISSION-4 TASK-T1 (GHL-8): "the contact's assigned intern comes from GHL's assignedTo,
@@ -196,6 +229,14 @@ Deno.serve(async (req) => {
             : 'Failed to set the GHL user id';
         return jsonError(status, message);
       }
+      await logOrgAction(supabase, {
+        orgId,
+        actorUserId: user.id,
+        action: 'member.set_ghl_user_id',
+        targetType: 'org_member',
+        targetId: targetUserId,
+        details: { ghl_user_id: raw || null },
+      });
       break;
     }
     default:

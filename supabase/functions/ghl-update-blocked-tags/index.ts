@@ -10,6 +10,7 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { corsHeaders, corsPreflightResponse } from '../_shared/cors.ts';
 import { requireOrgRole } from '../_shared/auth.ts';
+import { logOrgAction } from '../_shared/audit.ts';
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -48,7 +49,7 @@ Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return corsPreflightResponse();
   if (req.method !== 'POST') return jsonResponse({ error: 'Method not allowed' }, 405);
 
-  const { orgId, error: authError } = await requireOrgRole(req, ['owner', 'admin']);
+  const { user, orgId, error: authError } = await requireOrgRole(req, ['owner', 'admin']);
   if (authError) return authError;
 
   let body: { dncTags?: unknown; pausedTags?: unknown };
@@ -80,6 +81,15 @@ Deno.serve(async (req: Request) => {
     const status = rpcError.message.includes('has no GHL integration') ? 400 : 500;
     return jsonResponse({ error: rpcError.message }, status);
   }
+
+  await logOrgAction(supabase, {
+    orgId,
+    actorUserId: user.id,
+    action: 'ghl.update_blocked_tags',
+    targetType: 'org_integrations',
+    targetId: orgId,
+    details: { dncTags, pausedTags },
+  });
 
   return jsonResponse({ dncTags, pausedTags });
 });

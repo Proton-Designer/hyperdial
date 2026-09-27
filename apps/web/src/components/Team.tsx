@@ -6,6 +6,7 @@ import {
   getTeamLiveBoard,
   startCoaching,
   CoachingActionError,
+  logAuditEvent,
   type TeamDailyStatsRow,
   type TeamLiveBoardRow,
   type TeamLiveStatus,
@@ -357,6 +358,7 @@ export function Team() {
     if (!sortedDaily || sortedDaily.length === 0) return;
     const csv = rowsToCsv(COLUMNS, sortedDaily);
     downloadCsv(`team-daily-${range}-${new Date().toISOString().slice(0, 10)}.csv`, csv);
+    void logAuditEvent('export.team_csv', { range, rowCount: sortedDaily.length });
   };
 
   const toggleSort = (key: SortKey) => {
