@@ -7,6 +7,7 @@ import { Contacts } from './Contacts';
 import { Campaigns } from './Campaigns';
 import { Analytics } from './Analytics';
 import { Team } from './Team';
+import { Recordings } from './Recordings';
 import { Settings } from './Settings';
 import { BottomTabBar } from './app/BottomTabBar';
 import { PageTransition } from './app/PageTransition';
@@ -14,7 +15,14 @@ import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { useOrg } from '@/contexts/OrgContext';
 
 export type TabType =
-  'dashboard' | 'dialer' | 'contacts' | 'campaigns' | 'analytics' | 'team' | 'settings';
+  | 'dashboard'
+  | 'dialer'
+  | 'contacts'
+  | 'campaigns'
+  | 'analytics'
+  | 'team'
+  | 'recordings'
+  | 'settings';
 
 export interface ParallelDialLaunchContext {
   sessionId: string;
@@ -25,7 +33,10 @@ export interface ParallelDialLaunchContext {
 // Analytics, and Settings are for owner/admin. Enforced here (not just in Sidebar's tab list) so
 // every entry point -- the sidebar, a quick-action button, a future deep link -- falls back to
 // Dialer instead of rendering a hidden tab.
-const AGENT_ALLOWED_TABS: readonly TabType[] = ['dashboard', 'dialer', 'contacts'];
+// MISSION-5 TASK-M5-B5: Recordings added for every role, including agent -- `recordings_search`'s
+// own scoping already restricts an agent to their own calls, so there is no separate "own calls
+// only" client view to build; the same page just renders narrower for them.
+const AGENT_ALLOWED_TABS: readonly TabType[] = ['dashboard', 'dialer', 'contacts', 'recordings'];
 
 // MISSION-5 TASK-M5-A5: a manager gets Analytics (reports) and Team, plus Settings (internally
 // restricted to just the Activity/audit-log sub-tab and their own profile -- see Settings.tsx's
@@ -40,6 +51,7 @@ const MANAGER_ALLOWED_TABS: readonly TabType[] = [
   'contacts',
   'analytics',
   'team',
+  'recordings',
   'settings',
 ];
 
@@ -55,6 +67,7 @@ const TAB_PATHS: Record<TabType, string> = {
   campaigns: '/campaigns',
   analytics: '/analytics',
   team: '/team',
+  recordings: '/recordings',
   settings: '/settings',
 };
 const PATH_TABS: Partial<Record<string, TabType>> = Object.fromEntries(
@@ -281,6 +294,11 @@ export function MainApp() {
           {activeTab === 'team' && (
             <PageTransition>
               <Team />
+            </PageTransition>
+          )}
+          {activeTab === 'recordings' && (
+            <PageTransition>
+              <Recordings />
             </PageTransition>
           )}
           {activeTab === 'settings' && (

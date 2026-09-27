@@ -7,6 +7,7 @@ import {
   MoreHorizontal,
   BarChart3,
   UsersRound,
+  Headphones,
   Settings,
   LogOut,
 } from 'lucide-react';
@@ -118,6 +119,17 @@ export function BottomTabBar({ activeTab, onTabChange, isManager }: BottomTabBar
                 </button>
               </>
             )}
+            <button
+              type="button"
+              onClick={() => {
+                onTabChange('recordings');
+                setMoreOpen(false);
+              }}
+              className="flex items-center gap-3 rounded-app-md px-3 py-3 text-text-primary hover:bg-white/5"
+            >
+              <Headphones className="w-5 h-5 text-text-secondary" />
+              Recordings
+            </button>
             <button
               type="button"
               onClick={() => {

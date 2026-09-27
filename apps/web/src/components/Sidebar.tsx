@@ -6,6 +6,7 @@ import {
   Target,
   BarChart3,
   UsersRound,
+  Headphones,
   Settings,
   ChevronsLeft,
   ChevronsRight,
@@ -44,6 +45,9 @@ const tabs: NavTab[] = [
   { id: 'campaigns', icon: Target, label: 'Campaigns', minRole: 'admin' },
   { id: 'analytics', icon: BarChart3, label: 'Analytics', minRole: 'manager' },
   { id: 'team', icon: UsersRound, label: 'Team', minRole: 'manager' },
+  // MISSION-5 TASK-M5-B5: no minRole -- every role gets Recordings, `recordings_search`'s own
+  // scoping already narrows an agent to their own calls server-side.
+  { id: 'recordings', icon: Headphones, label: 'Recordings' },
 ];
 
 export function Sidebar({

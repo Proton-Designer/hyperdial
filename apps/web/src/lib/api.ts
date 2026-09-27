@@ -3830,3 +3830,302 @@ export function uploadMyVoicemailDrop(file: File): Promise<VoicemailDropInfo> {
 export function uploadOrgDefaultVoicemailDrop(file: File): Promise<VoicemailDropInfo> {
   return uploadVoicemailDrop('org', file);
 }
+
+// --- MISSION-5 TASK-M5-B5: call review library (recordings browser, flags, comments,
+// scorecards) -- backend is `20260927171355_call_review_library.sql`. Owner/admin see every
+// call, a manager's rows are pod-scoped, an agent sees/comments on only their own. ---
+
+export interface RecordingSearchRow {
+  call_leg_id: string;
+  agent_id: string;
+  agent_name: string;
+  campaign_id: string | null;
+  campaign_name: string | null;
+  disposition_key: string | null;
+  disposition_label: string | null;
+  duration_seconds: number | null;
+  ended_at: string | null;
+  is_flagged: boolean;
+  flag_reason: string | null;
+  comment_count: number;
+  has_scorecard: boolean;
+}
+
+export interface RecordingSearchFilters {
+  /** Owner/admin/manager only -- scope-checked server-side against the caller's own managed
+   *  pods (`recordings_search`'s own `p_agent_id` check); an agent may only ever pass their own
+   *  id (or omit it, same result). */
+  agentId?: string;
+  campaignId?: string;
+  dispositionKey?: string;
+  minDurationSeconds?: number;
+  maxDurationSeconds?: number;
+  start?: Date;
+  end?: Date;
+  flaggedOnly?: boolean;
+  limit?: number;
+  offset?: number;
+}
+
+/** The Recordings page's one-RPC-per-load list/filter query -- every filter is optional and
+ *  server-side (never client-filtered), same trust model as `getTeamDailyStats`. */
+export async function searchRecordings(
+  filters: RecordingSearchFilters = {}
+): Promise<RecordingSearchRow[]> {
+  const orgId = await getActiveOrgId();
+  const { data, error } = await supabase.rpc('recordings_search', {
+    p_org: orgId,
+    p_agent_id: filters.agentId ?? null,
+    p_campaign_id: filters.campaignId ?? null,
+    p_disposition_key: filters.dispositionKey ?? null,
+    p_min_duration_seconds: filters.minDurationSeconds ?? null,
+    p_max_duration_seconds: filters.maxDurationSeconds ?? null,
+    p_start: filters.start ? filters.start.toISOString() : null,
+    p_end: filters.end ? filters.end.toISOString() : null,
+    p_flagged_only: filters.flaggedOnly ?? false,
+    p_limit: filters.limit ?? 50,
+    p_offset: filters.offset ?? 0,
+  });
+  if (error) throw new Error(error.message);
+  return (data ?? []) as RecordingSearchRow[];
+}
+
+export interface RecordingFlag {
+  reason: string;
+  flaggedBy: string | null;
+  createdAt: string;
+}
+
+/** null = not flagged. Visibility is `recording_flags`' own RLS (anyone who can view the leg). */
+export async function getRecordingFlag(callLegId: string): Promise<RecordingFlag | null> {
+  const { data, error } = await supabase
+    .from('recording_flags')
+    .select('reason, flagged_by, created_at')
+    .eq('call_leg_id', callLegId)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!data) return null;
+  return { reason: data.reason, flaggedBy: data.flagged_by, createdAt: data.created_at };
+}
+
+/** Upsert -- re-flagging overwrites the reason/flagger. Anyone who can view the leg may flag it
+ *  (including an agent flagging their own call), enforced by `recording_flags`' own RLS. */
+export async function flagRecording(callLegId: string, reason: string): Promise<void> {
+  const orgId = await getActiveOrgId();
+  const { error } = await supabase
+    .from('recording_flags')
+    .upsert({ call_leg_id: callLegId, org_id: orgId, reason }, { onConflict: 'call_leg_id' });
+  if (error) throw new Error(error.message);
+}
+
+export async function unflagRecording(callLegId: string): Promise<void> {
+  const { error } = await supabase.from('recording_flags').delete().eq('call_leg_id', callLegId);
+  if (error) throw new Error(error.message);
+}
+
+export interface RecordingComment {
+  id: string;
+  callLegId: string;
+  authorUserId: string | null;
+  atSecond: number | null;
+  text: string;
+  createdAt: string;
+}
+
+/** Oldest first (a thread reads top-to-bottom). Visibility is `recording_comments`' own RLS. */
+export async function listRecordingComments(callLegId: string): Promise<RecordingComment[]> {
+  const { data, error } = await supabase
+    .from('recording_comments')
+    .select('id, call_leg_id, author_user_id, at_second, text, created_at')
+    .eq('call_leg_id', callLegId)
+    .order('created_at', { ascending: true });
+  if (error) throw new Error(error.message);
+  return (data ?? []).map((r) => ({
+    id: r.id,
+    callLegId: r.call_leg_id,
+    authorUserId: r.author_user_id,
+    atSecond: r.at_second,
+    text: r.text,
+    createdAt: r.created_at,
+  }));
+}
+
+/** Append-only -- there is no edit/delete (matches `org_audit_log`'s own permanent-note
+ *  convention). `atSecond` anchors the comment to a point in the recording's timeline. */
+export async function addRecordingComment(
+  callLegId: string,
+  text: string,
+  atSecond?: number
+): Promise<void> {
+  const orgId = await getActiveOrgId();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) throw new Error('Not signed in');
+  const { error } = await supabase.from('recording_comments').insert({
+    call_leg_id: callLegId,
+    org_id: orgId,
+    author_user_id: user.id,
+    at_second: atSecond ?? null,
+    text,
+  });
+  if (error) throw new Error(error.message);
+}
+
+export type ScorecardCriterionKind = 'scale_1_5' | 'yes_no';
+
+export interface ScorecardRubricCriterion {
+  id: string;
+  label: string;
+  kind: ScorecardCriterionKind;
+  sort: number;
+}
+
+export interface ScorecardRubric {
+  id: string;
+  name: string;
+  criteria: ScorecardRubricCriterion[];
+}
+
+/** Every active rubric this org's owner/admin has defined, each with its active criteria in
+ *  display order -- `scorecard_rubrics`/`scorecard_rubric_criteria` are plain tables (RLS: any
+ *  org member reads, owner/admin manage), no RPC needed for this read. */
+export async function listScorecardRubrics(): Promise<ScorecardRubric[]> {
+  const { data: rubrics, error } = await supabase
+    .from('scorecard_rubrics')
+    .select('id, name')
+    .eq('active', true)
+    .order('name', { ascending: true });
+  if (error) throw new Error(error.message);
+  const rows = rubrics ?? [];
+  if (rows.length === 0) return [];
+  const { data: criteria, error: criteriaError } = await supabase
+    .from('scorecard_rubric_criteria')
+    .select('id, rubric_id, label, kind, sort')
+    .in(
+      'rubric_id',
+      rows.map((r) => r.id)
+    )
+    .eq('active', true)
+    .order('sort', { ascending: true });
+  if (criteriaError) throw new Error(criteriaError.message);
+  return rows.map((r) => ({
+    id: r.id,
+    name: r.name,
+    criteria: (criteria ?? [])
+      .filter((c) => c.rubric_id === r.id)
+      .map((c) => ({
+        id: c.id,
+        label: c.label,
+        kind: c.kind as ScorecardCriterionKind,
+        sort: c.sort,
+      })),
+  }));
+}
+
+export interface ScorecardScoreInput {
+  criterionId: string;
+  /** Exactly one of these must be set, matching the criterion's own `kind`. */
+  scoreValue?: number;
+  scoreBool?: boolean;
+}
+
+/** Owner/admin/manager only (never agent) -- a distinct, narrower gate than viewing/flagging/
+ *  commenting. Re-scoring replaces the full score set. Returns the scorecard's id. */
+export async function setCallScorecard(
+  callLegId: string,
+  rubricId: string,
+  scores: ScorecardScoreInput[]
+): Promise<string> {
+  const orgId = await getActiveOrgId();
+  const { data, error } = await supabase.rpc('set_call_scorecard', {
+    p_org: orgId,
+    p_call_leg_id: callLegId,
+    p_rubric_id: rubricId,
+    p_scores: scores.map((s) => ({
+      criterion_id: s.criterionId,
+      score_value: s.scoreValue ?? null,
+      score_bool: s.scoreBool ?? null,
+    })),
+  });
+  if (error) throw new Error(error.message);
+  return data as string;
+}
+
+export interface CallScorecardScore {
+  criterionId: string;
+  label: string;
+  kind: ScorecardCriterionKind;
+  scoreValue: number | null;
+  scoreBool: boolean | null;
+}
+
+export interface CallScorecardView {
+  rubricId: string;
+  rubricName: string;
+  scoredBy: string | null;
+  updatedAt: string;
+  scores: CallScorecardScore[];
+}
+
+/** null = this call has never been scored. Reads via `call_scorecards`/`call_scorecard_scores`'
+ *  own RLS (anyone who can view the leg) -- embeds through the real FKs to
+ *  scorecard_rubrics/scorecard_rubric_criteria rather than a second round trip. */
+export async function getCallScorecard(callLegId: string): Promise<CallScorecardView | null> {
+  const { data: cs, error } = await supabase
+    .from('call_scorecards')
+    .select('id, rubric_id, scored_by, updated_at, scorecard_rubrics(name)')
+    .eq('call_leg_id', callLegId)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!cs) return null;
+  const { data: scores, error: scoresError } = await supabase
+    .from('call_scorecard_scores')
+    .select('criterion_id, score_value, score_bool, scorecard_rubric_criteria(label, kind, sort)')
+    .eq('scorecard_id', cs.id)
+    .order('criterion_id', { ascending: true });
+  if (scoresError) throw new Error(scoresError.message);
+  type ScoreRow = {
+    criterion_id: string;
+    score_value: number | null;
+    score_bool: boolean | null;
+    scorecard_rubric_criteria: { label: string; kind: string; sort: number } | null;
+  };
+  const rubricName = (cs.scorecard_rubrics as unknown as { name: string } | null)?.name ?? 'Rubric';
+  return {
+    rubricId: cs.rubric_id,
+    rubricName,
+    scoredBy: cs.scored_by,
+    updatedAt: cs.updated_at,
+    scores: ((scores ?? []) as unknown as ScoreRow[])
+      .slice()
+      .sort(
+        (a, b) =>
+          (a.scorecard_rubric_criteria?.sort ?? 0) - (b.scorecard_rubric_criteria?.sort ?? 0)
+      )
+      .map((s) => ({
+        criterionId: s.criterion_id,
+        label: s.scorecard_rubric_criteria?.label ?? 'Criterion',
+        kind: (s.scorecard_rubric_criteria?.kind as ScorecardCriterionKind) ?? 'scale_1_5',
+        scoreValue: s.score_value,
+        scoreBool: s.score_bool,
+      })),
+  };
+}
+
+export interface ScorecardTrendPoint {
+  callLegId: string;
+  scoredAt: string;
+  scorePct: number;
+}
+
+/** The signed-in agent's own scorecard trend, oldest to newest -- backs Dashboard.tsx's My
+ *  stats card. No agentId parameter, same self-view trust model as `getAgentSelfStats`. */
+export async function getMyScorecardTrend(): Promise<ScorecardTrendPoint[]> {
+  const orgId = await getActiveOrgId();
+  const { data, error } = await supabase.rpc('my_scorecard_trend', { p_org: orgId });
+  if (error) throw new Error(error.message);
+  return ((data ?? []) as { call_leg_id: string; scored_at: string; score_pct: number }[]).map(
+    (r) => ({ callLegId: r.call_leg_id, scoredAt: r.scored_at, scorePct: r.score_pct })
+  );
+}

@@ -39,6 +39,7 @@ import {
   type SpendStatus,
 } from '@/lib/api';
 import { MyGoalHeader } from '@/components/goals/MyGoalHeader';
+import { MyScorecardTrendMini } from '@/components/Recordings';
 
 type PerfRange = '7d' | '30d' | 'custom';
 
@@ -266,6 +267,14 @@ export function Dashboard({
           title="Today's goals"
           cardClassName="mb-6 rounded-app-lg border border-border-subtle bg-surface-1 p-4 sm:p-6 shadow-app-sm"
         />
+      )}
+
+      {/* MISSION-5 TASK-M5-B5: renders nothing if this agent has never been scored -- see the
+          component's own header comment. */}
+      {isAgent && (
+        <div className="mb-6">
+          <MyScorecardTrendMini />
+        </div>
       )}
 
       {/* Compact stat row -- 2x2 on mobile, 4-across from md up. Shares one shape between the
