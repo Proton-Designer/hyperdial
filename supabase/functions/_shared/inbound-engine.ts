@@ -471,6 +471,11 @@ async function enqueueInboundCallNoteJob(
       agent_name: agentName,
       duration_seconds: durationSeconds,
       recording_url: null,
+      // MISSION-4 TASK-T2 (GHL-11/16): the real call time, not "now" -- this job can be retried
+      // well after the call itself. ended_at first (the call is over by the time this note job
+      // is enqueued at all -- see this function's own call site), answered_at as a fallback for
+      // the unusual case ended_at is somehow unset.
+      occurred_at: row.ended_at ?? row.answered_at ?? null,
     },
   });
   if (error)

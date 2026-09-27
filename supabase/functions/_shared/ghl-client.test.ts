@@ -1,4 +1,4 @@
-import { assertEquals } from 'jsr:@std/assert@1';
+import { assertEquals, assertRejects } from 'jsr:@std/assert@1';
 import {
   buildAddNotePayload,
   buildCreateTaskPayload,
@@ -452,6 +452,152 @@ Deno.test(
         'https://services.leadconnectorhq.com/custom-fields/object-key/contact?locationId=loc-1'
       );
       assertEquals(result, [{ id: 'f1', name: 'Business Name' }]);
+    } finally {
+      restore();
+    }
+  }
+);
+
+// ---------------------------------------------------------------------------
+// MISSION-4 TASK-T2 (GHL-11/12/13) additions
+// ---------------------------------------------------------------------------
+
+Deno.test(
+  'createGhlClient.updateContactCustomFields: PUTs { customFields: [{id, field_value}] } to /contacts/{id}',
+  async () => {
+    let seenUrl = '';
+    let seenMethod = '';
+    let seenBody: unknown = null;
+    const restore = stubFetch((url, init) => {
+      seenUrl = url;
+      seenMethod = init?.method ?? '';
+      seenBody = JSON.parse(String(init?.body ?? '{}'));
+      return new Response(JSON.stringify({}), { status: 200 });
+    });
+    try {
+      const client = createGhlClient('test-token');
+      await client.updateContactCustomFields('contact-1', [
+        { id: 'f1', fieldValue: '2026-09-27T00:00:00Z' },
+        { id: 'f2', fieldValue: '3' },
+      ]);
+      assertEquals(seenUrl, 'https://services.leadconnectorhq.com/contacts/contact-1');
+      assertEquals(seenMethod, 'PUT');
+      assertEquals(seenBody, {
+        customFields: [
+          { id: 'f1', field_value: '2026-09-27T00:00:00Z' },
+          { id: 'f2', field_value: '3' },
+        ],
+      });
+    } finally {
+      restore();
+    }
+  }
+);
+
+Deno.test(
+  'createGhlClient.moveOpportunityStage: an EXISTING opportunity is found and PUT to the new stage',
+  async () => {
+    const seen: { url: string; method: string; body: unknown }[] = [];
+    const restore = stubFetch((url, init) => {
+      seen.push({
+        url,
+        method: init?.method ?? 'GET',
+        body: init?.body ? JSON.parse(String(init.body)) : null,
+      });
+      if (url.includes('/opportunities/search')) {
+        return new Response(
+          JSON.stringify({ opportunities: [{ id: 'opp-1', pipelineId: 'p1' }] }),
+          { status: 200 }
+        );
+      }
+      return new Response(JSON.stringify({}), { status: 200 });
+    });
+    try {
+      const client = createGhlClient('test-token');
+      const result = await client.moveOpportunityStage({
+        locationId: 'loc-1',
+        contactId: 'contact-1',
+        pipelineId: 'p1',
+        pipelineStageId: 'stage-2',
+        opportunityName: 'HyperDial lead',
+      });
+      assertEquals(result, { opportunityId: 'opp-1', created: false });
+      assertEquals(seen.length, 2);
+      assertEquals(seen[0].method, 'GET');
+      assertEquals(
+        seen[0].url,
+        'https://services.leadconnectorhq.com/opportunities/search?location_id=loc-1&pipeline_id=p1&contact_id=contact-1&limit=1'
+      );
+      assertEquals(seen[1].url, 'https://services.leadconnectorhq.com/opportunities/opp-1');
+      assertEquals(seen[1].method, 'PUT');
+      assertEquals(seen[1].body, { pipelineStageId: 'stage-2' });
+    } finally {
+      restore();
+    }
+  }
+);
+
+Deno.test(
+  'createGhlClient.moveOpportunityStage: no existing opportunity -- creates one already at the target stage',
+  async () => {
+    const seen: { url: string; method: string; body: unknown }[] = [];
+    const restore = stubFetch((url, init) => {
+      seen.push({
+        url,
+        method: init?.method ?? 'GET',
+        body: init?.body ? JSON.parse(String(init.body)) : null,
+      });
+      if (url.includes('/opportunities/search')) {
+        return new Response(JSON.stringify({ opportunities: [] }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ opportunity: { id: 'opp-new' } }), { status: 201 });
+    });
+    try {
+      const client = createGhlClient('test-token');
+      const result = await client.moveOpportunityStage({
+        locationId: 'loc-1',
+        contactId: 'contact-1',
+        pipelineId: 'p1',
+        pipelineStageId: 'stage-2',
+        opportunityName: 'HyperDial lead',
+      });
+      assertEquals(result, { opportunityId: 'opp-new', created: true });
+      assertEquals(seen[1].method, 'POST');
+      assertEquals(seen[1].url, 'https://services.leadconnectorhq.com/opportunities/');
+      assertEquals(seen[1].body, {
+        pipelineId: 'p1',
+        locationId: 'loc-1',
+        name: 'HyperDial lead',
+        pipelineStageId: 'stage-2',
+        status: 'open',
+        contactId: 'contact-1',
+      });
+    } finally {
+      restore();
+    }
+  }
+);
+
+Deno.test(
+  'createGhlClient.moveOpportunityStage: throws when the create response has no opportunity.id',
+  async () => {
+    const restore = stubFetch((url) => {
+      if (url.includes('/opportunities/search')) {
+        return new Response(JSON.stringify({ opportunities: [] }), { status: 200 });
+      }
+      return new Response(JSON.stringify({}), { status: 200 });
+    });
+    try {
+      const client = createGhlClient('test-token');
+      await assertRejects(() =>
+        client.moveOpportunityStage({
+          locationId: 'loc-1',
+          contactId: 'contact-1',
+          pipelineId: 'p1',
+          pipelineStageId: 'stage-2',
+          opportunityName: 'HyperDial lead',
+        })
+      );
     } finally {
       restore();
     }

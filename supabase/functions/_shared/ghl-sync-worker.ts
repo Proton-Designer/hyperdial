@@ -18,6 +18,77 @@ export interface JobProgress {
   tag_added?: boolean;
   task_created?: boolean;
   dnd_set?: boolean;
+  /** MISSION-4 TASK-T2 (GHL-11/13): last_call_at/last_call_outcome/call_attempts (+
+   *  license_number/service_zips for a 'yes_build_profile' disposition) pushed via
+   *  `updateContactCustomFields`. */
+  custom_fields_pushed?: boolean;
+  /** MISSION-4 TASK-T2 (GHL-12): the org-configured outcome -> pipeline stage move applied. */
+  stage_moved?: boolean;
+}
+
+/** MISSION-4 TASK-T2 (GHL-11/12/13): everything a push job needs to know about the ORG's own
+ *  push-direction configuration -- resolved once per org by the caller (same "resolve per org,
+ *  not per job" shape `resolveOrgGhlContext`/`buildEnrichment` already use), not re-fetched per
+ *  job. Both fields are entirely optional/absent-safe: an org with no push field mapping or no
+ *  outcome->stage config configured at all just gets a job with `pushFieldMapping: undefined`/
+ *  no `stageTarget`, and every new step below no-ops cleanly. */
+export interface GhlPushConfig {
+  /** target key -> GHL custom-field-definition id. The SAME `org_integrations.ghl_field_mapping`
+   *  jsonb T1 built for pull-direction enrichment, reused unchanged in its natural stored
+   *  direction (target key -> field id) -- push needs no inversion, only pull did. */
+  pushFieldMapping?: Record<string, string>;
+}
+
+/** Fields resolved by the CALLER (ghl-sync-worker/index.ts) at push time from `call_legs`/
+ *  `campaign_leads` -- kept OUT of `DispositionPayload` (which is `submit_disposition`'s own
+ *  enqueue-time snapshot, an already-live, complex RPC not worth touching for this) so this
+ *  module never needs the SQL side to change at all. */
+export interface DispositionPushTimeContext {
+  /** ISO 8601, or null if genuinely unknown (never invented as "now" -- a stale/absent value is
+   *  more honest than a wrong one). */
+  lastCallAt?: string | null;
+  /** `campaign_leads.attempts` for this lead, or null when the leg has no lead_id at all (e.g. a
+   *  contact dialed outside any campaign). */
+  callAttempts?: number | null;
+  /** The org's configured outcome -> pipeline/stage move for THIS disposition
+   *  (`dispositions.ghl_pipeline_id`/`ghl_pipeline_stage_id`) -- absent/null means "unmapped,
+   *  never move" per the task's own explicit requirement. */
+  stageTarget?: { pipelineId: string; pipelineStageId: string } | null;
+}
+
+/** Builds the `{id, fieldValue}[]` array `updateContactCustomFields` needs from whichever of
+ *  last_call_at/last_call_outcome/call_attempts/license_number/service_zips have BOTH a value
+ *  worth pushing AND a configured GHL field id -- an org that hasn't mapped a given key, or a
+ *  value that's simply absent this time (e.g. no license_number on a non-build-profile
+ *  disposition), silently contributes nothing for that one key rather than erroring. Exported for
+ *  its own direct test coverage (pure, no I/O). */
+export function buildPushCustomFields(
+  mapping: Record<string, string> | undefined,
+  values: {
+    lastCallAt?: string | null;
+    lastCallOutcome?: string | null;
+    callAttempts?: number | null;
+    licenseNumber?: string | null;
+    serviceZips?: string[] | null;
+  }
+): { id: string; fieldValue: string }[] {
+  if (!mapping) return [];
+  const out: { id: string; fieldValue: string }[] = [];
+  const push = (targetKey: string, value: string | undefined | null) => {
+    const fieldId = mapping[targetKey];
+    if (fieldId && value !== undefined && value !== null && value !== '') {
+      out.push({ id: fieldId, fieldValue: value });
+    }
+  };
+  push('last_call_at', values.lastCallAt);
+  push('last_call_outcome', values.lastCallOutcome);
+  push('call_attempts', values.callAttempts === null ? null : String(values.callAttempts ?? ''));
+  push('license_number', values.licenseNumber);
+  push(
+    'service_zips',
+    values.serviceZips && values.serviceZips.length > 0 ? values.serviceZips.join(', ') : null
+  );
+  return out;
 }
 
 export interface DispositionPayload {
@@ -85,6 +156,11 @@ export interface ProcessDispositionJobArgs {
   payload: DispositionPayload;
   /** Steps already completed by a prior attempt -- each step is skipped when its flag is set. */
   progress: JobProgress;
+  /** MISSION-4 TASK-T2: optional -- an org with no push field mapping / no stage config at all
+   *  simply gets no custom-fields/stage-move step run (both steps still mark themselves done,
+   *  since "nothing to push" is a completed no-op, not a failure to retry forever). */
+  pushConfig?: GhlPushConfig;
+  pushTimeContext?: DispositionPushTimeContext;
 }
 
 export interface ProcessJobResult {
@@ -160,6 +236,44 @@ export async function processDispositionJob(
       progress.dnd_set = true;
     }
 
+    // MISSION-4 TASK-T2 (GHL-11/13): last_call_at/last_call_outcome/call_attempts, plus
+    // license_number/service_zips (carried in the payload since TASK-F-P1, unmapped until now)
+    // when the org's field mapping has a GHL field id for any of them.
+    if (!progress.custom_fields_pushed) {
+      const fields = buildPushCustomFields(args.pushConfig?.pushFieldMapping, {
+        lastCallAt: args.pushTimeContext?.lastCallAt,
+        lastCallOutcome: args.payload.disposition_label,
+        callAttempts: args.pushTimeContext?.callAttempts,
+        licenseNumber: args.payload.license_number,
+        serviceZips: args.payload.zips,
+      });
+      if (fields.length > 0) {
+        await args.client.updateContactCustomFields(ghlContactId, fields);
+      }
+      progress.custom_fields_pushed = true;
+    }
+
+    // MISSION-4 TASK-T2 (GHL-12): "the pipeline stage moves with the outcome ... unmapped = no
+    // move" -- stageTarget is null/absent for a disposition the admin hasn't configured a
+    // pipeline/stage for, in which case this step does nothing but still marks itself done.
+    if (!progress.stage_moved) {
+      const stageTarget = args.pushTimeContext?.stageTarget;
+      if (stageTarget) {
+        await args.client.moveOpportunityStage({
+          locationId: args.locationId,
+          contactId: ghlContactId,
+          pipelineId: stageTarget.pipelineId,
+          pipelineStageId: stageTarget.pipelineStageId,
+          opportunityName:
+            [args.contactFields.firstName, args.contactFields.lastName]
+              .filter(Boolean)
+              .join(' ')
+              .trim() || 'HyperDial lead',
+        });
+      }
+      progress.stage_moved = true;
+    }
+
     return { ok: true, progress, resolvedGhlContactId: ghlContactId };
   } catch (err) {
     return {
@@ -178,7 +292,18 @@ export interface InboundCallNotePayload {
   agent_name: string | null;
   duration_seconds: number;
   recording_url: string | null;
+  /** MISSION-4 TASK-T2 (GHL-11/16): ISO 8601 -- when the inbound call actually happened, for the
+   *  same push-time "last_call_at" custom field a disposition job pushes. Optional/nullable
+   *  rather than defaulting to "now" here -- a job can be retried well after the real call, and
+   *  the caller (inbound-engine.ts) already has the real timestamp (`inbound_calls.ended_at`)
+   *  available at enqueue time, so there's no reason to guess. */
+  occurred_at?: string | null;
 }
+
+/** MISSION-4 TASK-T2 (GHL-16): "inbound calls push a GHL note + the last-call fields," same tag
+ *  convention GHL-10 established for outbound dispositions (`'call:' || key`) -- inbound has no
+ *  disposition key, so this is the one hardcoded literal for the inbound case specifically. */
+const INBOUND_CALL_GHL_TAG = 'call:inbound';
 
 export function buildInboundCallNote(p: InboundCallNotePayload): string {
   const outcomeLabel: Record<InboundCallNotePayload['outcome'], string> = {
@@ -201,10 +326,16 @@ export interface ProcessInboundCallNoteJobArgs {
   contactFields: ContactFields;
   payload: InboundCallNotePayload;
   progress: JobProgress;
+  /** MISSION-4 TASK-T2 (GHL-11/16): same org-wide push field mapping a disposition job gets --
+   *  inbound calls have no per-outcome pipeline-stage config (GHL-12 is disposition-only, per
+   *  the task's own "the pipeline stage moves with the outcome" wording), so only
+   *  `pushFieldMapping` applies here, never a `stageTarget`. */
+  pushConfig?: GhlPushConfig;
 }
 
-/** Mirrors processNurtureTagJob's shape exactly (upsert-if-needed, one step, no tag/task/dnd)
- *  with `note_added` as its one step instead of `tag_added`. */
+/** Mirrors processNurtureTagJob's shape (upsert-if-needed) but with THREE steps of its own
+ *  (note -> tag -> custom fields), not one -- GHL-16's "note + the last-call fields" plus GHL-10's
+ *  same tagging convention applied to the inbound case. */
 export async function processInboundCallNoteJob(
   args: ProcessInboundCallNoteJobArgs
 ): Promise<ProcessJobResult> {
@@ -235,6 +366,22 @@ export async function processInboundCallNoteJob(
     if (!progress.note_added) {
       await args.client.addNote(ghlContactId, { body: buildInboundCallNote(args.payload) });
       progress.note_added = true;
+    }
+
+    if (!progress.tag_added) {
+      await args.client.addTags(ghlContactId, [INBOUND_CALL_GHL_TAG]);
+      progress.tag_added = true;
+    }
+
+    if (!progress.custom_fields_pushed) {
+      const fields = buildPushCustomFields(args.pushConfig?.pushFieldMapping, {
+        lastCallAt: args.payload.occurred_at,
+        lastCallOutcome: args.payload.outcome,
+      });
+      if (fields.length > 0) {
+        await args.client.updateContactCustomFields(ghlContactId, fields);
+      }
+      progress.custom_fields_pushed = true;
     }
 
     return { ok: true, progress, resolvedGhlContactId: ghlContactId };

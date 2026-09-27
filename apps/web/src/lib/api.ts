@@ -2221,6 +2221,11 @@ export interface Disposition {
    *  creation, matching `key`/`lead_effect`'s own "not editable after creation" precedent below --
    *  changing it later would retroactively reinterpret already-submitted dispositions. */
   required_fields: string[] | null;
+  /** MISSION-4 TASK-T2 (GHL-12): "the pipeline stage moves with the outcome ... unmapped = no
+   *  move" -- both null (the default) means this disposition never moves anything. Set as a
+   *  pair (either both null or both set) by the Settings editor. */
+  ghl_pipeline_id: string | null;
+  ghl_pipeline_stage_id: string | null;
 }
 
 /** Every org's dispositions (including inactive ones -- the Settings editor lists both; the
@@ -2231,7 +2236,7 @@ export async function listDispositions(): Promise<Disposition[]> {
   const { data, error } = await supabase
     .from('dispositions')
     .select(
-      'id, org_id, key, label, lead_effect, ghl_tag, creates_task, sort, active, is_win, required_fields'
+      'id, org_id, key, label, lead_effect, ghl_tag, creates_task, sort, active, is_win, required_fields, ghl_pipeline_id, ghl_pipeline_stage_id'
     )
     .eq('org_id', orgId)
     .order('sort', { ascending: true });
@@ -2268,7 +2273,7 @@ export async function createDisposition(input: CreateDispositionInput): Promise<
       required_fields: input.required_fields ?? null,
     })
     .select(
-      'id, org_id, key, label, lead_effect, ghl_tag, creates_task, sort, active, is_win, required_fields'
+      'id, org_id, key, label, lead_effect, ghl_tag, creates_task, sort, active, is_win, required_fields, ghl_pipeline_id, ghl_pipeline_stage_id'
     )
     .single();
   if (error) throw new Error(error.message);
@@ -2282,6 +2287,9 @@ export interface UpdateDispositionInput {
   sort?: number;
   active?: boolean;
   is_win?: boolean;
+  /** MISSION-4 TASK-T2 (GHL-12) -- always set together (both null clears the mapping). */
+  ghl_pipeline_id?: string | null;
+  ghl_pipeline_stage_id?: string | null;
 }
 
 /** `key` and `lead_effect` are intentionally not editable here -- crm_sync_jobs payloads and any

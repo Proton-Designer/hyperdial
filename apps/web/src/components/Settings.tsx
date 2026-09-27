@@ -1087,6 +1087,9 @@ function GhlBlockedTagsEditor({
   );
 }
 
+// MISSION-4 TASK-T2: keep in sync with supabase/functions/_shared/ghl-field-mapping.ts's
+// GHL_FIELD_MAPPING_TARGET_KEYS -- duplicated because this Vite app can't import a Deno
+// `_shared/*.ts` module (same three-copies reasoning as area-code-tz.ts).
 const GHL_FIELD_MAPPING_TARGET_KEYS = [
   'business_name',
   'website',
@@ -1096,6 +1099,9 @@ const GHL_FIELD_MAPPING_TARGET_KEYS = [
   'service_zips',
   'tier',
   'list_source',
+  'last_call_at',
+  'last_call_outcome',
+  'call_attempts',
 ] as const;
 
 const GHL_FIELD_MAPPING_LABELS: Record<(typeof GHL_FIELD_MAPPING_TARGET_KEYS)[number], string> = {
@@ -1107,6 +1113,9 @@ const GHL_FIELD_MAPPING_LABELS: Record<(typeof GHL_FIELD_MAPPING_TARGET_KEYS)[nu
   service_zips: 'Service ZIPs',
   tier: 'Tier',
   list_source: 'List source',
+  last_call_at: 'Last call time',
+  last_call_outcome: 'Last call outcome',
+  call_attempts: 'Call attempts',
 };
 
 /** MISSION-4 TASK-T1 (GHL-5/6): the 5-minute auto-pull toggle (disabled by default) + last-run
@@ -1521,6 +1530,23 @@ function DispositionsTab() {
   const [editGhlTag, setEditGhlTag] = useState('');
   const [editCreatesTask, setEditCreatesTask] = useState(false);
   const [movingId, setMovingId] = useState<string | null>(null);
+  // MISSION-4 TASK-T2 (GHL-12): "pipelineId|stageId", same combined-<select>-value convention
+  // GhlCampaignMappingsEditor already uses -- '' means "unmapped, no move".
+  const [editStageKey, setEditStageKey] = useState('');
+  const [ghlStages, setGhlStages] = useState<GhlPipelineStageOption[] | null>(null);
+  const [loadingStages, setLoadingStages] = useState(false);
+
+  const handleLoadGhlStages = async () => {
+    setLoadingStages(true);
+    setError(null);
+    try {
+      setGhlStages(await listGhlPipelineStages());
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to load GHL pipelines');
+    } finally {
+      setLoadingStages(false);
+    }
+  };
 
   const load = useCallback(() => {
     setLoading(true);
@@ -1539,16 +1565,26 @@ function DispositionsTab() {
     setEditLabel(d.label);
     setEditGhlTag(d.ghl_tag ?? '');
     setEditCreatesTask(d.creates_task);
+    setEditStageKey(
+      d.ghl_pipeline_id && d.ghl_pipeline_stage_id
+        ? `${d.ghl_pipeline_id}|${d.ghl_pipeline_stage_id}`
+        : ''
+    );
   };
 
   const saveEdit = async (id: string) => {
     setSavingId(id);
     setError(null);
     try {
+      const [ghlPipelineId, ghlPipelineStageId] = editStageKey
+        ? editStageKey.split('|')
+        : [null, null];
       await updateDisposition(id, {
         label: editLabel.trim(),
         ghl_tag: editGhlTag.trim() || null,
         creates_task: editCreatesTask,
+        ghl_pipeline_id: ghlPipelineId,
+        ghl_pipeline_stage_id: ghlPipelineStageId,
       });
       setEditingId(null);
       load();
@@ -1701,6 +1737,33 @@ function DispositionsTab() {
                       />
                       Creates a GHL task
                     </label>
+                    <div className="flex items-center gap-2">
+                      {ghlStages ? (
+                        <select
+                          value={editStageKey}
+                          onChange={(e) => setEditStageKey(e.target.value)}
+                          className="flex-1 bg-surface-2 border border-white/10 rounded-lg px-3 py-2 text-sm text-white"
+                        >
+                          <option value="">No GHL pipeline stage move</option>
+                          {ghlStages.map((s) => (
+                            <option key={s.stageId} value={`${s.pipelineId}|${s.stageId}`}>
+                              {s.pipelineName} / {s.stageName}
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={handleLoadGhlStages}
+                          disabled={loadingStages}
+                          className="flex-1 px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-text-secondary text-sm disabled:opacity-50"
+                        >
+                          {loadingStages
+                            ? 'Loading...'
+                            : 'Load pipeline stages from GHL to set a move...'}
+                        </button>
+                      )}
+                    </div>
                     <div className="flex gap-2">
                       <button
                         onClick={() => saveEdit(d.id)}
@@ -1739,6 +1802,7 @@ function DispositionsTab() {
                         {d.required_fields && d.required_fields.length > 0
                           ? ` · requires ${d.required_fields.join(', ')}`
                           : ''}
+                        {d.ghl_pipeline_stage_id ? ' · moves GHL pipeline stage' : ''}
                       </div>
                     </div>
                     <div className="flex items-center gap-1 flex-shrink-0">

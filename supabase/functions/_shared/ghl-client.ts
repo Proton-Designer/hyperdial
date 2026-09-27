@@ -322,6 +322,16 @@ export interface GhlClient {
   createTask(contactId: string, args: CreateTaskArgs): Promise<{ taskId: string }>;
   /** PUT /contacts/{contactId} with only { dnd } — turns DND on/off for a known contact id (DNC disposition). */
   setDnd(contactId: string, dnd: boolean): Promise<void>;
+  /** MISSION-4 TASK-T2 (GHL-11/13): PUT /contacts/{contactId} with only `customFields` —
+   *  verified against contacts.json's `UpdateContactDto`: each entry is `{id, field_value}`
+   *  (`id` is the custom-field DEFINITION id, required; `field_value` the value — note the
+   *  write-side key is `field_value`, NOT `value`, unlike the READ side's `GhlCustomFieldValue`
+   *  T1 already defined for a pulled contact's own `customFields[]`). Never touches any other
+   *  contact field (same minimal-PUT shape as `setDnd`). */
+  updateContactCustomFields(
+    contactId: string,
+    fields: { id: string; fieldValue: string }[]
+  ): Promise<void>;
   /** GET /contacts/{contactId} — the only endpoint confirmed to return assignedTo/dateUpdated/
    *  customFields together (TASK-T1). Used for a stage-mode pull's per-contact detail fetch. */
   getContact(contactId: string): Promise<GhlContact>;
@@ -340,6 +350,23 @@ export interface GhlClient {
    *  field DEFINITIONS (id -> name), used to resolve `GhlContact.customFields[].id` to a name
    *  and to compute the field-mapping editor's "sensible defaults by field name". */
   listContactCustomFieldDefs(locationId: string): Promise<GhlCustomFieldDef[]>;
+  /** MISSION-4 TASK-T2 (GHL-12): moves (or creates) the contact's opportunity in the given
+   *  pipeline to the given stage. Verified against opportunities.json: `GET
+   *  /opportunities/search?contact_id=&pipeline_id=` is the only way to find an existing
+   *  opportunity for a contact within one specific pipeline (no "get opportunity by contact+
+   *  pipeline" endpoint exists); `PUT /opportunities/{id}` (`UpdateOpportunityDto`) accepts
+   *  `pipelineStageId` alone to move an EXISTING opportunity; `POST /opportunities/`
+   *  (`CreateOpportunityDto`, required: pipelineId/locationId/name/status/contactId) creates one
+   *  already AT the target stage when the contact has none yet in this pipeline — a pulled
+   *  contact (or one that's never reached this outcome before) commonly has no opportunity at
+   *  all, so "move" must be able to fall back to "create". */
+  moveOpportunityStage(args: {
+    locationId: string;
+    contactId: string;
+    pipelineId: string;
+    pipelineStageId: string;
+    opportunityName: string;
+  }): Promise<{ opportunityId: string; created: boolean }>;
 }
 
 export interface CreateGhlClientOptions {
@@ -431,6 +458,15 @@ export function createGhlClient(token: string, options: CreateGhlClientOptions =
       });
     },
 
+    async updateContactCustomFields(contactId, fields) {
+      await ghlRequest(token, apiBase, `/contacts/${contactId}`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          customFields: fields.map((f) => ({ id: f.id, field_value: f.fieldValue })),
+        }),
+      });
+    },
+
     async getContact(contactId) {
       const res = await ghlRequest<{ contact?: GhlContact }>(
         token,
@@ -477,6 +513,48 @@ export function createGhlClient(token: string, options: CreateGhlClientOptions =
         `/custom-fields/object-key/contact?${qs}`
       );
       return res.fields ?? [];
+    },
+
+    async moveOpportunityStage(args) {
+      const qs = new URLSearchParams({
+        location_id: args.locationId,
+        pipeline_id: args.pipelineId,
+        contact_id: args.contactId,
+        limit: '1',
+      }).toString();
+      const searchRes = await ghlRequest<{ opportunities?: GhlOpportunity[] }>(
+        token,
+        apiBase,
+        `/opportunities/search?${qs}`
+      );
+      const existing = searchRes.opportunities?.[0];
+      if (existing?.id) {
+        await ghlRequest(token, apiBase, `/opportunities/${existing.id}`, {
+          method: 'PUT',
+          body: JSON.stringify({ pipelineStageId: args.pipelineStageId }),
+        });
+        return { opportunityId: existing.id, created: false };
+      }
+      const createRes = await ghlRequest<{ opportunity?: { id?: string } }>(
+        token,
+        apiBase,
+        '/opportunities/',
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            pipelineId: args.pipelineId,
+            locationId: args.locationId,
+            name: args.opportunityName,
+            pipelineStageId: args.pipelineStageId,
+            status: 'open',
+            contactId: args.contactId,
+          }),
+        }
+      );
+      if (!createRes.opportunity?.id) {
+        throw new Error('GHL moveOpportunityStage: create response had no opportunity.id');
+      }
+      return { opportunityId: createRes.opportunity.id, created: true };
     },
   };
 }

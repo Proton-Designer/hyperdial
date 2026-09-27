@@ -1293,3 +1293,60 @@ inbound leg on the same WebRTC client if only the coaching-specific check existe
 unique index `coaching_sessions_one_active_per_manager` closes the remaining race between that
 check and the insert -- don't remove it as "redundant" with the earlier check, it isn't (the
 check is advisory/racy, the index is the actual guarantee).
+
+## MISSION-4 TASK-T2 -- GHL push complete (GHL-2,10,11,12,13,16), 2026-09-27
+
+**Decision 1 -- GHL-10's tag gap was a FILL, not a rename.** Three of the 9 canonical seeded
+dispositions (`gatekeeper`/`voicemail_left`/`no_answer`) had `ghl_tag = null` since
+`20260925060000`; the other six already have admin-configured human-readable tags
+(`'Interested'`, `'Callback'`, ...). The task file's own "keep the admin-configurable mapping
+that exists; ensure every outcome has one" resolved the tension with `audit/requirements.md`'s
+generic `call:<disposition>` format example: only the three nulls were filled (to
+`'call:' || key`, migration `20260926080100`), the six existing custom tags were left completely
+untouched. Don't "fix" the inconsistency later by renaming the six to match -- that would break
+whatever GHL automations an org has already built against their existing tag names.
+
+**Decision 2 -- GHL-11/12/13 needed ZERO changes to `submit_disposition`.** That RPC
+(`20260925060000`, already live) is large and already reviewed; rather than editing it to embed
+`last_call_at`/`call_attempts`/a resolved pipeline-stage target into its enqueue-time jsonb
+payload, `ghl-sync-worker/index.ts` resolves all three AT PUSH TIME instead: `call_legs`
+(`dispositioned_at`/`ended_at`/`lead_id`) + `campaign_leads.attempts` for the disposition case,
+`dispositions.ghl_pipeline_id`/`ghl_pipeline_stage_id` (new nullable columns, same migration) for
+the stage move. This means an admin changing a disposition's pipeline-stage mapping applies to
+every future push of that disposition immediately, with no RPC redeploy needed, and kept a
+large already-live PL/pgSQL function completely out of this task's blast radius. Inbound calls
+(GHL-16) get `occurred_at` the same way -- a one-line addition to `inbound-engine.ts`'s own
+TypeScript enqueue call (`row.ended_at ?? row.answered_at`), not a SQL change either.
+
+**Decision 3 -- the SAME `org_integrations.ghl_field_mapping` jsonb serves both directions,
+unchanged.** T1 built it as `target key -> GHL field id` for pull-direction enrichment (inverted
+in TS to `field id -> target key` before use). Push needs the mapping in its NATURAL stored
+direction, so `last_call_at`/`last_call_outcome`/`call_attempts` were simply added to
+`GHL_FIELD_MAPPING_TARGET_KEYS` (three copies kept in sync: `_shared/ghl-field-mapping.ts`,
+its own test file's assumptions, and `apps/web/src/components/Settings.tsx`'s duplicated literal
+array -- same three-copies reasoning as `area-code-tz.ts`, Vite can't import the Deno module) --
+no new column, no new migration for this part.
+
+**Decision 4 -- GHL-2's rate limiter is the SAME shared `_shared/ghl-rate-limit.ts` T1 built for
+pull, now also wrapping `ghl-sync-worker`'s push client.** "Backoff on 429" was NOT built as new,
+429-specific logic -- `fail_crm_sync_job`'s existing exponential-ish backoff (any thrown error,
+including a 429, requeues with a growing delay, dead after 8 attempts, `20260924002000`) already
+covers it generically, same as every other transient GHL failure this outbox has always handled.
+"Batching" is the existing `CLAIM_BATCH_SIZE = 10` per tick (unchanged) -- GHL-2 was a gap in
+RATE LIMITING specifically (the push client had none at all until now), not in batching or
+backoff, both of which already existed from TASK-P3-P3.
+
+**Decision 5 -- `moveOpportunityStage` falls back to CREATE when no opportunity exists yet.**
+GHL's opportunity-search has no "get by contact+pipeline" shortcut; a pulled contact (or one
+that's never reached a stage-moving disposition before) commonly has no opportunity in the
+target pipeline at all. Searching first (`GET /opportunities/search?contact_id=&pipeline_id=`),
+then `PUT`-ing an existing one or `POST`-ing a new one already at the target stage, means GHL-12
+works identically whether or not GHL-4/GHL-5's own pull ever created an opportunity for this
+contact.
+
+**Do not undo without understanding:** `processDispositionJob`'s custom-fields and stage-move
+steps run unconditionally (marking themselves done even with no mapping/target configured) --
+this is deliberate, matching every other optional step in this file (tag/task/dnd already do the
+same "no-op but still done" thing). Don't add an early-return that skips setting the progress
+flag when there's nothing to push; that would make a retry re-check the same no-op forever
+instead of marking it complete once.

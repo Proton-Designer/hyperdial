@@ -24,6 +24,8 @@ const FIXTURE_DISPOSITIONS: Disposition[] = [
     active: true,
     is_win: true,
     required_fields: ['license_number', 'zips'],
+    ghl_pipeline_id: null,
+    ghl_pipeline_stage_id: null,
   },
   {
     id: '2',
@@ -37,6 +39,8 @@ const FIXTURE_DISPOSITIONS: Disposition[] = [
     active: true,
     is_win: false,
     required_fields: null,
+    ghl_pipeline_id: null,
+    ghl_pipeline_stage_id: null,
   },
   {
     id: '3',
@@ -50,6 +54,8 @@ const FIXTURE_DISPOSITIONS: Disposition[] = [
     active: true,
     is_win: false,
     required_fields: null,
+    ghl_pipeline_id: null,
+    ghl_pipeline_stage_id: null,
   },
   {
     id: '4',
@@ -63,6 +69,8 @@ const FIXTURE_DISPOSITIONS: Disposition[] = [
     active: true,
     is_win: false,
     required_fields: null,
+    ghl_pipeline_id: null,
+    ghl_pipeline_stage_id: null,
   },
   {
     id: '5',
@@ -76,6 +84,8 @@ const FIXTURE_DISPOSITIONS: Disposition[] = [
     active: true,
     is_win: false,
     required_fields: null,
+    ghl_pipeline_id: null,
+    ghl_pipeline_stage_id: null,
   },
   {
     id: '6',
@@ -89,6 +99,8 @@ const FIXTURE_DISPOSITIONS: Disposition[] = [
     active: true,
     is_win: false,
     required_fields: null,
+    ghl_pipeline_id: null,
+    ghl_pipeline_stage_id: null,
   },
   {
     id: '7',
@@ -102,6 +114,8 @@ const FIXTURE_DISPOSITIONS: Disposition[] = [
     active: true,
     is_win: false,
     required_fields: null,
+    ghl_pipeline_id: null,
+    ghl_pipeline_stage_id: null,
   },
   // Inactive on purpose: fixture proof that WrapUpModal filters to active=true itself.
   {
@@ -116,6 +130,8 @@ const FIXTURE_DISPOSITIONS: Disposition[] = [
     active: false,
     is_win: false,
     required_fields: null,
+    ghl_pipeline_id: null,
+    ghl_pipeline_stage_id: null,
   },
 ];
 

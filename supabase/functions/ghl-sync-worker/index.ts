@@ -14,6 +14,7 @@ import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2';
 import { timingSafeEqual } from 'jsr:@std/crypto@1/timing-safe-equal';
 import { corsHeaders, corsPreflightResponse } from '../_shared/cors.ts';
 import { createGhlClient, type GhlClient } from '../_shared/ghl-client.ts';
+import { createGhlRateLimiter, withGhlRateLimit } from '../_shared/ghl-rate-limit.ts';
 import {
   processContactUpsertJob,
   processDispositionJob,
@@ -22,6 +23,8 @@ import {
   processTagJob,
   type ContactFields,
   type DispositionPayload,
+  type DispositionPushTimeContext,
+  type GhlPushConfig,
   type InboundCallNotePayload,
   type JobProgress,
 } from '../_shared/ghl-sync-worker.ts';
@@ -73,6 +76,10 @@ interface CrmSyncJobRow {
 interface OrgGhlContext {
   client: GhlClient;
   locationId: string;
+  /** MISSION-4 TASK-T2 (GHL-11/13): the org's `ghl_field_mapping` reused in its natural stored
+   *  direction (target key -> GHL custom-field-definition id) -- push needs no inversion, only
+   *  T1's PULL-direction enrichment did. */
+  pushConfig: GhlPushConfig;
 }
 
 async function resolveOrgGhlContext(
@@ -81,7 +88,7 @@ async function resolveOrgGhlContext(
 ): Promise<OrgGhlContext | null> {
   const { data: integration } = await supabase
     .from('org_integrations')
-    .select('status, location_id')
+    .select('status, location_id, ghl_field_mapping')
     .eq('org_id', orgId)
     .eq('provider', 'ghl')
     .maybeSingle();
@@ -90,12 +97,81 @@ async function resolveOrgGhlContext(
   }
   const { data: token } = await supabase.rpc('get_org_ghl_token', { p_org: orgId });
   if (!token) return null;
+  // MISSION-4 TASK-T2 (GHL-2): "respect GHL rate limits ... batching" -- the SAME shared limiter
+  // T1 built for the pull path (100 req/10s, verified against GHL's published docs), one
+  // instance per org per invocation (this worker already resolves a client once per org, not per
+  // job -- CLAIM_BATCH_SIZE below is the "batching" half of GHL-2). A 429 that still slips
+  // through is not special-cased here: `fail_crm_sync_job`'s existing exponential-ish backoff
+  // (any thrown error -> requeue with a growing delay, dead after 8 attempts) already covers a
+  // 429 exactly like any other transient failure -- see decisions.md for why no separate
+  // 429-specific retry logic was added.
+  const rawClient = createGhlClient(token as string, {
+    apiBase: Deno.env.get('GHL_API_BASE') || undefined,
+  });
+  const client = withGhlRateLimit(rawClient, createGhlRateLimiter());
+  const pushFieldMapping = (integration.ghl_field_mapping as Record<string, string> | null) ?? {};
   return {
-    client: createGhlClient(token as string, {
-      apiBase: Deno.env.get('GHL_API_BASE') || undefined,
-    }),
+    client,
     locationId: integration.location_id as string,
+    pushConfig: { pushFieldMapping },
   };
+}
+
+interface DispositionRow {
+  ghl_pipeline_id: string | null;
+  ghl_pipeline_stage_id: string | null;
+}
+
+/** MISSION-4 TASK-T2 (GHL-12): resolves the org-configured outcome -> pipeline/stage move for
+ *  ONE disposition key. Looked up at push time (not carried in `submit_disposition`'s own
+ *  enqueue-time payload) so an admin can change or add a mapping and have it apply to every
+ *  future push of that disposition immediately, without needing that already-live RPC to
+ *  change at all. Null (unmapped, or either half missing) is the explicit "no move" case. */
+async function resolveStageTarget(
+  supabase: SupabaseClient,
+  orgId: string,
+  dispositionKey: string
+): Promise<{ pipelineId: string; pipelineStageId: string } | null> {
+  const { data } = await supabase
+    .from('dispositions')
+    .select('ghl_pipeline_id, ghl_pipeline_stage_id')
+    .eq('org_id', orgId)
+    .eq('key', dispositionKey)
+    .maybeSingle();
+  const row = data as DispositionRow | null;
+  if (!row?.ghl_pipeline_id || !row?.ghl_pipeline_stage_id) return null;
+  return { pipelineId: row.ghl_pipeline_id, pipelineStageId: row.ghl_pipeline_stage_id };
+}
+
+interface CallLegPushContext {
+  lastCallAt: string | null;
+  callAttempts: number | null;
+}
+
+/** MISSION-4 TASK-T2 (GHL-11): resolves last_call_at (the leg's own dispositioned_at/ended_at,
+ *  never "now" -- a retry can run well after the real call) and call_attempts
+ *  (`campaign_leads.attempts` for the leg's own lead, null when the leg has no lead_id at all,
+ *  e.g. a contact dialed outside any campaign) -- both entirely from EXISTING columns, no
+ *  `submit_disposition` change needed. */
+async function resolveDispositionPushTimeContext(
+  supabase: SupabaseClient,
+  callLegId: string | null
+): Promise<CallLegPushContext> {
+  if (!callLegId) return { lastCallAt: null, callAttempts: null };
+  const { data: leg } = await supabase
+    .from('call_legs')
+    .select('dispositioned_at, ended_at, lead_id')
+    .eq('id', callLegId)
+    .maybeSingle();
+  if (!leg) return { lastCallAt: null, callAttempts: null };
+  const lastCallAt = (leg.dispositioned_at as string | null) ?? (leg.ended_at as string | null);
+  if (!leg.lead_id) return { lastCallAt, callAttempts: null };
+  const { data: lead } = await supabase
+    .from('campaign_leads')
+    .select('attempts')
+    .eq('id', leg.lead_id)
+    .maybeSingle();
+  return { lastCallAt, callAttempts: (lead?.attempts as number | undefined) ?? null };
 }
 
 async function loadContactFields(
@@ -149,13 +225,20 @@ async function processJob(
 
   let result: Awaited<ReturnType<typeof processDispositionJob>>;
   if (job.kind === 'disposition') {
+    const payload = job.payload as unknown as DispositionPayload;
+    const [pushTimeContext, stageTarget] = await Promise.all([
+      resolveDispositionPushTimeContext(supabase, job.call_leg_id),
+      resolveStageTarget(supabase, job.org_id, payload.disposition_key),
+    ]);
     result = await processDispositionJob({
       client: ctx.client,
       locationId: ctx.locationId,
       ghlContactId: contact.ghlContactId,
       contactFields: contact.fields,
-      payload: job.payload as unknown as DispositionPayload,
+      payload,
       progress: job.progress ?? {},
+      pushConfig: ctx.pushConfig,
+      pushTimeContext: { ...pushTimeContext, stageTarget } satisfies DispositionPushTimeContext,
     });
   } else if (job.kind === 'nurture_tag') {
     // TASK-F-T1 (QUE-3): "max attempts -> nurture tag pushed to GHL."
@@ -174,6 +257,7 @@ async function processJob(
       contactFields: contact.fields,
       payload: job.payload as unknown as InboundCallNotePayload,
       progress: job.progress ?? {},
+      pushConfig: ctx.pushConfig,
     });
   } else if (job.kind === 'voicemail_tag' || job.kind === 'no_answer_tag') {
     // TASK-F-T3 (VMD-3, GHL-9 overlap): the counted tag itself was computed at enqueue time

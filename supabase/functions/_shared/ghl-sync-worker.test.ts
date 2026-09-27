@@ -2,11 +2,14 @@ import { assertEquals } from 'jsr:@std/assert@1';
 import { createGhlClient, type GhlClient } from './ghl-client.ts';
 import {
   buildDispositionNote,
+  buildPushCustomFields,
   processContactUpsertJob,
   processDispositionJob,
+  processInboundCallNoteJob,
   processNurtureTagJob,
   processTagJob,
   type DispositionPayload,
+  type InboundCallNotePayload,
 } from './ghl-sync-worker.ts';
 
 function stubFetch(handler: (url: string, init?: RequestInit) => Response) {
@@ -101,6 +104,8 @@ Deno.test(
         tag_added: true,
         task_created: true,
         dnd_set: true,
+        custom_fields_pushed: true,
+        stage_moved: true,
       });
       assertEquals(calls, [
         'POST /contacts/upsert',
@@ -604,6 +609,303 @@ Deno.test(
       assertEquals(result.ok, false);
       assertEquals(result.resolvedGhlContactId, null);
       assertEquals(tagCalls, 0);
+    } finally {
+      restore();
+    }
+  }
+);
+
+// ---------------------------------------------------------------------------
+// MISSION-4 TASK-T2 (GHL-2,10,11,12,13,16) additions
+// ---------------------------------------------------------------------------
+
+Deno.test('buildPushCustomFields: no mapping at all -- contributes nothing', () => {
+  assertEquals(
+    buildPushCustomFields(undefined, { lastCallAt: '2026-09-27T00:00:00Z', callAttempts: 3 }),
+    []
+  );
+});
+
+Deno.test('buildPushCustomFields: only the mapped, present keys are included', () => {
+  const result = buildPushCustomFields(
+    { last_call_at: 'f-lca', call_attempts: 'f-att' },
+    {
+      lastCallAt: '2026-09-27T00:00:00Z',
+      lastCallOutcome: 'Interested', // not mapped -- must be omitted
+      callAttempts: 3,
+      licenseNumber: null,
+      serviceZips: null,
+    }
+  );
+  assertEquals(result, [
+    { id: 'f-lca', fieldValue: '2026-09-27T00:00:00Z' },
+    { id: 'f-att', fieldValue: '3' },
+  ]);
+});
+
+Deno.test(
+  'buildPushCustomFields: call_attempts of 0 is a real value, not treated as absent',
+  () => {
+    const result = buildPushCustomFields({ call_attempts: 'f-att' }, { callAttempts: 0 });
+    assertEquals(result, [{ id: 'f-att', fieldValue: '0' }]);
+  }
+);
+
+Deno.test(
+  'buildPushCustomFields: service_zips joins into one string, license_number/zips reuse the same call',
+  () => {
+    const result = buildPushCustomFields(
+      { license_number: 'f-lic', service_zips: 'f-zips' },
+      { licenseNumber: 'LN-123', serviceZips: ['90210', '90211'] }
+    );
+    assertEquals(result, [
+      { id: 'f-lic', fieldValue: 'LN-123' },
+      { id: 'f-zips', fieldValue: '90210, 90211' },
+    ]);
+  }
+);
+
+Deno.test(
+  'processDispositionJob: GHL-11/13 custom fields pushed when pushConfig + pushTimeContext are given',
+  async () => {
+    let seenBody: unknown = null;
+    const restore = stubFetch((url, init) => {
+      if (url.includes('/contacts/upsert')) return Response.json({ contact: { id: 'ghl-1' } });
+      if (url.endsWith('/contacts/ghl-1') && init?.method === 'PUT') {
+        seenBody = JSON.parse(String(init.body));
+      }
+      return Response.json({ id: 'ok' });
+    });
+    try {
+      const client: GhlClient = createGhlClient('tok');
+      const buildProfilePayload: DispositionPayload = {
+        ...PAYLOAD,
+        license_number: 'LN-999',
+        zips: ['30301'],
+      };
+      const result = await processDispositionJob({
+        client,
+        locationId: 'loc-1',
+        ghlContactId: null,
+        contactFields: { firstName: 'Alice', lastName: 'Doe', phone: '+14155552671' },
+        payload: buildProfilePayload,
+        progress: {},
+        pushConfig: {
+          pushFieldMapping: {
+            last_call_at: 'f-lca',
+            last_call_outcome: 'f-lco',
+            call_attempts: 'f-att',
+            license_number: 'f-lic',
+            service_zips: 'f-zips',
+          },
+        },
+        pushTimeContext: { lastCallAt: '2026-09-27T00:00:00Z', callAttempts: 4 },
+      });
+      assertEquals(result.ok, true);
+      assertEquals(result.progress.custom_fields_pushed, true);
+      assertEquals(seenBody, {
+        customFields: [
+          { id: 'f-lca', field_value: '2026-09-27T00:00:00Z' },
+          { id: 'f-lco', field_value: 'Interested' },
+          { id: 'f-att', field_value: '4' },
+          { id: 'f-lic', field_value: 'LN-999' },
+          { id: 'f-zips', field_value: '30301' },
+        ],
+      });
+    } finally {
+      restore();
+    }
+  }
+);
+
+Deno.test(
+  'processDispositionJob: no pushConfig at all -- the custom-fields step is a clean no-op, never PUTs',
+  async () => {
+    let putCalls = 0;
+    const restore = stubFetch((url, init) => {
+      if (url.includes('/contacts/upsert')) return Response.json({ contact: { id: 'ghl-1' } });
+      if (init?.method === 'PUT') putCalls++;
+      return Response.json({ id: 'ok' });
+    });
+    try {
+      const client: GhlClient = createGhlClient('tok');
+      const result = await processDispositionJob({
+        client,
+        locationId: 'loc-1',
+        ghlContactId: null,
+        contactFields: { firstName: 'Alice', lastName: 'Doe', phone: '+14155552671' },
+        payload: PAYLOAD,
+        progress: {},
+      });
+      assertEquals(result.ok, true);
+      assertEquals(result.progress.custom_fields_pushed, true);
+      assertEquals(putCalls, 0);
+    } finally {
+      restore();
+    }
+  }
+);
+
+Deno.test(
+  'processDispositionJob: GHL-12 stage move -- calls moveOpportunityStage when a stageTarget is configured',
+  async () => {
+    const calls: string[] = [];
+    const restore = stubFetch((url, init) => {
+      const method = init?.method ?? 'GET';
+      calls.push(`${method} ${new URL(url).pathname}`);
+      if (url.includes('/contacts/upsert')) return Response.json({ contact: { id: 'ghl-1' } });
+      if (url.includes('/opportunities/search')) return Response.json({ opportunities: [] });
+      if (url.includes('/opportunities/')) return Response.json({ opportunity: { id: 'opp-1' } });
+      return Response.json({ id: 'ok' });
+    });
+    try {
+      const client: GhlClient = createGhlClient('tok');
+      const result = await processDispositionJob({
+        client,
+        locationId: 'loc-1',
+        ghlContactId: null,
+        contactFields: { firstName: 'Alice', lastName: 'Doe', phone: '+14155552671' },
+        payload: PAYLOAD,
+        progress: {},
+        pushTimeContext: {
+          stageTarget: { pipelineId: 'p1', pipelineStageId: 'stage-2' },
+        },
+      });
+      assertEquals(result.ok, true);
+      assertEquals(result.progress.stage_moved, true);
+      assertEquals(
+        calls.some((c) => c.includes('/opportunities/search')),
+        true
+      );
+      assertEquals(
+        calls.some((c) => c === 'POST /opportunities/'),
+        true
+      );
+    } finally {
+      restore();
+    }
+  }
+);
+
+Deno.test(
+  'processDispositionJob: unmapped disposition (no stageTarget) never calls the opportunities endpoint',
+  async () => {
+    let opportunityCalls = 0;
+    const restore = stubFetch((url) => {
+      if (url.includes('/contacts/upsert')) return Response.json({ contact: { id: 'ghl-1' } });
+      if (url.includes('/opportunities')) opportunityCalls++;
+      return Response.json({ id: 'ok' });
+    });
+    try {
+      const client: GhlClient = createGhlClient('tok');
+      const result = await processDispositionJob({
+        client,
+        locationId: 'loc-1',
+        ghlContactId: null,
+        contactFields: { firstName: 'Alice', lastName: 'Doe', phone: '+14155552671' },
+        payload: PAYLOAD,
+        progress: {},
+      });
+      assertEquals(result.ok, true);
+      assertEquals(result.progress.stage_moved, true);
+      assertEquals(opportunityCalls, 0);
+    } finally {
+      restore();
+    }
+  }
+);
+
+const INBOUND_PAYLOAD: InboundCallNotePayload = {
+  from_e164: '+14155559999',
+  outcome: 'answered_by_agent',
+  agent_name: 'Jane Agent',
+  duration_seconds: 60,
+  recording_url: null,
+  occurred_at: '2026-09-27T01:00:00Z',
+};
+
+Deno.test(
+  'processInboundCallNoteJob: GHL-16 happy path -- upsert, note, call:inbound tag, then custom fields',
+  async () => {
+    const calls: string[] = [];
+    let tagBody: unknown = null;
+    let customFieldsBody: unknown = null;
+    const restore = stubFetch((url, init) => {
+      const method = init?.method ?? 'GET';
+      calls.push(`${method} ${new URL(url).pathname}`);
+      if (url.includes('/contacts/upsert')) return Response.json({ contact: { id: 'ghl-1' } });
+      if (url.endsWith('/notes')) return Response.json({ id: 'note-1' });
+      if (url.endsWith('/tags')) {
+        tagBody = JSON.parse(String(init?.body ?? '{}'));
+        return Response.json({});
+      }
+      if (url.endsWith('/contacts/ghl-1') && method === 'PUT') {
+        customFieldsBody = JSON.parse(String(init?.body ?? '{}'));
+      }
+      return Response.json({ id: 'ok' });
+    });
+    try {
+      const client: GhlClient = createGhlClient('tok');
+      const result = await processInboundCallNoteJob({
+        client,
+        locationId: 'loc-1',
+        ghlContactId: null,
+        contactFields: { firstName: 'Bob', lastName: null, phone: '+14155552673' },
+        payload: INBOUND_PAYLOAD,
+        progress: {},
+        pushConfig: {
+          pushFieldMapping: { last_call_at: 'f-lca', last_call_outcome: 'f-lco' },
+        },
+      });
+      assertEquals(result.ok, true);
+      assertEquals(result.progress, {
+        upserted: true,
+        note_added: true,
+        tag_added: true,
+        custom_fields_pushed: true,
+      });
+      assertEquals(tagBody, { tags: ['call:inbound'] });
+      assertEquals(customFieldsBody, {
+        customFields: [
+          { id: 'f-lca', field_value: '2026-09-27T01:00:00Z' },
+          { id: 'f-lco', field_value: 'answered_by_agent' },
+        ],
+      });
+      assertEquals(calls, [
+        'POST /contacts/upsert',
+        'POST /contacts/ghl-1/notes',
+        'POST /contacts/ghl-1/tags',
+        'PUT /contacts/ghl-1',
+      ]);
+    } finally {
+      restore();
+    }
+  }
+);
+
+Deno.test(
+  'processInboundCallNoteJob: no pushConfig -- tag still pushed, custom-fields step is a clean no-op',
+  async () => {
+    let putCalls = 0;
+    const restore = stubFetch((url, init) => {
+      if (url.includes('/contacts/upsert')) return Response.json({ contact: { id: 'ghl-1' } });
+      if (init?.method === 'PUT') putCalls++;
+      return Response.json({ id: 'ok' });
+    });
+    try {
+      const client: GhlClient = createGhlClient('tok');
+      const result = await processInboundCallNoteJob({
+        client,
+        locationId: 'loc-1',
+        ghlContactId: null,
+        contactFields: { firstName: 'Bob', lastName: null, phone: '+14155552673' },
+        payload: { ...INBOUND_PAYLOAD, occurred_at: null },
+        progress: {},
+      });
+      assertEquals(result.ok, true);
+      assertEquals(result.progress.tag_added, true);
+      assertEquals(result.progress.custom_fields_pushed, true);
+      assertEquals(putCalls, 0);
     } finally {
       restore();
     }

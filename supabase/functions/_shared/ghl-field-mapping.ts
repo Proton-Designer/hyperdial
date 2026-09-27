@@ -12,7 +12,16 @@ import type { GhlCustomFieldDef } from './ghl-client.ts';
 /** The task's own example target keys (business name, website, rating, review count, license #,
  *  service ZIPs, tier, list source) -- an open-ended set in practice (org_integrations.
  *  ghl_field_mapping is a plain jsonb object, not a fixed enum), but these are the ones worth a
- *  built-in name-matching guess. */
+ *  built-in name-matching guess.
+ *
+ *  MISSION-4 TASK-T2 (GHL-11/13): `last_call_at`/`last_call_outcome`/`call_attempts` are the
+ *  three PUSH-direction keys ("push custom fields: last call time, last outcome, attempt
+ *  count ... field keys configurable in the same GHL field mapping as T1") -- the SAME
+ *  `ghl_field_mapping` jsonb (target key -> GHL custom-field-definition id) is reused unchanged
+ *  in its natural stored direction for push, no separate mapping/migration needed. Unlike the
+ *  first eight, these three are never read FROM a pulled GHL contact (there's no dedicated-column
+ *  question for them), only ever WRITTEN to one at push time -- so they never appear in
+ *  `GHL_FIELD_MAPPING_KNOWN_COLUMNS` below (that set is pull-direction only). */
 export const GHL_FIELD_MAPPING_TARGET_KEYS = [
   'business_name',
   'website',
@@ -22,6 +31,9 @@ export const GHL_FIELD_MAPPING_TARGET_KEYS = [
   'service_zips',
   'tier',
   'list_source',
+  'last_call_at',
+  'last_call_outcome',
+  'call_attempts',
 ] as const;
 
 /** TASK-T1 (GHL-6): `business_name`/`website`/`rating`/`review_count` already have DEDICATED,
@@ -48,6 +60,9 @@ const TARGET_KEY_SYNONYMS: Record<string, string[]> = {
   service_zips: ['service zips', 'service area', 'zip codes', 'service zip codes', 'service areas'],
   tier: ['tier', 'lead tier', 'quality tier'],
   list_source: ['list source', 'source list', 'lead source', 'list'],
+  last_call_at: ['last call at', 'last call date', 'last call time', 'last called'],
+  last_call_outcome: ['last call outcome', 'last outcome', 'last disposition', 'call outcome'],
+  call_attempts: ['call attempts', 'attempts', 'attempt count', 'number of attempts'],
 };
 
 function normalize(s: string): string {

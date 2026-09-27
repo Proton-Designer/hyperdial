@@ -399,6 +399,26 @@ fully covered by deno tests (`coaching-core.test.ts`, against a fake supabase + 
 -- never a real Telnyx call) and the RLS/uniqueness by `audit/T3/dryrun-tests.sql` -- B20 above
 only covers what a real Telnyx call + two real browsers can add on top of that.
 
+### B21 -- GHL push complete (MISSION-4 TASK-T2, GHL-2/10/11/12/13/16) -- **needs a real connected GHL sub-account**
+
+Owner or admin, with GHL connected (B19's own setup) and at least one custom field created in the
+GHL sub-account to map "Last call time"/"Last call outcome"/"Call attempts" onto.
+
+| #     | Step                                                                                                                                      | Expected                                                                                                                                                                                                          | ☐   |
+| ----- | ------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --- |
+| B21.1 | Settings → Integrations → GHL field mapping → **Suggest from GHL**, map "Last call time"/"Last call outcome"/"Call attempts" to real GHL custom fields, Save. | Suggestions appear for any exactly-named field; mapping saves and reloads correctly (same field-mapping editor B19 already covers, now with 3 more rows). | ☐   |
+| B21.2 | Settings → Dispositions → edit any disposition → **Load pipeline stages from GHL...** → pick a pipeline/stage → Save.                     | Saves; the disposition's row now shows "· moves GHL pipeline stage".                                                                                                                                             | ☐   |
+| B21.3 | An agent dials a GHL-linked contact and submits the disposition edited in B21.2.                                                          | Within ~60s (the push worker's own cadence): a GHL note appears with the disposition/duration/notes; the disposition's own GHL tag (`call:<key>` for any of gatekeeper/voicemail_left/no_answer, or the existing custom tag for the other six) is applied; the mapped custom fields show the real last-call time/outcome/attempt count; the contact's opportunity in the configured pipeline moves to the configured stage (or is created there if it had none). | ☐   |
+| B21.4 | Submit the `yes_build_profile` disposition with a license number + service ZIPs filled in.                                                | The SAME custom fields configured for license_number/service_zips (B19's own field mapping) now also carry these values, pushed by the same push job as B21.3.                                                    | ☐   |
+| B21.5 | Submit a disposition with NO pipeline/stage configured (leave a different disposition's mapping empty).                                  | No opportunity is created or moved for that disposition -- "unmapped = no move", confirmed by checking the contact's opportunity in GHL is untouched.                                                             | ☐   |
+| B21.6 | Take (or simulate, e.g. by temporarily unplugging the org's caller-ID number) a real inbound call answered by an intern, let it end.      | A GHL note ("Inbound call from ...") appears on the contact, tagged `call:inbound`, with the mapped last-call custom fields updated to the inbound call's own time/outcome.                                      | ☐   |
+| B21.7 | Settings → Integrations → GHL sync status (the existing crm_sync_jobs status view).                                                       | Every job above shows `done`; a deliberately-broken field mapping (an invalid GHL field id) shows the job retried with a growing delay, not stuck immediately -- confirms GHL-2's existing backoff still applies. | ☐   |
+
+The tag-gap-fill/field-mapping/push-orchestration logic (custom fields step, stage-move step,
+the inbound tag, the rate limiter) is fully covered by deno tests (`ghl-sync-worker.test.ts`,
+`ghl-client.test.ts`, `ghl-field-mapping.test.ts`) against a fake GHL client -- never a real GHL
+call. B21 above only covers what a real, connected GHL sub-account can add on top of that.
+
 ---
 
 ## C. Evidence to capture
