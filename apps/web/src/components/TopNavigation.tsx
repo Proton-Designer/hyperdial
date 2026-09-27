@@ -164,7 +164,9 @@ export function TopNavigation({ activeTab = 'dashboard', onTabChange }: TopNavig
     // its own Listen button) rather than trying to start a coaching call from here, which has no
     // WebRTC client mounted. `n.data` is null for every notification type that predates this
     // column, so this only ever fires for the type it's meant for.
-    if (n.type === 'agent_raised_hand' && n.data) {
+    // MISSION-5 TASK-M5-B4: the 4 supervisor alerts land the same place -- Team's live board is
+    // where every one of these conditions (wrap-up/paused/call/zero-connects) is visible per-row.
+    if ((n.type === 'agent_raised_hand' || n.type.startsWith('supervisor_alert.')) && n.data) {
       setShowNotifications(false);
       onTabChange?.('team');
     }

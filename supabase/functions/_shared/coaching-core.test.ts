@@ -56,6 +56,7 @@ function makeFakeSupabase(cfg: {
   dial_sessions?: Result[];
   call_legs?: Result[];
   org_members?: Result[];
+  org_manager_pods?: Result[];
   user_phone_numbers?: Result[];
   profiles?: Result[];
   coachingInsert?: Result;
@@ -89,6 +90,12 @@ function makeFakeSupabase(cfg: {
             update: (patch: Record<string, unknown>) =>
               updateChain(() => writes.push({ table, patch })),
           };
+        // MISSION-5 TASK-M5-B4: pod-scope.ts's own isManagerScopedToAgent reads this table --
+        // only ever reached when a test's callerRole is 'manager' (every existing test here
+        // passes 'owner', which never touches it, hence no `org_manager_pods` cfg needed on any
+        // of them).
+        case 'org_manager_pods':
+          return { select: () => selectChain(next('org_manager_pods', cfg.org_manager_pods)) };
         case 'user_phone_numbers':
           return { select: () => selectChain(next('user_phone_numbers', cfg.user_phone_numbers)) };
         case 'profiles':
@@ -165,6 +172,7 @@ Deno.test('runStartCoachingAction: rejects an invalid mode without touching the 
     'conn-1',
     'org-1',
     'mgr-1',
+    'owner',
     { targetUserId: 'agent-1', mode: 'yell' }
   );
   assertEquals(result.status, 400);
@@ -182,9 +190,63 @@ Deno.test(
       'conn-1',
       'org-1',
       'mgr-1',
+      'owner',
       { targetUserId: 'mgr-1', mode: 'listen' }
     );
     assertEquals(result.status, 400);
+  }
+);
+
+Deno.test(
+  'MISSION-5 TASK-M5-B4: a manager outside their pod scope is rejected before touching dial_sessions',
+  async () => {
+    const supabase = makeFakeSupabase({
+      org_members: [OK({ pod_id: 'pod-a' })],
+      org_manager_pods: [EMPTY], // no row scoping this manager to pod-a
+    });
+    const { client, calls } = makeFakeTelnyxClient();
+    const result = await runStartCoachingAction(
+      supabase,
+      client,
+      'app-1',
+      'conn-1',
+      'org-1',
+      'mgr-1',
+      'manager',
+      { targetUserId: 'agent-1', mode: 'listen' }
+    );
+    assertEquals(result.status, 403);
+    assertEquals(calls.length, 0); // never dialed -- rejected before the busy/target checks
+  }
+);
+
+// Positive control for the rejection above: an in-scope manager (org_manager_pods DOES have a
+// row for pod-a) passes the gate and reaches the normal MANAGER_BUSY/TARGET_NOT_ON_CALL checks
+// exactly like every 'owner' test above -- proves the gate isn't unconditionally closed.
+Deno.test(
+  'MISSION-5 TASK-M5-B4: a manager INSIDE their pod scope passes the gate and reaches the normal flow',
+  async () => {
+    const supabase = makeFakeSupabase({
+      org_members: [OK({ pod_id: 'pod-a' })],
+      org_manager_pods: [OK({ pod_id: 'pod-a' })],
+      dial_sessions: [OK({ id: 's-mgr', state: 'on_call' })],
+    });
+    const { client, calls } = makeFakeTelnyxClient();
+    const result = await runStartCoachingAction(
+      supabase,
+      client,
+      'app-1',
+      'conn-1',
+      'org-1',
+      'mgr-1',
+      'manager',
+      { targetUserId: 'agent-1', mode: 'listen' }
+    );
+    // Reached the manager-busy check (their own session is on_call) -- proof the pod-scope gate
+    // let this request through to the rest of the function, not rejected at 403.
+    assertEquals(result.status, 409);
+    assertEquals(result.body.code, 'MANAGER_BUSY');
+    assertEquals(calls.length, 0);
   }
 );
 
@@ -204,6 +266,7 @@ Deno.test(
       'conn-1',
       'org-1',
       'mgr-1',
+      'owner',
       { targetUserId: 'agent-1', mode: 'listen' }
     );
     assertEquals(result.status, 409);
@@ -229,6 +292,7 @@ Deno.test(
       'conn-1',
       'org-1',
       'mgr-1',
+      'owner',
       { targetUserId: 'agent-1', mode: 'listen' }
     );
     assertEquals(result.status, 409);
@@ -257,6 +321,7 @@ Deno.test(
       'conn-1',
       'org-1',
       'mgr-1',
+      'owner',
       { targetUserId: 'agent-1', mode: 'whisper' }
     );
     assertEquals(result.status, 409);
@@ -285,6 +350,7 @@ Deno.test(
       'conn-1',
       'org-1',
       'mgr-1',
+      'owner',
       { targetUserId: 'agent-1', mode: 'listen' }
     );
     assertEquals(result.status, 409);
@@ -312,6 +378,7 @@ Deno.test(
       'conn-1',
       'org-1',
       'mgr-1',
+      'owner',
       { targetUserId: 'agent-1', mode: 'listen' }
     );
     assertEquals(result.status, 409);
@@ -350,6 +417,7 @@ Deno.test(
       'conn-1',
       'org-1',
       'mgr-1',
+      'owner',
       { targetUserId: 'agent-1', mode: 'listen' }
     );
     assertEquals(result.status, 409);
@@ -380,6 +448,7 @@ Deno.test(
       'conn-1',
       'org-1',
       'mgr-1',
+      'owner',
       { targetUserId: 'agent-1', mode: 'listen' }
     );
     assertEquals(result.status, 200);
@@ -418,6 +487,7 @@ Deno.test(
       'conn-1',
       'org-1',
       'mgr-1',
+      'owner',
       { targetUserId: 'agent-1', mode: 'whisper' }
     );
     assertEquals(result.status, 200);
@@ -483,6 +553,7 @@ Deno.test(
       'conn-1',
       'org-1',
       'mgr-1',
+      'owner',
       { targetUserId: 'agent-1', mode: 'listen' }
     );
     assertEquals(result.status, 502);

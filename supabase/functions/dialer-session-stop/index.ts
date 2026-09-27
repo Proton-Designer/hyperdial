@@ -4,6 +4,7 @@ import { requireTelnyxOrgRole } from '../_shared/telnyx-org-context.ts';
 import { stopSession } from '../_shared/dialer-engine.ts';
 import { readJsonBody } from '../_shared/http-json.ts';
 import { logOrgAction } from '../_shared/audit.ts';
+import { isManagerScopedToAgent } from '../_shared/pod-scope.ts';
 
 interface StopBody {
   sessionId?: string;
@@ -33,7 +34,7 @@ Deno.serve(async (req) => {
     orgId,
     role,
     error: authError,
-  } = await requireTelnyxOrgRole(req, ['owner', 'admin', 'agent']);
+  } = await requireTelnyxOrgRole(req, ['owner', 'admin', 'agent', 'manager']);
   if (authError) return authError;
 
   const { body, errorResponse } = await readJsonBody<StopBody>(req);
@@ -62,6 +63,12 @@ Deno.serve(async (req) => {
       return jsonResponse(404, { error: 'Session not found' });
     if (role === 'agent' && session.agent_id !== user.id) {
       return jsonResponse(403, { error: 'Not your session' });
+    }
+    // MISSION-5 TASK-M5-B4: a manager may only remote-end an agent inside their own managed pod
+    // scope -- see dialer-session-pause's own identical check + pod-scope.ts's header.
+    if (role === 'manager' && session.agent_id !== user.id) {
+      const inScope = await isManagerScopedToAgent(supabase, orgId, user.id, session.agent_id);
+      if (!inScope) return jsonResponse(403, { error: 'That agent is outside your managed pods' });
     }
 
     // MISSION-5 TASK-M5-B2: a manager acting on someone ELSE's session -- never true for an

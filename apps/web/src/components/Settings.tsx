@@ -27,6 +27,8 @@ import {
   History,
   Download,
   Share2,
+  Bell,
+  AlertTriangle,
 } from 'lucide-react';
 import { usePhoneNumbers } from '@/contexts/PhoneNumbersContext';
 import { useAuth } from '@/contexts/AuthContext';
@@ -150,6 +152,13 @@ import {
   type Disposition,
   type DispositionLeadEffect,
   type DncNumber,
+  getSupervisorAlertSettings,
+  updateSupervisorAlertSettings,
+  type SupervisorAlertSettings,
+  type SupervisorAlertType,
+  getUserNotificationPreferences,
+  setUserNotificationPreference,
+  getCurrentUserId,
 } from '@/lib/api';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ListSkeleton, TableSkeleton } from '@/components/app/skeletons';
@@ -650,6 +659,13 @@ function TeamTab() {
         </div>
       )}
 
+      {canManage && (
+        <>
+          <SupervisorAlertSettingsCard />
+          <NotificationPreferencesCard members={members} />
+        </>
+      )}
+
       {canManage && showInvite && (
         <div className="bg-gradient-to-r from-accent-from/10 to-accent-to/10 rounded-app-lg p-6 border border-accent-from/20 mb-6">
           <h3 className="text-section-title text-text-primary mb-4">Invite teammates</h3>
@@ -1147,6 +1163,231 @@ function TeamTab() {
         onDone={load}
       />
     </motion.div>
+  );
+}
+
+/** MISSION-5 TASK-M5-B4: per-org opt-in supervisor alerts -- owner/admin only, same
+ *  load/save/error shape as RecordingSettingsCard above. Each of the 4 conditions is an
+ *  independent checkbox + its own editable minutes threshold; saving one field re-sends the
+ *  FULL current settings object (updateSupervisorAlertSettings' own patch semantics only send
+ *  defined fields, but this card always has every field defined once loaded, so there's no
+ *  partial-overwrite risk). */
+function SupervisorAlertSettingsCard() {
+  const { role } = useOrg();
+  const isAdmin = role === 'owner' || role === 'admin';
+
+  const [settings, setSettings] = useState<SupervisorAlertSettings | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isAdmin) {
+      setLoading(false);
+      return;
+    }
+    getSupervisorAlertSettings()
+      .then(setSettings)
+      .catch((e) => setError(String(e)))
+      .finally(() => setLoading(false));
+  }, [isAdmin]);
+
+  const save = async (next: SupervisorAlertSettings) => {
+    setSettings(next);
+    setSaving(true);
+    setError(null);
+    try {
+      await updateSupervisorAlertSettings(next);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (!isAdmin) return null;
+  if (loading) return <Skeleton className="h-48 rounded-app-lg max-w-2xl mt-6" />;
+  if (!settings) return null;
+
+  const rows: {
+    key: 'wrapUp' | 'paused' | 'call' | 'zeroConnects';
+    label: string;
+    minutesLabel: string;
+  }[] = [
+    { key: 'wrapUp', label: 'Agent stuck in wrap-up', minutesLabel: 'minutes' },
+    { key: 'paused', label: 'Agent paused too long', minutesLabel: 'minutes' },
+    { key: 'call', label: 'Agent on a call too long', minutesLabel: 'minutes' },
+    { key: 'zeroConnects', label: 'Zero connects while dialing', minutesLabel: 'minute window' },
+  ];
+  const fieldsFor = (key: (typeof rows)[number]['key']) =>
+    ({
+      wrapUp: {
+        enabledKey: 'wrapUpAlertEnabled',
+        minutesKey: 'wrapUpAlertMinutes',
+      } as const,
+      paused: {
+        enabledKey: 'pausedAlertEnabled',
+        minutesKey: 'pausedAlertMinutes',
+      } as const,
+      call: {
+        enabledKey: 'callAlertEnabled',
+        minutesKey: 'callAlertMinutes',
+      } as const,
+      zeroConnects: {
+        enabledKey: 'zeroConnectsAlertEnabled',
+        minutesKey: 'zeroConnectsWindowMinutes',
+      } as const,
+    })[key];
+
+  return (
+    <div className="bg-surface-1 rounded-app-lg p-6 border border-border-subtle mb-6">
+      <h3 className="text-section-title text-text-primary mb-1 flex items-center gap-2">
+        <AlertTriangle className="w-4 h-4 text-warning" />
+        Supervisor alerts
+      </h3>
+      <p className="text-sm text-text-secondary mb-4">
+        Off by default. Each alert fires once per agent per episode -- it won't repeat until the
+        agent leaves and re-enters that condition. Delivered to owner/admin and, for an agent in a
+        pod, that pod's manager.
+      </p>
+      {error && <p className="text-body text-danger mb-3">{error}</p>}
+      <div className="space-y-3">
+        {rows.map(({ key, label, minutesLabel }) => {
+          const { enabledKey, minutesKey } = fieldsFor(key);
+          const enabled = settings[enabledKey];
+          const minutes = settings[minutesKey];
+          return (
+            <div key={key} className="flex items-center justify-between gap-3">
+              <label className="flex items-center gap-2 text-sm text-text-primary flex-1">
+                <input
+                  type="checkbox"
+                  checked={enabled}
+                  disabled={saving}
+                  onChange={(e) => save({ ...settings, [enabledKey]: e.target.checked })}
+                />
+                {label}
+              </label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="number"
+                  min={1}
+                  value={minutes}
+                  disabled={saving || !enabled}
+                  onChange={(e) => {
+                    const n = parseInt(e.target.value, 10);
+                    if (!Number.isFinite(n) || n <= 0) return;
+                    void save({ ...settings, [minutesKey]: n });
+                  }}
+                  className="w-16 bg-surface-2 border border-white/10 rounded-app-sm px-2 py-1 text-sm text-white focus:outline-none focus:border-accent-to"
+                />
+                <span className="text-meta text-text-muted">{minutesLabel}</span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/** MISSION-5 TASK-M5-B4: per-user opt-out for the 4 supervisor-alert types above. Owner/admin may
+ *  pick anyone from the roster; the picker defaults to "myself" so the common case (an owner
+ *  tuning their own noise) needs no searching. A plain agent/manager has no Settings entry point
+ *  today (MainApp.tsx's own tab gate) -- see the task report for why this card is owner/admin-only
+ *  for now, not a narrower gap specific to this feature. */
+function NotificationPreferencesCard({ members }: { members: OrgMember[] }) {
+  const { role } = useOrg();
+  const isAdmin = role === 'owner' || role === 'admin';
+
+  const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
+  const [prefs, setPrefs] = useState<Record<SupervisorAlertType, boolean> | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isAdmin) {
+      setLoading(false);
+      return;
+    }
+    getCurrentUserId()
+      .then(setSelectedUserId)
+      .catch((e) => setError(String(e)));
+  }, [isAdmin]);
+
+  useEffect(() => {
+    if (!selectedUserId) return;
+    setLoading(true);
+    setError(null);
+    getUserNotificationPreferences(selectedUserId)
+      .then(setPrefs)
+      .catch((e) => setError(String(e)))
+      .finally(() => setLoading(false));
+  }, [selectedUserId]);
+
+  const handleToggle = async (type: SupervisorAlertType, enabled: boolean) => {
+    if (!selectedUserId || !prefs) return;
+    setPrefs({ ...prefs, [type]: enabled });
+    setSaving(true);
+    setError(null);
+    try {
+      await setUserNotificationPreference(selectedUserId, type, enabled);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (!isAdmin) return null;
+
+  const options: { type: SupervisorAlertType; label: string }[] = [
+    { type: 'wrap_up_stuck', label: 'Agent stuck in wrap-up' },
+    { type: 'paused_stuck', label: 'Agent paused too long' },
+    { type: 'call_stuck', label: 'Agent on a call too long' },
+    { type: 'zero_connects', label: 'Zero connects while dialing' },
+  ];
+
+  return (
+    <div className="bg-surface-1 rounded-app-lg p-6 border border-border-subtle mb-6">
+      <h3 className="text-section-title text-text-primary mb-1 flex items-center gap-2">
+        <Bell className="w-4 h-4" />
+        Notification preferences
+      </h3>
+      <p className="text-sm text-text-secondary mb-4">
+        Which supervisor alerts a person receives in-app. On by default for everyone until turned
+        off here.
+      </p>
+      {error && <p className="text-body text-danger mb-3">{error}</p>}
+      <select
+        value={selectedUserId ?? ''}
+        onChange={(e) => setSelectedUserId(e.target.value || null)}
+        className="bg-surface-2 border border-white/10 rounded-app-md px-3 py-2 text-sm text-white mb-4 focus:outline-none focus:border-accent-to"
+      >
+        {members.map((m) => (
+          <option key={m.user_id} value={m.user_id}>
+            {[m.first_name, m.last_name].filter(Boolean).join(' ') || m.email || m.user_id}
+          </option>
+        ))}
+      </select>
+      {loading ? (
+        <Skeleton className="h-24 rounded-app-md" />
+      ) : prefs ? (
+        <div className="space-y-2">
+          {options.map((opt) => (
+            <label key={opt.type} className="flex items-center gap-2 text-sm text-text-primary">
+              <input
+                type="checkbox"
+                checked={prefs[opt.type]}
+                disabled={saving}
+                onChange={(e) => handleToggle(opt.type, e.target.checked)}
+              />
+              {opt.label}
+            </label>
+          ))}
+        </div>
+      ) : null}
+    </div>
   );
 }
 

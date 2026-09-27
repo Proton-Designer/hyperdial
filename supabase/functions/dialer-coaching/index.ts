@@ -31,7 +31,12 @@ Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return corsPreflightResponse();
   if (req.method !== 'POST') return jsonResponse({ error: 'Method not allowed' }, 405);
 
-  const { user, orgId, error: roleError } = await requireTelnyxOrgRole(req, ['owner', 'admin']);
+  const {
+    user,
+    orgId,
+    role,
+    error: roleError,
+  } = await requireTelnyxOrgRole(req, ['owner', 'admin', 'manager']);
   if (roleError) return roleError;
 
   let body: Record<string, unknown>;
@@ -66,6 +71,7 @@ Deno.serve(async (req: Request) => {
         credentialConnectionId,
         orgId,
         user.id,
+        role,
         body
       );
       break;

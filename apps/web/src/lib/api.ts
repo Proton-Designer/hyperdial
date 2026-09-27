@@ -34,6 +34,17 @@ async function getActiveOrgId(): Promise<string> {
   return data.active_org_id as string;
 }
 
+/** MISSION-5 TASK-M5-B4: the signed-in user's own id -- Settings.tsx's notification-preferences
+ *  card defaults its member picker to "myself" rather than forcing an owner/admin to find their
+ *  own row in the list first. */
+export async function getCurrentUserId(): Promise<string> {
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) throw new Error('Not signed in');
+  return user.id;
+}
+
 /** Headers for calling Supabase Edge Functions from the browser (includes apikey so gateway accepts the request). */
 async function getEdgeFunctionHeaders(): Promise<HeadersInit> {
   const anonKey = (import.meta as ImportMeta & { env?: Record<string, string> }).env
@@ -890,6 +901,124 @@ export async function updateOrgTimezone(timezone: string): Promise<void> {
   const { error } = await supabase.from('org_timezone_settings').upsert({
     org_id: orgId,
     timezone,
+    updated_at: new Date().toISOString(),
+  });
+  if (error) throw new Error(error.message);
+}
+
+/** MISSION-5 TASK-M5-B4: the 4 supervisor-alert conditions this org has opted into, plus their
+ *  editable thresholds. Same "org_<feature>_settings" select/upsert shape as getOrgTimezone/
+ *  updateOrgTimezone above -- select: any member; insert/update: owner/admin (RLS). */
+export type SupervisorAlertType = 'wrap_up_stuck' | 'paused_stuck' | 'call_stuck' | 'zero_connects';
+
+export interface SupervisorAlertSettings {
+  wrapUpAlertEnabled: boolean;
+  wrapUpAlertMinutes: number;
+  pausedAlertEnabled: boolean;
+  pausedAlertMinutes: number;
+  callAlertEnabled: boolean;
+  callAlertMinutes: number;
+  zeroConnectsAlertEnabled: boolean;
+  zeroConnectsWindowMinutes: number;
+}
+
+const DEFAULT_SUPERVISOR_ALERT_SETTINGS: SupervisorAlertSettings = {
+  wrapUpAlertEnabled: false,
+  wrapUpAlertMinutes: 10,
+  pausedAlertEnabled: false,
+  pausedAlertMinutes: 15,
+  callAlertEnabled: false,
+  callAlertMinutes: 30,
+  zeroConnectsAlertEnabled: false,
+  zeroConnectsWindowMinutes: 30,
+};
+
+export async function getSupervisorAlertSettings(): Promise<SupervisorAlertSettings> {
+  const orgId = await getActiveOrgId();
+  const { data, error } = await supabase
+    .from('org_supervisor_alert_settings')
+    .select(
+      'wrap_up_alert_enabled, wrap_up_alert_minutes, paused_alert_enabled, paused_alert_minutes, call_alert_enabled, call_alert_minutes, zero_connects_alert_enabled, zero_connects_window_minutes'
+    )
+    .eq('org_id', orgId)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!data) return DEFAULT_SUPERVISOR_ALERT_SETTINGS;
+  return {
+    wrapUpAlertEnabled: data.wrap_up_alert_enabled,
+    wrapUpAlertMinutes: data.wrap_up_alert_minutes,
+    pausedAlertEnabled: data.paused_alert_enabled,
+    pausedAlertMinutes: data.paused_alert_minutes,
+    callAlertEnabled: data.call_alert_enabled,
+    callAlertMinutes: data.call_alert_minutes,
+    zeroConnectsAlertEnabled: data.zero_connects_alert_enabled,
+    zeroConnectsWindowMinutes: data.zero_connects_window_minutes,
+  };
+}
+
+/** Owner/admin only -- enforced by org_supervisor_alert_settings' own RLS UPDATE policy. Partial:
+ *  callers only ever send the fields the settings card actually changed. */
+export async function updateSupervisorAlertSettings(
+  patch: Partial<SupervisorAlertSettings>
+): Promise<void> {
+  const orgId = await getActiveOrgId();
+  const row: Record<string, unknown> = { org_id: orgId, updated_at: new Date().toISOString() };
+  if (patch.wrapUpAlertEnabled !== undefined) row.wrap_up_alert_enabled = patch.wrapUpAlertEnabled;
+  if (patch.wrapUpAlertMinutes !== undefined) row.wrap_up_alert_minutes = patch.wrapUpAlertMinutes;
+  if (patch.pausedAlertEnabled !== undefined) row.paused_alert_enabled = patch.pausedAlertEnabled;
+  if (patch.pausedAlertMinutes !== undefined) row.paused_alert_minutes = patch.pausedAlertMinutes;
+  if (patch.callAlertEnabled !== undefined) row.call_alert_enabled = patch.callAlertEnabled;
+  if (patch.callAlertMinutes !== undefined) row.call_alert_minutes = patch.callAlertMinutes;
+  if (patch.zeroConnectsAlertEnabled !== undefined)
+    row.zero_connects_alert_enabled = patch.zeroConnectsAlertEnabled;
+  if (patch.zeroConnectsWindowMinutes !== undefined)
+    row.zero_connects_window_minutes = patch.zeroConnectsWindowMinutes;
+  const { error } = await supabase.from('org_supervisor_alert_settings').upsert(row);
+  if (error) throw new Error(error.message);
+}
+
+/** MISSION-5 TASK-M5-B4: per-user opt-out for the 4 alert types above (in-app only). Absence of a
+ *  row means on -- "defaults = everything on for owner/admin" (and, by the same absence-means-on
+ *  rule, for a manager too, since a manager who never touched this should still receive their own
+ *  pod's alerts by default -- the whole point of routing them there). Self OR owner/admin (RLS). */
+const SUPERVISOR_ALERT_TYPES: SupervisorAlertType[] = [
+  'wrap_up_stuck',
+  'paused_stuck',
+  'call_stuck',
+  'zero_connects',
+];
+
+export async function getUserNotificationPreferences(
+  userId: string
+): Promise<Record<SupervisorAlertType, boolean>> {
+  const orgId = await getActiveOrgId();
+  const { data, error } = await supabase
+    .from('user_notification_preferences')
+    .select('alert_type, enabled')
+    .eq('org_id', orgId)
+    .eq('user_id', userId);
+  if (error) throw new Error(error.message);
+  const overrides = new Map(
+    (data ?? []).map((r: { alert_type: string; enabled: boolean }) => [r.alert_type, r.enabled])
+  );
+  const result = {} as Record<SupervisorAlertType, boolean>;
+  for (const type of SUPERVISOR_ALERT_TYPES) {
+    result[type] = overrides.get(type) ?? true;
+  }
+  return result;
+}
+
+export async function setUserNotificationPreference(
+  userId: string,
+  alertType: SupervisorAlertType,
+  enabled: boolean
+): Promise<void> {
+  const orgId = await getActiveOrgId();
+  const { error } = await supabase.from('user_notification_preferences').upsert({
+    org_id: orgId,
+    user_id: userId,
+    alert_type: alertType,
+    enabled,
     updated_at: new Date().toISOString(),
   });
   if (error) throw new Error(error.message);

@@ -18,6 +18,8 @@ sources:
   - supabase/migrations/20260927160550_manager_role_and_pods.sql
   - supabase/migrations/20260927164816_goals_and_broadcasts.sql
   - supabase/migrations/20260927171355_call_review_library.sql
+  - supabase/migrations/20260927171444_supervisor_alerts_and_pod_scoping.sql
+  - supabase/functions/_shared/pod-scope.ts
   - supabase/functions/recording-url/index.ts
   - supabase/functions/_shared/recording-core.ts
   - supabase/functions/_shared/telnyx-org-context.ts
@@ -47,9 +49,10 @@ answers:
   - "how do team broadcasts work, who can post one, and how does an agent dismiss it"
   - "who can see/flag/comment on/score a call recording, and how is a manager's pod scope enforced there"
   - "why does telnyx-org-context.ts have its own separate OrgRole type instead of importing _shared/auth.ts's"
+  - "who gets notified about a supervisor alert, and can a person opt out of one"
 covers: "Supabase auth, session handling, the two-layer Edge Function authorization model, service-role usage, org tenancy, the per-table RLS inventory, member offboarding (disable/remove/restore), the manager role's server-enforced pod scope, daily goals + team broadcasts, and the call review library's access model."
 excludes: "Telnyx webhook signature mechanics (domain.telephony); dial-loop ownership checks (domain.dialer)."
-tokens_est: 7150
+tokens_est: 7550
 source_hash: b8d3fd311248f16889b10f531365423ec36488c32179946d09361fb21c5ce0c5
 ---
 
@@ -150,6 +153,8 @@ are the deliberate exceptions: personal, not org-shared (see `20260924000300`'s 
 | `org_broadcast_dismissals` (`20260927164816`, TASK-M5-A6) | ALL: `user_id = auth.uid()` only — a caller may only ever touch their OWN dismissal rows; no privileged check needed (dismissing a broadcast you can't otherwise see is harmless), so this is the one write in this task done as a plain client insert, not an RPC. |
 | `call_legs` (new policy, `20260927171355`, TASK-M5-B5) | Additive THIRD permissive SELECT policy on top of the two pre-existing ones (owner/admin all; agent own) — a manager sees a leg whose session's agent is in their own `org_manager_pods` scope. Without this a manager could not see `call_legs` at all (it predates the manager role). |
 | `recording_flags`/`recording_comments`/`call_scorecards`/`call_scorecard_scores` (`20260927171355`, TASK-M5-B5) | SELECT: `private.can_view_call_leg(call_leg_id)` (owner/admin any, manager pod-scoped, agent own) — one shared helper, not four hand-written copies. `recording_flags` is also client-writable (`for all`, same check + an org_id cross-check in `WITH CHECK`) — flag/unflag needs no server-side scope logic beyond visibility. `recording_comments` is INSERT-only client-side (append-only, `author_user_id = auth.uid()` enforced) — no update/delete policy. `call_scorecards`/`call_scorecard_scores` have NO client write policy at all — `set_call_scorecard` is the only writer (manager-write needs pod-scope + rubric/criterion validation, easier in plpgsql). |
+| `org_supervisor_alert_settings` (`20260927171444`, TASK-M5-B4) | SELECT `is_org_member`; INSERT/UPDATE `has_org_role([owner,admin])`. Same singleton-per-org shape as `org_timezone_settings`/`org_reliability_alert_settings`. |
+| `user_notification_preferences` (`20260927171444`, TASK-M5-B4) | SELECT/ALL: `user_id = auth.uid() OR has_org_role([owner,admin])` — the only table in this inventory where owner/admin may write a row keyed to someone ELSE's `user_id`, per the task's own explicit "owner/admin can set them for someone else" requirement. `WITH CHECK` additionally requires an `org_members` row to exist for that `(org_id, user_id)` pair, so this can't seed a preference for a non-member. |
 | `scorecard_rubrics`/`scorecard_rubric_criteria` (`20260927171355`, TASK-M5-B5) | SELECT: any org member. INSERT/UPDATE/DELETE: owner/admin only (`for all`). |
 | `notifications` | Unchanged: SELECT/UPDATE `user_id = auth.uid()`. Personal, not org-scoped even though `org_id` was added to the table (FK/cascade hygiene only). |
 | `user_preferences` | Unchanged: SELECT/INSERT/UPDATE `auth.uid() = user_id`. No `org_id` column — stays per-user. |
@@ -199,9 +204,37 @@ MISSION-5 TASK-M5-B2 added `session.remote_pause`/`session.remote_end`/`session.
 - `assign_campaign_leads` (eng2's B3 RPC): widened via a **further `create or replace` in THIS migration**, never touching B3's own file (same non-destructive layering convention used throughout M5) — a manager may only assign TO an agent in their own pod scope, and for `mode: 'by_current_agent'`, the SOURCE agent (`p_filter.from_agent_id`) must also be in scope.
 - `org-members`'s roster GET and `org-audit-log`'s GET: both Edge Functions, scoped in application code (a manager only sees roster rows / audit rows for agents in their own pods, plus their own).
 
-**Explicitly NOT scoped yet** (coordinate once landed, don't touch concurrently): coaching (`coaching-core.ts`) and remote pause/stop (`dialer-engine.ts`) are eng2's B2 territory — B2's own task file says "manager after A5", i.e. B2 ships owner/admin-only first and picks up manager+pod scoping in its own follow-up once B2 has landed.
+**Coaching and remote pause/stop/hangup are now scoped too, in TASK-M5-B4** (this section
+originally deferred them — "manager after A5" — since B2 shipped owner/admin-only first). Both
+live in `_shared/pod-scope.ts` rather than reusing `is_agent_in_callers_pod_scope` directly:
+`isManagerScopedToAgent(supabase, orgId, managerId, agentId)` reimplements the SAME two-table
+check in TypeScript (a `private.*` function can't be called via `supabase.rpc()`, and neither
+call site is an RPC to begin with — see that file's own header). `dialer-session-pause`/`-stop`/
+`-hangup-live` each call it when `role==='manager'` and the target isn't the manager's own
+session; `runStartCoachingAction` (`coaching-core.ts`) calls it before ever dialing the manager's
+own phone. `coaching_sessions`' SELECT RLS was widened to match (a manager sees only coaching
+attempts they started) for consistency, though nothing client-side reads that table directly yet.
 
 **Client-side tab visibility** (cosmetic only, real enforcement is server-side above): a manager gets Dashboard/Dialer/Contacts/Analytics/Team/Settings, same as owner/admin, **except Campaigns** — "assign leads" is enforced server-side but deliberately has no client entry point yet (Campaigns.tsx has other un-scoped surface — CSV import, campaign creation, agent-roster assignment — that would need its own manager-safe review first). Within Settings, a manager is further restricted to just the Activity (audit log) and Security (own profile) sub-tabs — not Telephony/Team/Integrations/Dispositions/DNC/Distribution, all billing/numbers/org-settings-adjacent.
+
+## Supervisor alerts + notification preferences (MISSION-5 TASK-M5-B4)
+
+Per-org opt-in alerts (agent stuck in wrap-up/paused/on-a-call too long, zero connects while
+dialing) reuse `reliability-alert-check`'s own cron infra rather than a second cron/secret
+entry — see `.brain/domains/dialer.md`'s own section for the SQL-side dedup mechanics
+(`check_supervisor_alerts()`, two different episode-boundary shapes). The TS-side recipient
+resolution is the auth-relevant half: `resolveAlertRecipients(supabase, orgId, agentId)` (also
+`_shared/pod-scope.ts`) returns every owner/admin plus the alerted agent's own pod-scoped
+manager — the SAME two-table shape as `isManagerScopedToAgent` above, generalized from "can THIS
+caller act on THIS agent" to "who should be told about THIS agent" (also reused by the raise-hand
+notifier, B2). `filterByNotificationPreference` then narrows that set against
+`user_notification_preferences` (per-user, per-alert-type opt-out; absence of a row means on).
+
+Two new tables, both following this schema's established "org member reads, owner/admin writes"
+RLS shape except where noted: `org_supervisor_alert_settings` (thresholds, owner/admin only) and
+`user_notification_preferences` (self OR owner/admin may write ANY row — "owner/admin can set
+them for someone else" is the task's own explicit requirement — with a `WITH CHECK` `exists()`
+guard so a row can never be written for a non-member).
 
 ## Daily goals + team broadcasts (MISSION-5 TASK-M5-A6)
 

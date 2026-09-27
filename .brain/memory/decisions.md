@@ -1805,3 +1805,54 @@ every cold transfer.
 changes WHAT the announcement says once that decision fires, keeping the two concerns (timing vs.
 content) orthogonal instead of overloading the mode enum with a fourth "and monitored" variant
 that would have doubled the mode list for a change that's really independent of it.
+
+## MISSION-5 TASK-M5-B4: supervisor alerts + notification preferences + B2 manager/pod scoping
+
+**Decision 1 -- two different dedup ("episode") mechanisms for the 4 alert conditions, not one
+generic shape forced onto all of them.** Wrap-up/paused/call-too-long each map onto exactly one
+OPEN row in `agent_state_events` (B1) -- a new `alerted_at` column on that table, set once per
+row, is automatically the right dedup boundary because the table's own one-open-row-per-agent
+invariant already IS the episode boundary (a fresh row only exists once the old one closed).
+Zero-connects has no such row -- its "episode" is a derived property of `call_legs` history (the
+stretch since the agent's last connect), so it needed its own marker
+(`dial_sessions.zero_connects_alerted_at`) and its own boundary rule (blocked only while it falls
+inside the SAME connect-free stretch, computed via `dry_streak_start`). Forcing zero-connects onto
+the `agent_state_events` shape would have meant inventing a state that doesn't exist; forcing the
+other three onto a call_legs-derived shape would have thrown away a boundary the schema already
+gives for free.
+
+**Decision 2 -- delivery reuses `reliability-alert-check` rather than a new cron worker.** The
+task's own wording offered "extend reliability-alert-check OR a sibling worker" -- reusing it
+avoids a second shared-secret/`config.toml`/pg_cron entry for the exact same "SQL decides+flips a
+dedup marker, TS resolves recipients and inserts notifications" shape T10 already established.
+`check_supervisor_alerts()` differs from T10's own checks only in reading its thresholds from a
+per-org settings table instead of a hardcoded constant -- everything else about the split is
+identical on purpose.
+
+**Decision 3 -- pod-scoped recipient/authorization checks live in a NEW `_shared/pod-scope.ts`,
+not by exposing `private.is_agent_in_callers_pod_scope` (A5) to `supabase.rpc()`.** That helper is
+in the `private` schema specifically so it's callable only from other SQL functions
+(RULES-CARD: every `rpc()` name must be a PUBLIC function) -- and none of B4's TS call sites
+(remote dialer actions, coaching start, alert/raise-hand recipient resolution) are RPC calls to
+begin with, they're plain Edge Function logic deciding who may act on or hear about an agent.
+Reimplementing the same two-table shape (`org_members.pod_id` + `org_manager_pods`) in TypeScript,
+once, in one shared file, is what A5's own `org-members`/`org-audit-log` GET handlers already did
+ad hoc for their own two call sites -- this just gives it a name so a third and fourth caller
+don't re-derive it a third and fourth time.
+
+**Decision 4 -- `user_notification_preferences` stores only explicit overrides; absence of a row
+means on.** Matches this schema's established "settings row absent means default" convention
+(pause reasons, recording consent) rather than seeding a row per user per alert type on org/member
+creation. This also makes "defaults = everything on for owner/admin" fall out for free -- and,
+by the same absence-means-on rule, for a manager too, which the task didn't explicitly require but
+is the only sensible default given the whole point of routing an alert to a pod manager is that
+they see it without having to opt in first.
+
+**Decision 5 -- no audit-log entry for either new settings write (org_supervisor_alert_settings
+thresholds, user_notification_preferences).** Matches the established, if incomplete, precedent
+of every other direct-table org-settings card in this codebase (`org_timezone_settings`,
+`org_recording_settings`, `org_reliability_alert_settings` -- none of them audit-log their own
+update today, despite pre-seeded `AUDIT_ACTION_LABELS` entries for some that nothing has ever
+fired). Extending the client-only `logAuditEvent`/`org-audit-log` POST route to carry a
+`targetId` for this one new case would have been a scope-creeping fix to a pre-existing gap this
+task didn't introduce and wasn't asked to close.

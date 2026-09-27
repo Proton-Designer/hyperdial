@@ -23,6 +23,8 @@ sources:
   - supabase/migrations/20260926070005_high_lines_drop_guard.sql
   - supabase/migrations/20260926080400_reliability_alerts.sql
   - supabase/migrations/20260927151747_supervisor_controls.sql
+  - supabase/migrations/20260927171444_supervisor_alerts_and_pod_scoping.sql
+  - supabase/functions/_shared/pod-scope.ts
   - apps/web/src/hooks/useDialerSession.ts
   - apps/web/src/lib/api.ts
   - apps/web/src/components/dialer/**
@@ -45,7 +47,7 @@ answers:
   - "how do I test the dial engine without a real Telnyx account"
 covers: "The org-scoped dial engine (TASK-P2-E2): rolling-refill queueing over campaign_leads, single-winner claim resolution, AMD triage, conference bridging, wrap_up, and the webhook that drives it."
 excludes: "Telnyx API wrappers, number purchase/search and WebRTC credentials (domain.telephony); campaign and lead list construction (domain.campaigns); the agent's own WebRTC leg (E3, not built yet); dispositions (Phase 3, not built yet)."
-tokens_est: 7550
+tokens_est: 8250
 source_hash: 30b4f8a2b005496e438e762a20c2579966e1779eeea3b4ad44ec1d24f5754809
 ---
 
@@ -538,9 +540,11 @@ Records the WINNING contact leg only, never a loser, starting the moment it's ac
 - **Remote pause/end/hang-up all reuse the EXISTING sessionId-keyed endpoints** — `dialer-
   session-pause`/`-stop`/`-hangup-live` already let an owner/admin act on any org session by
   `sessionId` (role==='agent' is the only restriction, gating self-only); `team_live_board` was
-  widened to also return `session_id` so the live board can call them directly. Owner/admin only
-  today — the task's own scope explicitly deferred manager+pod scoping to a follow-up once
-  TASK-M5-A5 (manager role/pods) lands.
+  widened to also return `session_id` so the live board can call them directly. **Manager+pod
+  scoping landed in TASK-M5-B4** (below): each of these three endpoints now also admits
+  `role==='manager'`, gated by `pod-scope.ts`'s `isManagerScopedToAgent` when the target isn't
+  the manager's own session — a manager may act on any agent in their own managed pod(s), never
+  outside them.
 - **Pause**: `pauseDialerSession(sessionId, 'Paused by manager')` — `pauseSession`'s own expected-
   state list widened to include `ready_pending` (a remote click, unlike the agent's own Pause
   button, can plausibly land in that transient window). Audit-logged (`session.remote_pause`)
@@ -562,8 +566,11 @@ Records the WINNING contact leg only, never a loser, starting the moment it's ac
   (`session.remote_hangup`). The confirm step is client-side only (Team.tsx).
 - **Raise hand**: agent-only, hotkey R or a button (ParallelDialerUI); `dial_sessions.
   raised_hand_at`, a new `dialer-session-raise-hand` endpoint, and a `notifications` row per
-  active owner/admin (reusing the exact shape `notifyOwnersAndAdminsOfDailyCap` already
-  established). Auto-clears at TWO single choke points, not scattered call sites: inside
+  recipient (reusing the exact shape `notifyOwnersAndAdminsOfDailyCap` already established).
+  **TASK-M5-B4**: the recipient set widened from "every owner/admin" to `pod-scope.ts`'s
+  `resolveAlertRecipients` — owner/admin unconditionally, plus the raising agent's own pod-scoped
+  manager (an agent with no pod still reaches owner/admin, just no manager). Auto-clears at TWO
+  single choke points, not scattered call sites: inside
   `transition_session` itself the instant a transition leaves `on_call` (reads the PRE-UPDATE
   row's own `state` in the SET list — standard Postgres semantics, needs no separate read), and
   inside `runStartCoachingAction`'s successful-insert path the instant a manager actually starts
@@ -574,6 +581,47 @@ Records the WINNING contact leg only, never a loser, starting the moment it's ac
   monitored..." to the T8 consent announcement (`recordingConsentMessage`) — for an org using live
   coaching in an all-party-consent state, "may be recorded" alone doesn't disclose a supervisor
   silently listening in. Not legal advice, same scope as the rest of that setting.
+
+### Supervisor alerts + notification preferences (MISSION-5 TASK-M5-B4)
+
+- **Per-org opt-in, per-condition editable thresholds** (`org_supervisor_alert_settings`, all off
+  by default): agent in wrap-up too long, paused too long, on a call too long, zero connects in
+  the last N minutes of active dialing. Same select-any-member/write-owner-admin RLS shape as
+  `org_timezone_settings`.
+- **Delivery reuses `reliability-alert-check`** (the T10 cron worker) rather than a second
+  cron/secret/config.toml entry for the same "SQL decides+flips, TS notifies" shape — a new
+  `check_supervisor_alerts()` RPC (no params; reads each org's own thresholds via a join, unlike
+  T10's hardcoded constants) runs alongside the existing stuck-session/webhook-spike checks every
+  5 minutes.
+- **Dedup ("one alert per agent per condition per episode") uses two different mechanisms**,
+  because an "episode" means something different for each: wrap-up/paused/call-too-long fire off
+  one OPEN row in `agent_state_events` (B1) — a new `alerted_at` column on that table is set once
+  per row, and naturally re-arms the moment that row closes and a fresh one opens (the table's
+  own one-open-row-per-agent shape IS the episode boundary, no separate recovery check needed).
+  Zero-connects has no single row to key off — its episode is "the stretch since the agent's last
+  CONNECTED leg (or since the session started, if they've never connected)"; `dial_sessions.
+  zero_connects_alerted_at` only blocks a re-fire while it falls inside that SAME stretch, so a
+  later connect re-arms it for the next dry spell in that session.
+- **Recipients**: owner/admin always, plus the alerted agent's own pod-scoped manager
+  (`pod-scope.ts`'s `resolveAlertRecipients`, shared with raise-hand above), each then filtered
+  through `user_notification_preferences` (per-user opt-out per alert type; absence of a row means
+  on — "everything on by default" falls out of this for free, for every role, not just owner/
+  admin). Settings → Team gains two owner/admin-only cards (`SupervisorAlertSettingsCard`,
+  `NotificationPreferencesCard`) for the thresholds and the per-person opt-outs respectively.
+- **Manager/pod scoping for coaching**: `dialer-coaching`'s role gate now admits `manager`;
+  `runStartCoachingAction` (coaching-core.ts) checks `isManagerScopedToAgent` before ever dialing
+  the manager's own phone when the caller isn't owner/admin. `coaching_sessions`' own SELECT RLS
+  was widened to match (a manager sees only coaching attempts they themselves started) — not
+  currently exercised by any client read (the UI only ever gets a `coachingId` back from the start
+  action's own response), pure consistency hardening.
+- **NOT built**: no self-service notification-preferences UI for an agent to manage their own
+  prefs — `MainApp.tsx`'s tab gate already excludes `'settings'` for a plain agent entirely (a
+  pre-existing gap, not one this task introduced), so only owner/admin can reach either new card
+  today, same as every other Settings → Team card. No audit-log entry for either new settings
+  write, matching the established (if imperfect) precedent of every other direct-table org-
+  settings card in this file (`org_recording_settings`, `org_reliability_alert_settings`,
+  `org_timezone_settings` — none of them audit-log their own update either, despite pre-seeded
+  `AUDIT_ACTION_LABELS` entries for some of them that nothing has ever actually fired).
 
 ### Hold + warm/cold transfer (MISSION-4 TASK-T4, AUD-6 + NEW)
 

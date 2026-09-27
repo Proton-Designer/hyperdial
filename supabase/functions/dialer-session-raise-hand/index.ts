@@ -2,11 +2,13 @@ import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2';
 import { corsHeaders, corsPreflightResponse } from '../_shared/cors.ts';
 import { requireTelnyxOrgRole } from '../_shared/telnyx-org-context.ts';
 import { readJsonBody } from '../_shared/http-json.ts';
+import { resolveAlertRecipients } from '../_shared/pod-scope.ts';
 
 /**
  * MISSION-5 TASK-M5-B2: the agent's own "raise hand" button (Dialer.tsx, hotkey R) -- flags
  * `dial_sessions.raised_hand_at` (read by `team_live_board`, the live-board flag) and notifies
- * every active owner/admin, same `notifications`-table shape
+ * every active owner/admin (TASK-M5-B4: + the agent's own pod-scoped manager, per
+ * `resolveAlertRecipients` -- see pod-scope.ts's own header), same `notifications`-table shape
  * `notifyOwnersAndAdminsOfDailyCap` (dialer-engine.ts) already uses. Deliberately NOT routed
  * through `transition_session` -- raising/clearing a hand never changes `dial_sessions.state`,
  * and that function's own field list is for state-transition fields, not orthogonal metadata
@@ -38,13 +40,8 @@ async function notifyOwnersAndAdminsOfRaisedHand(
   agentId: string,
   targetSessionId: string
 ): Promise<void> {
-  const { data: members, error } = await supabase
-    .from('org_members')
-    .select('user_id')
-    .eq('org_id', orgId)
-    .eq('status', 'active')
-    .in('role', ['owner', 'admin']);
-  if (error || !members?.length) return;
+  const recipientIds = await resolveAlertRecipients(supabase, orgId, agentId);
+  if (recipientIds.length === 0) return;
 
   const { data: profile } = await supabase
     .from('profiles')
@@ -55,9 +52,9 @@ async function notifyOwnersAndAdminsOfRaisedHand(
     [profile?.first_name, profile?.last_name].filter(Boolean).join(' ').trim() || 'An agent';
 
   await supabase.from('notifications').insert(
-    (members as { user_id: string }[]).map((m) => ({
+    recipientIds.map((recipientId) => ({
       org_id: orgId,
-      user_id: m.user_id,
+      user_id: recipientId,
       type: 'agent_raised_hand',
       title: `${agentName} raised their hand`,
       body: `${agentName} could use help on their current call. Open Team to listen in.`,

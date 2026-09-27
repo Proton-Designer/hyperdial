@@ -34,6 +34,7 @@ import { agentSipUri } from './dialer-engine.ts';
 import { encodeCoachingClientState, type CoachingMode } from './client-state.ts';
 import { webhookUrlForOrg } from './telnyx-provision.ts';
 import { logOrgAction } from './audit.ts';
+import { isManagerScopedToAgent } from './pod-scope.ts';
 
 export type { CoachingMode };
 const COACHING_MODES: CoachingMode[] = ['listen', 'whisper', 'barge'];
@@ -156,6 +157,7 @@ export async function runStartCoachingAction(
   credentialConnectionId: string | null,
   orgId: string,
   managerId: string,
+  callerRole: string,
   body: Record<string, unknown>
 ): Promise<ActionResult> {
   const targetUserId = typeof body.targetUserId === 'string' ? body.targetUserId : '';
@@ -166,6 +168,16 @@ export async function runStartCoachingAction(
   }
   if (targetUserId === managerId) {
     return { status: 400, body: { error: 'You cannot coach your own session.' } };
+  }
+
+  // MISSION-5 TASK-M5-B4: a manager (not owner/admin) may only coach an agent inside their own
+  // managed pod scope -- fails before ever dialing the manager's own phone, same "fail fast"
+  // placement as the whisper-mode agent-leg check below. Owner/admin are unrestricted, unchanged.
+  if (callerRole === 'manager') {
+    const inScope = await isManagerScopedToAgent(supabase, orgId, managerId, targetUserId);
+    if (!inScope) {
+      return { status: 403, body: { error: 'That agent is outside your managed pods' } };
+    }
   }
 
   // Busy check: useTelnyxCall.ts has exactly one active-call slot (activeCallRef) -- a manager
