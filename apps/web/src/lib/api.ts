@@ -895,6 +895,64 @@ export async function updateOrgTimezone(timezone: string): Promise<void> {
   if (error) throw new Error(error.message);
 }
 
+/** MISSION-5 TASK-M5-A6: the org-timezone "today" boundary, shared by every surface that needs
+ *  it (Dashboard.tsx's My stats, Dialer.tsx's goal header) -- lifted out rather than duplicated a
+ *  third time; Team.tsx keeps its own long-standing local copy of this same technique (A4) since
+ *  it also needs Yesterday/7d/Custom, not just Today. A zone AHEAD of UTC (e.g. Asia/Tokyo) has
+ *  its own local midnight on the PREVIOUS UTC calendar day, so this searches +/-16h in 15-min
+ *  steps around UTC midnight rather than only forward from it (covers every real IANA offset,
+ *  including the :30/:45 ones). */
+function localMidnightUtc(tz: string, y: number, month: number, day: number): Date {
+  const base = Date.UTC(y, month - 1, day, 0, 0, 0);
+  const STEP_MS = 15 * 60 * 1000;
+  for (let k = -64; k <= 64; k++) {
+    const guess = new Date(base + k * STEP_MS);
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: tz,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    }).formatToParts(guess);
+    const get = (t: string) => parts.find((p) => p.type === t)?.value;
+    if (
+      get('hour') === '00' &&
+      get('minute') === '00' &&
+      Number(get('year')) === y &&
+      Number(get('month')) === month &&
+      Number(get('day')) === day
+    ) {
+      return guess;
+    }
+  }
+  return new Date(base); // unreachable for a real IANA zone (a +/-16h search always finds one)
+}
+
+/** [start of today, start of tomorrow) in `tz`. */
+export function getTodayRange(tz: string): { start: Date; end: Date } {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: tz,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date());
+  const get = (t: string) => Number(parts.find((p) => p.type === t)?.value);
+  const y = get('year');
+  const m = get('month');
+  const day = get('day');
+  const start = localMidnightUtc(tz, y, m, day);
+  const tomorrow = new Date(Date.UTC(y, m - 1, day + 1));
+  const end = localMidnightUtc(
+    tz,
+    tomorrow.getUTCFullYear(),
+    tomorrow.getUTCMonth() + 1,
+    tomorrow.getUTCDate()
+  );
+  return { start, end };
+}
+
 /** MISSION-5 TASK-M5-A4: "My stats" self-view (Dashboard.tsx) -- the caller's OWN numbers for
  *  [start, end) plus a team_median_conversations_per_hr computed server-side across every active
  *  member for the SAME window. Callable by any org member for themselves; there is no agentId
@@ -1470,6 +1528,147 @@ export async function getManagerPods(managerUserId: string): Promise<string[]> {
     .eq('manager_user_id', managerUserId);
   if (error) throw new Error(error.message);
   return (data ?? []).map((r: { pod_id: string }) => r.pod_id);
+}
+
+// --- MISSION-5 TASK-M5-A6: daily goals (org/pod/agent, most-specific-wins) ---
+
+export type GoalMetric = 'dials' | 'conversations' | 'wins' | 'talk_minutes';
+export type GoalScope = 'org' | 'pod' | 'agent';
+
+export interface GoalTargets {
+  dials_goal: number | null;
+  conversations_goal: number | null;
+  wins_goal: number | null;
+  talk_minutes_goal: number | null;
+}
+
+/** The caller's OWN resolved daily targets (agent-level goal wins, else the caller's pod-level
+ *  goal, else the org-level goal, independently per metric) -- backs Dashboard.tsx's My stats and
+ *  Dialer.tsx's header progress bars. Any org member may call this for themselves; there is no
+ *  agentId parameter, same self-view trust model as `getAgentSelfStats`. */
+export async function getMyGoalTargets(): Promise<GoalTargets> {
+  const orgId = await getActiveOrgId();
+  const { data, error } = await supabase.rpc('my_goal_targets', { p_org: orgId });
+  if (error) throw new Error(error.message);
+  const rows = (data ?? []) as GoalTargets[];
+  return (
+    rows[0] ?? {
+      dials_goal: null,
+      conversations_goal: null,
+      wins_goal: null,
+      talk_minutes_goal: null,
+    }
+  );
+}
+
+export interface TeamGoalTargetsRow extends GoalTargets {
+  agent_id: string;
+}
+
+/** Same resolution as `getMyGoalTargets`, per active pod-scoped agent -- owner/admin/manager
+ *  only (server-enforced; a manager's rows are already filtered to their own supervised pods by
+ *  the RPC, same pattern as `getTeamDailyStats`). Join with `getTeamDailyStats`'s actuals by
+ *  `agent_id` client-side to render attainment on the Team page. */
+export async function getTeamGoalTargets(): Promise<TeamGoalTargetsRow[]> {
+  const orgId = await getActiveOrgId();
+  const { data, error } = await supabase.rpc('team_goal_targets', { p_org: orgId });
+  if (error) throw new Error(error.message);
+  return (data ?? []) as TeamGoalTargetsRow[];
+}
+
+/** Sets (upserts) the standing daily target for one metric at one scope. Owner/admin may set any
+ *  scope; a manager may only set 'pod' (their own supervised pod) or 'agent' (an agent inside
+ *  their own supervised pods) -- never 'org'. Pass only the id the scope needs (podId for 'pod',
+ *  agentUserId for 'agent', neither for 'org'); the RPC rejects any other combination. Returns the
+ *  goal's id. */
+export async function setOrgGoal(
+  scope: GoalScope,
+  metric: GoalMetric,
+  target: number,
+  podId?: string,
+  agentUserId?: string
+): Promise<string> {
+  const orgId = await getActiveOrgId();
+  const { data, error } = await supabase.rpc('set_org_goal', {
+    p_org: orgId,
+    p_scope: scope,
+    p_pod_id: podId ?? null,
+    p_agent_user_id: agentUserId ?? null,
+    p_metric: metric,
+    p_target: target,
+  });
+  if (error) throw new Error(error.message);
+  return data as string;
+}
+
+/** Same owner/admin-any, manager-own-scope-only permission split as `setOrgGoal`, checked
+ *  server-side against the goal's OWN scope/pod/agent (the RPC looks the row up itself). */
+export async function deleteOrgGoal(goalId: string): Promise<void> {
+  const orgId = await getActiveOrgId();
+  const { error } = await supabase.rpc('delete_org_goal', { p_org: orgId, p_goal_id: goalId });
+  if (error) throw new Error(error.message);
+}
+
+// --- MISSION-5 TASK-M5-A6: team broadcasts ---
+
+export interface OrgBroadcast {
+  id: string;
+  message: string;
+  pod_id: string | null;
+  created_at: string;
+  expires_at: string | null;
+}
+
+/** Every broadcast the caller can currently see (their own pod, or org-wide, not expired, not
+ *  already dismissed by them) -- pre-filtered server-side so Dialer.tsx never has to reconstruct
+ *  that visibility logic itself. Polled the same way `getTeamLiveBoard` is. */
+export async function getActiveBroadcasts(): Promise<OrgBroadcast[]> {
+  const orgId = await getActiveOrgId();
+  const { data, error } = await supabase.rpc('active_org_broadcasts', { p_org: orgId });
+  if (error) throw new Error(error.message);
+  return (data ?? []) as OrgBroadcast[];
+}
+
+/** Owner/admin/manager only; a manager posting to a specific pod may only target a pod they
+ *  supervise (server-enforced) -- 'everyone' (podId omitted) is open to all three roles. Returns
+ *  the new broadcast's id. */
+export async function createBroadcast(
+  message: string,
+  podId?: string,
+  expiresAt?: Date
+): Promise<string> {
+  const orgId = await getActiveOrgId();
+  const { data, error } = await supabase.rpc('create_org_broadcast', {
+    p_org: orgId,
+    p_pod_id: podId ?? null,
+    p_message: message,
+    p_expires_at: expiresAt ? expiresAt.toISOString() : null,
+  });
+  if (error) throw new Error(error.message);
+  return data as string;
+}
+
+/** Only the poster or an owner/admin may remove a broadcast early (server-enforced). */
+export async function deleteBroadcast(broadcastId: string): Promise<void> {
+  const orgId = await getActiveOrgId();
+  const { error } = await supabase.rpc('delete_org_broadcast', {
+    p_org: orgId,
+    p_broadcast_id: broadcastId,
+  });
+  if (error) throw new Error(error.message);
+}
+
+/** Plain client insert, not an RPC -- `org_broadcast_dismissals`' own RLS only lets a caller
+ *  touch their OWN dismissal rows, so there is no privileged check to enforce server-side. */
+export async function dismissBroadcast(broadcastId: string): Promise<void> {
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) throw new Error('Not signed in');
+  const { error } = await supabase
+    .from('org_broadcast_dismissals')
+    .insert({ broadcast_id: broadcastId, user_id: user.id });
+  if (error) throw new Error(error.message);
 }
 
 // --- MISSION-5 TASK-M5-A3: offboarding wizard ---

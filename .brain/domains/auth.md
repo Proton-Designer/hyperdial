@@ -16,6 +16,7 @@ sources:
   - supabase/migrations/20260927080000_org_audit_log.sql
   - supabase/migrations/20260927080002_org_member_offboarding.sql
   - supabase/migrations/20260927160550_manager_role_and_pods.sql
+  - supabase/migrations/20260927164816_goals_and_broadcasts.sql
   - supabase/functions/org-members/index.ts
   - supabase/functions/_shared/dialer-engine.ts
   - apps/web/src/contexts/AuthContext.tsx
@@ -38,9 +39,11 @@ answers:
   - "what happens when a team member is disabled or removed"
   - "what can a manager role do, and how is their pod scope enforced"
   - "what is the difference between org_members.pod_id and org_manager_pods"
-covers: "Supabase auth, session handling, the two-layer Edge Function authorization model, service-role usage, org tenancy, the per-table RLS inventory, member offboarding (disable/remove/restore), and the manager role's server-enforced pod scope."
+  - "how are daily goals set and resolved (org vs pod vs agent level)"
+  - "how do team broadcasts work, who can post one, and how does an agent dismiss it"
+covers: "Supabase auth, session handling, the two-layer Edge Function authorization model, service-role usage, org tenancy, the per-table RLS inventory, member offboarding (disable/remove/restore), the manager role's server-enforced pod scope, and daily goals + team broadcasts."
 excludes: "Telnyx webhook signature mechanics (domain.telephony); dial-loop ownership checks (domain.dialer)."
-tokens_est: 6100
+tokens_est: 6650
 source_hash: b8d3fd311248f16889b10f531365423ec36488c32179946d09361fb21c5ce0c5
 ---
 
@@ -136,6 +139,9 @@ are the deliberate exceptions: personal, not org-shared (see `20260924000300`'s 
 | `user_phone_numbers` | SELECT `is_org_member` (any role, to pick a caller ID); INSERT/UPDATE/DELETE `has_org_role([owner,admin])`. |
 | `org_pods` (`20260927160550`, TASK-M5-A5) | SELECT `is_org_member`; INSERT/UPDATE/DELETE `has_org_role([owner,admin])`. Just a name — membership (`org_members.pod_id`) and a manager's scope (`org_manager_pods`) are separate tables. |
 | `org_manager_pods` (`20260927160550`, TASK-M5-A5) | SELECT: the manager's own rows (`manager_user_id = auth.uid()`), or owner/admin see all. INSERT/UPDATE/DELETE `has_org_role([owner,admin])` — a manager can view but never edit their own scope. |
+| `org_goals` (`20260927164816`, TASK-M5-A6) | SELECT: owner/admin see all; a manager sees org-wide rows plus pod/agent rows inside their own `org_manager_pods` scope; any agent sees their own agent-level row. **No client INSERT/UPDATE/DELETE policy at all** — writes only via `set_org_goal`/`delete_org_goal` (same reasoning as `org_audit_log`: the manager-tier pod-scope check is easier to express in plpgsql than a single RLS `WITH CHECK`). |
+| `org_broadcasts` (`20260927164816`, TASK-M5-A6) | SELECT: `is_org_member` and (org-wide, or owner/admin, or the caller's own `org_members.pod_id` matches). No client write policy — `create_org_broadcast`/`delete_org_broadcast` only. |
+| `org_broadcast_dismissals` (`20260927164816`, TASK-M5-A6) | ALL: `user_id = auth.uid()` only — a caller may only ever touch their OWN dismissal rows; no privileged check needed (dismissing a broadcast you can't otherwise see is harmless), so this is the one write in this task done as a plain client insert, not an RPC. |
 | `notifications` | Unchanged: SELECT/UPDATE `user_id = auth.uid()`. Personal, not org-scoped even though `org_id` was added to the table (FK/cascade hygiene only). |
 | `user_preferences` | Unchanged: SELECT/INSERT/UPDATE `auth.uid() = user_id`. No `org_id` column — stays per-user. |
 | `dialer_sessions` | SELECT: owner/admin see all; agent sees only their own. All writes via Edge Functions. |
@@ -153,7 +159,7 @@ are the deliberate exceptions: personal, not org-shared (see `20260924000300`'s 
 
 **Client read/write surface**: `supabase/functions/org-audit-log` — GET (owner/admin, filters: actor/action/date range, paged, resolves actor names via one bulk `profiles` lookup, never `auth.admin.getUserById` per row) backs Settings → **Activity** (`Settings.tsx`'s `ActivityTab`). POST accepts only an allowlisted `name` (`export.team_csv`, `export.analytics_csv` today) — the one gap neither writer above covers, since a CSV export never round-trips to a server on its own (`apps/web/src/lib/csv.ts`'s own header) — wired from `Team.tsx`/`Analytics.tsx`'s own export handlers via `api.ts`'s `logAuditEvent`.
 
-**Action name registry** (add a row here — and to `Settings.tsx`'s `AUDIT_ACTION_LABELS` — whenever a new action is wired in): `member.role_change`, `member.disable`, `member.enable`, `member.remove`, `member.restore`, `member.release_queued_leads`, `member.set_ghl_user_id`, `invite.create`, `campaign_leads.assign`, `campaign_leads.callback_fallback_claim`, `coaching.start`, `coaching.end`, `session.remote_pause`, `session.remote_end`, `session.remote_hangup`, `ghl.connect`, `ghl.disconnect`, `ghl.update_blocked_tags`, `ghl.update_pull_settings`, `settings.spend.update`, `settings.reliability_alerts.update`, `settings.recording.update`, `settings.transfer.update`, `export.team_csv`, `export.analytics_csv`.
+**Action name registry** (add a row here — and to `Settings.tsx`'s `AUDIT_ACTION_LABELS` — whenever a new action is wired in): `member.role_change`, `member.disable`, `member.enable`, `member.remove`, `member.restore`, `member.release_queued_leads`, `member.set_ghl_user_id`, `invite.create`, `campaign_leads.assign`, `campaign_leads.callback_fallback_claim`, `coaching.start`, `coaching.end`, `session.remote_pause`, `session.remote_end`, `session.remote_hangup`, `ghl.connect`, `ghl.disconnect`, `ghl.update_blocked_tags`, `ghl.update_pull_settings`, `settings.spend.update`, `settings.reliability_alerts.update`, `settings.recording.update`, `settings.transfer.update`, `export.team_csv`, `export.analytics_csv`, `goal.set`, `goal.delete`, `broadcast.create`, `broadcast.delete`.
 MISSION-5 TASK-M5-B2 added `session.remote_pause`/`session.remote_end`/`session.remote_hangup` (owner/admin acting on someone ELSE's dial session -- never logged for an agent's own routine pause/stop/hangup click) and reused `coaching.end` for two new triggers (`swept_stale` from the sweeper, `target_transferred`/`coach_offboarded` from the new coaching-end helpers) that previously went unlogged.
 
 **Retention**: keep 1 year, documented not enforced — no cron yet (row volume is trivial at current org sizes; revisit with a scheduled prune if that changes).
@@ -187,6 +193,50 @@ MISSION-5 TASK-M5-B2 added `session.remote_pause`/`session.remote_end`/`session.
 **Explicitly NOT scoped yet** (coordinate once landed, don't touch concurrently): coaching (`coaching-core.ts`) and remote pause/stop (`dialer-engine.ts`) are eng2's B2 territory — B2's own task file says "manager after A5", i.e. B2 ships owner/admin-only first and picks up manager+pod scoping in its own follow-up once B2 has landed.
 
 **Client-side tab visibility** (cosmetic only, real enforcement is server-side above): a manager gets Dashboard/Dialer/Contacts/Analytics/Team/Settings, same as owner/admin, **except Campaigns** — "assign leads" is enforced server-side but deliberately has no client entry point yet (Campaigns.tsx has other un-scoped surface — CSV import, campaign creation, agent-roster assignment — that would need its own manager-safe review first). Within Settings, a manager is further restricted to just the Activity (audit log) and Security (own profile) sub-tabs — not Telephony/Team/Integrations/Dispositions/DNC/Distribution, all billing/numbers/org-settings-adjacent.
+
+## Daily goals + team broadcasts (MISSION-5 TASK-M5-A6)
+
+`20260927164816_goals_and_broadcasts.sql`. Two independent features, same permission shape as
+each other (and as pods/A5): owner/admin act on anything, a manager only within their own
+`org_manager_pods` scope, an agent gets a resolved self-view only. Neither adds any new
+call_legs/dial_sessions aggregation — actual counts still come from the existing
+`agent_self_stats`/`team_daily_stats` RPCs, joined client-side by `agent_id`.
+
+**Goals**: `org_goals` is a STANDING row per scope-key+metric (not a historical log) — a partial
+unique index per scope tier (`(org_id, metric) where scope='org'`, `(org_id, pod_id, metric)
+where scope='pod'`, `(org_id, agent_user_id, metric) where scope='agent'`) makes `set_org_goal`'s
+`insert ... on conflict ... do update` a true upsert-in-place. Four metrics: `dials`,
+`conversations`, `wins` (this app's "yes to profile" — same `is_win` disposition flag
+`agent_self_stats`/`team_daily_stats` already use for their own `wins` column), `talk_minutes`.
+**Resolution is most-specific-wins, independently PER METRIC**: agent-level row beats pod-level
+beats org-level — an org can set a blanket `dials` goal while one pod also has its own
+`conversations` goal and one agent has their own `talk_minutes` goal, and each agent's effective
+target is assembled from whichever tier actually has a row for that metric. `my_goal_targets(p_org)`
+resolves this for the caller themselves (self-view, any org member, same trust model as
+`agent_self_stats` — no `p_agent` parameter); `team_goal_targets(p_org)` resolves it for every
+pod-scoped agent (owner/admin/manager, same role gate + `is_agent_in_callers_pod_scope`
+composition as `team_daily_stats`). Writes (`set_org_goal`/`delete_org_goal`) are owner/admin-any,
+manager-own-scope-only — a manager can never set/delete an ORG-level goal, only pod (their own
+supervised pod) or agent (an agent inside one of their own supervised pods).
+
+**Broadcasts**: `org_broadcasts` (`pod_id` null = everyone) + `org_broadcast_dismissals`
+(per-viewer, so one agent dismissing a broadcast never hides it from anyone else).
+`create_org_broadcast`/`delete_org_broadcast` are owner/admin-any, manager-own-pod-scope-only —
+unlike goals, a manager MAY post org-wide ("everyone" is open to all three roles per the task's
+own wording; only a POD target is scope-checked). `active_org_broadcasts(p_org)` is the one read
+path agents use (Dialer.tsx): pre-filtered to non-expired, visible-to-caller (their own pod or
+everyone), not-yet-dismissed rows in one round trip. Dismissing is a plain client insert into
+`org_broadcast_dismissals` (see the RLS table above), not an RPC — the only write in either
+feature that isn't.
+
+**UI**: Team.tsx gets a goal-setting + broadcast-composing panel (`TeamGoalsAndBroadcastPanel`,
+owner/admin/manager — same "server enforces the pod scope, the UI doesn't try to pre-filter
+options" trust model `assign_campaign_leads`'s own UI already uses) and a goal-attainment table
+(`TeamGoalAttainment`, joins `team_goal_targets` with the daily-stats table Team.tsx already
+fetches). Dashboard.tsx's My stats card and Dialer.tsx's header both render the caller's own
+today-vs-goal progress bars via one shared component (`MyGoalHeader`/`GoalProgressBars`) — a
+metric with no goal set anywhere is left out of the bars entirely, and the whole card/section
+renders nothing if no goal is set at all.
 
 ## Constraints & gotchas
 

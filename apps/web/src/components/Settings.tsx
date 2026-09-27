@@ -3139,6 +3139,10 @@ const AUDIT_ACTION_LABELS: Record<string, string> = {
   'settings.transfer.update': 'Updated transfer settings',
   'export.team_csv': 'Exported the team daily CSV',
   'export.analytics_csv': 'Exported the analytics CSV',
+  'goal.set': 'Set a team goal',
+  'goal.delete': 'Removed a team goal',
+  'broadcast.create': 'Posted a broadcast',
+  'broadcast.delete': 'Removed a broadcast',
 };
 
 function ActivityTab() {

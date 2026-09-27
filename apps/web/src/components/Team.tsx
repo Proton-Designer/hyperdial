@@ -29,6 +29,8 @@ import { EmptyState } from '@/components/app/EmptyState';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
 import { useFocusTrap } from '@/hooks/useFocusTrap';
+import { TeamGoalsAndBroadcastPanel } from '@/components/goals/TeamGoalsAndBroadcastPanel';
+import { TeamGoalAttainment } from '@/components/goals/TeamGoalAttainment';
 
 type Range = 'today' | 'yesterday' | '7d' | 'custom';
 type TeamView = 'overview' | 'attendance';
@@ -1006,6 +1008,10 @@ export function Team() {
         <AttendanceTab orgTz={orgTz} />
       ) : (
         <>
+          {/* MISSION-5 TASK-M5-A6: goals + broadcasts. Server-enforced pod scoping (no client-side
+              role/pod-scope filtering here -- see the panel's own header comment). */}
+          <TeamGoalsAndBroadcastPanel />
+
           {/* ADM-7: live board */}
           <div className="mb-8">
             <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
@@ -1139,6 +1145,8 @@ export function Team() {
               onConfirm={handleConfirmedRemoteAction}
             />
           )}
+
+          <TeamGoalAttainment daily={daily} />
 
           {/* ADM-6: daily numbers */}
           <div>

@@ -14,6 +14,8 @@ import { WrapUpModal } from './dialer/WrapUpModal';
 import { StartSessionPanel } from './dialer/StartSessionPanel';
 import { ManualDialPanel } from './dialer/ManualDialPanel';
 import { HotkeyHelpOverlay } from './dialer/HotkeyHelpOverlay';
+import { MyGoalHeader } from '@/components/goals/MyGoalHeader';
+import { BroadcastBanner } from '@/components/goals/BroadcastBanner';
 import { isTypingTarget } from '@/lib/keyboard';
 import {
   getActiveDialerSession,
@@ -932,6 +934,13 @@ function DialerBody({
 
       {/* Center Panel - Dialing Interface */}
       <div className="flex-1 bg-surface-0 p-4 sm:p-8 overflow-y-auto">
+        {/* MISSION-5 TASK-M5-A6: today's goal progress + any active broadcast for this agent.
+            Both are self-contained (own fetch/poll) and render nothing when there's nothing to
+            show, so they're safe to always mount here regardless of dialer state. */}
+        <div className="max-w-2xl mx-auto mb-6">
+          <MyGoalHeader />
+        </div>
+        <BroadcastBanner />
         {pendingInboundCall && (
           <IncomingCallBanner
             fromE164={pendingInboundCall.fromE164}

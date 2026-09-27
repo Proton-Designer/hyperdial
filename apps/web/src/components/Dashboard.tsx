@@ -38,6 +38,7 @@ import {
   type UserPreferences,
   type SpendStatus,
 } from '@/lib/api';
+import { MyGoalHeader } from '@/components/goals/MyGoalHeader';
 
 type PerfRange = '7d' | '30d' | 'custom';
 
@@ -255,6 +256,16 @@ export function Dashboard({
           Telnyx balance is low: ${spendStatus.availableCreditUsd.toFixed(2)} available, below your
           ${spendStatus.lowBalanceAlertUsd.toFixed(2)} alert threshold. Check Settings → Telephony.
         </div>
+      )}
+
+      {/* MISSION-5 TASK-M5-A6: "My stats" -- today's goal attainment, self-view only (an
+          owner/admin already gets an org-wide Team Performance chart below, not a personal one).
+          Renders nothing at all (title included) if no goal is set anywhere for this org. */}
+      {isAgent && (
+        <MyGoalHeader
+          title="Today's goals"
+          cardClassName="mb-6 rounded-app-lg border border-border-subtle bg-surface-1 p-4 sm:p-6 shadow-app-sm"
+        />
       )}
 
       {/* Compact stat row -- 2x2 on mobile, 4-across from md up. Shares one shape between the
