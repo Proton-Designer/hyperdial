@@ -64,7 +64,11 @@ Deno.serve(async (req) => {
       .from('call_legs')
       .select(
         'id, kind, state, outcome, contact_id, lead_id, call_control_id, amd_result, hangup_cause, answered_at, claimed_at, ended_at, created_at, dispositioned_at, held_at, transferred_to, transfer_type, ' +
-          'contact:contacts(business_name, first_name, last_name, phone_number)'
+          // TASK-T5 (CRD-1): widened for the connected-call card's business-details panel --
+          // license_number/service_zips/tier live inside ghl_custom_fields (keyed by our own
+          // target-key names, not a GHL field id -- see ghl-import.ts's own enrichment code),
+          // read client-side, no server-side unpacking needed.
+          'contact:contacts(id, business_name, first_name, last_name, phone_number, rating, review_count, website, owner_contact, ghl_custom_fields)'
       )
       .eq('session_id', sessionId)
       // TASK-P2-E2 fix-forward: claim_next_leads (migration 20260924001900) now inserts every
@@ -146,6 +150,98 @@ Deno.serve(async (req) => {
       });
     }
 
+    // TASK-T5 (CRD-3 + CRD-5): one batched query for the WHOLE current batch's history, not one
+    // per card -- the same "pre-loaded the moment the batch fires" shape CRD-1's own contact join
+    // already gets for free. A leg still in progress (kind='contact', state anything but 'ended')
+    // is naturally excluded by the state filter, so there's no need to also exclude the current
+    // in-batch leg ids explicitly.
+    const contactIds = Array.from(
+      new Set((legs ?? []).map((l) => l.contact_id).filter((id): id is string => Boolean(id)))
+    );
+    const history: Record<
+      string,
+      Array<{
+        legId: string;
+        createdAt: string;
+        outcome: string | null;
+        dispositionLabel: string | null;
+        durationSeconds: number | null;
+        notes: string | null;
+        isVoicemail: boolean;
+        hasRecording: boolean;
+        callbackAt: string | null;
+      }>
+    > = {};
+    if (contactIds.length > 0) {
+      const { data: historyRows, error: historyError } = await supabase
+        .from('call_legs')
+        .select(
+          'id, contact_id, created_at, outcome, duration_seconds, notes, callback_at, recording_status, recording_path, ' +
+            'disposition:dispositions(label)'
+        )
+        .eq('org_id', orgId)
+        .eq('kind', 'contact')
+        .eq('state', 'ended')
+        .in('contact_id', contactIds)
+        .order('created_at', { ascending: false });
+      if (historyError) {
+        return new Response(JSON.stringify({ error: historyError.message }), {
+          status: 500,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+      // Cap at 3 most-recent attempts per contact -- same "last 3" convention DSP-9's own
+      // contact_disposition_history function already established for this exact kind of strip.
+      for (const row of (historyRows ?? []) as Array<{
+        id: string;
+        contact_id: string;
+        created_at: string;
+        outcome: string | null;
+        duration_seconds: number | null;
+        notes: string | null;
+        callback_at: string | null;
+        recording_status: string | null;
+        recording_path: string | null;
+        disposition: { label: string } | { label: string }[] | null;
+      }>) {
+        const bucket = (history[row.contact_id] ??= []);
+        if (bucket.length >= 3) continue;
+        const disposition = Array.isArray(row.disposition) ? row.disposition[0] : row.disposition;
+        bucket.push({
+          legId: row.id,
+          createdAt: row.created_at,
+          outcome: row.outcome,
+          dispositionLabel: disposition?.label ?? null,
+          durationSeconds: row.duration_seconds,
+          notes: row.notes,
+          isVoicemail: row.outcome === 'voicemail_left',
+          hasRecording: row.recording_status === 'saved' && Boolean(row.recording_path),
+          callbackAt: row.callback_at,
+        });
+      }
+    }
+
+    // TASK-T5 (CRD-4, card-side): the campaign's own script/objection sheet (T5a,
+    // 20260926080200) -- same 3s poll already satisfies "live refetch on change."
+    let campaignScript: { scriptText: string | null; objectionSheetText: string | null } | null =
+      null;
+    if (session.campaign_id) {
+      const { data: campaign, error: campaignError } = await supabase
+        .from('campaigns')
+        .select('script_text, objection_sheet_text')
+        .eq('id', session.campaign_id)
+        .maybeSingle();
+      if (campaignError) {
+        return new Response(JSON.stringify({ error: campaignError.message }), {
+          status: 500,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+      campaignScript = campaign
+        ? { scriptText: campaign.script_text, objectionSheetText: campaign.objection_sheet_text }
+        : null;
+    }
+
     return new Response(
       JSON.stringify({
         session,
@@ -153,6 +249,8 @@ Deno.serve(async (req) => {
         inboundCall: inboundCall ?? null,
         coachingMode,
         activeTransfer: activeTransfer ?? null,
+        history,
+        campaignScript,
       }),
       {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },

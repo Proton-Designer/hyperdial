@@ -799,6 +799,9 @@ function DialerBody({
                 coachingMode={parallelSession.coachingMode}
                 heldAt={parallelSession.heldAt}
                 activeTransfer={parallelSession.activeTransfer}
+                connectedContact={parallelSession.connectedContact}
+                connectedContactHistory={parallelSession.connectedContactHistory}
+                campaignScript={parallelSession.campaignScript}
                 onPause={handleParallelPause}
                 onResume={() => void handleParallelResume()}
                 onStop={(opts) => void handleParallelStop(opts)}

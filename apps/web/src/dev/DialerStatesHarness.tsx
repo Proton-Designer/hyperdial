@@ -196,6 +196,43 @@ export function DialerStatesHarness() {
           coachingMode={null}
           heldAt={null}
           activeTransfer={null}
+          connectedContact={
+            scenario.connectedContactId
+              ? {
+                  id: scenario.connectedContactId,
+                  name: FIXTURE_CONTACTS[0].name,
+                  phone: FIXTURE_CONTACTS[0].phone,
+                  rating: 4.8,
+                  reviewCount: 120,
+                  website: 'https://example.com',
+                  ownerContact: 'Jane Owner',
+                  licenseNumber: 'LIC-12345',
+                  serviceZips: '90210, 90211',
+                  tier: 'Gold',
+                }
+              : null
+          }
+          connectedContactHistory={
+            scenario.connectedContactId
+              ? [
+                  {
+                    legId: 'fixture-history-1',
+                    createdAt: ANSWERED_2MIN_AGO,
+                    outcome: 'no_answer',
+                    dispositionLabel: null,
+                    durationSeconds: null,
+                    notes: null,
+                    isVoicemail: false,
+                    hasRecording: false,
+                    callbackAt: null,
+                  },
+                ]
+              : []
+          }
+          campaignScript={{
+            scriptText: 'Hi, this is {agent} calling from {company}...',
+            objectionSheetText: '"Not interested" -> acknowledge, then ask what changed.',
+          }}
           onPause={() => window.alert('Pause clicked (fixture, no-op)')}
           onResume={() => window.alert('Resume clicked (fixture, no-op)')}
           onStop={(opts) =>

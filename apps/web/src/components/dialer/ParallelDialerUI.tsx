@@ -1,14 +1,22 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { motion } from 'motion/react';
+import { Play } from 'lucide-react';
 import { ContactBatchCard } from './ContactBatchCard';
 import { LiveCallPanel } from './LiveCallPanel';
 import { TransferModal } from './TransferModal';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/components/ui/utils';
 import { useFocusTrap } from '@/hooks/useFocusTrap';
-import type { BatchContactPreview } from '@/hooks/useDialerSession';
-import type { ActiveTransfer, DialSessionState, InboundCallInfo } from '@/lib/api';
+import type { BatchContactPreview, ConnectedContactDetails } from '@/hooks/useDialerSession';
+import { getRecordingUrl } from '@/lib/api';
+import type {
+  ActiveTransfer,
+  CampaignScriptInfo,
+  ContactHistoryEntry,
+  DialSessionState,
+  InboundCallInfo,
+} from '@/lib/api';
 
 interface ParallelDialerUIProps {
   sessionState: DialSessionState;
@@ -36,6 +44,14 @@ interface ParallelDialerUIProps {
   heldAt: string | null;
   /** TASK-T4: the session's in-flight warm/cold transfer, if any. */
   activeTransfer: ActiveTransfer | null;
+  /** TASK-T5 (CRD-1): the connected contact's own business details, if the leg has a contact
+   *  join at all -- every field individually nullable ("graceful when missing"). */
+  connectedContact: ConnectedContactDetails | null;
+  /** TASK-T5 (CRD-3): the connected contact's own past-attempt history (up to 3, most recent
+   *  first). Empty for a contact with no prior attempts. */
+  connectedContactHistory: ContactHistoryEntry[];
+  /** TASK-T5 (CRD-4, card-side): the connected call's own campaign script/objection sheet. */
+  campaignScript: CampaignScriptInfo | null;
   onPause: () => void;
   onResume: () => void;
   /** BUG-11: `force` is only ever passed `true` from the confirm dialog's "Hang up and stop"
@@ -160,6 +176,9 @@ export function ParallelDialerUI({
   coachingMode,
   heldAt,
   activeTransfer,
+  connectedContact,
+  connectedContactHistory,
+  campaignScript,
   onPause,
   onResume,
   onStop,
@@ -182,7 +201,11 @@ export function ParallelDialerUI({
             : (activeTransfer.target_number ?? ''),
       }
     : null;
-  const connectedContact = batchContacts.find((c) => c.id === connectedContactId) ?? null;
+  // TASK-T5: connectedContact (CRD-1's own widened join) is the primary source for name/phone
+  // too now -- batchContacts (name/phone only) is just the fallback for the split second before
+  // it loads, same graceful-degradation spirit as every other nullable CRD-1 field.
+  const connectedContactPreview = batchContacts.find((c) => c.id === connectedContactId) ?? null;
+  const connectedCallCard = connectedContact ?? connectedContactPreview;
   const inboundContactName = inboundCall
     ? inboundCall.contact
       ? inboundCall.contact.business_name ||
@@ -289,22 +312,31 @@ export function ParallelDialerUI({
         </div>
       )}
 
-      {connectedContact && (
-        <LiveCallPanel
-          contactName={connectedContact.name}
-          phone={connectedContact.phone}
-          answeredAt={connectedAnsweredAt}
-          coachingMode={coachingMode}
-          heldAt={heldAt}
-          onHold={onHoldCall}
-          onResume={onResumeCall}
-          activeTransfer={activeTransferForPanel}
-          onOpenTransfer={() => setShowTransferModal(true)}
-          onCompleteTransfer={onCompleteTransfer}
-          onCancelTransfer={onCancelTransfer}
-          onToggleMute={onMuteChange}
-          onEndCall={onEndLiveCall}
-        />
+      {connectedCallCard && (
+        <>
+          <LiveCallPanel
+            contactName={connectedCallCard.name}
+            phone={connectedCallCard.phone}
+            answeredAt={connectedAnsweredAt}
+            coachingMode={coachingMode}
+            heldAt={heldAt}
+            onHold={onHoldCall}
+            onResume={onResumeCall}
+            activeTransfer={activeTransferForPanel}
+            onOpenTransfer={() => setShowTransferModal(true)}
+            onCompleteTransfer={onCompleteTransfer}
+            onCancelTransfer={onCancelTransfer}
+            onToggleMute={onMuteChange}
+            onEndCall={onEndLiveCall}
+          />
+          {connectedContact && <ContactDetailsPanel contact={connectedContact} />}
+          {connectedContactHistory.length > 0 && (
+            <ContactHistoryPanel history={connectedContactHistory} />
+          )}
+          {campaignScript && (campaignScript.scriptText || campaignScript.objectionSheetText) && (
+            <CampaignScriptPanel script={campaignScript} />
+          )}
+        </>
       )}
 
       {showTransferModal && (
@@ -346,5 +378,164 @@ function Stat({ label, value }: { label: string; value: React.ReactNode }) {
     <span>
       {label}: <b className="text-text-primary font-semibold">{value}</b>
     </span>
+  );
+}
+
+/** TASK-T5 (CRD-1): business details for the currently-connected contact. Every row is omitted
+ *  individually when its own field is null -- "graceful when missing" per the task's own spec,
+ *  never a placeholder "N/A" row. Renders nothing (not even the card) if every field is null. */
+function ContactDetailsPanel({ contact }: { contact: ConnectedContactDetails }) {
+  const rows: Array<{ label: string; value: React.ReactNode }> = [];
+  if (contact.rating !== null) {
+    rows.push({
+      label: 'Rating',
+      value: `${contact.rating.toFixed(1)}${contact.reviewCount !== null ? ` (${contact.reviewCount} reviews)` : ''}`,
+    });
+  }
+  if (contact.ownerContact) rows.push({ label: 'Owner/contact', value: contact.ownerContact });
+  if (contact.licenseNumber) rows.push({ label: 'License #', value: contact.licenseNumber });
+  if (contact.serviceZips) rows.push({ label: 'Service ZIPs', value: contact.serviceZips });
+  if (contact.tier) rows.push({ label: 'Tier', value: contact.tier });
+  if (contact.website) {
+    rows.push({
+      label: 'Website',
+      value: (
+        <a
+          href={contact.website}
+          target="_blank"
+          rel="noreferrer"
+          className="text-accent-to hover:underline"
+        >
+          {contact.website}
+        </a>
+      ),
+    });
+  }
+  if (rows.length === 0) return null;
+
+  return (
+    <div className="rounded-app-lg border border-border-subtle bg-surface-1 p-4">
+      <h4 className="text-meta text-text-secondary mb-2">Business details</h4>
+      <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1.5 text-body">
+        {rows.map((row) => (
+          <div key={row.label} className="flex justify-between gap-2 sm:block">
+            <dt className="text-text-muted">{row.label}</dt>
+            <dd className="text-text-primary sm:mt-0.5">{row.value}</dd>
+          </div>
+        ))}
+      </dl>
+    </div>
+  );
+}
+
+function formatHistoryDuration(seconds: number | null): string | null {
+  if (seconds === null) return null;
+  const m = Math.floor(seconds / 60);
+  const s = Math.floor(seconds % 60);
+  return `${m}:${String(s).padStart(2, '0')}`;
+}
+
+/** TASK-T5 (CRD-3): up to 3 past attempts at the connected contact, most recent first --
+ *  recording playback is on-click (a past leg's recording either already exists or it doesn't,
+ *  no "still processing" window to wait out), same pattern as WrapUpModal's own
+ *  DispositionHistory/RecordingButton. */
+function ContactHistoryPanel({ history }: { history: ContactHistoryEntry[] }) {
+  const [playingLegId, setPlayingLegId] = useState<string | null>(null);
+  const [playError, setPlayError] = useState<string | null>(null);
+  const [recordingUrl, setRecordingUrl] = useState<{ legId: string; url: string } | null>(null);
+
+  const handlePlay = async (legId: string) => {
+    setPlayError(null);
+    setPlayingLegId(legId);
+    try {
+      const result = await getRecordingUrl(legId);
+      setRecordingUrl({ legId, url: result.url });
+    } catch (e) {
+      setPlayError(e instanceof Error ? e.message : 'Recording not available');
+    } finally {
+      setPlayingLegId(null);
+    }
+  };
+
+  return (
+    <div className="rounded-app-lg border border-border-subtle bg-surface-1 p-4">
+      <h4 className="text-meta text-text-secondary mb-2">Previous attempts</h4>
+      <div className="space-y-2">
+        {history.map((entry) => {
+          const duration = formatHistoryDuration(entry.durationSeconds);
+          return (
+            <div
+              key={entry.legId}
+              className="rounded-app-md border border-border-subtle bg-surface-2 px-3 py-2 text-body"
+            >
+              <div className="flex flex-wrap items-center justify-between gap-2 text-text-primary">
+                <span className="font-medium">
+                  {entry.dispositionLabel ?? entry.outcome ?? 'No outcome'}
+                  {entry.isVoicemail && (
+                    <span className="ml-1.5 text-meta text-warning">Voicemail left</span>
+                  )}
+                  {entry.callbackAt && (
+                    <span className="ml-1.5 text-meta text-accent-to">Callback set</span>
+                  )}
+                </span>
+                <span className="text-meta text-text-muted whitespace-nowrap">
+                  {new Date(entry.createdAt).toLocaleDateString()}
+                  {duration ? ` · ${duration}` : ''}
+                </span>
+              </div>
+              {entry.notes && <p className="text-meta text-text-secondary mt-1">{entry.notes}</p>}
+              {entry.hasRecording && (
+                <div className="mt-1.5">
+                  {recordingUrl?.legId === entry.legId ? (
+                    <audio controls src={recordingUrl.url} className="w-full h-8">
+                      <track kind="captions" />
+                    </audio>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => void handlePlay(entry.legId)}
+                      disabled={playingLegId === entry.legId}
+                      className="flex items-center gap-1 text-meta text-accent-to hover:underline disabled:opacity-50"
+                    >
+                      <Play className="w-3 h-3" />
+                      {playingLegId === entry.legId ? 'Loading…' : 'Play recording'}
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      {playError && <p className="text-xs text-danger mt-1">{playError}</p>}
+    </div>
+  );
+}
+
+/** TASK-T5 (CRD-4, card-side): collapsible so it doesn't compete for space with the live call
+ *  controls above -- closed by default, same "not mandatory to look at" spirit as the admin-side
+ *  editor (CampaignManageModal) it mirrors. Live refetch on change comes for free from the same
+ *  3s poll that already refreshes everything else on this screen. */
+function CampaignScriptPanel({ script }: { script: CampaignScriptInfo }) {
+  return (
+    <details className="rounded-app-lg border border-border-subtle bg-surface-1 p-4">
+      <summary className="text-meta text-text-secondary cursor-pointer select-none">
+        Call script &amp; objections
+      </summary>
+      <div className="mt-3 space-y-3 text-body">
+        {script.scriptText && (
+          <div>
+            <h4 className="text-meta text-text-muted mb-1">Script</h4>
+            <p className="text-text-primary whitespace-pre-wrap">{script.scriptText}</p>
+          </div>
+        )}
+        {script.objectionSheetText && (
+          <div>
+            <h4 className="text-meta text-text-muted mb-1">Objection sheet</h4>
+            <p className="text-text-primary whitespace-pre-wrap">{script.objectionSheetText}</p>
+          </div>
+        )}
+      </div>
+    </details>
   );
 }

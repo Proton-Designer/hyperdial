@@ -14,6 +14,8 @@ import {
   cancelTransfer,
   type ActiveTransfer,
   type CallLegRecord,
+  type CampaignScriptInfo,
+  type ContactHistoryEntry,
   type DialSessionRecord,
   type InboundCallInfo,
 } from '@/lib/api';
@@ -34,6 +36,23 @@ export interface BatchContactPreview {
   id: string;
   name: string;
   phone: string;
+}
+
+/** TASK-T5 (CRD-1): the connected-call card's business-details panel -- built from the active
+ *  leg's own widened `contact` join (dialer-session-get). Every field is nullable/optional by
+ *  design ("graceful when missing" is the task's own explicit ask) -- license_number/
+ *  service_zips/tier come out of `ghlCustomFields`, keyed by our own target-key names. */
+export interface ConnectedContactDetails {
+  id: string;
+  name: string;
+  phone: string;
+  rating: number | null;
+  reviewCount: number | null;
+  website: string | null;
+  ownerContact: string | null;
+  licenseNumber: string | null;
+  serviceZips: string | null;
+  tier: string | null;
 }
 
 /** TASK-L2b: the leg still waiting on a wrap-up disposition, plus everything WrapUpModal
@@ -57,6 +76,11 @@ interface DialerHookState {
   /** TASK-T4: the session's in-flight warm/cold transfer, if any -- see getDialerSession's own
    *  comment (api.ts). */
   activeTransfer: ActiveTransfer | null;
+  /** TASK-T5 (CRD-3 + CRD-5): the whole current batch's contact history, pre-loaded in one
+   *  batched query -- see getDialerSession's own comment (api.ts). */
+  history: Record<string, ContactHistoryEntry[]>;
+  /** TASK-T5 (CRD-4): the connected call's own campaign script/objection sheet, if any. */
+  campaignScript: CampaignScriptInfo | null;
   loading: boolean;
   error: string | null;
 }
@@ -102,6 +126,8 @@ export function useDialerSession(initialSessionId: string | null = null) {
     inboundCall: null,
     coachingMode: null,
     activeTransfer: null,
+    history: {},
+    campaignScript: null,
     loading: false,
     error: null,
   });
@@ -110,7 +136,7 @@ export function useDialerSession(initialSessionId: string | null = null) {
   const loadSession = useCallback(async (sessionId: string) => {
     setState((prev) => ({ ...prev, loading: true, error: null }));
     try {
-      const { session, legs, inboundCall, coachingMode, activeTransfer } =
+      const { session, legs, inboundCall, coachingMode, activeTransfer, history, campaignScript } =
         await getDialerSession(sessionId);
       setState((prev) => ({
         ...prev,
@@ -120,6 +146,8 @@ export function useDialerSession(initialSessionId: string | null = null) {
         inboundCall,
         coachingMode,
         activeTransfer,
+        history,
+        campaignScript,
       }));
     } catch (e) {
       setState((prev) => ({
@@ -285,6 +313,27 @@ export function useDialerSession(initialSessionId: string | null = null) {
     const connectedAnsweredAt = activeLeg?.answered_at ?? null;
     // TASK-T4: 'On hold mm:ss' timer anchor -- null whenever the active leg isn't held.
     const heldAt = activeLeg?.held_at ?? null;
+    // TASK-T5 (CRD-1): built straight from the active leg's own widened contact join -- every
+    // field individually nullable ("graceful when missing"). ghl_custom_fields is keyed by our
+    // own target-key names, not a GHL field id (confirmed against ghl-import.ts's own
+    // enrichment code).
+    const connectedContact: ConnectedContactDetails | null = activeLeg?.contact
+      ? {
+          id: activeLeg.contact.id,
+          name: contactName(activeLeg),
+          phone: activeLeg.contact.phone_number ?? '',
+          rating: activeLeg.contact.rating,
+          reviewCount: activeLeg.contact.review_count,
+          website: activeLeg.contact.website,
+          ownerContact: activeLeg.contact.owner_contact,
+          licenseNumber: activeLeg.contact.ghl_custom_fields?.license_number ?? null,
+          serviceZips: activeLeg.contact.ghl_custom_fields?.service_zips ?? null,
+          tier: activeLeg.contact.ghl_custom_fields?.tier ?? null,
+        }
+      : null;
+    // TASK-T5 (CRD-3): the connected contact's own slice of the batch-wide history map.
+    const connectedContactHistory: ContactHistoryEntry[] =
+      (connectedContactId && state.history[connectedContactId]) || [];
     const answeringLeg = contactLegs.find(
       (l) => l.state === 'answered' || l.state === 'amd_pending'
     );
@@ -343,8 +392,10 @@ export function useDialerSession(initialSessionId: string | null = null) {
       wrapUpLeg,
       progress,
       heldAt,
+      connectedContact,
+      connectedContactHistory,
     };
-  }, [state.legs, state.session]);
+  }, [state.legs, state.session, state.history]);
 
   return {
     ...state,

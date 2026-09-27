@@ -1861,12 +1861,44 @@ export interface CallLegRecord {
    *  id, or an E.164 number, depending on `transfer_type`'s own target kind. */
   transferred_to: string | null;
   transfer_type: 'cold' | 'warm' | null;
+  /** TASK-T5 (CRD-1): widened for the connected-call card's business-details panel.
+   *  license_number/service_zips/tier live inside `ghl_custom_fields`, keyed by our own
+   *  target-key names (not a GHL field id) -- read directly, e.g.
+   *  `contact.ghl_custom_fields?.license_number`. */
   contact: {
+    id: string;
     business_name: string | null;
     first_name: string | null;
     last_name: string | null;
     phone_number: string | null;
+    rating: number | null;
+    review_count: number | null;
+    website: string | null;
+    owner_contact: string | null;
+    ghl_custom_fields: Record<string, string> | null;
   } | null;
+}
+
+/** TASK-T5 (CRD-3): one past attempt at this contact, oldest-safe subset of `call_legs` --
+ *  `getDialerSession`'s own `history` map is keyed by `contact_id`, capped at the 3 most recent
+ *  per contact (same convention `contact_disposition_history`, DSP-9, already established). */
+export interface ContactHistoryEntry {
+  legId: string;
+  createdAt: string;
+  outcome: CallLegOutcome | null;
+  dispositionLabel: string | null;
+  durationSeconds: number | null;
+  notes: string | null;
+  isVoicemail: boolean;
+  hasRecording: boolean;
+  callbackAt: string | null;
+}
+
+/** TASK-T5 (CRD-4, card-side): the connected call's own campaign script/objection sheet
+ *  (T5a's `campaigns.script_text`/`objection_sheet_text`). Null fields render as "not set". */
+export interface CampaignScriptInfo {
+  scriptText: string | null;
+  objectionSheetText: string | null;
 }
 
 /** TASK-T4: mirrors `call_transfers` -- at most one can ever be active per session
@@ -2062,6 +2094,12 @@ export async function getDialerSession(sessionId: string): Promise<{
    *  control panel (Complete/Cancel for a 'connected' warm transfer; a "Dialing…" state for
    *  either kind still ringing). Null once a transfer resolves (completed/cancelled/failed). */
   activeTransfer: ActiveTransfer | null;
+  /** TASK-T5 (CRD-3 + CRD-5): the WHOLE current batch's contact history, pre-loaded in one
+   *  batched query -- keyed by `contact_id`, capped at 3 most-recent attempts each. */
+  history: Record<string, ContactHistoryEntry[]>;
+  /** TASK-T5 (CRD-4): the connected call's own campaign script/objection sheet, if the campaign
+   *  has one set. Null campaign lookup (should never happen) degrades to null, not an error. */
+  campaignScript: CampaignScriptInfo | null;
 }> {
   const res = await fetch(
     `${getFunctionsUrl()}/dialer-session-get?sessionId=${encodeURIComponent(sessionId)}`,
@@ -2078,6 +2116,8 @@ export async function getDialerSession(sessionId: string): Promise<{
     inboundCall: InboundCallInfo | null;
     coachingMode: 'whisper' | 'barge' | null;
     activeTransfer: ActiveTransfer | null;
+    history: Record<string, ContactHistoryEntry[]>;
+    campaignScript: CampaignScriptInfo | null;
   };
 }
 
