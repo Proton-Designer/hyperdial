@@ -139,6 +139,7 @@ language plpgsql
 security definer
 set search_path = ''
 as $$
+#variable_conflict use_column
 begin
   return query
   -- wrap_up: one open agent_state_events row in state='wrap_up', past the org's threshold, never
