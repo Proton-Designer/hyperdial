@@ -1279,24 +1279,73 @@ export async function logAuditEvent(
   }
 }
 
-export interface CreatedInvite {
-  inviteId: string;
-  token: string;
-  expiresAt: string;
+// --- MISSION-5 TASK-A2: invites v2 (bulk create, pending list, resend/revoke) ---
+
+export interface BulkInviteResult {
+  email: string;
+  status: 'sent' | 'already_member' | 'already_invited' | 'invalid';
+  inviteId?: string;
+  /** Only present for status 'sent' -- build the shareable link client-side (same shape as the
+   *  pre-A2 single-invite flow), since this app has no email-sending infra of its own. */
+  token?: string;
+  expiresAt?: string;
 }
 
-export async function createOrgInvite(
-  email: string,
-  role: 'admin' | 'agent'
-): Promise<CreatedInvite> {
+export async function createOrgInvites(
+  emails: string[],
+  role: 'admin' | 'agent',
+  campaignIds: string[] = []
+): Promise<BulkInviteResult[]> {
   const res = await fetch(`${getFunctionsUrl()}/org-invite-create`, {
     method: 'POST',
     headers: await getEdgeFunctionHeaders(),
-    body: JSON.stringify({ email, role }),
+    body: JSON.stringify({ action: 'create', emails, role, campaignIds }),
   });
   const data = await res.json();
-  if (!res.ok) throw new Error(data.error || 'Failed to create invite');
-  return data as CreatedInvite;
+  if (!res.ok) throw new Error(data.error || 'Failed to create invites');
+  return (data.results ?? []) as BulkInviteResult[];
+}
+
+export interface OrgInvite {
+  id: string;
+  email: string;
+  role: 'owner' | 'admin' | 'agent';
+  invitedByName: string | null;
+  campaignIds: string[];
+  status: 'pending' | 'accepted' | 'expired' | 'revoked';
+  createdAt: string;
+  expiresAt: string;
+}
+
+export async function listOrgInvites(): Promise<OrgInvite[]> {
+  const res = await fetch(`${getFunctionsUrl()}/org-invite-create`, {
+    method: 'GET',
+    headers: await getEdgeFunctionHeaders(),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Failed to list invites');
+  return (data.invites ?? []) as OrgInvite[];
+}
+
+export async function resendOrgInvite(inviteId: string): Promise<BulkInviteResult> {
+  const res = await fetch(`${getFunctionsUrl()}/org-invite-create`, {
+    method: 'POST',
+    headers: await getEdgeFunctionHeaders(),
+    body: JSON.stringify({ action: 'resend', inviteId }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Failed to resend invite');
+  return { email: '', status: 'sent', ...data } as BulkInviteResult;
+}
+
+export async function revokeOrgInvite(inviteId: string): Promise<void> {
+  const res = await fetch(`${getFunctionsUrl()}/org-invite-create`, {
+    method: 'POST',
+    headers: await getEdgeFunctionHeaders(),
+    body: JSON.stringify({ action: 'revoke', inviteId }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || 'Failed to revoke invite');
 }
 
 export interface InvitePreview {

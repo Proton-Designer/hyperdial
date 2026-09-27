@@ -11,8 +11,6 @@ import {
   Shield,
   Search,
   Loader2,
-  Copy,
-  Check,
   Trash2,
   UserX,
   UserCheck,
@@ -52,7 +50,10 @@ import {
   getMyProfile,
   updateMyProfile,
   listOrgMembers,
-  createOrgInvite,
+  createOrgInvites,
+  listOrgInvites,
+  resendOrgInvite,
+  revokeOrgInvite,
   changeMemberRole,
   disableMember,
   enableMember,
@@ -121,6 +122,8 @@ import {
   type InboundSettings,
   type VoicemailDropInfo,
   type OrgMember,
+  type OrgInvite,
+  type BulkInviteResult,
   type GhlIntegrationStatus,
   type GhlCampaignMapping,
   type GhlPipelineStageOption,
@@ -301,41 +304,62 @@ function TeamTab() {
   const breakpoint = useBreakpoint();
   const isDesktop = breakpoint === 'desktop';
   const [members, setMembers] = useState<OrgMember[]>([]);
+  const [invites, setInvites] = useState<OrgInvite[]>([]);
+  const [campaigns, setCampaigns] = useState<CampaignWithStats[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [busyUserId, setBusyUserId] = useState<string | null>(null);
+  const [busyInviteId, setBusyInviteId] = useState<string | null>(null);
 
   const [showInvite, setShowInvite] = useState(false);
-  const [inviteEmail, setInviteEmail] = useState('');
+  // TASK-A2: bulk -- paste many emails (comma/newline-separated), one role + one optional
+  // campaign set for the whole batch (matches the task's own "choose role and optional campaigns"
+  // wording -- per-email role/campaigns would need a much heavier per-row form for a rare need).
+  const [inviteEmailsText, setInviteEmailsText] = useState('');
   const [inviteRole, setInviteRole] = useState<'admin' | 'agent'>('agent');
+  const [inviteCampaignIds, setInviteCampaignIds] = useState<string[]>([]);
   const [inviteSubmitting, setInviteSubmitting] = useState(false);
-  const [inviteLink, setInviteLink] = useState<string | null>(null);
-  const [linkCopied, setLinkCopied] = useState(false);
+  const [bulkResults, setBulkResults] = useState<BulkInviteResult[] | null>(null);
+  const [copiedToken, setCopiedToken] = useState<string | null>(null);
 
   const canManage = role === 'owner' || role === 'admin';
 
   const load = useCallback(() => {
     setLoading(true);
-    listOrgMembers()
-      .then(setMembers)
+    Promise.all([
+      listOrgMembers(),
+      canManage ? listOrgInvites() : Promise.resolve([]),
+      canManage ? listCampaigns() : Promise.resolve([]),
+    ])
+      .then(([m, i, c]) => {
+        setMembers(m);
+        setInvites(i);
+        setCampaigns(c);
+      })
       .catch((e) => setError(String(e)))
       .finally(() => setLoading(false));
-  }, []);
+  }, [canManage]);
 
   useEffect(() => {
     load();
   }, [load]);
 
-  const handleCreateInvite = async (e: React.FormEvent) => {
+  const handleCreateInvites = async (e: React.FormEvent) => {
     e.preventDefault();
+    const emails = inviteEmailsText
+      .split(/[,\n]/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (emails.length === 0) return;
     setInviteSubmitting(true);
     setActionError(null);
-    setInviteLink(null);
+    setBulkResults(null);
     try {
-      const { token } = await createOrgInvite(inviteEmail.trim(), inviteRole);
-      setInviteLink(`${window.location.origin}/?invite=${token}`);
-      setInviteEmail('');
+      const results = await createOrgInvites(emails, inviteRole, inviteCampaignIds);
+      setBulkResults(results);
+      setInviteEmailsText('');
+      load();
     } catch (e) {
       setActionError(String(e));
     } finally {
@@ -343,14 +367,13 @@ function TeamTab() {
     }
   };
 
-  const handleCopyLink = async () => {
-    if (!inviteLink) return;
+  const handleCopyLink = async (token: string) => {
     try {
-      await navigator.clipboard.writeText(inviteLink);
-      setLinkCopied(true);
-      setTimeout(() => setLinkCopied(false), 2000);
+      await navigator.clipboard.writeText(`${window.location.origin}/?invite=${token}`);
+      setCopiedToken(token);
+      setTimeout(() => setCopiedToken(null), 2000);
     } catch {
-      // Clipboard API unavailable -- the link is still selectable text in the field below.
+      // Clipboard API unavailable -- the link is still visible as plain text.
     }
   };
 
@@ -367,6 +390,48 @@ function TeamTab() {
     }
   };
 
+  const handleResendInvite = async (inviteId: string) => {
+    setBusyInviteId(inviteId);
+    setActionError(null);
+    try {
+      const result = await resendOrgInvite(inviteId);
+      setBulkResults([result]);
+      load();
+    } catch (e) {
+      setActionError(String(e));
+    } finally {
+      setBusyInviteId(null);
+    }
+  };
+
+  const handleRevokeInvite = async (inviteId: string, email: string) => {
+    if (!confirm(`Revoke the invite to ${email}?`)) return;
+    setBusyInviteId(inviteId);
+    setActionError(null);
+    try {
+      await revokeOrgInvite(inviteId);
+      load();
+    } catch (e) {
+      setActionError(String(e));
+    } finally {
+      setBusyInviteId(null);
+    }
+  };
+
+  const pendingInvites = invites.filter((i) => i.status === 'pending');
+  const seatCounts = {
+    active: members.filter((m) => m.status === 'active').length,
+    disabled: members.filter((m) => m.status === 'disabled').length,
+    pending: pendingInvites.length,
+  };
+
+  function expiryLabel(expiresAt: string): string {
+    const ms = new Date(expiresAt).getTime() - Date.now();
+    if (ms <= 0) return 'Expired';
+    const days = Math.ceil(ms / 86400000);
+    return days === 1 ? '1 day left' : `${days} days left`;
+  }
+
   return (
     <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
       <PageHeader
@@ -378,54 +443,47 @@ function TeamTab() {
               size="sm"
               onClick={() => {
                 setShowInvite((v) => !v);
-                setInviteLink(null);
+                setBulkResults(null);
               }}
             >
-              Invite member
+              Invite members
             </Button>
           )
         }
       />
 
+      {canManage && (
+        <div className="flex flex-wrap items-center gap-4 mb-6 text-meta text-text-secondary">
+          <span>
+            <span className="text-text-primary font-semibold">{seatCounts.active}</span> active
+          </span>
+          <span>
+            <span className="text-text-primary font-semibold">{seatCounts.pending}</span> pending
+          </span>
+          <span>
+            <span className="text-text-primary font-semibold">{seatCounts.disabled}</span> disabled
+          </span>
+        </div>
+      )}
+
       {canManage && showInvite && (
         <div className="bg-gradient-to-r from-accent-from/10 to-accent-to/10 rounded-app-lg p-6 border border-accent-from/20 mb-6">
-          <h3 className="text-section-title text-text-primary mb-4">Invite a teammate</h3>
-          {inviteLink ? (
+          <h3 className="text-section-title text-text-primary mb-4">Invite teammates</h3>
+          <form onSubmit={handleCreateInvites} className="space-y-3">
             <div>
-              <p className="text-sm text-text-secondary mb-3">
-                Send this single-use link (expires in 7 days). Anyone with it can join as{' '}
-                {inviteRole}.
-              </p>
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  readOnly
-                  value={inviteLink}
-                  className="flex-1 bg-surface-2 border border-white/10 rounded-app-md px-4 py-3 text-white text-sm"
-                  onFocus={(e) => e.target.select()}
-                />
-                <button
-                  onClick={handleCopyLink}
-                  className="px-4 py-3 bg-accent-to/20 hover:bg-accent-to/30 border border-accent-to/30 rounded-app-md text-accent-to flex items-center gap-2"
-                >
-                  {linkCopied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
-                  {linkCopied ? 'Copied' : 'Copy'}
-                </button>
-              </div>
+              <label className="block text-sm text-text-secondary mb-2">
+                Emails (comma or newline-separated)
+              </label>
+              <textarea
+                value={inviteEmailsText}
+                onChange={(e) => setInviteEmailsText(e.target.value)}
+                required
+                rows={3}
+                className="w-full bg-surface-2 border border-white/10 rounded-app-md px-4 py-3 text-white placeholder-text-muted focus:outline-none focus:border-accent-to"
+                placeholder={'jane@company.com\njohn@company.com'}
+              />
             </div>
-          ) : (
-            <form onSubmit={handleCreateInvite} className="flex flex-wrap items-end gap-3">
-              <div className="flex-1 min-w-[200px]">
-                <label className="block text-sm text-text-secondary mb-2">Email</label>
-                <input
-                  type="email"
-                  value={inviteEmail}
-                  onChange={(e) => setInviteEmail(e.target.value)}
-                  required
-                  className="w-full bg-surface-2 border border-white/10 rounded-app-md px-4 py-3 text-white placeholder-text-muted focus:outline-none focus:border-accent-to"
-                  placeholder="teammate@company.com"
-                />
-              </div>
+            <div className="flex flex-wrap items-end gap-3">
               <div>
                 <label className="block text-sm text-text-secondary mb-2">Role</label>
                 <select
@@ -437,6 +495,41 @@ function TeamTab() {
                   <option value="admin">Admin</option>
                 </select>
               </div>
+              {campaigns.length > 0 && (
+                <div className="flex-1 min-w-[220px]">
+                  <label className="block text-sm text-text-secondary mb-2">
+                    Join campaigns (optional)
+                  </label>
+                  <div className="flex flex-wrap gap-2">
+                    {campaigns.map((c) => {
+                      const checked = inviteCampaignIds.includes(c.id);
+                      return (
+                        <label
+                          key={c.id}
+                          className={cn(
+                            'px-2.5 py-1 rounded-full text-xs border cursor-pointer',
+                            checked
+                              ? 'bg-accent-to/20 border-accent-to/40 text-accent-to'
+                              : 'bg-surface-2 border-border-subtle text-text-secondary'
+                          )}
+                        >
+                          <input
+                            type="checkbox"
+                            className="hidden"
+                            checked={checked}
+                            onChange={() =>
+                              setInviteCampaignIds((prev) =>
+                                checked ? prev.filter((id) => id !== c.id) : [...prev, c.id]
+                              )
+                            }
+                          />
+                          {c.name}
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
               <button
                 type="submit"
                 disabled={inviteSubmitting}
@@ -447,10 +540,100 @@ function TeamTab() {
                 ) : (
                   <Mail className="w-4 h-4" />
                 )}
-                Send invite
+                Send invites
               </button>
-            </form>
+            </div>
+          </form>
+
+          {bulkResults && (
+            <div className="mt-4 space-y-1.5">
+              {bulkResults.map((r, i) => (
+                <div
+                  key={`${r.email}-${i}`}
+                  className="flex flex-wrap items-center gap-2 text-meta"
+                >
+                  <span className="text-text-primary">{r.email || '(resent)'}</span>
+                  <span
+                    className={cn(
+                      'px-1.5 py-0.5 rounded-full text-[10px] uppercase',
+                      r.status === 'sent'
+                        ? 'bg-success/10 text-success'
+                        : r.status === 'invalid'
+                          ? 'bg-danger/10 text-danger'
+                          : 'bg-white/5 text-text-secondary'
+                    )}
+                  >
+                    {r.status.replace('_', ' ')}
+                  </span>
+                  {r.status === 'sent' && r.token && (
+                    <button
+                      type="button"
+                      onClick={() => handleCopyLink(r.token!)}
+                      className="text-accent-to hover:underline"
+                    >
+                      {copiedToken === r.token ? 'Copied' : 'Copy link'}
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
           )}
+        </div>
+      )}
+
+      {canManage && pendingInvites.length > 0 && (
+        <div className="mb-8">
+          <h3 className="text-section-title text-text-primary mb-3">Pending invites</h3>
+          <div className="rounded-app-lg border border-border-subtle bg-surface-1 overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow className="border-border-subtle hover:bg-transparent">
+                  <TableHead className="text-text-secondary">Email</TableHead>
+                  <TableHead className="text-text-secondary">Role</TableHead>
+                  <TableHead className="text-text-secondary">Invited by</TableHead>
+                  <TableHead className="text-text-secondary">Expires</TableHead>
+                  <TableHead className="text-right text-text-secondary">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {pendingInvites.map((inv) => {
+                  const busy = busyInviteId === inv.id;
+                  return (
+                    <TableRow key={inv.id} className="border-border-subtle">
+                      <TableCell className="text-white">{inv.email}</TableCell>
+                      <TableCell className="text-text-secondary">{ROLE_LABEL[inv.role]}</TableCell>
+                      <TableCell className="text-text-secondary">
+                        {inv.invitedByName ?? '—'}
+                      </TableCell>
+                      <TableCell className="text-text-secondary">
+                        {expiryLabel(inv.expiresAt)}
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex items-center justify-end gap-1">
+                          <button
+                            disabled={busy}
+                            onClick={() => handleResendInvite(inv.id)}
+                            title="Resend"
+                            className="p-2 rounded-app-sm hover:bg-white/5 text-text-secondary hover:text-text-primary transition-colors disabled:opacity-50"
+                          >
+                            <Mail className="w-4 h-4" />
+                          </button>
+                          <button
+                            disabled={busy}
+                            onClick={() => handleRevokeInvite(inv.id, inv.email)}
+                            title="Revoke"
+                            className="p-2 rounded-app-sm hover:bg-danger/10 text-text-secondary hover:text-danger transition-colors disabled:opacity-50"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </div>
         </div>
       )}
 

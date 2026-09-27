@@ -57,31 +57,36 @@ Deno.serve(async (req) => {
       )
     );
 
-    // auth.users isn't exposed via PostgREST -- the admin API is the only way to attach an
-    // email to each roster row. Fine at the roster sizes Stage 1 teams run (a handful to a few
-    // dozen); revisit with a single admin.listUsers() page-scan if that stops being true.
-    const results = await Promise.all(
-      (members ?? []).map(async (m: MemberRow) => {
-        const profile = profileMap.get(m.user_id);
-        let email: string | null = null;
-        try {
-          const { data } = await supabase.auth.admin.getUserById(m.user_id);
-          email = data.user?.email ?? null;
-        } catch (err) {
-          console.error('org-members email lookup failed for', m.user_id, err);
-        }
-        return {
-          user_id: m.user_id,
-          role: m.role,
-          status: m.status,
-          created_at: m.created_at,
-          first_name: profile?.first_name ?? null,
-          last_name: profile?.last_name ?? null,
-          email,
-          ghl_user_id: m.ghl_user_id,
-        };
-      })
+    // TASK-A2 (closes TM-X1): one query for every member's email instead of one
+    // auth.admin.getUserById GoTrue Admin API round trip PER member -- a 50-member roster used to
+    // be 50 sequential calls. `org_member_emails` reads auth.users directly, scoped to this org,
+    // via a SECURITY DEFINER function (`20260927080001_org_invites_v2.sql`).
+    const { data: emailRows, error: emailError } = await supabase.rpc('org_member_emails', {
+      p_org: orgId,
+    });
+    if (emailError) {
+      console.error('org-members email lookup failed:', emailError.message);
+    }
+    const emailMap = new Map(
+      ((emailRows ?? []) as { user_id: string; email: string | null }[]).map((r) => [
+        r.user_id,
+        r.email,
+      ])
     );
+
+    const results = (members ?? []).map((m: MemberRow) => {
+      const profile = profileMap.get(m.user_id);
+      return {
+        user_id: m.user_id,
+        role: m.role,
+        status: m.status,
+        created_at: m.created_at,
+        first_name: profile?.first_name ?? null,
+        last_name: profile?.last_name ?? null,
+        email: emailMap.get(m.user_id) ?? null,
+        ghl_user_id: m.ghl_user_id,
+      };
+    });
 
     return new Response(JSON.stringify({ members: results }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },

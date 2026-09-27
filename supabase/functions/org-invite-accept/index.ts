@@ -1,6 +1,7 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { corsHeaders, corsPreflightResponse } from '../_shared/cors.ts';
 import { getUserFromRequest } from '../_shared/auth.ts';
+import { logOrgAction } from '../_shared/audit.ts';
 
 function jsonError(status: number, message: string): Response {
   return new Response(JSON.stringify({ error: message }), {
@@ -23,6 +24,7 @@ interface InviteRow {
   role: 'owner' | 'admin' | 'agent';
   expires_at: string;
   accepted_at: string | null;
+  campaign_ids?: string[];
   orgs: { name: string } | { name: string }[] | null;
 }
 
@@ -91,7 +93,7 @@ Deno.serve(async (req) => {
 
   const { data: invite, error: fetchError } = await supabase
     .from('org_invites')
-    .select('id, org_id, email, role, expires_at, accepted_at')
+    .select('id, org_id, email, role, expires_at, accepted_at, campaign_ids')
     .eq('token_hash', tokenHash)
     .maybeSingle<InviteRow>();
   if (fetchError) {
@@ -139,6 +141,34 @@ Deno.serve(async (req) => {
     .from('org_invites')
     .update({ accepted_at: new Date().toISOString() })
     .eq('id', invite.id);
+
+  // TASK-A2: auto-join campaigns picked at invite time. Best-effort per campaign, not
+  // all-or-nothing -- membership itself (above) has already succeeded and must not be undone by
+  // a single bad campaign id slipping through (validCampaignIds already checks this at CREATE
+  // time, so this is a defense-in-depth backstop, not the primary guard). The pre-existing
+  // check_campaign_agent_org trigger (20260924000200) still rejects a cross-org id regardless.
+  const campaignIds = invite.campaign_ids ?? [];
+  if (campaignIds.length > 0) {
+    const { error: campaignAgentsError } = await supabase.from('campaign_agents').insert(
+      campaignIds.map((campaignId) => ({
+        campaign_id: campaignId,
+        user_id: user.id,
+        org_id: invite.org_id,
+      }))
+    );
+    if (campaignAgentsError) {
+      console.error('org-invite-accept campaign_agents insert error:', campaignAgentsError.message);
+    }
+  }
+
+  await logOrgAction(supabase, {
+    orgId: invite.org_id,
+    actorUserId: user.id,
+    action: 'invite.accept',
+    targetType: 'org_invite',
+    targetId: invite.id,
+    details: { role: invite.role, campaignIds },
+  });
 
   return new Response(JSON.stringify({ orgId: invite.org_id, role: invite.role }), {
     headers: { ...corsHeaders, 'Content-Type': 'application/json' },
