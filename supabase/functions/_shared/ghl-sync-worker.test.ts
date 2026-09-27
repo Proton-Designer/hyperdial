@@ -8,8 +8,10 @@ import {
   processInboundCallNoteJob,
   processNurtureTagJob,
   processTagJob,
+  processTransferNoteJob,
   type DispositionPayload,
   type InboundCallNotePayload,
+  type TransferNotePayload,
 } from './ghl-sync-worker.ts';
 
 function stubFetch(handler: (url: string, init?: RequestInit) => Response) {
@@ -906,6 +908,165 @@ Deno.test(
       assertEquals(result.progress.tag_added, true);
       assertEquals(result.progress.custom_fields_pushed, true);
       assertEquals(putCalls, 0);
+    } finally {
+      restore();
+    }
+  }
+);
+
+// ---------------------------------------------------------------------------
+// processTransferNoteJob (lead follow-up to MISSION-4 TASK-T2's own fix-forward -- crm_sync_jobs
+// kind widened by eng2's 20260926070002_transfer_hold.sql; T4's own enqueue_crm_job call is still
+// pending, this is the worker-side processor so the queue doesn't get stuck once it lands)
+// ---------------------------------------------------------------------------
+
+const TRANSFER_NOTE_PAYLOAD: TransferNotePayload = {
+  note_body: 'Warm transfer to Jane (sales) -- prospect asked about pricing tiers.',
+  transfer_type: 'warm',
+  call_leg_id: '11111111-1111-4111-8111-111111111111',
+};
+
+Deno.test('processTransferNoteJob: already linked, already noted is a full no-op', async () => {
+  let calls = 0;
+  const restore = stubFetch(() => {
+    calls++;
+    return Response.json({});
+  });
+  try {
+    const client: GhlClient = createGhlClient('tok');
+    const result = await processTransferNoteJob({
+      client,
+      locationId: 'loc-1',
+      ghlContactId: 'ghl-already',
+      contactFields: { firstName: null, lastName: null, phone: '+14155552671' },
+      payload: TRANSFER_NOTE_PAYLOAD,
+      progress: { upserted: true, note_added: true },
+    });
+    assertEquals(result.ok, true);
+    assertEquals(result.resolvedGhlContactId, 'ghl-already');
+    assertEquals(calls, 0);
+  } finally {
+    restore();
+  }
+});
+
+Deno.test(
+  'processTransferNoteJob: unlinked contact upserts first, then posts note_body VERBATIM (not reformatted, no transfer_type prefix)',
+  async () => {
+    let notedBody: string | null = null;
+    const restore = stubFetch((url, init) => {
+      if (url.includes('/contacts/upsert'))
+        return Response.json({ new: true, contact: { id: 'ghl-fresh' } });
+      if (url.includes('/notes')) {
+        notedBody = JSON.parse(String(init?.body)).body;
+        return Response.json({ id: 'note-1' });
+      }
+      return Response.json({});
+    });
+    try {
+      const client: GhlClient = createGhlClient('tok');
+      const result = await processTransferNoteJob({
+        client,
+        locationId: 'loc-1',
+        ghlContactId: null,
+        contactFields: { firstName: 'Bob', lastName: null, phone: '+14155552672' },
+        payload: TRANSFER_NOTE_PAYLOAD,
+        progress: {},
+      });
+      assertEquals(result.ok, true);
+      assertEquals(result.resolvedGhlContactId, 'ghl-fresh');
+      assertEquals(notedBody, TRANSFER_NOTE_PAYLOAD.note_body);
+    } finally {
+      restore();
+    }
+  }
+);
+
+Deno.test(
+  'processTransferNoteJob: a retry that already upserted skips straight to the note step',
+  async () => {
+    let upsertCalls = 0;
+    let notedBody: string | null = null;
+    const restore = stubFetch((url, init) => {
+      if (url.includes('/contacts/upsert')) {
+        upsertCalls++;
+        return Response.json({ new: true, contact: { id: 'ghl-fresh' } });
+      }
+      if (url.includes('/notes')) {
+        notedBody = JSON.parse(String(init?.body)).body;
+        return Response.json({ id: 'note-1' });
+      }
+      return Response.json({});
+    });
+    try {
+      const client: GhlClient = createGhlClient('tok');
+      const result = await processTransferNoteJob({
+        client,
+        locationId: 'loc-1',
+        ghlContactId: 'ghl-already',
+        contactFields: { firstName: null, lastName: null, phone: '+14155552671' },
+        payload: TRANSFER_NOTE_PAYLOAD,
+        progress: { upserted: true },
+      });
+      assertEquals(result.ok, true);
+      assertEquals(upsertCalls, 0);
+      assertEquals(notedBody, TRANSFER_NOTE_PAYLOAD.note_body);
+    } finally {
+      restore();
+    }
+  }
+);
+
+Deno.test(
+  'processTransferNoteJob: upsert failure returns ok:false, never calls the notes endpoint',
+  async () => {
+    let noteCalls = 0;
+    const restore = stubFetch((url) => {
+      if (url.includes('/notes')) {
+        noteCalls++;
+        return Response.json({});
+      }
+      return new Response('server error', { status: 500 });
+    });
+    try {
+      const client: GhlClient = createGhlClient('tok');
+      const result = await processTransferNoteJob({
+        client,
+        locationId: 'loc-1',
+        ghlContactId: null,
+        contactFields: { firstName: 'Bob', lastName: null, phone: '+14155552673' },
+        payload: TRANSFER_NOTE_PAYLOAD,
+        progress: {},
+      });
+      assertEquals(result.ok, false);
+      assertEquals(result.resolvedGhlContactId, null);
+      assertEquals(noteCalls, 0);
+    } finally {
+      restore();
+    }
+  }
+);
+
+Deno.test(
+  'processTransferNoteJob: no phone and no existing GHL contact id -- fails before any network call',
+  async () => {
+    let calls = 0;
+    const restore = stubFetch(() => {
+      calls++;
+      return Response.json({});
+    });
+    try {
+      const client: GhlClient = createGhlClient('tok');
+      const result = await processTransferNoteJob({
+        client,
+        locationId: 'loc-1',
+        ghlContactId: null,
+        contactFields: { firstName: 'Bob', lastName: null, phone: null },
+        payload: TRANSFER_NOTE_PAYLOAD,
+        progress: {},
+      });
+      assertEquals(result.ok, false);
+      assertEquals(calls, 0);
     } finally {
       restore();
     }

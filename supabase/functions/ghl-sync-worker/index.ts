@@ -14,19 +14,25 @@ import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2';
 import { timingSafeEqual } from 'jsr:@std/crypto@1/timing-safe-equal';
 import { corsHeaders, corsPreflightResponse } from '../_shared/cors.ts';
 import { createGhlClient, type GhlClient } from '../_shared/ghl-client.ts';
-import { createGhlRateLimiter, withGhlRateLimit } from '../_shared/ghl-rate-limit.ts';
+import {
+  createGhlRateLimiter,
+  withGhlRateLimit,
+  GHL_PUSH_RATE_LIMIT_MAX_PER_WINDOW,
+} from '../_shared/ghl-rate-limit.ts';
 import {
   processContactUpsertJob,
   processDispositionJob,
   processInboundCallNoteJob,
   processNurtureTagJob,
   processTagJob,
+  processTransferNoteJob,
   type ContactFields,
   type DispositionPayload,
   type DispositionPushTimeContext,
   type GhlPushConfig,
   type InboundCallNotePayload,
   type JobProgress,
+  type TransferNotePayload,
 } from '../_shared/ghl-sync-worker.ts';
 
 const CLAIM_BATCH_SIZE = 10;
@@ -64,7 +70,8 @@ interface CrmSyncJobRow {
     | 'nurture_tag'
     | 'voicemail_tag'
     | 'no_answer_tag'
-    | 'inbound_call_note';
+    | 'inbound_call_note'
+    | 'transfer_note';
   contact_id: string | null;
   call_leg_id: string | null;
   payload: Record<string, unknown>;
@@ -108,7 +115,12 @@ async function resolveOrgGhlContext(
   const rawClient = createGhlClient(token as string, {
     apiBase: Deno.env.get('GHL_API_BASE') || undefined,
   });
-  const client = withGhlRateLimit(rawClient, createGhlRateLimiter());
+  // TASK-T2 review fix-forward (SHOULD, ghl-rate-limit.ts's own header comment): push's own half
+  // of the modeled per-location budget -- ghl-pull-worker/ghl-sync-now share the other half.
+  const client = withGhlRateLimit(
+    rawClient,
+    createGhlRateLimiter({ maxPerWindow: GHL_PUSH_RATE_LIMIT_MAX_PER_WINDOW })
+  );
   const pushFieldMapping = (integration.ghl_field_mapping as Record<string, string> | null) ?? {};
   return {
     client,
@@ -276,6 +288,27 @@ async function processJob(
       ghlContactId: contact.ghlContactId,
       contactFields: contact.fields,
       tag,
+      progress: job.progress ?? {},
+    });
+  } else if (job.kind === 'transfer_note') {
+    // Lead follow-up to TASK-T2's own fix-forward: same missing-required-field shape as the
+    // voicemail_tag/no_answer_tag branch above -- fail_crm_sync_job rather than silently
+    // upserting-with-no-note (an unknown kind falling through to contact_upsert, just below,
+    // would otherwise mask a genuinely malformed transfer_note payload as a "success").
+    const payload = job.payload as unknown as TransferNotePayload;
+    if (!payload.note_body) {
+      await supabase.rpc('fail_crm_sync_job', {
+        p_job: job.id,
+        p_error: 'transfer_note job is missing payload.note_body',
+      });
+      return;
+    }
+    result = await processTransferNoteJob({
+      client: ctx.client,
+      locationId: ctx.locationId,
+      ghlContactId: contact.ghlContactId,
+      contactFields: contact.fields,
+      payload,
       progress: job.progress ?? {},
     });
   } else {

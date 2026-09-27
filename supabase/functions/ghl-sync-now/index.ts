@@ -10,7 +10,11 @@ import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2';
 import { corsHeaders, corsPreflightResponse } from '../_shared/cors.ts';
 import { requireOrgRole } from '../_shared/auth.ts';
 import { createGhlClient } from '../_shared/ghl-client.ts';
-import { createGhlRateLimiter, withGhlRateLimit } from '../_shared/ghl-rate-limit.ts';
+import {
+  createGhlRateLimiter,
+  withGhlRateLimit,
+  GHL_PULL_RATE_LIMIT_MAX_PER_WINDOW,
+} from '../_shared/ghl-rate-limit.ts';
 import { runGhlPullForOrg, type GhlCampaignMappingRow } from '../_shared/ghl-pull-run.ts';
 import type { GhlImportEnrichment } from '../_shared/ghl-import.ts';
 
@@ -122,7 +126,12 @@ Deno.serve(async (req: Request) => {
   const rawClient = createGhlClient(token as string, {
     apiBase: Deno.env.get('GHL_API_BASE') || undefined,
   });
-  const client = withGhlRateLimit(rawClient, createGhlRateLimiter());
+  // TASK-T2 review fix-forward (SHOULD, ghl-rate-limit.ts's own header comment): shares
+  // ghl-pull-worker's pull-side half of the modeled per-location budget.
+  const client = withGhlRateLimit(
+    rawClient,
+    createGhlRateLimiter({ maxPerWindow: GHL_PULL_RATE_LIMIT_MAX_PER_WINDOW })
+  );
 
   const enrichment = await buildEnrichment(
     supabase,

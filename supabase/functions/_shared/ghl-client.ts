@@ -49,7 +49,15 @@
  * TASK-T1 (MISSION-4) additions -- GHL-3/4/5/6/8 -- verified 2026-09-26 the same way (curled
  * raw.githubusercontent.com/GoHighLevel/highlevel-api-docs/main/apps/{opportunities,users,
  * custom-fields}.json, parsed with python, never WebFetch):
- *   - `GET /opportunities/search?locationId&pipeline_stage_id&limit&startAfterId&startAfter` --
+ *   - `GET /opportunities/search?location_id&pipeline_stage_id&limit&startAfterId&startAfter` --
+ *     note `location_id`/`pipeline_stage_id`/`contact_id`/`pipeline_id` on THIS ONE endpoint are
+ *     snake_case in the real spec (`opportunities.json`'s own `parameters` list for
+ *     `/opportunities/search`), unlike every other GHL query param in this file (`locationId` on
+ *     `/contacts/`, `/opportunities/pipelines`, `/users/`, `/custom-fields/object-key/{objectKey}`
+ *     is camelCase) -- a genuine GHL API inconsistency, re-confirmed against the raw spec during
+ *     TASK-T2's review fix-forward (review-eng2.md #1/#2 both claimed a mismatch here based on
+ *     the marketplace docs SITE, not the spec; the spec and this file's `buildSearchOpportunities-
+ *     Query`/`moveOpportunityStage` already agreed -- see audit/T2/ghl-param-evidence.md) --
  *     the ONLY server-side way to filter by pipeline stage (GHL-4's "pull by ... pipeline
  *     stage"); `GET /contacts/` has no stage param at all, same as it has no tag param (see
  *     above). Response: `SearchOpportunitiesResponseSchema` -- `pipelineId`, `pipelineStageId`,

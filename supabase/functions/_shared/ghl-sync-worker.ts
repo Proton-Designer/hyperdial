@@ -552,3 +552,73 @@ export async function processContactUpsertJob(
     };
   }
 }
+
+/** MISSION-4 lead follow-up to TASK-T2's own fix-forward: the `'transfer_note'` job kind
+ *  (`crm_sync_jobs_kind_check` already widened by eng2's `20260926070002_transfer_hold.sql` --
+ *  DB side is done; `transfer-core.ts`'s own `enqueue_crm_job(..., 'transfer_note', ...)` is
+ *  eng2's still-pending T4 work). Payload contract per the lead: `{note_body, transfer_type,
+ *  call_leg_id}`. `call_leg_id` here is purely informational (already carried on the job row's
+ *  own `call_legs.id` column from enqueue time) and `transfer_type` is not folded into the note
+ *  text -- the lead's own wording is "posts payload.note_body as a GHL contact note", not a
+ *  reformatted/prefixed version of it, so this posts it verbatim. */
+export interface TransferNotePayload {
+  note_body: string;
+  transfer_type: 'warm' | 'cold';
+  call_leg_id: string;
+}
+
+export interface ProcessTransferNoteJobArgs {
+  client: GhlClient;
+  locationId: string;
+  ghlContactId: string | null;
+  contactFields: ContactFields;
+  payload: TransferNotePayload;
+  progress: JobProgress;
+}
+
+/** Mirrors `processNurtureTagJob`'s shape exactly (upsert-if-needed, then ONE more step) but the
+ *  second step is a note, not a tag -- same `progress.note_added` guard `processDispositionJob`/
+ *  `processInboundCallNoteJob` already use for their own note step, so a partial-failure retry
+ *  never double-posts the note. No tag/custom-fields/stage steps: this job kind only ever notes. */
+export async function processTransferNoteJob(
+  args: ProcessTransferNoteJobArgs
+): Promise<ProcessJobResult> {
+  const progress: JobProgress = { ...args.progress };
+  let ghlContactId = args.ghlContactId;
+
+  try {
+    if (!progress.upserted) {
+      if (!ghlContactId) {
+        if (!args.contactFields.phone) {
+          throw new Error('cannot upsert to GHL: contact has no phone number');
+        }
+        const res = await args.client.upsertContact({
+          locationId: args.locationId,
+          firstName: args.contactFields.firstName ?? undefined,
+          lastName: args.contactFields.lastName ?? undefined,
+          phone: args.contactFields.phone,
+          email: args.contactFields.email ?? undefined,
+        });
+        ghlContactId = res.contactId;
+      }
+      progress.upserted = true;
+    }
+    if (!ghlContactId) {
+      throw new Error('no GHL contact id available after the upsert step');
+    }
+
+    if (!progress.note_added) {
+      await args.client.addNote(ghlContactId, { body: args.payload.note_body });
+      progress.note_added = true;
+    }
+
+    return { ok: true, progress, resolvedGhlContactId: ghlContactId };
+  } catch (err) {
+    return {
+      ok: false,
+      progress,
+      resolvedGhlContactId: ghlContactId,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}

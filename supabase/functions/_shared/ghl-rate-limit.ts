@@ -22,6 +22,31 @@
 export const GHL_RATE_LIMIT_MAX_PER_WINDOW = 100;
 export const GHL_RATE_LIMIT_WINDOW_MS = 10_000;
 
+/**
+ * TASK-T2 review fix-forward (SHOULD, review-eng2.md #4): `createGhlRateLimiter()` builds a
+ * fresh in-memory `callTimestamps` array per call -- there is no cross-invocation, cross-function
+ * shared state (no Redis/DB backing it), and each of the 3 real callers below
+ * (`ghl-pull-worker`, `ghl-sync-now`, `ghl-sync-worker`) constructs its OWN limiter instance. Two
+ * (or three) of these running for the SAME org at the SAME time each get their own full
+ * `GHL_RATE_LIMIT_MAX_PER_WINDOW`-sized budget, so the org's real combined request rate to GHL
+ * can exceed the actual per-location cap even though every individual caller believes it's
+ * pacing correctly.
+ *
+ * Simplest correct fix (chosen over a shared Redis limiter): split the single location-wide
+ * budget across the two *directions* that can run concurrently for one org -- pull
+ * (`ghl-pull-worker`'s cron sweep and `ghl-sync-now`'s on-demand manual trigger, which never both
+ * page the SAME mapping at once but CAN both be mid-run for the same org) and push
+ * (`ghl-sync-worker`'s cron worker). Each direction gets half of the modeled cap. This is
+ * conservative, not exact: the two pull-side callers still each get the FULL pull-side half
+ * rather than sharing a third of it, so a pull cron tick racing a manual "Sync now" click for the
+ * same org is a known, accepted residual gap (rare -- an on-demand trigger overlapping the very
+ * cron tick it's meant to substitute for -- and GHL's real limit is itself unmodeled/unconfirmed,
+ * see this file's own header). Revisit with a real Upstash-Redis-backed shared limiter only if a
+ * live 429 is ever actually observed.
+ */
+export const GHL_PULL_RATE_LIMIT_MAX_PER_WINDOW = GHL_RATE_LIMIT_MAX_PER_WINDOW / 2;
+export const GHL_PUSH_RATE_LIMIT_MAX_PER_WINDOW = GHL_RATE_LIMIT_MAX_PER_WINDOW / 2;
+
 export interface GhlRateLimiterOptions {
   maxPerWindow?: number;
   windowMs?: number;
