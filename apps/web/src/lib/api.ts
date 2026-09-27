@@ -1371,9 +1371,10 @@ export const disableMember = (userId: string) =>
 export const enableMember = (userId: string) =>
   orgMembersAction({ action: 'enable', user_id: userId });
 /** MISSION-5 TASK-M5-A3: soft-remove (restorable for 72h via `restoreMember`) -- same
- *  session-halt + number-release cascade as `disableMember`. Does NOT release queued leads/
- *  callbacks; call `releaseQueuedLeads` separately (the offboarding wizard's own explicit step --
- *  callback reassignment isn't built yet, see `getOffboardPreview`'s own doc comment). */
+ *  session-halt + number-release cascade as `disableMember`. Does NOT release queued leads or
+ *  reassign callbacks itself; the offboarding wizard calls `releaseQueuedLeads`/
+ *  `assignCampaignLeads` (`by_current_agent` mode, MISSION-5 TASK-M5-B3) as separate, explicit
+ *  steps. */
 export const removeMember = (userId: string) =>
   orgMembersAction({ action: 'remove', user_id: userId });
 /** MISSION-5 TASK-M5-A3: 403s once `restorable_until` has passed. */
@@ -1399,8 +1400,10 @@ export interface OffboardPreview {
 }
 
 /** MISSION-5 TASK-M5-A3: "show what they held" -- read-only, safe to call before the admin has
- *  decided whether to disable or remove. `held_leads[].callbacks` has no reassignment action
- *  yet (B3's reassign RPC isn't built) -- the wizard shows the count but no button for it. */
+ *  decided whether to disable or remove. `held_leads[].callbacks` is reassigned via
+ *  `assignCampaignLeads(campaignId, null, { mode: 'by_current_agent', from_agent_id: userId })`
+ *  per campaign (MISSION-5 TASK-M5-B3's own new filter mode), wired into the offboarding wizard's
+ *  "Reassign callbacks to the pool" button. */
 export async function getOffboardPreview(userId: string): Promise<OffboardPreview> {
   const data = await orgMembersAction({ action: 'offboard_preview', user_id: userId });
   return data as unknown as OffboardPreview;

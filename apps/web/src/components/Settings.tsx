@@ -62,6 +62,7 @@ import {
   restoreMember,
   getOffboardPreview,
   releaseQueuedLeads,
+  assignCampaignLeads,
   type OffboardPreview,
   updateMemberGhlUserId,
   getGhlIntegrationStatus,
@@ -952,13 +953,15 @@ function restorableLabel(restorableUntilIso: string): string {
   return `Restorable for ${minutesLeft}m`;
 }
 
-/** MISSION-5 TASK-M5-A3: the offboarding wizard -- opened by the Disable/Remove buttons above.
+/** MISSION-5 TASK-M5-A3 (extended once B3 landed, see audit/M5-B3/review-eng1.md's own "what the
+ *  swap needs" section): the offboarding wizard -- opened by the Disable/Remove buttons above.
  *  Shows what the member currently holds (leads, callbacks, numbers, campaigns) before the admin
- *  commits, with a "release queued leads to the pool" step available now (B3's reassign RPC
- *  isn't built yet, so due/future callbacks are shown but have no action button here -- see
- *  `getOffboardPreview`'s own doc comment in api.ts). Built around `getOffboardPreview`/
- *  `releaseQueuedLeads` as swappable pieces: once B3 lands, a callback-reassignment step slots in
- *  here without changing this modal's own shape. */
+ *  commits, with two independent steps: "release queued leads to the pool" (org-wide, one RPC
+ *  call) and "reassign callbacks to the pool" (per campaign, via `assign_campaign_leads`'
+ *  `by_current_agent` mode -- B3's own new filter mode, the only one that also touches
+ *  'callback' rows). Order-independent: `by_current_agent` re-checks each row's CURRENT
+ *  `assigned_agent_id` at UPDATE time, so calling it after queued leads are already released
+ *  simply finds nothing left to move for those, no double-release risk either way. */
 function OffboardWizardModal({
   open,
   member,
@@ -977,6 +980,7 @@ function OffboardWizardModal({
   const [preview, setPreview] = useState<OffboardPreview | null>(null);
   const [loadingPreview, setLoadingPreview] = useState(false);
   const [releasing, setReleasing] = useState(false);
+  const [reassigningCallbacks, setReassigningCallbacks] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -990,7 +994,7 @@ function OffboardWizardModal({
       .catch((e) => setError(e instanceof Error ? e.message : String(e)))
       .finally(() => setLoadingPreview(false));
     // Re-fetch keyed on the member id + open transition only -- not on `preview` itself (that
-    // would refetch every time handleReleaseLeads updates it below).
+    // would refetch every time handleReleaseLeads/handleReassignCallbacks update it below).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, member?.user_id]);
 
@@ -1013,6 +1017,29 @@ function OffboardWizardModal({
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setReleasing(false);
+    }
+  };
+
+  const handleReassignCallbacks = async () => {
+    if (!preview) return;
+    setReassigningCallbacks(true);
+    setError(null);
+    try {
+      // One RPC call per campaign the member holds a callback in -- assign_campaign_leads takes
+      // a single p_campaign_id, there is no org-wide "by_current_agent across every campaign"
+      // mode (unlike release_agent_queued_leads, which is already org-wide by design).
+      for (const held of preview.held_leads) {
+        if (held.callbacks === 0) continue;
+        await assignCampaignLeads(held.campaign_id, null, {
+          mode: 'by_current_agent',
+          from_agent_id: member.user_id,
+        });
+      }
+      setPreview(await getOffboardPreview(member.user_id));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setReassigningCallbacks(false);
     }
   };
 
@@ -1096,10 +1123,17 @@ function OffboardWizardModal({
                 </Button>
               )}
               {totalCallbacks > 0 && (
-                <p className="text-xs text-text-secondary">
-                  Callback reassignment isn't built yet -- these stay assigned to {name} until a
-                  follow-up task ships.
-                </p>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  disabled={reassigningCallbacks}
+                  onClick={handleReassignCallbacks}
+                >
+                  {reassigningCallbacks ? 'Reassigning…' : 'Reassign callbacks to the pool'}
+                </Button>
+              )}
+              {totalQueued === 0 && totalCallbacks === 0 && preview.held_leads.length === 0 && (
+                <p className="text-xs text-text-secondary">Not holding any leads or callbacks.</p>
               )}
             </div>
           )
