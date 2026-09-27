@@ -1596,3 +1596,17 @@ gatekeeper rows are backfilled to 1440 ONLY if still at the untouched 5760 defau
 already customized it is left alone) -- `seed_default_campaign_retry_rules`'s own `ON CONFLICT DO
 NOTHING` re-confirmed idempotent (a manager's customization always survives a re-seed) in
 `audit/T8/dryrun-tests.sql`.
+
+**Decision (TASK-T9, CID-4) -- an auto-rested number is a REASON string on the existing
+`resting`/`resting_until` mechanism, not a new status value.** `check_number_health` (weekly cron +
+on-demand) flags a number whose 30-day human-answer rate is below half the pool's own median (min
+20 sampled dials) by setting `status='resting'` + `resting_until` exactly as the existing
+daily-cap-exhaustion path already does, plus two new observability-only columns
+(`flagged_at`/`flagged_reason`). This means `pick_and_reserve_dial_number`'s own `status='active'`
+filter needed zero changes to correctly exclude a flagged number, and the existing lazy
+`reactivate_rested_numbers` reactivation path (already called by every caller of that function)
+makes a flagged number naturally re-eligible for a fresh health check once its rest period elapses
+-- no separate dedup/reset logic needed. Local-presence fallback (`private.area_code_states`, a
+new NANP-only area-code->US-state table, 357 verified rows sourced the same way
+`area_code_timezones` was) adds a third `pick_and_reserve_dial_number` ORDER BY tier behind the
+existing same-area-code tier; signature and concurrency (`for update...skip locked`) unchanged.

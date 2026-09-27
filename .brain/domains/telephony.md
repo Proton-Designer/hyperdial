@@ -166,6 +166,8 @@ HyperDial places and receives real phone calls through Telnyx. This domain cover
   `telnyx-webrtc-credentials/index.ts`'s defensive multi-shape parsing (string / `.token` / bare `eyJ…`) only existed because it hand-rolled the request instead of trusting the spec;
   it is gone from the new code, but `useTelnyxCall.ts`'s consumption of `{ token }` is unchanged.
 
+- **CID-4 (TASK-T9, 2026-09-27): caller-ID health auto-rests a number, it doesn't retire it.** `check_number_health` (weekly cron + on-demand, `org_number_health_settings.health_alerts_enabled`, DISABLED by default) flags a pool number whose 30-day human-answer rate is below half the pool's own median (min 20 sampled dials) by reusing the EXISTING `user_phone_numbers.status='resting'`/`resting_until` mechanism (same lazy-reactivation path `pick_and_reserve_dial_number` already runs) — no new status value. `flagged_at`/`flagged_reason` are observability-only. `pick_and_reserve_dial_number` also gained a same-state preference tier (`private.area_code_states`, NANP-only, 357 rows) behind the existing same-area-code tier — signature/concurrency unchanged. Telnyx's own reputation-lookup product exists (`/v2/reputation/numbers/{phone_number}`) but sits behind an Enterprise account tier with no pricing in `spec3.json`; not wired up (`audit/T9/api-evidence.md`).
+
 ## Not covered here
 
 - Dial loop, batching, AMD, `call_logs`, Redis session state → `.brain/domains/dialer.md`

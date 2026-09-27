@@ -1199,6 +1199,29 @@ now()+delay_minutes offset") does not exist in either of its two callers
 
 ---
 
+## 33. Telnyx's number-reputation lookup exists but is not wired up (TASK-T9, CID-4) — an open business decision, not a bug
+
+- CID-4 asked to "research whether Telnyx offers a spam/reputation lookup... if free/cheap, use
+  it; if it costs money, build it disabled + document the cost." `spec3.json` (freshly curled)
+  confirms `GET /v2/reputation/numbers/{phone_number}` exists, but it sits behind an
+  `/v2/enterprises/{enterprise_id}/...` namespace and a one-time
+  `/v2/terms_of_service/number_reputation/agree` acceptance — an "Enterprise" product tier, not a
+  plain per-call endpoint on the account tier this build otherwise uses. The spec carries no
+  pricing info at all for it.
+- **Not wired up, deliberately**: since the actual cost/eligibility can't be confirmed from
+  `spec3.json` or from this (non-enterprise-tier) environment, building a disabled toggle around a
+  guessed price would be worse than not building it — a future engineer could see the toggle and
+  assume the cost was verified. See `audit/T9/api-evidence.md`.
+- **If a future task picks this up**: first confirm with Telnyx (or the account's own billing
+  console) whether this org's account includes Enterprise reputation monitoring and its real
+  per-lookup/per-number cost, then wire it in as a disabled-by-default org setting, same shape as
+  every other optional Telnyx feature in this repo.
+- CID-4's own health check (`check_number_health`, the same migration) needed none of this — it's
+  entirely derived from this org's own `call_legs.outcome` history (the existing
+  `outcome = 'connected'` human-answer signal), not a Telnyx API call.
+
+---
+
 ## Not issues — deliberate, documented elsewhere
 
 - Redis alongside Postgres → `mem.decisions`
