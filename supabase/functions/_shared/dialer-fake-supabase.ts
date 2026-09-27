@@ -512,7 +512,7 @@ function rpc(
       return { data: null, error: null };
     }
 
-    // MISSION-5 TASK-M5-B3: mirrors agent_daily_dial_status (20260927070004_distribution_
+    // MISSION-5 TASK-M5-B3: mirrors agent_daily_dial_status (20260927144500_distribution_
     // guards.sql) -- org_distribution_settings absent/disabled (the common case: no fixture
     // ever seeds it) returns cap_enabled: false, exactly like the real SQL's own
     // "v_enabled is null or not v_enabled" branch, so every pre-existing refillSession test
