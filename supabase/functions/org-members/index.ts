@@ -386,6 +386,33 @@ Deno.serve(async (req) => {
         targetId: targetUserId,
         details: { from: target.role, to: body.role },
       });
+      // Review fix (A5 NIT): org_manager_pods has no role check of its own (see
+      // 'set_manager_pods' above) -- demoting a manager away from that role must clear their
+      // scope rows here, or a later re-promotion would silently resurrect a stale pod scope
+      // nobody chose. Best-effort: a cleanup failure never fails the role change itself, same
+      // as cascadeOffboard's own best-effort pattern in this file.
+      if (target.role === 'manager' && body.role !== 'manager') {
+        const { error: podScopeError } = await supabase
+          .from('org_manager_pods')
+          .delete()
+          .eq('org_id', orgId)
+          .eq('manager_user_id', targetUserId);
+        if (podScopeError) {
+          console.error(
+            'org-members change_role: manager pod-scope cleanup failed',
+            podScopeError.message
+          );
+        } else {
+          await logOrgAction(supabase, {
+            orgId,
+            actorUserId: user.id,
+            action: 'member.set_manager_pods',
+            targetType: 'org_member',
+            targetId: targetUserId,
+            details: { pod_ids: [], reason: 'role_change_away_from_manager' },
+          });
+        }
+      }
       break;
     }
     case 'disable': {

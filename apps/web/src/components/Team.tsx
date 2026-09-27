@@ -919,10 +919,12 @@ export function Team() {
       if (av == null && bv == null) return 0;
       if (av == null) return 1; // nulls (e.g. offline state_since) always sort last
       if (bv == null) return -1;
-      if (typeof av === 'string' && typeof bv === 'string') {
-        return dir * av.localeCompare(bv);
+      // Review fix (A4 SHOULD): calls_today/conversations_today are numbers -- comparing them via
+      // String().localeCompare() sorted lexicographically ("10" before "9"), not numerically.
+      if (typeof av === 'number' && typeof bv === 'number') {
+        return dir * (av - bv);
       }
-      return dir * (String(av).localeCompare(String(bv)) || 0);
+      return dir * String(av).localeCompare(String(bv));
     });
   }, [live, liveStatusFilter, liveCampaignFilter, livePodFilter, liveSortKey, liveSortDir]);
 
