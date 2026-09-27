@@ -565,7 +565,7 @@ begin
   candidates as (
     select r.id
     from ranked r
-    where
+    where (
       v_mode = 'all'
       or (v_mode = 'range'
         and r.rn between (p_filter ->> 'start')::int and (p_filter ->> 'end')::int)
@@ -573,6 +573,20 @@ begin
         and r.rn <= ceil(r.total * (p_filter ->> 'percentage')::numeric / 100))
       or (v_mode = 'tag' and r.ghl_tags && array[p_filter ->> 'tag'])
       or (v_mode = 'by_current_agent' and r.assigned_agent_id = v_from_agent_id)
+    )
+    -- MISSION-5 TASK-M5-A5 fix-forward (live dry-run BLOCKER): 'all'/'range'/'percentage'/'tag'
+    -- match ANY currently-queued lead in the campaign, regardless of who (if anyone) already
+    -- holds it -- a queued lead can already have an assigned_agent_id (assignment doesn't change
+    -- status). Without this, a manager calling mode='all' targeting their own pod's agent would
+    -- ALSO sweep up leads already assigned to a DIFFERENT pod's agent, reassigning them away --
+    -- caught live: manager(pod X) assigning to agent(pod X) with mode='all' also grabbed a lead
+    -- already held by agent(pod Y). A no-op for owner/admin (is_agent_in_callers_pod_scope is
+    -- unconditionally true for them); for a manager, every mode may only touch a lead that is
+    -- currently unassigned OR already held by an agent inside their OWN pod scope.
+    and (
+      r.assigned_agent_id is null
+      or private.is_agent_in_callers_pod_scope(v_org_id, r.assigned_agent_id)
+    )
   ),
   updated as (
     update public.campaign_leads cl
