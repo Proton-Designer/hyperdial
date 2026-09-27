@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { toast } from 'sonner';
 import { useTelnyxCall } from '../lib/useTelnyxCall';
+import { CoachingBanner } from './dialer/CoachingBanner';
 import { usePhoneNumbers } from '@/contexts/PhoneNumbersContext';
 import { CampaignStats } from './dialer/CampaignStats';
 import { useDialerSession } from '@/hooks/useDialerSession';
@@ -160,6 +162,8 @@ function DialerBody({
     pendingInboundCall,
     answerPendingInboundCall,
     declinePendingInboundCall,
+    activeCoaching,
+    setActiveCoachingMode,
   } = useTelnyxCall({
     remoteElementId: REMOTE_AUDIO_ID,
     sessionId: effectiveSessionId ?? undefined,
@@ -715,6 +719,22 @@ function DialerBody({
     <div className="flex h-full">
       {/* Remote audio is created in useEffect (outside React tree) to avoid circular ref in Telnyx SDK */}
 
+      {/* TASK-T3: a portal, not a normal child -- this component's own wrapper div is
+          CSS-`display:none` while another tab is active (MainApp.tsx), but the coaching leg
+          lives on this SAME always-mounted WebRTC client regardless of which tab is showing, so
+          the banner needs to render into `document.body` directly to stay visible across every
+          tab switch, not just while the Dialer tab happens to be active. */}
+      {activeCoaching &&
+        createPortal(
+          <CoachingBanner
+            coachingId={activeCoaching.coachingId}
+            mode={activeCoaching.mode}
+            onModeChanged={setActiveCoachingMode}
+            onLeave={hangup}
+          />,
+          document.body
+        )}
+
       {/* Center Panel - Dialing Interface */}
       <div className="flex-1 bg-surface-0 p-4 sm:p-8 overflow-y-auto">
         {pendingInboundCall && (
@@ -775,6 +795,7 @@ function DialerBody({
                 connectedContactId={parallelSession.connectedContactId}
                 connectedAnsweredAt={parallelSession.connectedAnsweredAt}
                 inboundCall={parallelSession.inboundCall}
+                coachingMode={parallelSession.coachingMode}
                 onPause={handleParallelPause}
                 onResume={() => void handleParallelResume()}
                 onStop={(opts) => void handleParallelStop(opts)}

@@ -2,13 +2,16 @@ import { createClient } from 'npm:@supabase/supabase-js@2';
 import { corsHeaders, corsPreflightResponse } from '../_shared/cors.ts';
 import { processTelnyxDialerEvent } from '../_shared/dialer-engine.ts';
 import { processTelnyxInboundEvent } from '../_shared/inbound-engine.ts';
+import { processTelnyxCoachingEvent } from '../_shared/coaching-core.ts';
 import { getConnectedOrgTelnyxContext } from '../_shared/telnyx-org-context.ts';
 import { verifyTelnyxSignature } from '../_shared/webhook-verify.ts';
 import {
   decodeDialClientState,
   decodeInboundClientState,
+  decodeCoachingClientState,
   type DialClientState,
   type InboundClientState,
+  type CoachingClientState,
 } from '../_shared/client-state.ts';
 
 type WebhookBody = {
@@ -81,11 +84,12 @@ function isFreshInboundCall(eventType: string, payload: Record<string, unknown>)
 
 /**
  * Dispatches a verified, accepted webhook body into the org-scoped engine that owns it --
- * either the dial engine (_shared/dialer-engine.ts, TASK-P2-E2) for an event carrying a
- * DialClientState, or the inbound-routing engine (_shared/inbound-engine.ts, TASK-I1) for an
- * event carrying an InboundClientState OR a genuinely fresh inbound call.initiated. The outer
+ * the dial engine (_shared/dialer-engine.ts, TASK-P2-E2) for an event carrying a DialClientState,
+ * the inbound-routing engine (_shared/inbound-engine.ts, TASK-I1) for an event carrying an
+ * InboundClientState OR a genuinely fresh inbound call.initiated, or the coaching engine
+ * (_shared/coaching-core.ts, TASK-T3) for an event carrying a CoachingClientState. The outer
  * Deno.serve handler below has already: verified the ed25519 signature, resolved `orgId` from
- * the `?org=` query param, and confirmed a call.* event matches ONE of these three shapes (or
+ * the `?org=` query param, and confirmed a call.* event matches ONE of these four shapes (or
  * is accepted-and-ignored before ever reaching here). Non-call.* events (e.g. conference.*) are
  * filtered out before ever reaching the engine.
  */
@@ -93,7 +97,8 @@ async function processWebhook(
   body: WebhookBody,
   orgId: string,
   dialClientState: DialClientState | null,
-  inboundClientState: InboundClientState | null
+  inboundClientState: InboundClientState | null,
+  coachingClientState: CoachingClientState | null
 ): Promise<void> {
   const eventType = body?.data?.event_type ?? '';
   const eventId = body?.data?.id ?? '';
@@ -106,11 +111,35 @@ async function processWebhook(
     eventId,
     occurredAt,
     callControlId,
-    hasClientState: Boolean(dialClientState || inboundClientState),
+    hasClientState: Boolean(dialClientState || inboundClientState || coachingClientState),
   });
 
   if (!eventType.startsWith('call.')) {
     webhookLog('event_ignored_not_a_call_event', { eventType });
+    return;
+  }
+
+  if (coachingClientState) {
+    // TASK-T3: a coaching leg is neither a dial-engine leg nor an inbound-routing leg -- see
+    // coaching-core.ts's own header for why it deliberately has no call_legs row at all. Only
+    // `call.answered`/`call.hangup` are interesting; processTelnyxCoachingEvent no-ops on
+    // anything else and on an already-`ended` row (idempotent against Telnyx's own retries).
+    if (!callControlId) {
+      webhookLog('coaching_event_ignored_missing_call_control_id', { eventType });
+      return;
+    }
+    const supabase = getSupabaseAdmin();
+    const { client, error } = await getConnectedOrgTelnyxContext(supabase, orgId);
+    if (!client) {
+      webhookLog('coaching_event_no_telnyx_client', { orgId, errorStatus: error?.status });
+      return;
+    }
+    await processTelnyxCoachingEvent(supabase, client, {
+      orgId,
+      eventType,
+      callControlId,
+      coachingId: coachingClientState.coaching,
+    });
     return;
   }
 
@@ -226,15 +255,18 @@ Deno.serve(async (req: Request) => {
     );
     const dialClientState = decodeDialClientState(rawClientState);
     const inboundClientState = decodeInboundClientState(rawClientState);
+    const coachingClientState = decodeCoachingClientState(rawClientState);
     const recognized =
       (dialClientState && dialClientState.org === orgId) ||
       (inboundClientState && inboundClientState.org === orgId) ||
+      (coachingClientState && coachingClientState.org === orgId) ||
       isFreshInboundCall(eventType, payloadForGate);
     if (eventType.startsWith('call.') && !recognized) {
       webhookLog('ignored_client_state_missing_or_org_mismatch', {
         orgId,
         eventType,
-        clientStateOrg: dialClientState?.org ?? inboundClientState?.org ?? null,
+        clientStateOrg:
+          dialClientState?.org ?? inboundClientState?.org ?? coachingClientState?.org ?? null,
       });
       return new Response(JSON.stringify({ received: true, ignored: true }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -252,7 +284,8 @@ Deno.serve(async (req: Request) => {
       body,
       orgId,
       dialClientState,
-      inboundClientState
+      inboundClientState,
+      coachingClientState
     ).catch((err) => console.error('telnyx-webhook async processing error:', err));
     if (typeof EdgeRuntime !== 'undefined') {
       // Ack 200 immediately; EdgeRuntime keeps processingPromise alive past the response.

@@ -189,6 +189,7 @@ export function DialerStatesHarness() {
           connectedContactId={scenario.connectedContactId}
           connectedAnsweredAt={scenario.connectedContactId ? ANSWERED_2MIN_AGO : null}
           inboundCall={null}
+          coachingMode={null}
           onPause={() => window.alert('Pause clicked (fixture, no-op)')}
           onResume={() => window.alert('Resume clicked (fixture, no-op)')}
           onStop={(opts) =>

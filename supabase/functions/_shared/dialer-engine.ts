@@ -453,8 +453,14 @@ async function agentLegStateFor(
  *  and the dial no longer depend on the browser having connected first. The browser still
  *  needs to actually be listening for the auto-answer itself to work -- that remains a
  *  disclosed, separate timing gap (NOT-done in the task log), not something this function can
- *  fix on its own. */
-async function agentSipUri(
+ *  fix on its own.
+ *
+ *  TASK-T3: exported (was module-private) -- `coaching-core.ts` reuses this UNCHANGED to
+ *  resolve a MANAGER's own SIP URI for a live-coaching leg. Nothing about the function itself
+ *  changed; it was never agent-specific despite the name (any org member's WebRTC credential
+ *  resolves the same way) -- exporting it was preferred over duplicating the credential-lookup
+ *  logic in a second file, per this lane's "reuse, don't reinvent" convention. */
+export async function agentSipUri(
   supabase: SupabaseClient,
   client: TelnyxClient,
   orgId: string,

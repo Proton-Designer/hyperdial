@@ -431,9 +431,38 @@ export interface TelnyxClient {
   }): Promise<{ id: string | null; name: string }>;
   joinConference(
     conferenceId: string,
-    args: { callControlId: string; startConferenceOnEnter?: boolean; endConferenceOnExit?: boolean }
+    args: {
+      callControlId: string;
+      startConferenceOnEnter?: boolean;
+      endConferenceOnExit?: boolean;
+      /** TASK-T3: verified against spec3.json's `JoinConferenceRequest` -- "barge" enters as a
+       *  normal participant (same as omitting this/"none"), "monitor" is muted-listen-only,
+       *  "whisper" is heard only by `whisperCallControlIds`. Omitted for every existing caller
+       *  (the agent leg, a contact winner leg) -- Telnyx defaults to "none" when absent, so this
+       *  is purely additive. */
+      supervisorRole?: 'barge' | 'monitor' | 'whisper';
+      /** Required (per spec3.json) for `supervisorRole: 'whisper'` to have any effect --
+       *  otherwise "the supervisor will join the conference as a monitoring participant only." */
+      whisperCallControlIds?: string[];
+    }
   ): Promise<void>;
   leaveConference(conferenceId: string, callControlId: string): Promise<void>;
+  /**
+   * TASK-T3: `POST /conferences/{id}/actions/update` -- verified against spec3.json's
+   * `UpdateConferenceRequest`: switches an ALREADY-JOINED supervisor's role live (e.g. Listen ->
+   * Whisper mid-call) without leaving and rejoining the conference. Distinct from
+   * `/participants/{id}` PATCH (spec3.json's `UpdateConferenceParticipantRequest`), which has no
+   * `supervisor_role` field at all -- only the `/actions/update` command can change it.
+   * `supervisorRole: 'none'` demotes a supervisor back to a normal participant.
+   */
+  updateConferenceSupervisorRole(
+    conferenceId: string,
+    args: {
+      callControlId: string;
+      supervisorRole: 'barge' | 'monitor' | 'whisper' | 'none';
+      whisperCallControlIds?: string[];
+    }
+  ): Promise<void>;
 
   recordStart(callControlId: string, args: RecordStartArgs): Promise<void>;
   transcriptionStart(callControlId: string, args?: TranscriptionStartArgs): Promise<void>;
@@ -591,6 +620,10 @@ export function createTelnyxClient(
           call_control_id: args.callControlId,
           start_conference_on_enter: args.startConferenceOnEnter ?? true,
           end_conference_on_exit: args.endConferenceOnExit ?? false,
+          ...(args.supervisorRole ? { supervisor_role: args.supervisorRole } : {}),
+          ...(args.whisperCallControlIds
+            ? { whisper_call_control_ids: args.whisperCallControlIds }
+            : {}),
         }),
       });
     },
@@ -599,6 +632,21 @@ export function createTelnyxClient(
       await req(`/conferences/${encodeURIComponent(conferenceId)}/actions/leave`, {
         method: 'POST',
         body: JSON.stringify({ call_control_id: callControlId }),
+      });
+    },
+
+    async updateConferenceSupervisorRole(conferenceId, args) {
+      // UpdateConferenceRequest (spec3.json): call_control_id + supervisor_role are both
+      // required on this endpoint (unlike join, where supervisor_role is optional).
+      await req(`/conferences/${encodeURIComponent(conferenceId)}/actions/update`, {
+        method: 'POST',
+        body: JSON.stringify({
+          call_control_id: args.callControlId,
+          supervisor_role: args.supervisorRole,
+          ...(args.whisperCallControlIds
+            ? { whisper_call_control_ids: args.whisperCallControlIds }
+            : {}),
+        }),
       });
     },
 

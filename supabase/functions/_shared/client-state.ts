@@ -23,8 +23,71 @@ export interface DialClientState {
   kind: DialClientStateKind;
 }
 
+/**
+ * TASK-T3 (live coaching): a distinct shape from both `DialClientState` and `InboundClientState`
+ * -- a coaching leg is never dialed by the dial engine or the inbound-routing engine, it's a
+ * MANAGER's own SIP leg dialed by `coaching-core.ts` to join another agent's already-live
+ * conference as a Telnyx supervisor. `coaching` is `coaching_sessions.id` -- the webhook handler
+ * (`processTelnyxCoachingEvent`) looks the row up by this id, never by session/leg the way the
+ * other two shapes do, since a coaching leg has no `call_legs` row of its own at all (deliberate
+ * -- see coaching-core.ts's header for why keeping it OUT of call_legs entirely is what makes
+ * this feature provably unable to affect the dial loop's own kind-agnostic code paths).
+ */
+export type CoachingMode = 'listen' | 'whisper' | 'barge';
+
+export interface CoachingClientState {
+  org: string;
+  coaching: string;
+  kind: 'coaching';
+  /** Round-tripped purely for the browser's own banner display (CoachingBanner.tsx) -- the DB
+   *  row (coaching_sessions.mode) stays authoritative for every server-side decision; nothing
+   *  here is ever trusted for anything but what label to show. */
+  mode: CoachingMode;
+}
+
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0;
+}
+
+const COACHING_MODES: CoachingMode[] = ['listen', 'whisper', 'barge'];
+
+/** Throws on invalid input -- same contract as encodeDialClientState/encodeInboundClientState. */
+export function encodeCoachingClientState(state: Omit<CoachingClientState, 'kind'>): string {
+  if (!isNonEmptyString(state.org) || !isNonEmptyString(state.coaching)) {
+    throw new Error('encodeCoachingClientState: org and coaching are required non-empty strings');
+  }
+  if (!COACHING_MODES.includes(state.mode)) {
+    throw new Error(`encodeCoachingClientState: invalid mode '${state.mode}'`);
+  }
+  return btoa(
+    JSON.stringify({ org: state.org, coaching: state.coaching, kind: 'coaching', mode: state.mode })
+  );
+}
+
+/** Never throws -- untrusted input from a webhook. Returns null on anything malformed, or on a
+ *  well-formed DialClientState/InboundClientState (both decode to objects with no `coaching`
+ *  key), so a single client_state value can be tried against all three decoders safely. */
+export function decodeCoachingClientState(
+  value: string | null | undefined
+): CoachingClientState | null {
+  if (!value) return null;
+  let decoded: Record<string, unknown>;
+  try {
+    decoded = JSON.parse(atob(value)) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+  if (
+    decoded.kind !== 'coaching' ||
+    !isNonEmptyString(decoded.org) ||
+    !isNonEmptyString(decoded.coaching)
+  ) {
+    return null;
+  }
+  const mode: CoachingMode = COACHING_MODES.includes(decoded.mode as CoachingMode)
+    ? (decoded.mode as CoachingMode)
+    : 'listen';
+  return { org: decoded.org, coaching: decoded.coaching, kind: 'coaching', mode };
 }
 
 /** Throws on invalid input — callers build this from trusted, already-validated IDs.

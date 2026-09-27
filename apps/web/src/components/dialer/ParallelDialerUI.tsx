@@ -29,6 +29,8 @@ interface ParallelDialerUIProps {
    *  bridge pauses the batch, `pause_reason: 'inbound_call'`, so no contact leg is live at the
    *  same time), but rendered independently rather than assumed. */
   inboundCall: InboundCallInfo | null;
+  /** TASK-T3: see LiveCallPanel's own `coachingMode` comment. */
+  coachingMode: 'whisper' | 'barge' | null;
   onPause: () => void;
   onResume: () => void;
   /** BUG-11: `force` is only ever passed `true` from the confirm dialog's "Hang up and stop"
@@ -140,6 +142,7 @@ export function ParallelDialerUI({
   connectedContactId,
   connectedAnsweredAt,
   inboundCall,
+  coachingMode,
   onPause,
   onResume,
   onStop,
@@ -258,6 +261,7 @@ export function ParallelDialerUI({
           contactName={connectedContact.name}
           phone={connectedContact.phone}
           answeredAt={connectedAnsweredAt}
+          coachingMode={coachingMode}
           onToggleMute={onMuteChange}
           onEndCall={onEndLiveCall}
         />
@@ -269,6 +273,7 @@ export function ParallelDialerUI({
           phone={inboundCall.contact?.phone_number ?? inboundCall.from_e164}
           answeredAt={inboundCall.answered_at}
           flagLabel="Inbound call"
+          coachingMode={coachingMode}
           onToggleMute={onMuteChange}
           onEndCall={onEndLiveCall}
         />

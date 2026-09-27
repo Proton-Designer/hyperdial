@@ -15,6 +15,12 @@ interface LiveCallPanelProps {
    *  inbound routing (`pause_reason: 'inbound_call'`), not a contact leg the batch dialed --
    *  the task's own explicit ask ("The Dialer shows the contact card flagged 'Inbound call'"). */
   flagLabel?: string;
+  /** TASK-T3: 'whisper'/'barge' only -- never 'listen' (industry default: a plain listen is
+   *  silent, the task's own explicit ask; enforced server-side too, see getDialerSession's own
+   *  comment in api.ts, not just by this component omitting it). A separate badge from
+   *  `flagLabel` (not a shared slot) so an "Inbound call" flag and a coaching indicator can show
+   *  at the same time without one clobbering the other. */
+  coachingMode?: 'whisper' | 'barge' | null;
   onToggleMute: (muted: boolean) => void;
   onEndCall: () => void;
 }
@@ -24,6 +30,7 @@ export function LiveCallPanel({
   phone,
   answeredAt,
   flagLabel,
+  coachingMode,
   onToggleMute,
   onEndCall,
 }: LiveCallPanelProps) {
@@ -54,6 +61,11 @@ export function LiveCallPanel({
         {flagLabel && (
           <span className="mb-2 px-2 py-0.5 rounded-full text-xs border border-accent-to/30 bg-accent-to/10 text-accent-to">
             {flagLabel}
+          </span>
+        )}
+        {coachingMode && (
+          <span className="mb-2 px-2 py-0.5 rounded-full text-xs border border-warning/30 bg-warning/10 text-warning">
+            {coachingMode === 'barge' ? 'Manager on the call' : 'Manager listening'}
           </span>
         )}
         <h3 className="text-page-title text-text-primary">{contactName}</h3>

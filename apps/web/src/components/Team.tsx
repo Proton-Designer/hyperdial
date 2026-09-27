@@ -1,12 +1,15 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { Users, ArrowUpDown } from 'lucide-react';
+import { Users, ArrowUpDown, Ear, Mic, Radio } from 'lucide-react';
 import {
   getTeamDailyStats,
   getTeamLiveBoard,
+  startCoaching,
+  CoachingActionError,
   type TeamDailyStatsRow,
   type TeamLiveBoardRow,
   type TeamLiveStatus,
   type TeamMemberRole,
+  type CoachingMode,
 } from '@/lib/api';
 import { PageHeader } from '@/components/app/PageHeader';
 import { EmptyState } from '@/components/app/EmptyState';
@@ -152,7 +155,28 @@ function statusLine(row: TeamLiveBoardRow): string {
   return meta.label;
 }
 
-function LiveBoardCard({ row }: { row: TeamLiveBoardRow }) {
+const COACHING_MODE_META: { mode: CoachingMode; label: string; icon: typeof Ear }[] = [
+  { mode: 'listen', label: 'Listen', icon: Ear },
+  { mode: 'whisper', label: 'Whisper', icon: Mic },
+  { mode: 'barge', label: 'Barge', icon: Radio },
+];
+
+function LiveBoardCard({
+  row,
+  onCoach,
+  coachingBusy,
+  coachingError,
+}: {
+  row: TeamLiveBoardRow;
+  /** TASK-T3: undefined for interns viewing their OWN row is never possible here -- Team.tsx is
+   *  owner/admin-only (route-gated, MainApp.tsx). Always passed for every row; the manager's own
+   *  row (if they also dial) is not specially excluded client-side -- the server itself rejects
+   *  coaching your own session (targetUserId === managerId, coaching-core.ts), so disabling it
+   *  here too would just duplicate that check for no real benefit. */
+  onCoach: (targetUserId: string, mode: CoachingMode) => void;
+  coachingBusy: boolean;
+  coachingError: string | null;
+}) {
   const meta = STATUS_META[row.status];
   return (
     <div className="rounded-app-md border border-border-subtle bg-surface-2 p-4 flex flex-wrap items-center gap-4">
@@ -164,6 +188,7 @@ function LiveBoardCard({ row }: { row: TeamLiveBoardRow }) {
             <RoleChip role={row.role} />
           </div>
           <div className={`text-meta ${meta.text}`}>{statusLine(row)}</div>
+          {coachingError && <div className="text-meta text-danger mt-0.5">{coachingError}</div>}
         </div>
       </div>
       <div className="flex items-center gap-6 text-meta text-text-secondary">
@@ -186,6 +211,22 @@ function LiveBoardCard({ row }: { row: TeamLiveBoardRow }) {
           <div className="text-text-primary font-medium">{row.conversations_today}</div>
         </div>
       </div>
+      {row.status === 'on_call' && (
+        <div className="flex items-center gap-1.5">
+          {COACHING_MODE_META.map(({ mode, label, icon: Icon }) => (
+            <button
+              key={mode}
+              type="button"
+              disabled={coachingBusy}
+              onClick={() => onCoach(row.agent_id, mode)}
+              className="px-2 py-1 rounded-app-md border border-border-subtle text-meta text-text-secondary hover:text-text-primary hover:border-accent-to/50 disabled:opacity-50 flex items-center gap-1"
+            >
+              <Icon className="w-3.5 h-3.5" />
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -234,6 +275,33 @@ export function Team() {
   const [liveError, setLiveError] = useState<string | null>(null);
   const [sortKey, setSortKey] = useState<SortKey>('dials');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+  // TASK-T3: 'busy' is global (the manager's own WebRTC client has one call slot, so only one
+  // coaching attempt can ever be starting at a time regardless of which row it came from) --
+  // the error is per-row (keyed by target agent_id) so a failure on one member's row doesn't
+  // show stale text under a DIFFERENT member's row.
+  const [coachingBusy, setCoachingBusy] = useState(false);
+  const [coachingErrors, setCoachingErrors] = useState<Record<string, string>>({});
+
+  const handleCoach = useCallback((targetUserId: string, mode: CoachingMode) => {
+    setCoachingBusy(true);
+    setCoachingErrors((prev) => ({ ...prev, [targetUserId]: '' }));
+    startCoaching(targetUserId, mode)
+      .then(() => {
+        // No local "now coaching" state to set here -- useTelnyxCall's own inbound-invite
+        // handler (Dialer.tsx, mounted app-wide) auto-answers the resulting invite and the
+        // floating CoachingBanner (portal) takes over from there.
+      })
+      .catch((e) => {
+        const message =
+          e instanceof CoachingActionError
+            ? e.message
+            : e instanceof Error
+              ? e.message
+              : 'Failed to start coaching';
+        setCoachingErrors((prev) => ({ ...prev, [targetUserId]: message }));
+      })
+      .finally(() => setCoachingBusy(false));
+  }, []);
 
   const resolved = useMemo(
     () => resolveRange(range, customStart, customEnd),
@@ -352,7 +420,13 @@ export function Team() {
         ) : (
           <div className="space-y-2">
             {live.map((row) => (
-              <LiveBoardCard key={row.agent_id} row={row} />
+              <LiveBoardCard
+                key={row.agent_id}
+                row={row}
+                onCoach={handleCoach}
+                coachingBusy={coachingBusy}
+                coachingError={coachingErrors[row.agent_id] || null}
+              />
             ))}
           </div>
         )}

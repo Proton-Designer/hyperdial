@@ -45,6 +45,7 @@ function makeMockClient(overrides: Partial<TelnyxClient> = {}): {
     createConference: async () => ({ id: null, name: '' }),
     joinConference: async () => {},
     leaveConference: async () => {},
+    updateConferenceSupervisorRole: async () => {},
     recordStart: async () => {},
     transcriptionStart: async () => {},
     playbackStart: async () => {},

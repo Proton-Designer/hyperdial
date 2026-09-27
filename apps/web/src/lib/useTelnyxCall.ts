@@ -78,6 +78,35 @@ function decodeInboundRoutingClientState(
   return { org, inbound, step };
 }
 
+/**
+ * TASK-T3: browser-safe port of client-state.ts's CoachingClientState decode -- same rationale
+ * as decodeAgentClientState/decodeInboundRoutingClientState above (a distinct shape: `{org,
+ * coaching, kind:'coaching'}`, no `session`/`leg`/`inbound`/`step` at all, so it never matches
+ * either of those decoders' required fields and can be tried unconditionally after them).
+ */
+export type CoachingMode = 'listen' | 'whisper' | 'barge';
+const COACHING_MODES: CoachingMode[] = ['listen', 'whisper', 'barge'];
+
+function decodeCoachingClientState(
+  value: unknown
+): { org: string; coaching: string; mode: CoachingMode } | null {
+  if (typeof value !== 'string' || !value) return null;
+  let decoded: Record<string, unknown>;
+  try {
+    decoded = JSON.parse(atob(value)) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+  const { org, coaching, kind, mode } = decoded;
+  if (kind !== 'coaching' || typeof org !== 'string' || !org) return null;
+  if (typeof coaching !== 'string' || !coaching) return null;
+  return {
+    org,
+    coaching,
+    mode: COACHING_MODES.includes(mode as CoachingMode) ? (mode as CoachingMode) : 'listen',
+  };
+}
+
 /** The invite's `custom_headers` (TASK-L1: `X-Hyperdial-Session`), as a defense-in-depth
  *  secondary signal alongside client_state -- see telnyx-client.ts's DialArgs header comment.
  *  Not relied on alone: header name/case over the real SIP INVITE wasn't live-verified this
@@ -116,6 +145,15 @@ export function useTelnyxCall(options: UseTelnyxCallOptions = {}) {
     id?: string;
     hangup: () => void;
     answer: (params?: { remoteElement?: string }) => void | Promise<void>;
+  } | null>(null);
+  /** TASK-T3: set for the lifetime of a live-coaching leg this hook auto-answered (see
+   *  decodeCoachingClientState's own header above) -- CoachingBanner reads this to know a
+   *  coaching call is live and which `coaching_sessions.id` to pass to switchCoachingMode.
+   *  Cleared in the same 'hangup'/'destroy'/'purge' branch that clears activeCallRef below, so it
+   *  never outlives the real Telnyx leg it describes. */
+  const [activeCoaching, setActiveCoaching] = useState<{
+    coachingId: string;
+    mode: CoachingMode;
   } | null>(null);
   /** TASK-L1: the SDK re-fires telnyx.notification repeatedly as an inbound call's state
    *  changes (new -> ringing -> ...) -- decide answer-vs-reject exactly once per call id, not
@@ -262,6 +300,36 @@ export function useTelnyxCall(options: UseTelnyxCallOptions = {}) {
                 }
 
                 if (!priorDecision) {
+                  // TASK-T3: checked FIRST, before the agent-leg session-match logic below --
+                  // a coaching invite carries neither `session` nor `leg` (a different shape
+                  // entirely, see decodeCoachingClientState's own header), so it always fails
+                  // decodeAgentClientState's required-fields check and would otherwise fall
+                  // through to the inbound-routing/reject branch. It is ALWAYS self-directed
+                  // (only THIS manager's own SIP credential could ever receive it -- the server
+                  // dialed it specifically to reach this browser), so it's auto-answered
+                  // unconditionally, unlike the agent leg's sessionId match.
+                  const coaching = decodeCoachingClientState(call.options?.clientState);
+                  if (coaching) {
+                    inboundCallDecisionsRef.current.set(call.id, 'answered');
+                    setActiveCoaching({ coachingId: coaching.coaching, mode: coaching.mode });
+                    const currentOptions = optionsRef.current;
+                    Promise.resolve(
+                      call.answer(
+                        currentOptions.remoteElementId
+                          ? { remoteElement: currentOptions.remoteElementId }
+                          : undefined
+                      )
+                    ).catch((err: unknown) => {
+                      setError(err instanceof Error ? err.message : String(err));
+                      setActiveCoaching(null);
+                      call.hangup();
+                    });
+                    activeCallRef.current = call;
+                    return;
+                  }
+                }
+
+                if (!priorDecision) {
                   const currentOptions = optionsRef.current;
                   const decoded = decodeAgentClientState(call.options?.clientState);
                   const headerSessionId = customHeaderSessionId(call.options?.customHeaders);
@@ -326,6 +394,7 @@ export function useTelnyxCall(options: UseTelnyxCallOptions = {}) {
               } else if (state === 'hangup' || state === 'destroy' || state === 'purge') {
                 setCallState('ended');
                 activeCallRef.current = null;
+                setActiveCoaching(null);
                 if (typeof window !== 'undefined') {
                   window.localStorage.removeItem(ACTIVE_AGENT_CALL_CONTROL_ID_KEY);
                 }
@@ -494,5 +563,11 @@ export function useTelnyxCall(options: UseTelnyxCallOptions = {}) {
     pendingInboundCall,
     answerPendingInboundCall,
     declinePendingInboundCall,
+    activeCoaching,
+    /** CoachingBanner calls this right after a successful switchCoachingMode API response -- the
+     *  hook itself never re-decodes client_state mid-call (Telnyx's own update action doesn't
+     *  re-fire an invite), so the new mode has to be told to it explicitly. */
+    setActiveCoachingMode: (mode: CoachingMode) =>
+      setActiveCoaching((current) => (current ? { ...current, mode } : current)),
   };
 }

@@ -407,6 +407,65 @@ Deno.test(
 );
 
 Deno.test(
+  'createTelnyxClient.joinConference: supervisorRole/whisperCallControlIds are only sent when provided (TASK-T3)',
+  async () => {
+    let seenBody: unknown = null;
+    const restore = stubFetch((_url, init) => {
+      seenBody = JSON.parse(String(init?.body ?? '{}'));
+      return new Response(JSON.stringify({ data: {} }), { status: 200 });
+    });
+    try {
+      const client = createTelnyxClient('test-api-key');
+      await client.joinConference('conf-1', {
+        callControlId: 'call-mgr',
+        supervisorRole: 'whisper',
+        whisperCallControlIds: ['call-agent'],
+      });
+      assertEquals(seenBody, {
+        call_control_id: 'call-mgr',
+        start_conference_on_enter: true,
+        end_conference_on_exit: false,
+        supervisor_role: 'whisper',
+        whisper_call_control_ids: ['call-agent'],
+      });
+
+      await client.joinConference('conf-1', { callControlId: 'call-agent-2' });
+      assertEquals(seenBody, {
+        call_control_id: 'call-agent-2',
+        start_conference_on_enter: true,
+        end_conference_on_exit: false,
+      });
+    } finally {
+      restore();
+    }
+  }
+);
+
+Deno.test(
+  'createTelnyxClient.updateConferenceSupervisorRole: hits /conferences/{id}/actions/update (TASK-T3)',
+  async () => {
+    let seenUrl = '';
+    let seenBody: unknown = null;
+    const restore = stubFetch((url, init) => {
+      seenUrl = url;
+      seenBody = JSON.parse(String(init?.body ?? '{}'));
+      return new Response(JSON.stringify({ data: {} }), { status: 200 });
+    });
+    try {
+      const client = createTelnyxClient('test-api-key');
+      await client.updateConferenceSupervisorRole('conf-1', {
+        callControlId: 'call-mgr',
+        supervisorRole: 'barge',
+      });
+      assertEquals(seenUrl, 'https://api.telnyx.com/v2/conferences/conf-1/actions/update');
+      assertEquals(seenBody, { call_control_id: 'call-mgr', supervisor_role: 'barge' });
+    } finally {
+      restore();
+    }
+  }
+);
+
+Deno.test(
   'createTelnyxClient.playbackStart: hits /calls/{id}/actions/playback_start with audio_url',
   async () => {
     let seenUrl = '';

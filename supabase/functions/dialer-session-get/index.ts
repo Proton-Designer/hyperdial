@@ -106,8 +106,36 @@ Deno.serve(async (req) => {
       });
     }
 
+    // TASK-T3: "Manager listening" indicator -- ONLY for whisper/barge (industry default: a
+    // plain 'listen' is silent/invisible to the intern, the task's own explicit ask). Enforced
+    // HERE, not just in the UI that reads it -- `coachingMode` can only ever be 'whisper',
+    // 'barge', or null, so no client-side filtering could accidentally leak a 'listen' row even
+    // if a future screen forgets to filter it out itself.
+    const { data: coachingRows, error: coachingError } = await supabase
+      .from('coaching_sessions')
+      .select('mode')
+      .eq('target_session_id', sessionId)
+      .eq('status', 'active')
+      .in('mode', ['whisper', 'barge']);
+    if (coachingError) {
+      return new Response(JSON.stringify({ error: coachingError.message }), {
+        status: 500,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+    const coachingMode = coachingRows?.some((r) => r.mode === 'barge')
+      ? 'barge'
+      : coachingRows?.some((r) => r.mode === 'whisper')
+        ? 'whisper'
+        : null;
+
     return new Response(
-      JSON.stringify({ session, legs: legs ?? [], inboundCall: inboundCall ?? null }),
+      JSON.stringify({
+        session,
+        legs: legs ?? [],
+        inboundCall: inboundCall ?? null,
+        coachingMode,
+      }),
       {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       }

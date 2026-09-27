@@ -45,6 +45,9 @@ interface DialerHookState {
   /** TASK-I1: the session's current bridged inbound call, if any -- see InboundCallInfo's own
    *  comment (api.ts) for the exact "current" scoping. */
   inboundCall: InboundCallInfo | null;
+  /** TASK-T3: 'whisper'/'barge' only -- see getDialerSession's own comment (api.ts). Drives
+   *  DialerStateBanner's "Manager listening" indicator. */
+  coachingMode: 'whisper' | 'barge' | null;
   loading: boolean;
   error: string | null;
 }
@@ -88,6 +91,7 @@ export function useDialerSession(initialSessionId: string | null = null) {
     sessionId: initialSessionId,
     legs: [],
     inboundCall: null,
+    coachingMode: null,
     loading: false,
     error: null,
   });
@@ -96,8 +100,8 @@ export function useDialerSession(initialSessionId: string | null = null) {
   const loadSession = useCallback(async (sessionId: string) => {
     setState((prev) => ({ ...prev, loading: true, error: null }));
     try {
-      const { session, legs, inboundCall } = await getDialerSession(sessionId);
-      setState((prev) => ({ ...prev, session, sessionId, legs, inboundCall }));
+      const { session, legs, inboundCall, coachingMode } = await getDialerSession(sessionId);
+      setState((prev) => ({ ...prev, session, sessionId, legs, inboundCall, coachingMode }));
     } catch (e) {
       setState((prev) => ({
         ...prev,
