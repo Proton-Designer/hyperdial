@@ -31,6 +31,7 @@ import { usePhoneNumbers } from '@/contexts/PhoneNumbersContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { useOrg } from '@/contexts/OrgContext';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
+import { NumberHealthPanel } from '@/components/settings/NumberHealthPanel';
 import { PageHeader } from '@/components/app/PageHeader';
 import { EmptyState } from '@/components/app/EmptyState';
 import { Button } from '@/components/ui/button';
@@ -3774,6 +3775,8 @@ export function Settings() {
                   )}
 
                   <NumberPoolCard />
+
+                  <NumberHealthPanel />
 
                   {isTelnyxConnected && <SpendSettingsCard />}
 

@@ -4,16 +4,9 @@ import { getNumberHealthStats, runNumberHealthCheck, type NumberHealthStat } fro
 
 /**
  * MISSION-4 TASK-T9 (CID-4): per-number dial/answer-rate/talk-time stats + an on-demand health
- * check button, for Settings -> Telephony -> Numbers.
- *
- * INTEGRATION NOTE (not yet wired in): `Settings.tsx` is held by eng2's concurrent TASK-T8-m4
- * (compliance: drop-rate/consent/recording-pause) as of this commit -- per the lead's own
- * instruction, this panel is built standalone in its own file rather than editing that file out
- * from under T8's in-flight claim. Once T8 releases `Settings.tsx`, mount this ONE line right
- * after `<NumberPoolCard />` inside the Telephony tab (`apps/web/src/components/Settings.tsx`,
- * the block starting `function NumberPoolCard()` / its call site further down in `Settings()`'s
- * own render): `<NumberHealthPanel />`. No other change needed -- this component is fully
- * self-contained (its own data fetch, its own owner/admin gate).
+ * check button, for Settings -> Telephony -> Numbers. Mounted in `Settings.tsx` right after
+ * `<NumberPoolCard />` (was built standalone in its own commit while `Settings.tsx` was held by
+ * eng2's concurrent TASK-T8-m4; wired in once that claim released).
  *
  * Owner/admin only, same gate as NumberPoolCard's own `isAdmin` check -- an agent never sees
  * this (the health check flags/rests numbers org-wide, an owner/admin concern, not a per-agent
