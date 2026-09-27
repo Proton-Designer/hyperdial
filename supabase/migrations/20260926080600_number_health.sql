@@ -622,7 +622,11 @@ begin
     where st.dials >= s.min_sample_dials
   ),
   medians as (
-    select el.org_id, percentile_cont(0.5) within group (order by el.rate) as median_rate
+    -- percentile_cont always returns double precision, regardless of the input expression's own
+    -- type (el.rate is numeric) -- cast right here so every downstream consumer (candidates, the
+    -- flagged_reason format(), the final SELECT) sees a plain numeric median_rate and round(x, n)
+    -- (which has no double-precision-with-a-scale-argument overload) never errors on it.
+    select el.org_id, (percentile_cont(0.5) within group (order by el.rate))::numeric as median_rate
     from eligible el
     group by el.org_id
   ),
