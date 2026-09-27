@@ -939,6 +939,7 @@ function DialerBody({
                 onResume={() => void handleParallelResume()}
                 onStop={(opts) => void handleParallelStop(opts)}
                 muted={isMuted}
+                onAutoResumePrefChange={setAutoResumePref}
                 onMuteChange={handleToggleMute}
                 onEndLiveCall={handleEndLiveCallParallel}
                 onHoldCall={() => void parallelSession.hold()}

@@ -59,6 +59,13 @@ interface ParallelDialerUIProps {
   /** TASK-T7: lifted out of LiveCallPanel's own local state so the Dialer's global "M" hotkey
    *  can read the same value the Mute button itself does. */
   muted: boolean;
+  /** TASK-T7 review fix-forward (SHOULD, eng2's review-eng2.md): Dialer.tsx reads
+   *  `auto_resume_seconds` once on mount, so without this callback a mid-session change via
+   *  `AutoResumePrefControl`'s own inline selector below has no in-memory effect until reload --
+   *  the countdown-arming effect keys off Dialer's own stale `autoResumePref` state, not a fresh
+   *  fetch. Optional (undefined outside a real Dialer mount, e.g. DialerStatesHarness) so the
+   *  control's own self-contained save still works standalone either way. */
+  onAutoResumePrefChange?: (value: 0 | 5 | 10 | 15) => void;
   onPause: () => void;
   onResume: () => void;
   /** BUG-11: `force` is only ever passed `true` from the confirm dialog's "Hang up and stop"
@@ -193,6 +200,7 @@ export function ParallelDialerUI({
   connectedContactHistory,
   campaignScript,
   muted,
+  onAutoResumePrefChange,
   onPause,
   onResume,
   onStop,
@@ -273,7 +281,7 @@ export function ParallelDialerUI({
             </span>
           </div>
           <div className="flex items-center gap-3">
-            <AutoResumePrefControl />
+            <AutoResumePrefControl onChange={onAutoResumePrefChange} />
             {sessionState === 'paused' ? (
               <Button variant="primary" size="sm" onClick={onResume}>
                 Resume
@@ -422,8 +430,13 @@ const AUTO_RESUME_SELECT_OPTIONS: Array<{ value: 0 | 5 | 10 | 15; label: string 
  *  `<AuthProvider>` in the tree at all (`main.tsx`'s dev-harness branch renders it standalone),
  *  and `useAuth()` throws hard ("must be used within AuthProvider") the instant a component calls
  *  it outside one -- this would have crashed that harness the moment this control was added. This
- *  read has no such requirement and degrades gracefully to a no-op save if there's no session. */
-function AutoResumePrefControl() {
+ *  read has no such requirement and degrades gracefully to a no-op save if there's no session.
+ *
+ *  TASK-T7 review fix-forward: `onChange` (ParallelDialerUIProps' own `onAutoResumePrefChange`)
+ *  lets the real Dialer mount keep its own `autoResumePref` state in sync the moment this saves,
+ *  instead of only taking effect on the NEXT full reload -- fired only on a SUCCESSFUL save, same
+ *  as this control's own optimistic-then-rollback-on-failure shape already implies. */
+function AutoResumePrefControl({ onChange }: { onChange?: (value: 0 | 5 | 10 | 15) => void }) {
   const [value, setValue] = useState<0 | 5 | 10 | 15 | null>(null);
   const [loaded, setLoaded] = useState(false);
 
@@ -444,6 +457,7 @@ function AutoResumePrefControl() {
       } = await supabase.auth.getUser();
       if (!user) return;
       await saveUserPreferences(user.id, { auto_resume_seconds: next });
+      onChange?.(next);
     } catch {
       setValue(prev);
     }
