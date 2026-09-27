@@ -5,11 +5,14 @@ layer: L2
 type: memory
 status: canonical
 owner: maintainer
-updated: 2026-09-25
+updated: 2026-09-27
 related:
   - mem.known-issues
   - domain.contacts
   - domain.campaigns
+  - domain.dialer
+  - domain.telephony
+  - domain.analytics
 answers:
   - "what is in flight"
   - "what is being worked on"
@@ -17,12 +20,60 @@ answers:
   - "what should I pick up next"
 covers: "Work in progress and the near-term backlog"
 excludes: "Shipped decisions (see mem.decisions), defects in shipped behaviour (see mem.known-issues)"
-tokens_est: 1450
+tokens_est: 2350
 ---
 
 # Active Work
 
-## In flight
+## Mission 4 (2026-09-26 onward) — supersedes the Stage-1 section below for "what's current"
+
+Mission 4 (`.claude/overnight/run-20260923-2024/MISSION-4.md`) is a large batch
+of dialer/telephony/GHL/analytics features layered on top of the
+already-launched Stage 1 base (below, still accurate as history). **Shipped
+and deployed** as of 2026-09-27 ~06:10: T1 (GHL pull complete), T2 (GHL push
+complete), T3 (live coaching), T4 (warm/cold transfer + hold), T5a/T5b (call
+script/objection sheet + connected-call context cards), T6 (per-lead
+assignment/priority/skip/remove), T7 (hotkeys + auto-resume — click-to-call
+piece parked, see below), T8 (compliance: recording consent + pause/resume +
+drop-rate), T9 (caller-ID health, CID-4), T10 (reliability alerts), T11
+(dialer analytics + CSV export), S2 part 1 (lines up to 10 + drop-rate guard).
+See `.brain/domains/dialer.md`/`telephony.md`/`campaigns.md`/`analytics.md`
+for what each actually does and where the code lives — this section only
+tracks status, not mechanism.
+
+**Parked / explicitly deferred (all a deliberate lead+engineer decision, not
+an oversight — pick up by re-reading the named task file first):**
+
+- **INB-7** (click-to-call from a contact's page, part of TASK-T7): needs the
+  same `call_legs`/disposition/GHL-sync treatment as a real session call, not
+  a standalone call — the existing `claim_leg` gate was never widened past a
+  parallel-session context, and INB-1's own inbound precedent doesn't
+  transfer cleanly (INB-1 deliberately has no `call_legs` row; INB-7 needs
+  one). Design notes only, zero code, in `TASK-T7-m4.md`'s own RESUME_PLAN —
+  parked rather than rushed near a session's hard stop.
+- **S1** (Supabase Realtime for the Dialer/Team live board, replacing/
+  supplementing polling, BASE-10 stretch): not started. `TASK-S1-m4.md`
+  (backlog). Declined for a late-session start given its own multi-party
+  dependency chain (build → the lead applies a migration live → live-verify
+  RLS-on-realtime → a second review, all before a hard stop) stacked on top
+  of unplanned live-dry-run fixes that ate the session's remaining budget.
+- **S2 parts 2-4** (voicemail rotation, inbound ring group, AUD-4
+  phone-callback fallback for the intern's audio): explicitly out of scope
+  for the S2 commit that shipped part 1 (lines + drop-rate guard) — see that
+  commit's own "NOT built" note and `TASK-S2-m4.md`.
+- **Area-code map consolidation**: the NANP area-code→timezone/state data
+  exists in 3 hand-synced copies (`_shared/area-code-tz.ts`,
+  `apps/web/src/lib/area-code-tz.ts`, and each of two SQL seed tables —
+  `private.area_code_timezones` and TASK-T9's `private.area_code_states`) —
+  Vite can't resolve a Deno `npm:` specifier and SQL can't import either TS
+  file, so there's no single source of truth today, only a sync test
+  (`area-code-tz-sync.test.ts`) that catches drift between the copies after
+  the fact. Consolidating onto one generated source is real but unscheduled
+  work — not attempted this session.
+
+## Stage 1 (historical — launched; kept for the record)
+
+### In flight
 
 **Stage 1 rebuild** (`feat/stage-1`, spec `docs/design/stage-1-architecture.md`).
 Status as of 2026-09-25: **the LAUNCH BLOCKERS phase (TASK-L1 through L9) is
@@ -100,7 +151,7 @@ each; not repeated here):
   disposition, blocks that contact everywhere (#13 addendum) — documented,
   not built.
 
-## Backlog
+### Backlog
 
 Migrated verbatim in intent from the former docs/backlog.md, removed under the
 Phase 02 classification plan — a TODO list is memory, and two copies diverge.
@@ -138,7 +189,7 @@ Item 6 is the only substantial one — it is a feature, not a fix, and it is
 plausibly the largest open item in the product. (TASK-B1's deep bug hunt did not build it —
 feature work is explicitly out of scope for that task.)
 
-## Recommended next steps
+### Recommended next steps
 
 Not assigned; offered as a reading of the current state:
 

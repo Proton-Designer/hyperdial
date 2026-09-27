@@ -5,13 +5,23 @@ layer: L2
 type: domain
 status: canonical
 owner: maintainer
-updated: 2026-09-25
+updated: 2026-09-27
 sources:
   - supabase/functions/_shared/dialer-core.ts
   - supabase/functions/_shared/dialer-engine.ts
   - supabase/functions/_shared/client-state.ts
+  - supabase/functions/_shared/coaching-core.ts
+  - supabase/functions/_shared/transfer-core.ts
   - supabase/functions/dialer-session-*/**
+  - supabase/functions/dialer-coaching/**
+  - supabase/functions/dialer-transfer/**
+  - supabase/functions/dialer-sweeper/**
+  - supabase/functions/reliability-alert-check/**
   - supabase/functions/telnyx-webhook/**
+  - supabase/migrations/20260926070000_live_coaching.sql
+  - supabase/migrations/20260926070003_lead_assignment_control.sql
+  - supabase/migrations/20260926070005_high_lines_drop_guard.sql
+  - supabase/migrations/20260926080400_reliability_alerts.sql
   - apps/web/src/hooks/useDialerSession.ts
   - apps/web/src/lib/api.ts
   - apps/web/src/components/dialer/**
@@ -34,7 +44,7 @@ answers:
   - "how do I test the dial engine without a real Telnyx account"
 covers: "The org-scoped dial engine (TASK-P2-E2): rolling-refill queueing over campaign_leads, single-winner claim resolution, AMD triage, conference bridging, wrap_up, and the webhook that drives it."
 excludes: "Telnyx API wrappers, number purchase/search and WebRTC credentials (domain.telephony); campaign and lead list construction (domain.campaigns); the agent's own WebRTC leg (E3, not built yet); dispositions (Phase 3, not built yet)."
-tokens_est: 5856
+tokens_est: 6700
 source_hash: 30b4f8a2b005496e438e762a20c2579966e1779eeea3b4ad44ec1d24f5754809
 ---
 
@@ -494,6 +504,71 @@ Records the WINNING contact leg only, never a loser, starting the moment it's ac
   already `on_call` at 8-10 lines when the guard trips keeps dialing at its own already-copied
   `lines` value until that session ends -- consistent with how changing `campaigns.lines` has
   always behaved (never live-pushed to a running session), not a new gap this task introduced.
+
+### Live coaching: listen / whisper / barge (MISSION-4 TASK-T3)
+
+- An owner/admin, from the Team page's live board, dials their OWN WebRTC credential (the same
+  agent-leg mechanism, reused unchanged) into a target member's live session conference as a
+  Telnyx supervisor participant — `barge`/`monitor`/`whisper` (Telnyx's own "listen" maps to
+  `monitor`, verified against `spec3.json`). Switching mode mid-call uses the conference-level
+  `/actions/update` command, not a rejoin. New `coaching_sessions` table (not `call_legs`) holds
+  the manager's coaching leg deliberately — nothing in the dial loop's own state machine treats a
+  supervisor participant as a contact/agent leg. Edge Function `dialer-coaching`, orchestration in
+  `_shared/coaching-core.ts` (deno-tested; the `index.ts` shell isn't). Review fix-forward: the
+  coaching leg now auto-ends when the coached call itself ends, rather than lingering.
+
+### Hold + warm/cold transfer (MISSION-4 TASK-T4, AUD-6 + NEW)
+
+- **Hold**: the prospect leg is held IN PLACE in the session's own persistent conference (Telnyx
+  conference hold is per-participant, not conference-wide) via a plain `held_at` timestamp on the
+  existing `call_legs` row — no new leg kind, no new table.
+- **Transfer**: deliberately NOT built on Telnyx's `transfer` command — its schema is bridge-shaped
+  and says nothing about a leg that's currently a conference participant, and using it
+  unverified risked stranding the agent's own persistent, shift-long conference. Built instead
+  from conference-native join/leave/hold/unhold primitives, each independently verified against
+  `spec3.json`. Cold transfer hands the prospect to a teammate's WebRTC or an external E.164
+  number and ends the intern's own participation (session → `wrap_up`); warm transfer holds the
+  original agent in a side conversation first. Edge Function `dialer-transfer`, orchestration in
+  `_shared/transfer-core.ts`. Review fix-forward: an in-flight transfer is now cancelled if the
+  intern hangs up before it completes, plus an external-transfer guard stack (mirrors the
+  existing `Allow transfers to external numbers` org setting, off by default) and an API-evidence
+  table for the conference primitives used.
+
+### Per-lead assignment, priority, skip, remove (MISSION-4 TASK-T6, ADM-4 + NEW)
+
+- Campaign-level agent assignment (`campaign_agents`) already existed (TASK-P2-P2) — the new piece
+  is per-LEAD ("slice") assignment. Reuses the existing `campaign_leads.assigned_agent_id` column
+  (previously callback-ownership-only); `claim_next_leads`' own WHERE clause now respects it for
+  `queued` leads too. New `assign_campaign_leads` RPC (owner/admin only) computes the target lead
+  set once — by rank/percentage/GHL-tag filter — and writes `assigned_agent_id` directly;
+  reassigning mid-day is just calling it again. It also auto-adds the target to `campaign_agents`
+  (an assignee not already on the campaign could never see or claim what was just assigned to
+  them). `AssignLeadsModal.tsx` is the UI (Campaigns → a campaign → Leads → "Assign leads").
+  **Priority** (high/normal/low, ordered ahead of attempts/`next_attempt_at`/position in
+  `claim_next_leads`) and **Skip** (pushes `next_attempt_at` forward without touching
+  attempts/position — "keeps its place") are both plain column updates through the existing
+  owner/admin-only RLS policy, no new RPC needed. **Remove from campaign** now flips `status` to a
+  new `'removed'` value instead of a hard `DELETE` (which silently lost the lead's own
+  attempts/history and contradicted this task's own "terminal status" ask) — deliberately not a
+  reuse of `'passthrough'`, which already has its own distinct meaning baked into every
+  campaign-stats view.
+
+### Reliability alerts: stuck session + webhook error spike (MISSION-4 TASK-T10, SEC-7 rest)
+
+- Two per-org opt-in alert types (`org_reliability_alert_settings`, both flags default `false`),
+  delivered through the existing generic `notifications` table/bell (same shape as TASK-SP's own
+  low-balance alert) — no new UI surface needed beyond a Settings toggle.
+  **Stuck dial session**: `check_stuck_dial_sessions` (SQL, decide+flip atomically, same shape as
+  `reap_stale_call_transfers`/`check_number_health`) flags a session in `dialing`/`connecting`/
+  `on_call` whose own `updated_at` AND most-recent `call_legs.created_at` are both older than 20
+  minutes (deliberately much longer than the 30s sweeper interval — this is a "something is
+  structurally stuck" alert, not a routine reap). **Webhook error spike**: counts
+  `telnyx-webhook` processing failures over a trailing 15-minute window; above a threshold, an
+  in-app alert deduped for 1 hour. Edge Function `reliability-alert-check`, triggered by
+  `private.trigger_reliability_alert_check` — pg_cron config not yet wired to the live project
+  (see `.brain/tooling/integrations.md`). Review fix-forward: `record_webhook_processing_error`
+  is now tracked under `EdgeRuntime.waitUntil`, not a bare `queueMicrotask` (the same
+  background-work risk TASK-P2-E2's own review already flagged for a different call site).
 
 ## Not covered here
 

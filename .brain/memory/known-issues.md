@@ -1276,6 +1276,18 @@ now()+delay_minutes offset") does not exist in either of its two callers
   own TS-side post-processing if one exists, so every path shares it instead of each duplicating
   the call). Small, well-scoped — not a new design.
 
+## 37. `service-map.md`'s "4 functions depend on `dialer-engine.ts`" (and CLAUDE.md's own copy of that claim) was stale — 11 do
+
+- Found while bringing `.brain/architecture/service-map.md` up to date for Mission 4 (2026-09-27).
+  `grep -rl "dialer-engine" supabase/functions --include=index.ts` returns 11 files today
+  (`dialer-session-{start,stop,pause,resume,get,active,hangup-live,reconnect,disposition,recording}`
+  + `dialer-sweeper`), not the 4 the doc (and CLAUDE.md's hard-constraint bullet) claimed. The
+  underlying rule itself is still correct and still matters — `dialer-engine.ts` changes are never
+  local, and the webhook + user-initiated paths still run through it concurrently — only the count
+  was wrong, and only in prose; nothing in the code or the constraint's own enforcement depends on
+  that number. `service-map.md` corrected in the same commit as this entry. CLAUDE.md itself was
+  left as-is (out of this task's scope) — worth a one-line fix next time someone's in that file.
+
 ---
 
 ## Not issues — deliberate, documented elsewhere

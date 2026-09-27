@@ -5,10 +5,11 @@ layer: L2
 type: domain
 status: canonical
 owner: maintainer
-updated: 2026-09-25
+updated: 2026-09-27
 sources:
   - supabase/migrations/20260924002400_analytics_real_data.sql
   - supabase/migrations/20260925020000_call_legs_duration_conversations.sql
+  - supabase/migrations/20260926080300_dialer_analytics_v2.sql
   - supabase/functions/dashboard-stats/index.ts
   - supabase/functions/team-performance/index.ts
   - supabase/functions/analytics-summary/index.ts
@@ -34,7 +35,7 @@ answers:
   - "where does the manager Team page's live board / per-intern daily table get its data"
 covers: "The Dashboard metrics, the Analytics screen, the call_leg_analytics/dial_session_hours views behind them, the weekly-summary job, and the in-app notification bell."
 excludes: "The dial loop and call_legs state machine that produces the source data — see .brain/domains/dialer.md. Dispositions themselves — see .brain/domains/dispositions.md."
-tokens_est: 2340
+tokens_est: 2850
 source_hash: 92c5f07e1add58d757f9884b6b977bb0aec9a816553c9d612afb6b4e39381c9a
 ---
 
@@ -77,6 +78,7 @@ mock data, no empty-by-construction tables, as of TASK-P4-P1.
 | Notification bell | `apps/web/src/components/TopNavigation.tsx` | Unchanged |
 | Schema + RLS | `supabase/migrations/20250213000001_create_call_events_and_notifications.sql` | `notifications`/`user_preferences` still relevant; the `call_events` half of this file is dropped as of `20260924002500` |
 | **New**: per-campaign drop rate (MISSION-4 TASK-T8) | `supabase/migrations/20260926070004_compliance_drop_consent_pause.sql` (`campaign_drop_rate_summary`), `Analytics.tsx`'s "Drop rate (last 30 days)" card | Same additive-RPC, same-scoping-shape convention as `funnel_summary` (org-scoped, owner/admin see the whole campaign, an agent only their own legs) — that function itself is untouched. Always a trailing 30-day window, independent of the page's own 7d/30d toggle. `dropped / human_answers`, a >3% guideline warning banner, not a hard limit. |
+| **New**: funnel + best-time-to-call heatmap + connect rate by number/hour + CSV export (MISSION-4 TASK-T11, ADM-8) | `supabase/migrations/20260926080300_dialer_analytics_v2.sql`, `Analytics.tsx`'s `FunnelAndInsights` component | 4 new `SECURITY DEFINER` "front door read" RPCs (`funnel_summary`, `answer_rate_heatmap`, `connect_rate_by_number`, `connect_rate_by_hour`), same shape as `team_daily_stats`/`team_live_board` — called directly via `supabase.rpc()`, each checks the caller's own org role inside itself, no edge function involved. Funnel: dials → human answers (`outcome in ('connected','dropped','abandoned')`) → conversations (≥30s) → wins. Heatmap: weekday × hour of human-answer rate, bucketed in the CONTACT's own local timezone (not the org's or the server's) — `call_leg_analytics` widened with `contact_timezone` for this. Connect-rate-by-number/-hour are owner/admin only (the RPCs return empty for an agent, by design, not an error). CSV export is a client-side download of the funnel's own rows, disabled while `funnel.dials === 0`. Review fix: `answer_rate_heatmap` must bucket ALL dials into its denominator, not just answered ones (an early draft silently excluded no-answers/voicemails from the rate's own denominator, inflating it). |
 
 ## How it works
 
@@ -114,6 +116,7 @@ mock data, no empty-by-construction tables, as of TASK-P4-P1.
   assumed from the task description (CLAUDE.md: "when a summary and the code disagree, the code is right"). The new fields simply match the existing, real behavior.
 - **No `orgs` table has a timezone column** (checked every migration) — `dialing_hours_today` hardcodes **America/Chicago** for "today"'s midnight boundary. If an org timezone column is ever
   added, this function is the one place that needs to start reading it instead.
+- **The whole TASK-T11 funnel/heatmap/by-number/by-hour/CSV-export block only mounts when the page's own top-level `hasData` is true** (`Analytics.tsx`'s `FunnelAndInsights` sits inside the same `!hasData ? <EmptyState/> : (...)` branch as the StatCard row) — an org with zero calls in the selected range never renders `FunnelAndInsights` at all, not even its own internal empty states (found live during the Mission 4 QA sweep, 2026-09-27, checking a QA sandbox org with no dial history). Not a bug: the component's own internal empty states (`!funnel || funnel.dials === 0`, `!heatmap || heatmap.length === 0`) exist for a real gap this doesn't cover — a range with SOME calls overall but none for a specific selected campaign — they're just unreachable when the org has literally zero calls anywhere, same case the outer `EmptyState` already covers.
 - **Stale claim removed (TASK-M2):** this used to say `Analytics.tsx`'s per-agent table was still mock data — it is not; `analytics-summary`'s real `agentPerformance` leaderboard has been wired
   in since TASK-P4-P1 (calls/connections/rate only, code-verified while building this task, CLAUDE.md's "code is right" rule). The genuinely-missing per-agent breadth (wins/callbacks/dialing
   hours/conversations-per-hr) is what TASK-M2's separate Team page (above) adds — not a fix to Analytics.tsx, a dedicated screen, so the two don't duplicate each other.

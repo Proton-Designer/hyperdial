@@ -5,7 +5,7 @@ layer: L2
 type: domain
 status: canonical
 owner: maintainer
-updated: 2026-09-24
+updated: 2026-09-27
 sources:
   - apps/web/src/components/Campaigns.tsx
   - apps/web/src/components/campaigns/**
@@ -13,7 +13,10 @@ sources:
   - supabase/migrations/20250207100000_create_campaigns_and_leads.sql
   - supabase/migrations/20260924000700_dialer_schema.sql
   - supabase/migrations/20260924001500_campaign_settings_agents_delete.sql
+  - supabase/migrations/20260926070003_lead_assignment_control.sql
+  - supabase/migrations/20260926070005_high_lines_drop_guard.sql
   - supabase/functions/dialer-session-start/index.ts
+  - supabase/functions/campaign-lines-guard-check/index.ts
 related:
   - domain.contacts
   - domain.dialer
@@ -27,7 +30,7 @@ answers:
   - "how are campaigns and campaign_leads scoped per user"
 covers: "The campaigns and campaign_leads tables, the campaigns_with_stats view, the campaign CRUD surface in the web client, and the handoff from a campaign to a parallel dial session."
 excludes: "Contact records and CSV import mechanics (.brain/domains/contacts.md) and everything after the session row is inserted — batching, AMD, call_logs (.brain/domains/dialer.md)."
-tokens_est: 3424
+tokens_est: 3950
 source_hash: f7c4fa7ab4c7aaef7f21b7456abe7a51c3d069875241177226f31a574d3132e5
 ---
 
@@ -50,6 +53,7 @@ product (the contact list, the dialer, the dashboard) is either feeding a campai
 | Dial settings | `lines`, `amd_mode`, `caller_id_number_id`, `max_attempts`, `retry_interval_minutes`, `calling_window_start`, `calling_window_end`, `abandon_message_enabled` — added by TASK-P2-E1 (`20260924000700`), editable via TASK-P2-P2's Settings section (admin+ only). |
 | High-lines guard | `lines` up to 7 always allowed; 8–10 only while `high_lines_guard_enabled` is true (MISSION-4 TASK-S2, `20260926070005`). Enforced by a same-row CHECK on `campaigns` (`campaigns_lines_check`) and by the `dial_sessions` BEFORE INSERT trigger for session-start-time overrides — a client can't bypass it via a direct `updateCampaignSettings` call. A 5-minute cron (`check_high_lines_drop_rate_guard` / `campaign-lines-guard-check`) auto-resets both `lines` (→7) and the flag (→false) if the campaign's trailing-60-minute T8-style drop rate exceeds 3% on ≥10 human answers; a human must re-enable it. `high_lines_guard_last_triggered_at`/`_last_drop_rate_pct` are pure history, never cleared. |
 | Soft delete | `campaigns.deleted_at` (TASK-P2-P2). Hard DELETE is no longer offered — the RLS delete policy was removed — so a "deleted" campaign is really "hidden and inert," not gone. |
+| Per-lead assignment ("slice") | `campaign_leads.assigned_agent_id` (MISSION-4 TASK-T6, ADM-4 + NEW). Distinct from `campaign_agents` (which controls who may see/dial a campaign at all): this controls WHICH of a campaign's own leads a given agent's `claim_next_leads` call will pick up. Set by the `assign_campaign_leads` RPC (owner/admin only) — by rank, percentage, or GHL-tag filter — which also auto-adds the target to `campaign_agents` (an assignee not already on the campaign could never claim what was just assigned). `priority` (high/normal/low, ordered ahead of attempts/`next_attempt_at`/position) and Skip (advances `next_attempt_at` without touching attempts/position) are plain column updates, no RPC. "Remove from campaign" is a `campaign_leads.status = 'removed'` flip, not a hard delete — deliberately distinct from `'passthrough'`, which already means something else in every campaign-stats view. |
 
 ## Where the code lives
 
@@ -58,6 +62,7 @@ product (the contact list, the dialer, the dashboard) is either feeding a campai
 | Schema + view + RLS | `supabase/migrations/20250207100000_create_campaigns_and_leads.sql` | Both tables, all 8 policies, `campaigns_with_stats` |
 | Dial settings columns | `supabase/migrations/20260924000700_dialer_schema.sql` | `lines`/`amd_mode`/`caller_id_number_id`/etc., plus `campaigns_check_caller_id_org` trigger |
 | High-lines drop-rate guard | `supabase/migrations/20260926070005_high_lines_drop_guard.sql`, `supabase/functions/campaign-lines-guard-check/index.ts` | `campaigns_lines_check` widen, `check_high_lines_drop_rate_guard` RPC, pg_cron every 5 min |
+| Per-lead assignment / priority / skip / remove | `supabase/migrations/20260926070003_lead_assignment_control.sql`, `apps/web/src/components/campaigns/AssignLeadsModal.tsx` | `assign_campaign_leads` RPC, `campaign_leads.assigned_agent_id`/`priority`, `'removed'` status. Wired in via `CampaignManageModal.tsx`'s "Assign leads" button on the Leads table. |
 | Soft delete, settings in the view, session-active guard | `supabase/migrations/20260924001500_campaign_settings_agents_delete.sql` | `deleted_at`, rebuilt `campaigns_with_stats`, `dial_sessions_require_active_campaign` trigger (TASK-P2-P2) |
 | SQL acceptance tests | `supabase/tests/campaign_settings_agents.sql` | Settings RLS, agent assignment, soft-delete, session-guard — 16 assertions |
 | Client data layer | `apps/web/src/lib/api.ts` | Campaigns section, `:354-496`; `startDialerSession` `:564-668`; `updateCampaignSettings`/`deleteCampaign`/`setCampaignAgents` (TASK-P2-P2) |
