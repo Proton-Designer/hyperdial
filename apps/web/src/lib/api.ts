@@ -819,6 +819,14 @@ export interface TeamLiveBoardRow {
    *  board's "filter by pod". */
   pod_id: string | null;
   pod_name: string | null;
+  /** MISSION-5 TASK-M5-B2: this agent's CURRENT session id (null while offline) -- lets the
+   *  live board call the existing sessionId-keyed remote-control endpoints
+   *  (pauseDialerSession/stopDialerSession/hangupLiveCall) against a REMOTE target, all three of
+   *  which already permit owner/admin to act on any org session. */
+  session_id: string | null;
+  /** MISSION-5 TASK-M5-B2: the agent's own "raise hand" button -- non-null means still raised.
+   *  Auto-clears server-side the moment the call ends or a manager starts coaching this agent. */
+  raised_hand_at: string | null;
 }
 
 /** Poll every 5s (ADM-7) -- a single RPC round trip per poll, not N queries. */
@@ -1282,12 +1290,16 @@ export interface AppNotification {
   body: string | null;
   created_at: string;
   read_at: string | null;
+  /** MISSION-5 TASK-M5-B2: a click-through target -- e.g. the raise-hand notification's
+   *  `{targetUserId, targetSessionId, action}`. Null for every notification type that predates
+   *  this column and still doesn't set it. */
+  data: Record<string, unknown> | null;
 }
 
 export async function listNotifications(): Promise<AppNotification[]> {
   const { data, error } = await supabase
     .from('notifications')
-    .select('id, type, title, body, created_at, read_at')
+    .select('id, type, title, body, created_at, read_at, data')
     .order('created_at', { ascending: false })
     .limit(50);
   if (error) throw new Error(error.message);
@@ -2515,8 +2527,10 @@ export interface DialSessionRecord {
    *  configured (see the migration's own header comment) -- (MISSION-5 TASK-M5-B3)
    *  'daily_dial_cap_reached', and (TASK-M5-B1) whatever an org's own
    *  `org_pause_reason_settings.reasons` list holds, from a manual pause via the Dialer's own
-   *  picker. */
+   *  picker, and (MISSION-5 TASK-M5-B2) 'Paused by manager' / 'remote_end_by_manager'. */
   pause_reason: string | null;
+  /** MISSION-5 TASK-M5-B2: the agent's own "raise hand" -- non-null means still raised. */
+  raised_hand_at: string | null;
 }
 
 export interface CallLegRecord {
@@ -2693,15 +2707,24 @@ export async function startDialerSession(args: {
 }
 
 /** `force` (BUG-11): pass true only once the confirm dialog has been shown and accepted (or
- *  there was no live human to confirm) -- see `LiveCallInProgressError`'s own comment. */
+ *  there was no live human to confirm) -- see `LiveCallInProgressError`'s own comment.
+ *  MISSION-5 TASK-M5-B2: `defer` is the manager's own "end session, let the live call finish"
+ *  action -- when a live call IS in progress, the server writes a deferred-stop request instead
+ *  of refusing (202 `{status:'deferred'}`); the session actually stops once the in-progress
+ *  call's disposition is saved. `force` and `defer` are mutually meaningful opposites of the
+ *  SAME conflict (force interrupts it now, defer waits) -- pass at most one. */
 export async function stopDialerSession(
   sessionId: string,
-  opts?: { force?: boolean }
-): Promise<{ status: 'stopped' }> {
+  opts?: { force?: boolean; defer?: boolean }
+): Promise<{ status: 'stopped' | 'deferred' }> {
   const res = await fetch(`${getFunctionsUrl()}/dialer-session-stop`, {
     method: 'POST',
     headers: await getEdgeFunctionHeaders(),
-    body: JSON.stringify({ sessionId, force: opts?.force === true }),
+    body: JSON.stringify({
+      sessionId,
+      force: opts?.force === true,
+      defer: opts?.defer === true,
+    }),
   });
   const data = await res.json();
   if (!res.ok) {
@@ -2710,7 +2733,7 @@ export async function stopDialerSession(
     }
     throw new Error(data.error || 'Failed to stop dialer session');
   }
-  return data as { status: 'stopped' };
+  return data as { status: 'stopped' | 'deferred' };
 }
 
 /** MISSION-5 TASK-M5-B1: `reason` is optional so every existing caller keeps working unchanged --
@@ -2773,6 +2796,24 @@ export async function hangupLiveCall(sessionId: string): Promise<void> {
   });
   const data = (await res.json()) as { error?: string };
   if (!res.ok) throw new Error(data.error || 'Failed to end live call');
+}
+
+/** MISSION-5 TASK-M5-B2: the agent's own "raise hand" button (Dialer.tsx, hotkey R). `raised`
+ *  defaults to true; pass false for the agent's own explicit "never mind" clear -- the server
+ *  also auto-clears this the moment the call ends or a manager starts coaching this agent, so
+ *  most clears never come through here at all. */
+export async function setRaisedHand(
+  sessionId: string,
+  raised = true
+): Promise<{ raisedHand: boolean }> {
+  const res = await fetch(`${getFunctionsUrl()}/dialer-session-raise-hand`, {
+    method: 'POST',
+    headers: await getEdgeFunctionHeaders(),
+    body: JSON.stringify({ sessionId, raised }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Failed to update raised-hand status');
+  return data as { raisedHand: boolean };
 }
 
 /** MISSION-4 TASK-T8: pauses/resumes the currently-recording winner leg's own recording during a
@@ -3468,6 +3509,10 @@ export type AnnounceRecordingMode = 'never' | 'all' | 'all_party_consent_states'
 export interface RecordingConsentSettings {
   announceRecordingMode: AnnounceRecordingMode;
   allPartyConsentStates: string[];
+  /** MISSION-5 TASK-M5-B2 (EC-17): appends monitoring wording to the consent notice, for orgs
+   *  using live coaching (listen/whisper/barge) in an all-party-consent state -- "may be
+   *  recorded" alone does not disclose a supervisor silently listening in. Not legal advice. */
+  mentionMonitoring: boolean;
 }
 
 const DEFAULT_ALL_PARTY_CONSENT_STATES = [
@@ -3491,7 +3536,7 @@ export async function getRecordingConsentSettings(): Promise<RecordingConsentSet
   const orgId = await getActiveOrgId();
   const { data, error } = await supabase
     .from('org_recording_settings')
-    .select('announce_recording_mode, all_party_consent_states')
+    .select('announce_recording_mode, all_party_consent_states, mention_monitoring')
     .eq('org_id', orgId)
     .maybeSingle();
   if (error) throw new Error(error.message);
@@ -3499,6 +3544,7 @@ export async function getRecordingConsentSettings(): Promise<RecordingConsentSet
     announceRecordingMode:
       (data?.announce_recording_mode as AnnounceRecordingMode | undefined) ?? 'never',
     allPartyConsentStates: data?.all_party_consent_states ?? DEFAULT_ALL_PARTY_CONSENT_STATES,
+    mentionMonitoring: data?.mention_monitoring ?? false,
   };
 }
 
@@ -3510,6 +3556,7 @@ export async function setRecordingConsentSettings(
     org_id: orgId,
     announce_recording_mode: settings.announceRecordingMode,
     all_party_consent_states: settings.allPartyConsentStates,
+    mention_monitoring: settings.mentionMonitoring,
     updated_at: new Date().toISOString(),
   });
   if (error) throw new Error(error.message);

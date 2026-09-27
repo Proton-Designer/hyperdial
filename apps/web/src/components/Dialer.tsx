@@ -775,6 +775,40 @@ function DialerBody({
     [parallelSession.sessionId, parallelSession.pause]
   );
 
+  // MISSION-5 TASK-M5-B2: "raise hand" -- hotkey R, or the button (ParallelDialerUI). Toggles
+  // off the current raised_hand_at value read straight off the session (not local component
+  // state) so a poll-driven auto-clear (call ended, or a manager started coaching) is reflected
+  // immediately -- the very next press always means "raise", never a stale "clear" from before
+  // the auto-clear happened.
+  const handleToggleRaiseHand = useCallback(async () => {
+    if (!parallelSession.sessionId) return;
+    const currentlyRaised = Boolean(parallelSession.session?.raised_hand_at);
+    try {
+      await parallelSession.setRaisedHand(!currentlyRaised);
+      toast.success(currentlyRaised ? 'Hand lowered' : 'Hand raised -- your manager was notified');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to update raised-hand status');
+    }
+  }, [parallelSession.sessionId, parallelSession.session, parallelSession.setRaisedHand]);
+
+  // MISSION-5 TASK-M5-B2: a manager's remote "End session" that had to defer (a live call was in
+  // progress) finally took effect -- the poll picks up `state === 'stopped'` with the exact
+  // sentinel pause_reason `stopSession`/`submit_disposition` both write ONLY for this path (see
+  // dialer-engine.ts's own comment on it), never for a self-service Stop. useDialerSession's own
+  // ACTIVE_SESSION_STATES excludes 'stopped', so polling has already stopped by the time this
+  // fires -- reset the same local state handleParallelStop's own self-service path already does,
+  // so the view doesn't sit frozen on a dead session with no explanation.
+  useEffect(() => {
+    if (
+      parallelSession.session?.state === 'stopped' &&
+      parallelSession.session.pause_reason === 'remote_end_by_manager'
+    ) {
+      setRestoredParallelContext(null);
+      onClearParallelContext?.();
+      toast('Your session was ended by a manager');
+    }
+  }, [parallelSession.session, onClearParallelContext]);
+
   const handleParallelStop = useCallback(
     async (opts?: { force?: boolean }) => {
       if (!parallelSession.sessionId) {
@@ -851,6 +885,13 @@ function DialerBody({
         e.preventDefault();
         setAutoResumeSecondsLeft(null);
         void handleParallelResume();
+        return;
+      }
+      if (e.key === 'r' || e.key === 'R') {
+        // MISSION-5 TASK-M5-B2: "during a call or session" -- any non-terminal state, not just
+        // on_call, unlike M/H which only ever make sense mid-call.
+        e.preventDefault();
+        void handleToggleRaiseHand();
       }
     };
     window.addEventListener('keydown', onKeyDown);
@@ -865,6 +906,7 @@ function DialerBody({
     isMuted,
     handleToggleMute,
     handleParallelResume,
+    handleToggleRaiseHand,
   ]);
 
   return (
@@ -973,6 +1015,8 @@ function DialerBody({
                 }}
                 onCompleteTransfer={() => void parallelSession.completeActiveTransfer()}
                 onCancelTransfer={() => void parallelSession.cancelActiveTransfer()}
+                raisedHandAt={parallelSession.session.raised_hand_at}
+                onToggleRaiseHand={() => void handleToggleRaiseHand()}
               />
               {/* wrap_up (TASK-L2b): the modal is the ONLY way out (no "Continue" bypass) --
                 submit_disposition (SQL) moves the session wrap_up -> dialing itself; onSubmitted

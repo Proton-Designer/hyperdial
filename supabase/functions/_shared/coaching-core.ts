@@ -112,6 +112,43 @@ async function agentLegCallControlId(
   return (data?.call_control_id as string | undefined) ?? null;
 }
 
+/** MISSION-5 TASK-M5-B2: "Already being coached by X" needs a human name, not a bare uuid.
+ *  Deliberately profiles-only (no auth.users email fallback, unlike team_daily_stats' own
+ *  coalesce chain) -- this is a same-org manager-to-manager message, not a roster display, and
+ *  an extra admin-API round trip for a name nobody strictly needs is not worth it here. */
+async function resolveManagerName(supabase: SupabaseClient, managerId: string): Promise<string> {
+  const { data } = await supabase
+    .from('profiles')
+    .select('first_name, last_name')
+    .eq('user_id', managerId)
+    .maybeSingle();
+  const name = [data?.first_name, data?.last_name].filter(Boolean).join(' ').trim();
+  return name || 'another manager';
+}
+
+/** MISSION-5 TASK-M5-B2 (EC-8): "at most one active coaching session per TARGET call" --
+ *  `coaching_sessions_one_active_per_target` is the real guarantee (this pre-check only closes
+ *  the common case with a clean, specific message before ever dialing the manager's phone; the
+ *  unique index is what the insert's own 23505 handler below falls back to for the TOCTOU race
+ *  two managers clicking at once). */
+async function alreadyCoachedError(
+  supabase: SupabaseClient,
+  targetSessionId: string
+): Promise<ActionResult | null> {
+  const { data: existing } = await supabase
+    .from('coaching_sessions')
+    .select('manager_id')
+    .eq('target_session_id', targetSessionId)
+    .in('status', ['starting', 'active'])
+    .maybeSingle();
+  if (!existing) return null;
+  const managerName = await resolveManagerName(supabase, existing.manager_id as string);
+  return {
+    status: 409,
+    body: { error: `Already being coached by ${managerName}`, code: 'ALREADY_COACHED' },
+  };
+}
+
 export async function runStartCoachingAction(
   supabase: SupabaseClient,
   client: TelnyxClient,
@@ -151,6 +188,12 @@ export async function runStartCoachingAction(
     };
   }
 
+  // MISSION-5 TASK-M5-B2 (EC-8): a clean, specific message before ever dialing the manager's
+  // phone for a target someone else is already coaching. See alreadyCoachedError's own header
+  // for why the unique index (not this check) is the real guarantee.
+  const alreadyCoached = await alreadyCoachedError(supabase, targetSession.id);
+  if (alreadyCoached) return alreadyCoached;
+
   // Fail fast for whisper mode: no agent leg on record means processTelnyxCoachingEvent would
   // just hang the manager's leg back up the instant it answers (endAsStale, its own header) --
   // better to never even ring the manager's phone for a mode this target can't support right now.
@@ -177,10 +220,29 @@ export async function runStartCoachingAction(
     .select('id')
     .single();
   if (insertError || !pendingRow) {
-    // 23505: the partial unique index (one active coaching row per manager) -- the same
-    // MANAGER_BUSY case as the check above, just caught after losing a race to a second click/
-    // tab instead of before it.
+    // 23505: TWO different partial unique indexes can fire here, and they mean different things
+    // to the caller -- one active coaching row per MANAGER (the same MANAGER_BUSY case as the
+    // check above, just caught after losing a race to a second click/tab instead of before it),
+    // or, since MISSION-5 TASK-M5-B2, one active coaching row per TARGET (a second manager's
+    // click raced `alreadyCoachedError`'s own pre-check above). Postgres names the violated
+    // constraint IN the error message itself -- distinguishing on it is the only way to give the
+    // right message without a second round trip guessing which one fired.
     if (insertError?.code === '23505') {
+      if (insertError.message?.includes('coaching_sessions_one_active_per_target')) {
+        const { data: winner } = await supabase
+          .from('coaching_sessions')
+          .select('manager_id')
+          .eq('target_session_id', targetSession.id)
+          .in('status', ['starting', 'active'])
+          .maybeSingle();
+        const managerName = winner
+          ? await resolveManagerName(supabase, winner.manager_id as string)
+          : 'another manager';
+        return {
+          status: 409,
+          body: { error: `Already being coached by ${managerName}`, code: 'ALREADY_COACHED' },
+        };
+      }
       return {
         status: 409,
         body: { error: "You're already coaching another call.", code: 'MANAGER_BUSY' },
@@ -190,6 +252,11 @@ export async function runStartCoachingAction(
     return { status: 500, body: { error: 'Failed to record the coaching attempt' } };
   }
   const coachingId = pendingRow.id as string;
+
+  // MISSION-5 TASK-M5-B2: "raise hand" auto-clears the moment a manager actually starts
+  // coaching this target -- best-effort, never blocks the real coaching attempt over a failed
+  // bookkeeping write.
+  await supabase.from('dial_sessions').update({ raised_hand_at: null }).eq('id', targetSession.id);
 
   const fromNumber = await anyOrgFromNumber(supabase, orgId);
   if (!fromNumber) {
@@ -439,4 +506,82 @@ export async function processTelnyxCoachingEvent(
     })
     .eq('id', row.id)
     .eq('status', 'starting');
+}
+
+/** MISSION-5 TASK-M5-B2 (EC-8: "coaching ends cleanly if ... the coach is disabled/removed"):
+ *  called from org-members/index.ts's cascadeOffboard. Ends every 'starting'/'active' coaching
+ *  row for this manager -- best-effort Telnyx hangup per row (mirrors
+ *  hangUpReapedCoachingSessions' own "our bookkeeping already reads ended regardless" shape),
+ *  never throws. A manager being disabled/removed almost never has a live coaching leg (the
+ *  common case is zero rows here), so this is cheap in the overwhelmingly common case too. */
+export async function endActiveCoachingSessionsForManager(
+  supabase: SupabaseClient,
+  client: TelnyxClient | null,
+  managerId: string,
+  reason: string
+): Promise<number> {
+  const { data: rows } = await supabase
+    .from('coaching_sessions')
+    .select('id, manager_call_control_id')
+    .eq('manager_id', managerId)
+    .in('status', ['starting', 'active']);
+  const active = (rows ?? []) as { id: string; manager_call_control_id: string | null }[];
+  if (active.length === 0) return 0;
+
+  await supabase
+    .from('coaching_sessions')
+    .update({ status: 'ended', ended_at: new Date().toISOString(), ended_reason: reason })
+    .in(
+      'id',
+      active.map((r) => r.id)
+    );
+
+  if (client) {
+    for (const row of active) {
+      if (!row.manager_call_control_id) continue;
+      try {
+        await client.hangup(row.manager_call_control_id);
+      } catch (err) {
+        console.warn('[coaching-core] endActiveCoachingSessionsForManager hangup failed', err);
+      }
+    }
+  }
+  return active.length;
+}
+
+/** MISSION-5 TASK-M5-B2 (EC-8: "coaching ends cleanly if the target call is transferred"): called
+ *  from transfer-core.ts's runCompleteTransferAction right after a transfer finalizes. Closes a
+ *  real gap the 60s sweeper (reap_stale_coaching_sessions) cannot catch on its own: a transfer
+ *  moves the CUSTOMER out of `dial_sessions.conference_id` into a side conference (or a fully
+ *  external destination), but `dial_sessions.state` stays 'on_call' throughout -- the sweeper's
+ *  own staleness condition (`ds.state <> 'on_call'`) never fires, so an active coaching session
+ *  on a transferred call would otherwise linger for up to COACHING_HARD_CAP_SECONDS (2 hours). At
+ *  most one active row per target (EC-8's own unique index), so this is always 0 or 1 row. */
+export async function endActiveCoachingForTargetSession(
+  supabase: SupabaseClient,
+  client: TelnyxClient | null,
+  targetSessionId: string,
+  reason: string
+): Promise<boolean> {
+  const { data: row } = await supabase
+    .from('coaching_sessions')
+    .select('id, manager_call_control_id')
+    .eq('target_session_id', targetSessionId)
+    .in('status', ['starting', 'active'])
+    .maybeSingle();
+  if (!row) return false;
+
+  await supabase
+    .from('coaching_sessions')
+    .update({ status: 'ended', ended_at: new Date().toISOString(), ended_reason: reason })
+    .eq('id', row.id as string);
+
+  if (client && row.manager_call_control_id) {
+    try {
+      await client.hangup(row.manager_call_control_id as string);
+    } catch (err) {
+      console.warn('[coaching-core] endActiveCoachingForTargetSession hangup failed', err);
+    }
+  }
+  return true;
 }

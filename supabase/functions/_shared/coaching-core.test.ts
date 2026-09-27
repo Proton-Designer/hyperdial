@@ -4,6 +4,7 @@ import {
   processTelnyxCoachingEvent,
   runStartCoachingAction,
   runSwitchCoachingModeAction,
+  endActiveCoachingSessionsForManager,
 } from './coaching-core.ts';
 
 // ---------------------------------------------------------------------------
@@ -30,6 +31,9 @@ function selectChain(result: Result) {
     limit: () => chain,
     select: () => chain,
     maybeSingle: async () => result,
+    // MISSION-5 TASK-M5-B2: endActiveCoachingSessionsForManager awaits the query directly (a
+    // multi-row select, no `.maybeSingle()`) -- same `result` shape either way.
+    then: (resolve: (v: unknown) => void) => resolve(result),
   };
   return chain;
 }
@@ -39,6 +43,7 @@ function updateChain(onSettle: () => void) {
   const chain: any = {
     eq: () => chain,
     neq: () => chain,
+    in: () => chain,
     then: (resolve: (v: unknown) => void) => {
       onSettle();
       resolve({ error: null });
@@ -52,8 +57,10 @@ function makeFakeSupabase(cfg: {
   call_legs?: Result[];
   org_members?: Result[];
   user_phone_numbers?: Result[];
+  profiles?: Result[];
   coachingInsert?: Result;
-  coachingSelect?: Result[];
+  // deno-lint-ignore no-explicit-any
+  coachingSelect?: Result<any>[];
 }) {
   const counters: Record<string, number> = {};
   const next = (key: string, arr?: Result[]): Result => {
@@ -68,7 +75,12 @@ function makeFakeSupabase(cfg: {
     from(table: string) {
       switch (table) {
         case 'dial_sessions':
-          return { select: () => selectChain(next('dial_sessions', cfg.dial_sessions)) };
+          return {
+            select: () => selectChain(next('dial_sessions', cfg.dial_sessions)),
+            // MISSION-5 TASK-M5-B2: a successful coaching start clears the target's raised_hand_at.
+            update: (patch: Record<string, unknown>) =>
+              updateChain(() => writes.push({ table, patch })),
+          };
         case 'call_legs':
           return { select: () => selectChain(next('call_legs', cfg.call_legs)) };
         case 'org_members':
@@ -79,6 +91,8 @@ function makeFakeSupabase(cfg: {
           };
         case 'user_phone_numbers':
           return { select: () => selectChain(next('user_phone_numbers', cfg.user_phone_numbers)) };
+        case 'profiles':
+          return { select: () => selectChain(next('profiles', cfg.profiles)) };
         case 'coaching_sessions':
           return {
             insert: (row: Record<string, unknown>) => {
@@ -230,6 +244,10 @@ Deno.test(
         EMPTY,
         OK({ id: 's-target', state: 'on_call', conference_id: 'conf-1', agent_leg_id: null }),
       ],
+      // MISSION-5 TASK-M5-B2 (EC-8): alreadyCoachedError's own pre-check runs BEFORE the
+      // whisper-specific agent-leg check -- EMPTY means "nobody else is already coaching this
+      // target", so this test still reaches (and fails at) the check it's actually testing.
+      coachingSelect: [EMPTY],
     });
     const { client } = makeFakeTelnyxClient();
     const result = await runStartCoachingAction(
@@ -254,6 +272,9 @@ Deno.test(
         EMPTY,
         OK({ id: 's-target', state: 'on_call', conference_id: 'conf-1', agent_leg_id: null }),
       ],
+      // The pre-check itself passes (nobody found) -- this test is specifically about losing a
+      // race AT THE INSERT, after the pre-check already said it was clear.
+      coachingSelect: [EMPTY],
       coachingInsert: { data: null, error: { message: 'duplicate', code: '23505' } },
     });
     const { client, calls } = makeFakeTelnyxClient();
@@ -273,6 +294,104 @@ Deno.test(
 );
 
 Deno.test(
+  "MISSION-5 TASK-M5-B2 (EC-8): the pre-check 409s with the OTHER manager's name before ever dialing",
+  async () => {
+    const supabase = makeFakeSupabase({
+      dial_sessions: [
+        EMPTY,
+        OK({ id: 's-target', state: 'on_call', conference_id: 'conf-1', agent_leg_id: null }),
+      ],
+      coachingSelect: [OK({ manager_id: 'mgr-other' })],
+      profiles: [OK({ first_name: 'Pat', last_name: 'Lee' })],
+    });
+    const { client, calls } = makeFakeTelnyxClient();
+    const result = await runStartCoachingAction(
+      supabase,
+      client,
+      'app-1',
+      'conn-1',
+      'org-1',
+      'mgr-1',
+      { targetUserId: 'agent-1', mode: 'listen' }
+    );
+    assertEquals(result.status, 409);
+    assertEquals(result.body.code, 'ALREADY_COACHED');
+    assertEquals(result.body.error, 'Already being coached by Pat Lee');
+    assertEquals(calls.length, 0); // never even dialed
+  }
+);
+
+Deno.test(
+  'MISSION-5 TASK-M5-B2 (EC-8): a race at the insert (target-index 23505) still names the winner, not a generic MANAGER_BUSY',
+  async () => {
+    const supabase = makeFakeSupabase({
+      dial_sessions: [
+        EMPTY,
+        OK({ id: 's-target', state: 'on_call', conference_id: 'conf-1', agent_leg_id: null }),
+      ],
+      // First select (the pre-check) finds nothing -- the race hasn't landed yet. Second select
+      // (inside the 23505 handler, re-checking who actually won) finds the other manager.
+      coachingSelect: [EMPTY, OK({ manager_id: 'mgr-other' })],
+      coachingInsert: {
+        data: null,
+        error: {
+          message:
+            'duplicate key value violates unique constraint "coaching_sessions_one_active_per_target"',
+          code: '23505',
+        },
+      },
+      profiles: [OK({ first_name: 'Pat', last_name: 'Lee' })],
+    });
+    const { client, calls } = makeFakeTelnyxClient();
+    const result = await runStartCoachingAction(
+      supabase,
+      client,
+      'app-1',
+      'conn-1',
+      'org-1',
+      'mgr-1',
+      { targetUserId: 'agent-1', mode: 'listen' }
+    );
+    assertEquals(result.status, 409);
+    assertEquals(result.body.code, 'ALREADY_COACHED');
+    assertEquals(result.body.error, 'Already being coached by Pat Lee');
+    assertEquals(calls.length, 0); // never reached dial()
+  }
+);
+
+Deno.test(
+  "MISSION-5 TASK-M5-B2: a successful start clears the TARGET session's raised_hand_at",
+  async () => {
+    const supabase = makeFakeSupabase({
+      dial_sessions: [
+        EMPTY,
+        OK({ id: 's-target', state: 'on_call', conference_id: 'conf-1', agent_leg_id: null }),
+      ],
+      org_members: [OK({ telnyx_credential_id: 'cred-1' })],
+      user_phone_numbers: [OK({ phone_number: '+15551230000' })],
+      coachingSelect: [EMPTY],
+      coachingInsert: OK({ id: 'coaching-1' }),
+    });
+    const { client } = makeFakeTelnyxClient();
+    const result = await runStartCoachingAction(
+      supabase,
+      client,
+      'app-1',
+      'conn-1',
+      'org-1',
+      'mgr-1',
+      { targetUserId: 'agent-1', mode: 'listen' }
+    );
+    assertEquals(result.status, 200);
+    const clearWrite = supabase._writes.find(
+      (w: { table: string; patch: Record<string, unknown> }) =>
+        w.table === 'dial_sessions' && w.patch.raised_hand_at === null
+    );
+    assertExists(clearWrite);
+  }
+);
+
+Deno.test(
   'runStartCoachingAction: happy path dials the manager SIP URI with a coaching client_state, never joins yet',
   async () => {
     const supabase = makeFakeSupabase({
@@ -288,6 +407,7 @@ Deno.test(
       call_legs: [OK({ call_control_id: 'call-agent-1' })],
       org_members: [OK({ telnyx_credential_id: 'cred-1' })],
       user_phone_numbers: [OK({ phone_number: '+15551230000' })],
+      coachingSelect: [EMPTY],
       coachingInsert: OK({ id: 'coaching-1' }),
     });
     const { client, calls } = makeFakeTelnyxClient();
@@ -348,6 +468,7 @@ Deno.test(
       ],
       org_members: [OK({ telnyx_credential_id: 'cred-1' })],
       user_phone_numbers: [OK({ phone_number: '+15551230000' })],
+      coachingSelect: [EMPTY],
       coachingInsert: OK({ id: 'coaching-1' }),
     });
     const { client } = makeFakeTelnyxClient({
@@ -592,5 +713,87 @@ Deno.test(
     );
     assertExists(write);
     assertEquals(write.patch.ended_reason, 'target_ended');
+  }
+);
+
+// ---------------------------------------------------------------------------
+// endActiveCoachingSessionsForManager (MISSION-5 TASK-M5-B2, EC-8: "coaching ends cleanly if
+// ... the coach is disabled/removed") -- called from org-members/index.ts's cascadeOffboard.
+// ---------------------------------------------------------------------------
+
+Deno.test(
+  'endActiveCoachingSessionsForManager: ends every active/starting row for the manager and hangs up each one',
+  async () => {
+    const supabase = makeFakeSupabase({
+      coachingSelect: [
+        OK([
+          { id: 'coaching-1', manager_call_control_id: 'call-mgr-1' },
+          { id: 'coaching-2', manager_call_control_id: 'call-mgr-2' },
+        ]),
+      ],
+    });
+    const hangupCalls: string[] = [];
+    const { client } = makeFakeTelnyxClient({
+      hangup: async (id: string) => {
+        hangupCalls.push(id);
+      },
+    });
+    const count = await endActiveCoachingSessionsForManager(
+      supabase,
+      client,
+      'mgr-1',
+      'coach_offboarded'
+    );
+    assertEquals(count, 2);
+    assertEquals(hangupCalls, ['call-mgr-1', 'call-mgr-2']);
+    const endedWrite = supabase._writes.find(
+      (w: { table: string; patch: Record<string, unknown> }) =>
+        w.table === 'coaching_sessions' && w.patch.status === 'ended'
+    );
+    assertExists(endedWrite);
+    assertEquals(endedWrite.patch.ended_reason, 'coach_offboarded');
+  }
+);
+
+Deno.test(
+  'endActiveCoachingSessionsForManager: no active rows -- a pure no-op, never even calls Telnyx -- positive control',
+  async () => {
+    const supabase = makeFakeSupabase({ coachingSelect: [OK([])] });
+    let telnyxTouched = false;
+    const { client } = makeFakeTelnyxClient({
+      hangup: async () => {
+        telnyxTouched = true;
+      },
+    });
+    const count = await endActiveCoachingSessionsForManager(
+      supabase,
+      client,
+      'mgr-1',
+      'coach_offboarded'
+    );
+    assertEquals(count, 0);
+    assertEquals(telnyxTouched, false);
+    assertEquals(supabase._writes.length, 0);
+  }
+);
+
+Deno.test(
+  'endActiveCoachingSessionsForManager: a null Telnyx client (org not connected) still ends the row in our own bookkeeping',
+  async () => {
+    const supabase = makeFakeSupabase({
+      coachingSelect: [OK([{ id: 'coaching-1', manager_call_control_id: 'call-mgr-1' }])],
+    });
+    const count = await endActiveCoachingSessionsForManager(
+      supabase,
+      null,
+      'mgr-1',
+      'coach_offboarded'
+    );
+    assertEquals(count, 1);
+    const endedWrite = supabase._writes.find(
+      (w: { table: string; patch: Record<string, unknown> }) =>
+        w.table === 'coaching_sessions' && w.patch.status === 'ended'
+    );
+    assertExists(endedWrite);
   }
 );

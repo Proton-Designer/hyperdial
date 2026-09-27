@@ -158,6 +158,15 @@ export function TopNavigation({ activeTab = 'dashboard', onTabChange }: TopNavig
         prev.map((x) => (x.id === n.id ? { ...x, read_at: new Date().toISOString() } : x))
       );
     }
+    // MISSION-5 TASK-M5-B2: the raise-hand notification's one-click Listen -- lands on Team
+    // (where the live board already shows the raised-hand flag right on the agent's row, with
+    // its own Listen button) rather than trying to start a coaching call from here, which has no
+    // WebRTC client mounted. `n.data` is null for every notification type that predates this
+    // column, so this only ever fires for the type it's meant for.
+    if (n.type === 'agent_raised_hand' && n.data) {
+      setShowNotifications(false);
+      onTabChange?.('team');
+    }
   };
 
   const handleMarkAllRead = async () => {

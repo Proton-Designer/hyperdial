@@ -3,6 +3,7 @@ import { corsHeaders, corsPreflightResponse } from '../_shared/cors.ts';
 import { requireTelnyxOrgRole } from '../_shared/telnyx-org-context.ts';
 import { pauseSession } from '../_shared/dialer-engine.ts';
 import { readJsonBody } from '../_shared/http-json.ts';
+import { logOrgAction } from '../_shared/audit.ts';
 
 interface PauseBody {
   sessionId?: string;
@@ -67,6 +68,20 @@ Deno.serve(async (req) => {
     if (!paused) {
       return jsonResponse(409, {
         error: 'Session is not currently dialing, so it cannot be paused.',
+      });
+    }
+
+    // MISSION-5 TASK-M5-B2: audit-log only a manager acting on someone ELSE's session -- an
+    // agent's own routine Pause click is not a team-management action worth logging (same
+    // scoping every other routine dialer action in this file already gets, e.g. resume/hangup).
+    if (role !== 'agent' && session.agent_id !== user.id) {
+      await logOrgAction(supabase, {
+        orgId,
+        actorUserId: user.id,
+        action: 'session.remote_pause',
+        targetType: 'dial_session',
+        targetId: sessionId,
+        details: { agentId: session.agent_id, reason },
       });
     }
 

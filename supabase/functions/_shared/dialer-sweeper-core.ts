@@ -120,6 +120,11 @@ export interface ReapedCoachingSession {
   id: string;
   org_id: string;
   manager_call_control_id: string | null;
+  // MISSION-5 TASK-M5-B2 (the A1 review's own SHOULD, audit/M5-A1/review-eng2.md): so
+  // dialer-sweeper/index.ts can audit-log the coaching-end this causes, the same way
+  // processTelnyxCoachingEvent's own manager_hangup branch already does.
+  manager_id: string;
+  target_session_id: string;
 }
 
 export interface HangUpReapedCoachingSessionsDeps {

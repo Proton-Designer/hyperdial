@@ -3,6 +3,7 @@ import { corsHeaders, corsPreflightResponse } from '../_shared/cors.ts';
 import { requireTelnyxOrgRole } from '../_shared/telnyx-org-context.ts';
 import { refillSession } from '../_shared/dialer-engine.ts';
 import { readJsonBody } from '../_shared/http-json.ts';
+import { logOrgAction } from '../_shared/audit.ts';
 
 /**
  * Submits a wrap-up disposition for a call leg (TASK-P3-E1, design §5). The mandatory wrap-up
@@ -119,8 +120,27 @@ Deno.serve(async (req) => {
 
     const sessionId = (data as { session_id: string }).session_id;
     const alreadySubmitted = (data as { already_submitted: boolean }).already_submitted;
+    // MISSION-5 TASK-M5-B2: true only when a manager's earlier "end session" request (deferred
+    // because a live call was in progress -- dialer-session-stop's own `defer:true`) actually
+    // took effect just now, at THIS disposition submission. Audit-logged here, not inside
+    // submit_disposition itself, because the SQL side has no Edge-Function-side logOrgAction to
+    // call -- same split every other cross-boundary audit event in this codebase already uses.
+    const remoteStopApplied = (data as { remote_stop_applied: boolean }).remote_stop_applied;
+    const remoteStopRequestedBy = (data as { remote_stop_requested_by: string | null })
+      .remote_stop_requested_by;
 
     const { dialed } = await refillSession(supabase, orgId, sessionId);
+
+    if (remoteStopApplied && remoteStopRequestedBy) {
+      await logOrgAction(supabase, {
+        orgId,
+        actorUserId: remoteStopRequestedBy,
+        action: 'session.remote_end',
+        targetType: 'dial_session',
+        targetId: sessionId,
+        details: { agentId: session.agent_id, deferred: true, reason: 'deferred_until_call_ended' },
+      });
+    }
 
     return jsonResponse(200, { ok: true, sessionId, alreadySubmitted, dialed });
   } catch (err) {

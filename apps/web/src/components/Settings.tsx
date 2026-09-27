@@ -2698,6 +2698,9 @@ function RecordingSettingsCard() {
   // the other.
   const [consentMode, setConsentMode] = useState<AnnounceRecordingMode>('never');
   const [consentStatesText, setConsentStatesText] = useState('');
+  // MISSION-5 TASK-M5-B2 (EC-17): a third, independent flag on the same setting -- "recorded"
+  // (above) vs. "recorded AND monitored" wording, relevant once this org uses live coaching.
+  const [mentionMonitoring, setMentionMonitoring] = useState(false);
   const [consentLoading, setConsentLoading] = useState(true);
   const [consentSaving, setConsentSaving] = useState(false);
   const [consentError, setConsentError] = useState<string | null>(null);
@@ -2716,6 +2719,7 @@ function RecordingSettingsCard() {
       .then((s) => {
         setConsentMode(s.announceRecordingMode);
         setConsentStatesText(s.allPartyConsentStates.join(', '));
+        setMentionMonitoring(s.mentionMonitoring);
       })
       .catch((e) => setConsentError(String(e)))
       .finally(() => setConsentLoading(false));
@@ -2735,7 +2739,11 @@ function RecordingSettingsCard() {
     }
   };
 
-  const saveConsentSettings = async (nextMode: AnnounceRecordingMode, nextStatesText: string) => {
+  const saveConsentSettings = async (
+    nextMode: AnnounceRecordingMode,
+    nextStatesText: string,
+    nextMentionMonitoring: boolean
+  ) => {
     setConsentSaving(true);
     setConsentError(null);
     try {
@@ -2746,6 +2754,7 @@ function RecordingSettingsCard() {
       await setRecordingConsentSettings({
         announceRecordingMode: nextMode,
         allPartyConsentStates: states,
+        mentionMonitoring: nextMentionMonitoring,
       });
     } catch (e) {
       setConsentError(String(e));
@@ -2756,11 +2765,16 @@ function RecordingSettingsCard() {
 
   const handleConsentModeChange = (next: AnnounceRecordingMode) => {
     setConsentMode(next);
-    void saveConsentSettings(next, consentStatesText);
+    void saveConsentSettings(next, consentStatesText, mentionMonitoring);
   };
 
   const handleConsentStatesBlur = () => {
-    void saveConsentSettings(consentMode, consentStatesText);
+    void saveConsentSettings(consentMode, consentStatesText, mentionMonitoring);
+  };
+
+  const handleMentionMonitoringChange = (next: boolean) => {
+    setMentionMonitoring(next);
+    void saveConsentSettings(consentMode, consentStatesText, next);
   };
 
   if (!isAdmin) return null;
@@ -2827,6 +2841,20 @@ function RecordingSettingsCard() {
                 />
               </div>
             )}
+            <label className="flex items-center gap-2 text-sm text-white">
+              <input
+                type="checkbox"
+                checked={mentionMonitoring}
+                disabled={consentSaving}
+                onChange={(e) => handleMentionMonitoringChange(e.target.checked)}
+              />
+              Also mention the call may be monitored
+            </label>
+            <p className="text-sm text-text-secondary">
+              Turn this on if your team uses live coaching (Listen/Whisper/Barge) -- "may be
+              recorded" alone doesn't disclose that a supervisor may be silently listening in, which
+              all-party-consent states require the caller be told.
+            </p>
           </div>
         )}
       </div>
@@ -3095,8 +3123,12 @@ const AUDIT_ACTION_LABELS: Record<string, string> = {
   'member.set_ghl_user_id': 'Set a member GHL mapping',
   'invite.create': 'Created an invite',
   'campaign_leads.assign': 'Assigned leads',
+  'campaign_leads.callback_fallback_claim': 'Callback fallback-claimed leads',
   'coaching.start': 'Started coaching a call',
   'coaching.end': 'Ended a coaching call',
+  'session.remote_pause': 'Remotely paused a session',
+  'session.remote_end': 'Remotely ended a session',
+  'session.remote_hangup': 'Remotely hung up a call',
   'ghl.connect': 'Connected GHL',
   'ghl.disconnect': 'Disconnected GHL',
   'ghl.update_blocked_tags': 'Updated GHL blocked tags',

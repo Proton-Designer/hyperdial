@@ -198,9 +198,13 @@ function abandonMessage(orgName: string | null): string {
 /** MISSION-4 TASK-T8: spoken once, right after bridge, when `shouldAnnounceRecordingConsent`
  *  says to. Deliberately generic wording (no state-specific legal phrasing) -- this feature
  *  decides WHEN to announce, not what a compliant script must say; see the org setting's own
- *  "not legal advice" comment. */
-function recordingConsentMessage(orgName: string | null): string {
-  return `This call${orgName ? ` with ${orgName}` : ''} may be recorded for quality purposes.`;
+ *  "not legal advice" comment. MISSION-5 TASK-M5-B2 (EC-17): `mentionMonitoring` appends a
+ *  distinct clause about being monitored, not just recorded -- a supervisor silently
+ *  listen/whisper/barge-ing in is exactly the kind of third-party presence an all-party-consent
+ *  state requires the caller be told about, and "may be recorded" alone does not disclose it. */
+function recordingConsentMessage(orgName: string | null, mentionMonitoring: boolean): string {
+  const suffix = mentionMonitoring ? 'recorded and monitored' : 'recorded';
+  return `This call${orgName ? ` with ${orgName}` : ''} may be ${suffix} for quality purposes.`;
 }
 
 // ---------------------------------------------------------------------------
@@ -2248,7 +2252,7 @@ async function maybeAnnounceRecordingConsent(
   try {
     const { data: settings, error: settingsError } = await supabase
       .from('org_recording_settings')
-      .select('announce_recording_mode, all_party_consent_states')
+      .select('announce_recording_mode, all_party_consent_states, mention_monitoring')
       .eq('org_id', session.org_id)
       .maybeSingle();
     if (settingsError) throw new Error(settingsError.message);
@@ -2269,7 +2273,7 @@ async function maybeAnnounceRecordingConsent(
 
     const orgName = await loadOrgName(supabase, session.org_id);
     await client.speak(winnerLeg.call_control_id, {
-      payload: recordingConsentMessage(orgName),
+      payload: recordingConsentMessage(orgName, Boolean(settings?.mention_monitoring)),
       voice: DEFAULT_SPEAK_VOICE,
     });
     dialerLog('recording_consent_announced', {
@@ -2424,13 +2428,32 @@ export async function stopSession(
   supabase: SupabaseClient,
   orgId: string,
   sessionId: string,
-  force = false
-): Promise<{ ok: boolean; reason?: string }> {
+  force = false,
+  // MISSION-5 TASK-M5-B2: remoteActorId is set ONLY by an owner/admin acting on a DIFFERENT
+  // member's session (dialer-session-stop/index.ts decides this, not this function) -- it tags
+  // the resulting stop as manager-initiated (pause_reason: 'remote_end_by_manager', read by the
+  // client to show "ended by a manager" instead of the ordinary self-stop toast) and, when
+  // `defer` is also true and a live call IS in progress, defers the actual stop instead of
+  // refusing: writes remote_stop_requested_at/_by (no state change yet) so submit_disposition's
+  // own wrap_up branch ends the session the moment the in-progress call's disposition is saved,
+  // rather than resuming it -- "a live call is allowed to finish".
+  opts?: { defer?: boolean; remoteActorId?: string }
+): Promise<{ ok: boolean; reason?: string; deferred?: boolean }> {
   const session = await loadSession(supabase, sessionId);
   if (!session || session.org_id !== orgId) return { ok: false, reason: 'not_found' };
 
   const legs = await loadActiveLegs(supabase, sessionId);
   if (!force && legs.some((leg) => leg.kind === 'contact' && leg.state === 'claimed')) {
+    if (opts?.defer && opts.remoteActorId) {
+      await supabase
+        .from('dial_sessions')
+        .update({
+          remote_stop_requested_at: new Date().toISOString(),
+          remote_stop_requested_by: opts.remoteActorId,
+        })
+        .eq('id', sessionId);
+      return { ok: false, reason: 'live_call_in_progress', deferred: true };
+    }
     return { ok: false, reason: 'live_call_in_progress' };
   }
 
@@ -2458,7 +2481,9 @@ export async function stopSession(
       'paused_agent_lost',
     ],
     p_new_state: 'stopped',
-    p_fields: { ended_at: new Date().toISOString() },
+    p_fields: opts?.remoteActorId
+      ? { ended_at: new Date().toISOString(), pause_reason: 'remote_end_by_manager' }
+      : { ended_at: new Date().toISOString() },
   });
   dialerLog('stop_session_done', { sessionId, hungUpLegs: legs.length });
   return { ok: true };
@@ -2478,7 +2503,12 @@ export async function pauseSession(
   if (!session || session.org_id !== orgId) return false;
   const { data, error } = await supabase.rpc('transition_session', {
     p_session: sessionId,
-    p_expected_states: ['dialing', 'ready'],
+    // MISSION-5 TASK-M5-B2: widened to also cover 'ready_pending' -- an owner/admin's remote
+    // pause (dialer-session-pause/index.ts now permits this, see that file's own header) can
+    // click fast enough to catch that transient boot-up window in a way the agent's own Pause
+    // button never could (haltIntakeForOffboarding, A3, already had to widen its own equivalent
+    // list for the exact same reason).
+    p_expected_states: ['ready_pending', 'dialing', 'ready'],
     p_new_state: 'paused',
     p_fields: { pause_reason: reason },
   });

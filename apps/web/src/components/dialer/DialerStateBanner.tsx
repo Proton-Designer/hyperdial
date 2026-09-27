@@ -172,6 +172,22 @@ export function DialerStateBanner({
     );
   }
 
+  if (sessionState === 'paused' && pauseReason === 'Paused by manager') {
+    return (
+      <StatusBanner
+        tone="info"
+        icon={<Pause className="w-5 h-5" />}
+        title="Paused by a manager"
+        detail="No new lines will dial until you resume."
+        action={
+          <Button variant="primary" onClick={onResume} disabled={resuming}>
+            {resuming ? 'Resuming…' : 'Resume'}
+          </Button>
+        }
+      />
+    );
+  }
+
   if (sessionState === 'paused' && pauseReason === 'post_wrapup') {
     const counting = typeof autoResumeSecondsLeft === 'number' && autoResumeSecondsLeft > 0;
     return (

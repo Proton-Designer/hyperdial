@@ -75,6 +75,8 @@ function makeFakeSupabase(cfg: {
   org_spend_settings?: Result[];
   org_telephony?: Result[];
   call_transfersCount?: number[];
+  // MISSION-5 TASK-M5-B2: finalizeHandoff's own endActiveCoachingForTargetSession call.
+  coachingSessionsSelect?: Result[];
   // deno-lint-ignore no-explicit-any
   rpc?: Record<string, Result<any>[]>;
 }) {
@@ -148,6 +150,18 @@ function makeFakeSupabase(cfg: {
           return { select: () => selectChain(next('org_spend_settings', cfg.org_spend_settings)) };
         case 'org_telephony':
           return { select: () => selectChain(next('org_telephony', cfg.org_telephony)) };
+        case 'coaching_sessions':
+          return {
+            select: () =>
+              selectChain(
+                next(
+                  'coaching_sessions',
+                  cfg.coachingSessionsSelect ?? [{ data: null, error: null }]
+                )
+              ),
+            update: (patch: Record<string, unknown>) =>
+              updateChain(() => writes.push({ table, patch })),
+          };
         default:
           throw new Error(`fake supabase: unexpected table ${table}`);
       }
@@ -197,6 +211,7 @@ function makeFakeTelnyxClient(overrides: Partial<TelnyxClient> = {}): {
 }
 
 const OK = <T>(data: T): Result<T> => ({ data, error: null });
+const EMPTY: Result<null> = { data: null, error: null };
 
 /**
  * TASK-T4 review fix-forward (BLOCKER 2): `runStartTransferAction`'s new external-target guard
@@ -714,6 +729,60 @@ Deno.test(
 );
 
 Deno.test(
+  'MISSION-5 TASK-M5-B2 (EC-8): runCompleteTransferAction ends an active coaching session on the target and hangs up the manager leg',
+  async () => {
+    const supabase = makeFakeSupabase({
+      call_transfersSelect: [WARM_CONNECTED],
+      dial_sessions: [SESSION_ON_CALL],
+      call_legs: [PROSPECT_LEG, OK({ call_control_id: 'call-agent-1' }), PROSPECT_LEG],
+      coachingSessionsSelect: [OK({ id: 'coaching-1', manager_call_control_id: 'call-mgr-1' })],
+    });
+    const { client, calls } = makeFakeTelnyxClient();
+    const result = await runCompleteTransferAction(supabase, client, 'org-1', 'agent', 'agent-1', {
+      transferId: 'transfer-1',
+    });
+    assertEquals(result.status, 200);
+    assertEquals(
+      calls.some((c) => c.method === 'hangup' && c.args[0] === 'call-mgr-1'),
+      true,
+      'the manager coaching leg must be hung up once the customer leaves the main conference'
+    );
+    const endedWrite = supabase._writes.find(
+      (w: { table: string; patch: Record<string, unknown> }) =>
+        w.table === 'coaching_sessions' && w.patch.status === 'ended'
+    );
+    assertExists(endedWrite);
+    assertEquals(endedWrite.patch.ended_reason, 'target_transferred');
+  }
+);
+
+Deno.test(
+  'MISSION-5 TASK-M5-B2 (EC-8): runCompleteTransferAction with NO active coaching session is a pure no-op for coaching -- positive control',
+  async () => {
+    const supabase = makeFakeSupabase({
+      call_transfersSelect: [WARM_CONNECTED],
+      dial_sessions: [SESSION_ON_CALL],
+      call_legs: [PROSPECT_LEG, OK({ call_control_id: 'call-agent-1' }), PROSPECT_LEG],
+      coachingSessionsSelect: [EMPTY],
+    });
+    const { client, calls } = makeFakeTelnyxClient();
+    const result = await runCompleteTransferAction(supabase, client, 'org-1', 'agent', 'agent-1', {
+      transferId: 'transfer-1',
+    });
+    assertEquals(result.status, 200);
+    assertEquals(
+      calls.some((c) => c.method === 'hangup'),
+      false
+    );
+    const endedWrite = supabase._writes.find(
+      (w: { table: string; patch: Record<string, unknown> }) =>
+        w.table === 'coaching_sessions' && w.patch.status === 'ended'
+    );
+    assertEquals(endedWrite, undefined);
+  }
+);
+
+Deno.test(
   'runCompleteTransferAction: a cold (already-completed) transfer id is refused, not silently re-run',
   async () => {
     const supabase = makeFakeSupabase({
@@ -810,6 +879,36 @@ Deno.test(
     );
     assertExists(sessionUpdate);
     assertEquals(sessionUpdate.args.p_new_state, 'wrap_up');
+  }
+);
+
+Deno.test(
+  'MISSION-5 TASK-M5-B2 (EC-8): a COLD transfer completion also ends an active coaching session on the target -- the gap the sweeper alone could never catch (state stays on_call throughout)',
+  async () => {
+    const supabase = makeFakeSupabase({
+      call_transfersSelect: [COLD_DIALING],
+      dial_sessions: [SESSION_ON_CALL],
+      call_legs: [PROSPECT_LEG, PROSPECT_LEG],
+      rpc: { transition_call_transfer: [OK(true)] },
+      coachingSessionsSelect: [OK({ id: 'coaching-1', manager_call_control_id: 'call-mgr-1' })],
+    });
+    const { client, calls } = makeFakeTelnyxClient();
+    await processTelnyxTransferEvent(supabase, client, {
+      orgId: 'org-1',
+      eventType: 'call.answered',
+      callControlId: 'call-target-1',
+      transferId: 'transfer-4',
+    });
+    assertEquals(
+      calls.some((c) => c.method === 'hangup' && c.args[0] === 'call-mgr-1'),
+      true
+    );
+    const endedWrite = supabase._writes.find(
+      (w: { table: string; patch: Record<string, unknown> }) =>
+        w.table === 'coaching_sessions' && w.patch.status === 'ended'
+    );
+    assertExists(endedWrite);
+    assertEquals(endedWrite.patch.ended_reason, 'target_transferred');
   }
 );
 

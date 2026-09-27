@@ -34,6 +34,7 @@ import {
 } from '../_shared/dialer-sweeper-core.ts';
 import type { TelnyxClient } from '../_shared/telnyx-client.ts';
 import { VOICEMAIL_DROP_SWEEP_TIMEOUT_SECONDS } from '../_shared/voicemail-core.ts';
+import { logOrgAction } from '../_shared/audit.ts';
 
 const STUCK_AFTER_SECONDS = 60;
 // TASK-L6: how long a claimed (bridged) contact leg must be silent before this even asks
@@ -182,6 +183,20 @@ Deno.serve(async (req: Request) => {
       return orgClients.get(orgId)?.client ?? null;
     },
   });
+  // MISSION-5 TASK-M5-B2 (the A1 review's own SHOULD, audit/M5-A1/review-eng2.md): the sweeper
+  // path never audit-logged the coaching-end it causes, unlike processTelnyxCoachingEvent's own
+  // manager_hangup branch. logOrgAction is fire-and-forget (its own header), so a failed insert
+  // here never affects the reap itself, which already committed in SQL before this runs.
+  for (const row of reapedCoachingSessions) {
+    await logOrgAction(supabase, {
+      orgId: row.org_id,
+      actorUserId: row.manager_id,
+      action: 'coaching.end',
+      targetType: 'dial_session',
+      targetId: row.target_session_id,
+      details: { reason: 'swept_stale' },
+    });
+  }
 
   // TASK-T4: same split as the coaching reap above -- SQL has already flipped each returned row
   // to status='failed'; this is the best-effort Telnyx cleanup (target hangup, and for a

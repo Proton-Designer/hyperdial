@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { Users, ArrowUpDown, Ear, Mic, Radio, Download } from 'lucide-react';
+import { createPortal } from 'react-dom';
+import { motion } from 'motion/react';
+import { Users, ArrowUpDown, Ear, Mic, Radio, Download, Pause, PhoneOff, Hand } from 'lucide-react';
 import { rowsToCsv, downloadCsv } from '@/lib/csv';
 import {
   getTeamDailyStats,
@@ -10,6 +12,10 @@ import {
   startCoaching,
   CoachingActionError,
   logAuditEvent,
+  pauseDialerSession,
+  stopDialerSession,
+  hangupLiveCall,
+  LiveCallInProgressError,
   type TeamDailyStatsRow,
   type TeamLiveBoardRow,
   type TeamLiveStatus,
@@ -22,6 +28,7 @@ import { PageHeader } from '@/components/app/PageHeader';
 import { EmptyState } from '@/components/app/EmptyState';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
+import { useFocusTrap } from '@/hooks/useFocusTrap';
 
 type Range = 'today' | 'yesterday' | '7d' | 'custom';
 type TeamView = 'overview' | 'attendance';
@@ -178,11 +185,78 @@ const COACHING_MODE_META: { mode: CoachingMode; label: string; icon: typeof Ear 
   { mode: 'barge', label: 'Barge', icon: Radio },
 ];
 
+/** MISSION-5 TASK-M5-B2: statuses where a remote Pause actually does anything --
+ *  `pauseSession`'s own gate (dialer-engine.ts), widened to include `ready_pending` for exactly
+ *  this remote case. Mirrors ParallelDialerUI's own `PAUSABLE_STATES` (the agent's self-pause) --
+ *  `ready_pending`/`ready` both fold into the live board's `'ready'` status string, so this list
+ *  is just `['ready', 'dialing']` here, not four separate dial_sessions.state values. */
+const REMOTE_PAUSABLE_STATUSES = new Set<TeamLiveStatus>(['ready', 'dialing']);
+
+/** MISSION-5 TASK-M5-B2: a generic yes/no confirm, same portal/focus-trap/motion shape as
+ *  ParallelDialerUI's own `StopConfirmDialog` -- reused for both remote actions that touch a
+ *  live human (End session while on a call, and Hang up) rather than duplicating the dialog
+ *  shell twice. */
+function RemoteActionConfirmDialog({
+  title,
+  detail,
+  confirmLabel,
+  onCancel,
+  onConfirm,
+}: {
+  title: string;
+  detail: string;
+  confirmLabel: string;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const modalRef = useRef<HTMLDivElement>(null);
+  useFocusTrap(modalRef, true);
+
+  return createPortal(
+    <div
+      className="fixed inset-0 flex items-center justify-center p-4"
+      style={{ zIndex: 10000 }}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="remote-action-confirm-title"
+    >
+      <div className="absolute inset-0 bg-black/60" onClick={onCancel} aria-hidden="true" />
+      <motion.div
+        ref={modalRef}
+        tabIndex={-1}
+        initial={{ opacity: 0, scale: 0.95 }}
+        animate={{ opacity: 1, scale: 1 }}
+        className="relative z-[1] w-full max-w-sm rounded-app-lg border border-border-subtle bg-surface-1 p-5 shadow-app-md outline-none"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h2 id="remote-action-confirm-title" className="text-page-title text-text-primary mb-2">
+          {title}
+        </h2>
+        <p className="text-body text-text-secondary mb-5">{detail}</p>
+        <div className="flex flex-col sm:flex-row sm:justify-end gap-2">
+          <Button variant="primary" onClick={onCancel}>
+            Cancel
+          </Button>
+          <Button variant="danger" onClick={onConfirm}>
+            {confirmLabel}
+          </Button>
+        </div>
+      </motion.div>
+    </div>,
+    document.body
+  );
+}
+
 function LiveBoardCard({
   row,
   onCoach,
   coachingBusy,
   coachingError,
+  onRemotePause,
+  onRemoteEnd,
+  onRemoteHangup,
+  remoteBusy,
+  remoteError,
 }: {
   row: TeamLiveBoardRow;
   /** TASK-T3: undefined for interns viewing their OWN row is never possible here -- Team.tsx is
@@ -193,6 +267,13 @@ function LiveBoardCard({
   onCoach: (targetUserId: string, mode: CoachingMode) => void;
   coachingBusy: boolean;
   coachingError: string | null;
+  /** MISSION-5 TASK-M5-B2: remote pause/end/hang-up. All three no-op (button hidden) with no
+   *  `row.session_id` -- an offline agent has no session to act on. */
+  onRemotePause: (row: TeamLiveBoardRow) => void;
+  onRemoteEnd: (row: TeamLiveBoardRow) => void;
+  onRemoteHangup: (row: TeamLiveBoardRow) => void;
+  remoteBusy: boolean;
+  remoteError: string | null;
 }) {
   const meta = STATUS_META[row.status];
   return (
@@ -203,9 +284,21 @@ function LiveBoardCard({
           <div className="flex items-center gap-1.5">
             <div className="font-medium text-text-primary truncate">{row.name}</div>
             <RoleChip role={row.role} />
+            {/* MISSION-5 TASK-M5-B2: raise-hand flag -- auto-clears server-side (coaching start
+             *  or the call ending), never dismissed from here. */}
+            {row.raised_hand_at && (
+              <span
+                className="flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-warning-soft text-warning flex-shrink-0"
+                title="This agent raised their hand"
+              >
+                <Hand className="w-3 h-3" />
+                Raised hand
+              </span>
+            )}
           </div>
           <div className={`text-meta ${meta.text}`}>{statusLine(row)}</div>
           {coachingError && <div className="text-meta text-danger mt-0.5">{coachingError}</div>}
+          {remoteError && <div className="text-meta text-danger mt-0.5">{remoteError}</div>}
         </div>
       </div>
       <div className="flex items-center gap-6 text-meta text-text-secondary">
@@ -242,6 +335,43 @@ function LiveBoardCard({
               {label}
             </button>
           ))}
+        </div>
+      )}
+      {row.session_id && (
+        <div className="flex items-center gap-1.5">
+          {REMOTE_PAUSABLE_STATUSES.has(row.status) && (
+            <button
+              type="button"
+              disabled={remoteBusy}
+              onClick={() => onRemotePause(row)}
+              title="Pause this agent's dialing"
+              className="px-2 py-1 rounded-app-md border border-border-subtle text-meta text-text-secondary hover:text-text-primary hover:border-accent-to/50 disabled:opacity-50 flex items-center gap-1"
+            >
+              <Pause className="w-3.5 h-3.5" />
+              Pause
+            </button>
+          )}
+          {row.status === 'on_call' && (
+            <button
+              type="button"
+              disabled={remoteBusy}
+              onClick={() => onRemoteHangup(row)}
+              title="Hang up on the current call"
+              className="px-2 py-1 rounded-app-md border border-border-subtle text-meta text-text-secondary hover:text-danger hover:border-danger/50 disabled:opacity-50 flex items-center gap-1"
+            >
+              <PhoneOff className="w-3.5 h-3.5" />
+              Hang up
+            </button>
+          )}
+          <button
+            type="button"
+            disabled={remoteBusy}
+            onClick={() => onRemoteEnd(row)}
+            title="End this agent's session"
+            className="px-2 py-1 rounded-app-md border border-border-subtle text-meta text-text-secondary hover:text-danger hover:border-danger/50 disabled:opacity-50 flex items-center gap-1"
+          >
+            End session
+          </button>
         </div>
       )}
     </div>
@@ -605,6 +735,85 @@ export function Team() {
       .finally(() => setCoachingBusy(false));
   }, []);
 
+  // MISSION-5 TASK-M5-B2: remote pause/end/hang-up. Per-agent (not global like coaching's own
+  // `coachingBusy`) -- these are independent HTTP calls against different sessions, no shared
+  // client-side resource to serialize on.
+  const [remoteBusy, setRemoteBusy] = useState<Record<string, boolean>>({});
+  const [remoteErrors, setRemoteErrors] = useState<Record<string, string>>({});
+  const [confirmTarget, setConfirmTarget] = useState<{
+    row: TeamLiveBoardRow;
+    kind: 'end' | 'hangup';
+  } | null>(null);
+
+  const runRemoteAction = useCallback(async (agentId: string, action: () => Promise<void>) => {
+    setRemoteBusy((prev) => ({ ...prev, [agentId]: true }));
+    setRemoteErrors((prev) => ({ ...prev, [agentId]: '' }));
+    try {
+      await action();
+    } catch (e) {
+      const message = e instanceof Error ? e.message : 'Action failed';
+      setRemoteErrors((prev) => ({ ...prev, [agentId]: message }));
+    } finally {
+      setRemoteBusy((prev) => ({ ...prev, [agentId]: false }));
+    }
+  }, []);
+
+  const handleRemotePause = useCallback(
+    (row: TeamLiveBoardRow) => {
+      if (!row.session_id) return;
+      void runRemoteAction(row.agent_id, async () => {
+        await pauseDialerSession(row.session_id as string, 'Paused by manager');
+      });
+    },
+    [runRemoteAction]
+  );
+
+  // MISSION-5 TASK-M5-B2: End session skips the confirm step unless a live call is actually in
+  // progress (only `on_call`/`wrap_up` can possibly have one) -- ending an already-idle session
+  // (ready/dialing/paused) has no live human to warn about, same "only ever rendered while
+  // there's someone to name" scoping StopConfirmDialog's own header already documents for the
+  // agent's self-service equivalent.
+  const handleRemoteEnd = useCallback(
+    (row: TeamLiveBoardRow) => {
+      if (!row.session_id) return;
+      if (row.status === 'on_call' || row.status === 'wrap_up') {
+        setConfirmTarget({ row, kind: 'end' });
+        return;
+      }
+      void runRemoteAction(row.agent_id, async () => {
+        await stopDialerSession(row.session_id as string, {});
+      });
+    },
+    [runRemoteAction]
+  );
+
+  const handleRemoteHangup = useCallback((row: TeamLiveBoardRow) => {
+    if (!row.session_id) return;
+    setConfirmTarget({ row, kind: 'hangup' });
+  }, []);
+
+  const handleConfirmedRemoteAction = useCallback(() => {
+    if (!confirmTarget) return;
+    const { row, kind } = confirmTarget;
+    setConfirmTarget(null);
+    if (!row.session_id) return;
+    void runRemoteAction(row.agent_id, async () => {
+      if (kind === 'hangup') {
+        await hangupLiveCall(row.session_id as string);
+      } else {
+        // `defer:true` -- "a live call is allowed to finish" (the task's own wording): the
+        // session ends the moment this in-progress call's disposition is saved, not right now.
+        try {
+          await stopDialerSession(row.session_id as string, { defer: true });
+        } catch (e) {
+          // Genuinely unexpected here (LIVE_CALL_IN_PROGRESS is impossible with defer:true --
+          // the server defers instead of refusing) -- surface it rather than silently retrying.
+          if (!(e instanceof LiveCallInProgressError)) throw e;
+        }
+      }
+    });
+  }, [confirmTarget, runRemoteAction]);
+
   const resolved = useMemo(
     () => resolveRange(orgTz, range, customStart, customEnd),
     [orgTz, range, customStart, customEnd]
@@ -903,11 +1112,33 @@ export function Team() {
                     onCoach={handleCoach}
                     coachingBusy={coachingBusy}
                     coachingError={coachingErrors[row.agent_id] || null}
+                    onRemotePause={handleRemotePause}
+                    onRemoteEnd={handleRemoteEnd}
+                    onRemoteHangup={handleRemoteHangup}
+                    remoteBusy={remoteBusy[row.agent_id] ?? false}
+                    remoteError={remoteErrors[row.agent_id] || null}
                   />
                 ))}
               </div>
             )}
           </div>
+          {confirmTarget && (
+            <RemoteActionConfirmDialog
+              title={
+                confirmTarget.kind === 'hangup'
+                  ? `Hang up ${confirmTarget.row.name}'s current call?`
+                  : `End ${confirmTarget.row.name}'s session?`
+              }
+              detail={
+                confirmTarget.kind === 'hangup'
+                  ? 'This disconnects the prospect right now. The agent stays signed in and ready for the next call.'
+                  : "The current call is allowed to finish -- the session ends automatically once the agent saves that call's disposition."
+              }
+              confirmLabel={confirmTarget.kind === 'hangup' ? 'Hang up' : 'End session'}
+              onCancel={() => setConfirmTarget(null)}
+              onConfirm={handleConfirmedRemoteAction}
+            />
+          )}
 
           {/* ADM-6: daily numbers */}
           <div>

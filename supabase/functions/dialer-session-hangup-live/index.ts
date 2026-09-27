@@ -6,6 +6,7 @@ import {
 } from '../_shared/telnyx-org-context.ts';
 import { endLiveCall } from '../_shared/dialer-engine.ts';
 import { readJsonBody } from '../_shared/http-json.ts';
+import { logOrgAction } from '../_shared/audit.ts';
 
 interface HangupLiveBody {
   sessionId?: string;
@@ -57,6 +58,11 @@ Deno.serve(async (req) => {
     if (role === 'agent' && session.agent_id !== user.id) {
       return jsonResponse(403, { error: 'Not your session' });
     }
+    // MISSION-5 TASK-M5-B2: a manager forcibly disconnecting someone ELSE's live call -- the
+    // confirm step for this is client-side only (Team.tsx's remote hang-up button); logged here,
+    // same "only the remote case, never the agent's own routine End Call click" scoping as
+    // dialer-session-pause's own new log call.
+    const isRemoteAction = role !== 'agent' && session.agent_id !== user.id;
     if (!session.active_leg_id) {
       // TASK-I1: no live CONTACT leg -- but a caller can be bridged into this same session's
       // conference with no call_legs row at all (inbound-engine.ts's `bridging_session` step,
@@ -81,11 +87,32 @@ Deno.serve(async (req) => {
       const { client, error: telnyxError } = await getConnectedOrgTelnyxContext(supabase, orgId);
       if (!client) return telnyxError!;
       await client.hangup(inboundCall.call_control_id);
+      if (isRemoteAction) {
+        await logOrgAction(supabase, {
+          orgId,
+          actorUserId: user.id,
+          action: 'session.remote_hangup',
+          targetType: 'dial_session',
+          targetId: sessionId,
+          details: { agentId: session.agent_id, kind: 'inbound_call' },
+        });
+      }
       return jsonResponse(200, { ok: true });
     }
 
     const ok = await endLiveCall(supabase, orgId, sessionId);
     if (!ok) return jsonResponse(400, { error: 'No live call to end' });
+
+    if (isRemoteAction) {
+      await logOrgAction(supabase, {
+        orgId,
+        actorUserId: user.id,
+        action: 'session.remote_hangup',
+        targetType: 'dial_session',
+        targetId: sessionId,
+        details: { agentId: session.agent_id, kind: 'contact_leg' },
+      });
+    }
 
     return jsonResponse(200, { ok: true });
   } catch (err) {

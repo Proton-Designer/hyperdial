@@ -1424,6 +1424,74 @@ Deno.test(
 );
 
 Deno.test(
+  'MISSION-5 TASK-M5-B2 (EC-17): mention_monitoring appends monitoring wording to the consent notice',
+  async () => {
+    const db = new FakeDb();
+    const server = new FakeTelnyxServer();
+    const restoreFetch = stubTelnyxFetch(server);
+    const supabase = createFakeSupabase(db);
+    const { orgId, campaignId, agentId } = seedFixtures(db);
+    db.insert('org_recording_settings', {
+      id: orgId,
+      org_id: orgId,
+      recording_enabled: true,
+      announce_recording_mode: 'all',
+      all_party_consent_states: [],
+      mention_monitoring: true,
+    });
+    try {
+      const { winnerCallControlId } = await bootstrapToOnCall(db, supabase, {
+        orgId,
+        campaignId,
+        agentId,
+      });
+      const speakReq = server.requests.find(
+        (r) => r.method === 'POST' && r.path === `/v2/calls/${winnerCallControlId}/actions/speak`
+      );
+      assertExists(speakReq);
+      const payload = (speakReq!.body as { payload: string }).payload;
+      assertEquals(payload.includes('monitored'), true);
+    } finally {
+      restoreFetch();
+    }
+  }
+);
+
+Deno.test(
+  'MISSION-5 TASK-M5-B2 (EC-17): mention_monitoring off (the default) never mentions monitoring -- positive control for the test above',
+  async () => {
+    const db = new FakeDb();
+    const server = new FakeTelnyxServer();
+    const restoreFetch = stubTelnyxFetch(server);
+    const supabase = createFakeSupabase(db);
+    const { orgId, campaignId, agentId } = seedFixtures(db);
+    db.insert('org_recording_settings', {
+      id: orgId,
+      org_id: orgId,
+      recording_enabled: true,
+      announce_recording_mode: 'all',
+      all_party_consent_states: [],
+      mention_monitoring: false,
+    });
+    try {
+      const { winnerCallControlId } = await bootstrapToOnCall(db, supabase, {
+        orgId,
+        campaignId,
+        agentId,
+      });
+      const speakReq = server.requests.find(
+        (r) => r.method === 'POST' && r.path === `/v2/calls/${winnerCallControlId}/actions/speak`
+      );
+      assertExists(speakReq);
+      const payload = (speakReq!.body as { payload: string }).payload;
+      assertEquals(payload.includes('monitored'), false);
+    } finally {
+      restoreFetch();
+    }
+  }
+);
+
+Deno.test(
   'TASK-T8: handleWin never speaks a consent notice when announce_recording_mode is "never" (the default)',
   async () => {
     const db = new FakeDb();

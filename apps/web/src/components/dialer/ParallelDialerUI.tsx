@@ -104,6 +104,10 @@ interface ParallelDialerUIProps {
   }) => Promise<void>;
   onCompleteTransfer: () => void;
   onCancelTransfer: () => void;
+  /** MISSION-5 TASK-M5-B2: non-null while raised -- drives the button's pressed state, same
+   *  "the button already knows which state it's in" shape as `onToggleRecording`. */
+  raisedHandAt?: string | null;
+  onToggleRaiseHand?: () => void;
 }
 
 /** BUG-11: "A prospect is on the line" confirm dialog, same portal/focus-trap/motion shape as
@@ -229,6 +233,8 @@ export function ParallelDialerUI({
   onStartTransfer,
   onCompleteTransfer,
   onCancelTransfer,
+  raisedHandAt,
+  onToggleRaiseHand,
 }: ParallelDialerUIProps) {
   const [showTransferModal, setShowTransferModal] = useState(false);
   const activeTransferForPanel = activeTransfer
@@ -322,6 +328,18 @@ export function ParallelDialerUI({
                   ))}
                 </DropdownMenuContent>
               </DropdownMenu>
+            )}
+            {/* MISSION-5 TASK-M5-B2: "during a call or session" -- always shown alongside Pause/
+                Stop, not gated to on_call. Hotkey R (Dialer.tsx) does the same thing. */}
+            {onToggleRaiseHand && (
+              <Button
+                variant={raisedHandAt ? 'warning-soft' : 'fe-secondary'}
+                size="sm"
+                onClick={onToggleRaiseHand}
+                title="Raise hand (R) -- flags your row on the live board and notifies your manager"
+              >
+                {raisedHandAt ? 'Hand raised' : 'Raise hand'}
+              </Button>
             )}
             {/* Stop always works, in every state, per this task's own spec -- but BUG-11 gates
                 it behind a confirm dialog while a human is actually on the line. */}

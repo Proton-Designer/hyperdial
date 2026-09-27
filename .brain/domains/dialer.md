@@ -22,6 +22,7 @@ sources:
   - supabase/migrations/20260926070003_lead_assignment_control.sql
   - supabase/migrations/20260926070005_high_lines_drop_guard.sql
   - supabase/migrations/20260926080400_reliability_alerts.sql
+  - supabase/migrations/20260927151747_supervisor_controls.sql
   - apps/web/src/hooks/useDialerSession.ts
   - apps/web/src/lib/api.ts
   - apps/web/src/components/dialer/**
@@ -44,7 +45,7 @@ answers:
   - "how do I test the dial engine without a real Telnyx account"
 covers: "The org-scoped dial engine (TASK-P2-E2): rolling-refill queueing over campaign_leads, single-winner claim resolution, AMD triage, conference bridging, wrap_up, and the webhook that drives it."
 excludes: "Telnyx API wrappers, number purchase/search and WebRTC credentials (domain.telephony); campaign and lead list construction (domain.campaigns); the agent's own WebRTC leg (E3, not built yet); dispositions (Phase 3, not built yet)."
-tokens_est: 6700
+tokens_est: 7550
 source_hash: 30b4f8a2b005496e438e762a20c2579966e1779eeea3b4ad44ec1d24f5754809
 ---
 
@@ -516,6 +517,63 @@ Records the WINNING contact leg only, never a loser, starting the moment it's ac
   supervisor participant as a contact/agent leg. Edge Function `dialer-coaching`, orchestration in
   `_shared/coaching-core.ts` (deno-tested; the `index.ts` shell isn't). Review fix-forward: the
   coaching leg now auto-ends when the coached call itself ends, rather than lingering.
+- **EC-8, MISSION-5 TASK-M5-B2: at most one active coaching session per TARGET call, not just per
+  manager.** `coaching_sessions_one_active_per_target` (unique partial index on
+  `target_session_id`) is the real guarantee; `runStartCoachingAction` also pre-checks it before
+  ever dialing, and a 23505 from either partial index (manager's own, or this one) is
+  distinguished by matching the constraint name in the Postgres error message, so a genuine race
+  still returns "Already being coached by X" rather than a generic busy message. Coaching also
+  now ends cleanly (hangs up the manager leg, marks the row `ended`) in two cases the sweeper's
+  own 60s staleness check cannot catch: (1) **the target call is transferred** — a transfer moves
+  the CUSTOMER out of `dial_sessions.conference_id` but `state` stays `'on_call'` throughout, so
+  `reap_stale_coaching_sessions`' `state <> 'on_call'` condition never fires; closed by hooking
+  `endActiveCoachingForTargetSession` into `finalizeHandoff` (transfer-core.ts), the ONE function
+  shared by both cold and warm transfer completion; (2) **the coach is disabled/removed** —
+  `endActiveCoachingSessionsForManager`, called from `org-members/index.ts`'s `cascadeOffboard`.
+  The sweeper path itself (`reap_stale_coaching_sessions`) also gained an audit-log call it never
+  had (`coaching.end`, reason `swept_stale`) — the A1 review's own carried SHOULD.
+
+### Supervisor controls (MISSION-5 TASK-M5-B2)
+
+- **Remote pause/end/hang-up all reuse the EXISTING sessionId-keyed endpoints** — `dialer-
+  session-pause`/`-stop`/`-hangup-live` already let an owner/admin act on any org session by
+  `sessionId` (role==='agent' is the only restriction, gating self-only); `team_live_board` was
+  widened to also return `session_id` so the live board can call them directly. Owner/admin only
+  today — the task's own scope explicitly deferred manager+pod scoping to a follow-up once
+  TASK-M5-A5 (manager role/pods) lands.
+- **Pause**: `pauseDialerSession(sessionId, 'Paused by manager')` — `pauseSession`'s own expected-
+  state list widened to include `ready_pending` (a remote click, unlike the agent's own Pause
+  button, can plausibly land in that transient window). Audit-logged (`session.remote_pause`)
+  only when the actor isn't the session's own agent.
+- **End session, "a live call is allowed to finish"**: `stopDialerSession(sessionId, {defer:
+  true})` — if no live call is in progress, stops immediately like a normal Stop; if one IS in
+  progress, instead of refusing (409) it writes `dial_sessions.remote_stop_requested_at/_by` (no
+  state change yet) and returns 202. `submit_disposition`'s own wrap_up branch checks that column
+  FIRST (ahead of the agent's own auto-resume preference) and transitions straight to `stopped`
+  the moment that in-progress call's disposition is saved, tagging `pause_reason:
+  'remote_end_by_manager'` so the client can tell this apart from a self-service Stop and show its
+  own "ended by a manager" toast (the poll-driven path a self-stop's own local reset never covered
+  before this task, since `ACTIVE_SESSION_STATES` stops polling once `state === 'stopped'`).
+  Audit-logged either way (`session.remote_end`), from `dialer-session-stop` for the immediate
+  case and from `dialer-session-disposition` (reading `submit_disposition`'s widened RPC result)
+  for the deferred-then-executed case.
+- **Hang up the contact leg only**: `hangupLiveCall(sessionId)` — no new backend logic at all,
+  `dialer-session-hangup-live` already permitted this; only gained the same remote-only audit log
+  (`session.remote_hangup`). The confirm step is client-side only (Team.tsx).
+- **Raise hand**: agent-only, hotkey R or a button (ParallelDialerUI); `dial_sessions.
+  raised_hand_at`, a new `dialer-session-raise-hand` endpoint, and a `notifications` row per
+  active owner/admin (reusing the exact shape `notifyOwnersAndAdminsOfDailyCap` already
+  established). Auto-clears at TWO single choke points, not scattered call sites: inside
+  `transition_session` itself the instant a transition leaves `on_call` (reads the PRE-UPDATE
+  row's own `state` in the SET list — standard Postgres semantics, needs no separate read), and
+  inside `runStartCoachingAction`'s successful-insert path the instant a manager actually starts
+  coaching that target. The live board shows the flag (`team_live_board.raised_hand_at`); the
+  notification's new `data` jsonb column carries a click-through (`TopNavigation.tsx` routes to
+  the Team tab, not to auto-starting a coaching call with no WebRTC client mounted there).
+- **EC-17**: `org_recording_settings.mention_monitoring` (boolean, default off) appends "...and
+  monitored..." to the T8 consent announcement (`recordingConsentMessage`) — for an org using live
+  coaching in an all-party-consent state, "may be recorded" alone doesn't disclose a supervisor
+  silently listening in. Not legal advice, same scope as the rest of that setting.
 
 ### Hold + warm/cold transfer (MISSION-4 TASK-T4, AUD-6 + NEW)
 

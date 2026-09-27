@@ -269,9 +269,27 @@ Deno.test(
     const hangupCalls: string[] = [];
     const resolveCalls: string[] = [];
     const rows: ReapedCoachingSession[] = [
-      { id: 'cs-1', org_id: 'org-1', manager_call_control_id: 'call-mgr-1' },
-      { id: 'cs-2', org_id: 'org-1', manager_call_control_id: 'call-mgr-2' },
-      { id: 'cs-3', org_id: 'org-2', manager_call_control_id: 'call-mgr-3' },
+      {
+        id: 'cs-1',
+        org_id: 'org-1',
+        manager_call_control_id: 'call-mgr-1',
+        manager_id: 'mgr-1',
+        target_session_id: 'session-1',
+      },
+      {
+        id: 'cs-2',
+        org_id: 'org-1',
+        manager_call_control_id: 'call-mgr-2',
+        manager_id: 'mgr-2',
+        target_session_id: 'session-2',
+      },
+      {
+        id: 'cs-3',
+        org_id: 'org-2',
+        manager_call_control_id: 'call-mgr-3',
+        manager_id: 'mgr-3',
+        target_session_id: 'session-3',
+      },
     ];
     const client = fakeTelnyxHangupOnly((id) => {
       hangupCalls.push(id);
@@ -296,7 +314,13 @@ Deno.test(
   'hangUpReapedCoachingSessions: a null manager_call_control_id (crash mid-start) is skipped, never asked about',
   async () => {
     const rows: ReapedCoachingSession[] = [
-      { id: 'cs-1', org_id: 'org-1', manager_call_control_id: null },
+      {
+        id: 'cs-1',
+        org_id: 'org-1',
+        manager_call_control_id: null,
+        manager_id: 'mgr-1',
+        target_session_id: 'session-1',
+      },
     ];
     let resolved = false;
     const hungUp = await hangUpReapedCoachingSessions(rows, {
@@ -314,7 +338,13 @@ Deno.test(
   'hangUpReapedCoachingSessions: no connected client for the org -> skipped, not a crash',
   async () => {
     const rows: ReapedCoachingSession[] = [
-      { id: 'cs-1', org_id: 'org-1', manager_call_control_id: 'call-mgr-1' },
+      {
+        id: 'cs-1',
+        org_id: 'org-1',
+        manager_call_control_id: 'call-mgr-1',
+        manager_id: 'mgr-1',
+        target_session_id: 'session-1',
+      },
     ];
     const hungUp = await hangUpReapedCoachingSessions(rows, {
       resolveClient: () => Promise.resolve(null),
@@ -327,8 +357,20 @@ Deno.test(
   'hangUpReapedCoachingSessions: a hangup that throws is swallowed and not counted, never a crash',
   async () => {
     const rows: ReapedCoachingSession[] = [
-      { id: 'cs-1', org_id: 'org-1', manager_call_control_id: 'call-mgr-1' },
-      { id: 'cs-2', org_id: 'org-1', manager_call_control_id: 'call-mgr-2' },
+      {
+        id: 'cs-1',
+        org_id: 'org-1',
+        manager_call_control_id: 'call-mgr-1',
+        manager_id: 'mgr-1',
+        target_session_id: 'session-1',
+      },
+      {
+        id: 'cs-2',
+        org_id: 'org-1',
+        manager_call_control_id: 'call-mgr-2',
+        manager_id: 'mgr-2',
+        target_session_id: 'session-2',
+      },
     ];
     const hangupCalls: string[] = [];
     const client = fakeTelnyxHangupOnly((id) => {

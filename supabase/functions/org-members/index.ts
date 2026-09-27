@@ -3,6 +3,8 @@ import { corsHeaders, corsPreflightResponse } from '../_shared/cors.ts';
 import { requireOrgRole, type OrgRole } from '../_shared/auth.ts';
 import { logOrgAction } from '../_shared/audit.ts';
 import { haltIntakeForOffboarding } from '../_shared/dialer-engine.ts';
+import { endActiveCoachingSessionsForManager } from '../_shared/coaching-core.ts';
+import { getConnectedOrgTelnyxContext } from '../_shared/telnyx-org-context.ts';
 
 function jsonError(status: number, message: string): Response {
   return new Response(JSON.stringify({ error: message }), {
@@ -88,7 +90,7 @@ async function cascadeOffboard(
   supabase: SupabaseClient,
   orgId: string,
   targetUserId: string
-): Promise<{ sessionHalted: boolean; numbersReleased: number }> {
+): Promise<{ sessionHalted: boolean; numbersReleased: number; coachingEnded: number }> {
   let sessionHalted = false;
   try {
     const result = await haltIntakeForOffboarding(supabase, orgId, targetUserId);
@@ -107,7 +109,26 @@ async function cascadeOffboard(
     console.error('org-members cascadeOffboard: number release failed', releaseError.message);
   }
 
-  return { sessionHalted, numbersReleased: releasedNumbers?.length ?? 0 };
+  // MISSION-5 TASK-M5-B2 (EC-8: "coaching ends cleanly if ... the coach is disabled/removed").
+  // Best-effort, never blocks the actual disable/remove: a real Telnyx client is fetched only if
+  // needed (getConnectedOrgTelnyxContext can itself fail for a disconnected org, which must not
+  // fail this whole cascade -- the coaching row still gets marked ended either way, just without
+  // a live hangup, same "our bookkeeping already reads ended regardless" shape
+  // hangUpReapedCoachingSessions already established).
+  let coachingEnded = 0;
+  try {
+    const telnyx = await getConnectedOrgTelnyxContext(supabase, orgId);
+    coachingEnded = await endActiveCoachingSessionsForManager(
+      supabase,
+      telnyx.client,
+      targetUserId,
+      'coach_offboarded'
+    );
+  } catch (err) {
+    console.error('org-members cascadeOffboard: coaching end failed', String(err));
+  }
+
+  return { sessionHalted, numbersReleased: releasedNumbers?.length ?? 0, coachingEnded };
 }
 
 Deno.serve(async (req) => {

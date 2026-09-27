@@ -24,6 +24,7 @@ import { agentSipUri } from './dialer-engine.ts';
 import { encodeTransferTargetClientState } from './client-state.ts';
 import { webhookUrlForOrg } from './telnyx-provision.ts';
 import { checkSpendGate } from './spend-gate.ts';
+import { endActiveCoachingForTargetSession } from './coaching-core.ts';
 
 export type TransferType = 'cold' | 'warm';
 export type TransferTargetKind = 'member' | 'external';
@@ -712,6 +713,7 @@ async function enqueueTransferNote(
  *  (`processTelnyxTransferEvent`) and `runCompleteTransferAction`. */
 async function finalizeHandoff(
   supabase: SupabaseClient,
+  client: TelnyxClient,
   session: SessionRow,
   row: CallTransferRow
 ): Promise<void> {
@@ -732,6 +734,18 @@ async function finalizeHandoff(
     p_new_state: 'wrap_up',
     p_fields: { active_leg_id: null },
   });
+  // MISSION-5 TASK-M5-B2 (EC-8: "coaching ends cleanly if the target call is transferred"): the
+  // CUSTOMER just left `session.conference_id` for good (into a side conference or a fully
+  // external destination), but `dial_sessions.state` only just now left 'on_call' via the
+  // transition above -- reap_stale_coaching_sessions' own staleness check would have kept a
+  // coaching session on this call alive throughout the ENTIRE transfer (its "state <> 'on_call'"
+  // condition never fires mid-transfer), so this cannot wait for the sweeper. Best-effort, never
+  // blocks the handoff itself.
+  try {
+    await endActiveCoachingForTargetSession(supabase, client, session.id, 'target_transferred');
+  } catch (err) {
+    console.warn('[transfer-core] endActiveCoachingForTargetSession failed', err);
+  }
 }
 
 export async function runCompleteTransferAction(
@@ -772,7 +786,7 @@ export async function runCompleteTransferAction(
     return { status: 502, body: { error: 'Failed to complete the transfer' } };
   }
 
-  await finalizeHandoff(supabase, session, row);
+  await finalizeHandoff(supabase, client, session, row);
   await supabase.rpc('transition_call_transfer', {
     p_transfer: row.id,
     p_org: orgId,
@@ -946,7 +960,7 @@ export async function processTelnyxTransferEvent(
         p_new_status: 'completed',
         p_fields: { side_conference_id: sideConferenceId, ended_at: new Date().toISOString() },
       });
-      if (applied.data) await finalizeHandoff(supabase, session, row);
+      if (applied.data) await finalizeHandoff(supabase, client, session, row);
     } else {
       await client.holdConferenceParticipants(session.conference_id, {
         callControlIds: [prospectLeg.call_control_id],

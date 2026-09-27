@@ -3,12 +3,18 @@ import { corsHeaders, corsPreflightResponse } from '../_shared/cors.ts';
 import { requireTelnyxOrgRole } from '../_shared/telnyx-org-context.ts';
 import { stopSession } from '../_shared/dialer-engine.ts';
 import { readJsonBody } from '../_shared/http-json.ts';
+import { logOrgAction } from '../_shared/audit.ts';
 
 interface StopBody {
   sessionId?: string;
   /** BUG-11: only true once the client's own confirm dialog has been shown (or there was no
    *  live human to confirm) -- see stopSession's own header comment in dialer-engine.ts. */
   force?: boolean;
+  /** MISSION-5 TASK-M5-B2: an owner/admin's remote "end session" -- "a live call is allowed to
+   *  finish" instead of `force`'s "hang up on them now". Only meaningful for a non-self caller;
+   *  an agent ending their own session with this set is harmless (there's no one else's live
+   *  call decision being deferred) but this is not the button that sends it. */
+  defer?: boolean;
 }
 
 function jsonResponse(status: number, payload: Record<string, unknown>): Response {
@@ -58,11 +64,45 @@ Deno.serve(async (req) => {
       return jsonResponse(403, { error: 'Not your session' });
     }
 
-    const result = await stopSession(supabase, orgId, sessionId, body.force === true);
+    // MISSION-5 TASK-M5-B2: a manager acting on someone ELSE's session -- never true for an
+    // agent ending their own (role==='agent' is already restricted to session.agent_id above).
+    const isRemoteAction = role !== 'agent' && session.agent_id !== user.id;
+
+    const result = await stopSession(supabase, orgId, sessionId, body.force === true, {
+      defer: body.defer === true,
+      remoteActorId: isRemoteAction ? user.id : undefined,
+    });
     if (!result.ok && result.reason === 'live_call_in_progress') {
+      if (result.deferred) {
+        if (isRemoteAction) {
+          await logOrgAction(supabase, {
+            orgId,
+            actorUserId: user.id,
+            action: 'session.remote_end',
+            targetType: 'dial_session',
+            targetId: sessionId,
+            details: { agentId: session.agent_id, deferred: true },
+          });
+        }
+        return jsonResponse(202, {
+          status: 'deferred',
+          message: 'This session will end once the current call finishes.',
+        });
+      }
       return jsonResponse(409, {
         error: 'A prospect is on the line. Confirm before hanging up on them.',
         code: 'LIVE_CALL_IN_PROGRESS',
+      });
+    }
+
+    if (isRemoteAction && result.ok) {
+      await logOrgAction(supabase, {
+        orgId,
+        actorUserId: user.id,
+        action: 'session.remote_end',
+        targetType: 'dial_session',
+        targetId: sessionId,
+        details: { agentId: session.agent_id, deferred: false },
       });
     }
 

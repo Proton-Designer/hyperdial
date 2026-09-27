@@ -442,6 +442,12 @@ verify_jwt = false
 verify_jwt = false
 [functions.dialer-session-reconnect]
 verify_jwt = false
+[functions.dialer-session-raise-hand]
+# MISSION-5 TASK-M5-B2: same custom-auth (requireTelnyxOrgRole) pattern as every other
+# dialer-session-* function above -- set from the start this time, not caught by a later
+# fix-forward (see dialer-session-hangup-live's own comment for what happens when this is
+# missed).
+verify_jwt = false
 [functions.dialer-sweeper]
 # Same reason as ghl-sync-worker above: triggered by pg_net (a cron job), no Supabase JWT at
 # all -- auth is the X-Cron-Secret header, checked inside the function itself. Set from the

@@ -14,6 +14,7 @@ import {
   startTransfer,
   completeTransfer,
   cancelTransfer,
+  setRaisedHand as setRaisedHandApi,
   type ActiveTransfer,
   type CallLegRecord,
   type CampaignScriptInfo,
@@ -207,6 +208,20 @@ export function useDialerSession(initialSessionId: string | null = null) {
     await loadSession(state.sessionId);
     return res;
   }, [loadSession, state.sessionId]);
+
+  /** MISSION-5 TASK-M5-B2: the agent's own "raise hand" (hotkey R). `raised` defaults to true;
+   *  Dialer.tsx's own toggle passes the OPPOSITE of the current value for the explicit "never
+   *  mind" clear -- most clears never come through here at all (the server auto-clears it when
+   *  the call ends or a manager starts coaching). */
+  const setRaisedHand = useCallback(
+    async (raised = true) => {
+      if (!state.sessionId) return null;
+      const res = await setRaisedHandApi(state.sessionId, raised);
+      await loadSession(state.sessionId);
+      return res;
+    },
+    [loadSession, state.sessionId]
+  );
 
   /** TASK-L1: the Reconnect button, shown when session.state === 'paused_agent_lost'. Only
    *  dials the agent leg again server-side -- the caller (the pre-flight/Reconnect UI) is
@@ -431,6 +446,7 @@ export function useDialerSession(initialSessionId: string | null = null) {
     stop,
     pause,
     resume,
+    setRaisedHand,
     reconnect,
     endLiveCall,
     hold,

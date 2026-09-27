@@ -1752,3 +1752,56 @@ agent, not per-session.** An agent who stops and restarts a session (or switches
 mid-day must not get a fresh cap each time -- `agent_daily_dial_status` joins `call_legs` to
 `dial_sessions` on `agent_id` (not `session_id`), matching how TASK-M5-B1's `agent_time_in_state`
 already treats "today" as spanning every session an agent has run.
+
+## MISSION-5 TASK-M5-B2: supervisor controls
+
+**Decision 1 -- remote pause/end/hang-up reuse the EXISTING sessionId-keyed dialer-session-*
+endpoints, no new remote-control endpoint was built.** Reading `dialer-session-pause`/`-stop`/
+`-hangup-live` before starting found all three already let an owner/admin act on ANY org session
+by `sessionId` (only `role==='agent'` is self-restricted) -- the only real gaps were (a)
+`team_live_board` not exposing `session_id` at all, so the client had no id to call them with, and
+(b) no audit logging on the remote path. Building a parallel endpoint would have duplicated
+already-correct, already-tested logic for no benefit.
+
+**Decision 2 -- "end session, a live call is allowed to finish" is a `defer` flag on the existing
+Stop endpoint, not a new state in the session state machine.** `stopSession` already had exactly
+two outcomes when a live call is claimed (`force`: hang up now, or refuse with 409); a third
+"wait" outcome just needed somewhere to park the request. Two new `dial_sessions` columns
+(`remote_stop_requested_at/_by`) plus one new branch in `submit_disposition` (checked BEFORE the
+existing auto-resume logic, since a manager's end-request outranks the agent's own pacing
+preference) does this without adding a new `dial_sessions.state` value or touching
+`transition_session`'s own state-transition contract.
+
+**Decision 3 -- raised_hand_at auto-clears inside `transition_session` itself, not at each call
+site that ends a call.** Referencing the bare `state` column on the right-hand side of
+`transition_session`'s own SET list reads the PRE-UPDATE row (standard Postgres UPDATE semantics
+-- every SET expression evaluates against the OLD row simultaneously) -- `raised_hand_at = case
+when state = 'on_call' and p_new_state <> 'on_call' then null else raised_hand_at end` fires
+exactly once, for every past AND future caller, with nothing to remember at any individual call
+site. The other auto-clear trigger ("a manager starts coaching this target") is NOT a state
+transition at all, so it's handled separately, inline in `runStartCoachingAction`'s own successful-
+insert path.
+
+**Decision 4 -- EC-8's "one coach per target" reuses the EXACT shape of the pre-existing "one
+coach per manager" constraint (a partial unique index), not a re-check inside a transaction.**
+`coaching_sessions_one_active_per_manager` already established the pattern (index + a pre-check +
+a 23505 fallback for the TOCTOU race); the new `coaching_sessions_one_active_per_target` index is
+its mirror image. The one real addition: since TWO different partial indexes can now both raise
+23505 on the same insert, the handler distinguishes them by matching the constraint name inside
+Postgres's own error message (it's embedded there), rather than adding a second round-trip query
+to guess which one fired before deciding.
+
+**Decision 5 -- coaching-end-on-transfer is hooked into `finalizeHandoff`, the ONE function
+already shared by cold and warm transfer completion, not into `runCompleteTransferAction`
+(warm-only) alone.** A first pass would have missed cold transfers entirely, and the underlying
+gap (`dial_sessions.state` stays `'on_call'` throughout ANY transfer, so the sweeper's own
+`state <> 'on_call'` staleness check never fires) applies identically to both transfer types --
+fixing only the warm path would have left a real, silently-lingering-until-the-2h-hard-cap bug on
+every cold transfer.
+
+**Decision 6 -- EC-17's monitoring wording is a THIRD independent boolean on
+`org_recording_settings`, appended to the existing consent message rather than replacing it.**
+`announce_recording_mode`/`all_party_consent_states` already decide WHEN to announce; this only
+changes WHAT the announcement says once that decision fires, keeping the two concerns (timing vs.
+content) orthogonal instead of overloading the mode enum with a fourth "and monitored" variant
+that would have doubled the mode list for a change that's really independent of it.
