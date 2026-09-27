@@ -13,6 +13,8 @@ import {
   Settings as SettingsIcon,
   Save,
   RotateCw,
+  SkipForward,
+  UserCog,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import {
@@ -27,12 +29,17 @@ import {
   addLeadsToCampaign,
   removeLeadFromCampaign,
   removeLeadsFromCampaign,
+  assignCampaignLeads,
+  setCampaignLeadPriority,
+  skipCampaignLead,
   listContacts,
   listCampaignRetryRules,
   upsertCampaignRetryRules,
   type CampaignWithStats,
   type CampaignSettingsInput,
   type CampaignLead,
+  type CampaignLeadPriority,
+  type AssignLeadsFilter,
   type Contact,
   type OrgMember,
   type CampaignRetryRule,
@@ -40,6 +47,7 @@ import {
 } from '../../lib/api';
 import { ImportContactsModal } from '../contacts/ImportContactsModal';
 import { AddContactModal } from '../contacts/AddContactModal';
+import { AssignLeadsModal } from './AssignLeadsModal';
 import { usePhoneNumbers } from '../../contexts/PhoneNumbersContext';
 import { useOrg } from '../../contexts/OrgContext';
 import { setPendingStartCampaignId } from '../../lib/dialerLaunchIntent';
@@ -232,6 +240,7 @@ export function CampaignManageModal({
   const modalRef = useRef<HTMLDivElement>(null);
   useFocusTrap(modalRef, open);
   const [confirmBulkRemove, setConfirmBulkRemove] = useState(false);
+  const [assignModalOpen, setAssignModalOpen] = useState(false);
 
   const fetchCampaign = useCallback(async () => {
     if (!campaignId) return;
@@ -487,6 +496,35 @@ export function CampaignManageModal({
 
   const handleRemoveLead = (contactId: string) => setConfirmRemoveContactId(contactId);
   const handleBulkRemove = () => selectedLeadIds.size > 0 && setConfirmBulkRemove(true);
+
+  const handlePriorityChange = async (leadId: string, priority: CampaignLeadPriority) => {
+    try {
+      await setCampaignLeadPriority(leadId, priority);
+      fetchLeads();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to update priority');
+    }
+  };
+
+  /** TASK-T6: "keeps its place/attempt" -- claim_next_leads passes over it for a while, without
+   *  incrementing attempts or moving its queue position. */
+  const handleSkipLead = async (leadId: string) => {
+    try {
+      await skipCampaignLead(leadId);
+      toast.success('Lead skipped for now');
+      fetchLeads();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to skip lead');
+    }
+  };
+
+  const handleAssignLeads = async (agentId: string | null, filter: AssignLeadsFilter) => {
+    if (!campaignId) return;
+    const count = await assignCampaignLeads(campaignId, agentId, filter);
+    toast.success(agentId ? `Assigned ${count} lead(s)` : `Unassigned ${count} lead(s)`);
+    fetchLeads();
+    fetchAssignment();
+  };
 
   const handleCallLead = (phoneNumber: string | null) => {
     if (phoneNumber) {
@@ -1017,6 +1055,15 @@ export function CampaignManageModal({
                       <UserPlus className="w-4 h-4" />
                       Add new contact
                     </button>
+                    <button
+                      type="button"
+                      onClick={() => setAssignModalOpen(true)}
+                      className="flex items-center gap-2 px-3 py-2 bg-surface-1 hover:bg-surface-3 border border-white/10 rounded-lg text-white text-sm"
+                      title="Assign a range/percentage/tag of queued leads to a teammate"
+                    >
+                      <UserCog className="w-4 h-4" />
+                      Assign leads
+                    </button>
                     {selectedLeadIds.size > 0 && (
                       <button
                         type="button"
@@ -1102,6 +1149,7 @@ export function CampaignManageModal({
                             <th className="pb-2 pr-2">Category</th>
                             <th className="pb-2 pr-2">Contact status</th>
                             <th className="pb-2 pr-2">Lead status</th>
+                            <th className="pb-2 pr-2">Priority</th>
                             <th className="pb-2 pr-2 text-right">Actions</th>
                           </tr>
                         </thead>
@@ -1137,11 +1185,29 @@ export function CampaignManageModal({
                                       ? 'bg-success/10 text-success'
                                       : lead.status === 'passthrough'
                                         ? 'bg-accent-to/10 text-accent-to'
-                                        : 'bg-warning/10 text-warning'
+                                        : lead.status === 'removed'
+                                          ? 'bg-text-secondary/10 text-text-secondary'
+                                          : 'bg-warning/10 text-warning'
                                   }`}
                                 >
                                   {lead.status}
                                 </span>
+                              </td>
+                              <td className="py-3 pr-2">
+                                <select
+                                  value={lead.priority}
+                                  onChange={(e) =>
+                                    void handlePriorityChange(
+                                      lead.id,
+                                      e.target.value as CampaignLeadPriority
+                                    )
+                                  }
+                                  className="rounded-app-md bg-surface-1 border border-white/10 px-2 py-1 text-xs text-white focus:outline-none"
+                                >
+                                  <option value="low">Low</option>
+                                  <option value="normal">Normal</option>
+                                  <option value="high">High</option>
+                                </select>
                               </td>
                               <td className="py-3 pr-2 text-right">
                                 <div className="flex items-center justify-end gap-1">
@@ -1155,6 +1221,16 @@ export function CampaignManageModal({
                                   >
                                     <Phone className="w-4 h-4" />
                                   </button>
+                                  {lead.status === 'queued' && (
+                                    <button
+                                      type="button"
+                                      onClick={() => void handleSkipLead(lead.id)}
+                                      className="p-2 rounded-lg hover:bg-white/10 text-text-secondary"
+                                      title="Skip for now (keeps its place and attempt count)"
+                                    >
+                                      <SkipForward className="w-4 h-4" />
+                                    </button>
+                                  )}
                                   <button
                                     type="button"
                                     onClick={() => handleRemoveLead(lead.contact_id)}
@@ -1234,6 +1310,15 @@ export function CampaignManageModal({
         onClose={() => setAddNewOpen(false)}
         onSuccess={handleAddNewSuccess}
       />
+
+      {/* Assign leads (TASK-T6 / ADM-4 slice assignment) */}
+      {assignModalOpen && (
+        <AssignLeadsModal
+          members={orgMembers}
+          onClose={() => setAssignModalOpen(false)}
+          onAssign={handleAssignLeads}
+        />
+      )}
 
       {/* Remove-from-campaign confirmation */}
       <AnimatePresence>

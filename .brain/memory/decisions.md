@@ -1484,3 +1484,61 @@ Writing the test that PROVED this wiring surfaced a real, separate bug in the te
 (`dialer-fake-supabase.ts`'s `apply_leg_outcome` case was clearing `dial_sessions.active_leg_id` as
 a side effect -- the REAL SQL function never touches `dial_sessions` at all, only
 `call_legs.outcome_applied_at` and `campaign_leads`; fixed to match).
+
+### TASK-T6: list & assignment control (ADM-4 + skip/remove/priority)
+
+**Decision 1 -- ADM-4's "assign a campaign to one or more interns" needed ZERO new code.**
+`campaign_agents` (TASK-P1, 20260924000200) already gates campaign-level visibility (RLS on
+campaign_leads/contacts, dialer-session-start's own membership check) and the campaign picker.
+Verified this by reading the code, not assuming it from the task's own framing -- the only
+genuinely missing piece was PER-LEAD ("slice") assignment.
+
+**Decision 2 -- reused `campaign_leads.assigned_agent_id` for slice assignment instead of adding a
+second column.** It already existed but was only ever written for callback ownership (set by
+submit_disposition, read by claim_next_leads' own callback-priority filter) -- never checked for
+`status = 'queued'` at all. Widening claim_next_leads' WHERE clause to also respect it for
+'queued' (null = today's "anyone on the campaign" behavior, unchanged) reuses the exact same
+column/shape a callback already uses, rather than inventing a parallel mechanism.
+
+**Decision 3 -- "a lead range/percentage/tag filter" is eager materialization, not an abstract
+rule.** `assign_campaign_leads` computes the target lead set ONCE (ranked by `position` among
+currently-queued leads) and writes `assigned_agent_id` directly -- no assignment-rules table, no
+extra join in claim_next_leads' own hot path. Reassigning mid-day is just calling it again.
+"One or more interns" for a slice (as opposed to a whole campaign, where campaign_agents already
+supports many) means running it once per intern with non-overlapping filters -- the column stays
+a single nullable FK, the simplest shape that already existed.
+
+**Decision 4 -- `assign_campaign_leads` also auto-adds the target to `campaign_agents`.** Assigning
+a slice to someone NOT already on the campaign would otherwise be a footgun: that agent's own
+`listCampaigns()` filters to `campaign_agents`, and campaign_leads/contacts' own RLS SELECT policy
+(`private.agent_assigned_to_campaign`) gates on the exact same table -- they could never see or
+claim a lead assigned to them on a campaign they're not "on". One manager action does what
+checking the box in "Assigned Agents" and running the assignment separately would otherwise
+require as two steps.
+
+**Decision 5 -- "tag" filter uses `contacts.ghl_tags` (already exists, TASK-F-T2/ghl_blocked_tags),
+not a new column.** A real, already-synced GHL concept, not invented for this task.
+
+**Decision 6 -- Priority and Skip are plain column updates through the EXISTING owner/admin-only
+RLS policy on campaign_leads (20260924000300), not new RPCs.** Neither needs role logic beyond
+what that policy already enforces -- an agent has zero write access to campaign_leads today, and
+this task never asked to change that (these are manager-side list actions, same audience as the
+pre-existing Remove button). "Skip... keeps its place/attempt" is satisfied literally: the skip
+update only writes `next_attempt_at`, never `attempts` or `position`.
+
+**Decision 7 -- Remove from campaign is now a status flip ('removed'), not a `.delete()`.** The
+prior hard-delete contradicted this task's own "terminal status" ask and silently destroyed the
+lead's own attempts/history (`call_legs.lead_id` is `on delete set null`, so the leg survives but
+loses its link to the lead). 'removed' is a NEW, distinct status -- not a reuse of 'passthrough'
+(TASK-N1's own multi-leg-dedup-loser concept, already baked into every campaign-stats view's own
+`count(...) filter (where status='passthrough')`; conflating the two would corrupt those counts).
+**Disclosed gap**: re-adding a previously-removed contact to the SAME campaign via
+`addLeadsToCampaign` will NOT revive the row (its own upsert is `ON CONFLICT DO NOTHING`) -- this
+is pre-existing behavior identical to re-adding an already-completed/exhausted/dnc contact today,
+not a new gap this task introduces; left unchanged as out of this task's own scope.
+
+**Decision 8 -- lead priority ordering sits between priority_requeue and attempts/next_attempt_at/
+position in claim_next_leads' own ORDER BY, callback ownership still first.** A promised callback
+time commitment outranks a manager's own priority tag; priority_requeue (an immediately-preceding
+dropped/abandoned retry) still resurfaces before a merely "high"-tagged lead that hasn't been
+touched yet.

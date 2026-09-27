@@ -1471,11 +1471,15 @@ export interface CampaignWithStats extends Campaign {
   passthrough: number;
 }
 
+export type CampaignLeadPriority = 'low' | 'normal' | 'high';
+
 export interface CampaignLead {
   id: string;
   campaign_id: string;
   contact_id: string;
-  status: 'queued' | 'passthrough' | 'completed';
+  status: 'queued' | 'passthrough' | 'completed' | 'removed';
+  priority: CampaignLeadPriority;
+  assigned_agent_id: string | null;
   added_at: string;
   contact: Contact;
 }
@@ -1647,7 +1651,7 @@ export async function setCampaignAgents(campaignId: string, userIds: string[]): 
 export async function listCampaignLeads(campaignId: string): Promise<CampaignLead[]> {
   const { data: leadsData, error: leadsError } = await supabase
     .from('campaign_leads')
-    .select('id, campaign_id, contact_id, status, added_at')
+    .select('id, campaign_id, contact_id, status, priority, assigned_agent_id, added_at')
     .eq('campaign_id', campaignId)
     .order('added_at', { ascending: false });
   if (leadsError) throw new Error(leadsError.message);
@@ -1656,6 +1660,8 @@ export async function listCampaignLeads(campaignId: string): Promise<CampaignLea
     campaign_id: string;
     contact_id: string;
     status: string;
+    priority: string;
+    assigned_agent_id: string | null;
     added_at: string;
   }[];
   if (leads.length === 0) return [];
@@ -1671,11 +1677,67 @@ export async function listCampaignLeads(campaignId: string): Promise<CampaignLea
       id: l.id,
       campaign_id: l.campaign_id,
       contact_id: l.contact_id,
-      status: l.status as 'queued' | 'passthrough' | 'completed',
+      status: l.status as 'queued' | 'passthrough' | 'completed' | 'removed',
+      priority: l.priority as CampaignLeadPriority,
+      assigned_agent_id: l.assigned_agent_id,
       added_at: l.added_at,
       contact: contactsMap.get(l.contact_id)!,
     }))
     .filter((cl) => cl.contact);
+}
+
+/** TASK-T6 (ADM-4): bulk-assigns (or, with `agentId: null`, unassigns) the target lead set
+ *  computed by `filter` -- eager materialization onto `campaign_leads.assigned_agent_id`, not an
+ *  abstract rule evaluated later at claim time. Re-running with a different agent/filter
+ *  reassigns mid-day; each call is independent and idempotent. Owner/admin only (checked inside
+ *  the function). Returns how many leads were actually touched. */
+export type AssignLeadsFilter =
+  | { mode: 'all' }
+  | { mode: 'range'; start: number; end: number }
+  | { mode: 'percentage'; percentage: number }
+  | { mode: 'tag'; tag: string };
+
+export async function assignCampaignLeads(
+  campaignId: string,
+  agentId: string | null,
+  filter: AssignLeadsFilter
+): Promise<number> {
+  const { data, error } = await supabase.rpc('assign_campaign_leads', {
+    p_campaign_id: campaignId,
+    p_agent_id: agentId,
+    p_filter: filter,
+  });
+  if (error) throw new Error(error.message);
+  return (data as number) ?? 0;
+}
+
+/** TASK-T6: a plain column update through the EXISTING owner/admin-only RLS policy on
+ *  campaign_leads (20260924000300) -- no new RPC, same "a simple settings toggle is fine" shape
+ *  as campaign retry rules/recording settings. */
+export async function setCampaignLeadPriority(
+  leadId: string,
+  priority: CampaignLeadPriority
+): Promise<void> {
+  const { error } = await supabase
+    .from('campaign_leads')
+    .update({ priority, updated_at: new Date().toISOString() })
+    .eq('id', leadId);
+  if (error) throw new Error(error.message);
+}
+
+/** TASK-T6: "Skip lead (not dialed now; it keeps its place/attempt)" -- pushes `next_attempt_at`
+ *  forward so claim_next_leads passes over it for a while, WITHOUT touching `attempts` or
+ *  `position` (that's what "keeps its place/attempt" means literally: neither column is
+ *  written). Same owner/admin-only RLS policy, no new RPC. */
+const SKIP_LEAD_DELAY_MINUTES = 15;
+
+export async function skipCampaignLead(leadId: string): Promise<void> {
+  const nextAttemptAt = new Date(Date.now() + SKIP_LEAD_DELAY_MINUTES * 60_000).toISOString();
+  const { error } = await supabase
+    .from('campaign_leads')
+    .update({ next_attempt_at: nextAttemptAt, updated_at: new Date().toISOString() })
+    .eq('id', leadId);
+  if (error) throw new Error(error.message);
 }
 
 /** PostgREST's `.in(col, values)` compiles every value into the request URL -- batches a large
@@ -1767,10 +1829,19 @@ export async function addLeadsToCampaign(
   };
 }
 
+/** TASK-T6 review fix-forward: used to be a hard `.delete()` -- contradicted this task's own
+ *  "Remove from campaign (terminal status)" ask and silently destroyed the lead's own attempts/
+ *  history (`call_legs.lead_id` is `on delete set null`, so the leg survives but its link to the
+ *  lead does not). Now a plain status flip, same "the row stays, only its status is terminal"
+ *  shape every OTHER terminal outcome (completed/exhausted/dnc/passthrough) already uses. Note:
+ *  re-adding a removed contact to the SAME campaign via `addLeadsToCampaign` will NOT revive this
+ *  row (its own upsert is `ignoreDuplicates: true` / `ON CONFLICT DO NOTHING`) -- pre-existing
+ *  behavior, identical to re-adding an already-completed/exhausted/dnc contact today; out of this
+ *  task's own scope to change. */
 export async function removeLeadFromCampaign(campaignId: string, contactId: string): Promise<void> {
   const { error } = await supabase
     .from('campaign_leads')
-    .delete()
+    .update({ status: 'removed', updated_at: new Date().toISOString() })
     .eq('campaign_id', campaignId)
     .eq('contact_id', contactId);
   if (error) throw new Error(error.message);
@@ -1783,7 +1854,7 @@ export async function removeLeadsFromCampaign(
   if (contactIds.length === 0) return;
   const { error } = await supabase
     .from('campaign_leads')
-    .delete()
+    .update({ status: 'removed', updated_at: new Date().toISOString() })
     .eq('campaign_id', campaignId)
     .in('contact_id', contactIds);
   if (error) throw new Error(error.message);
