@@ -94,7 +94,7 @@ Deno.serve(async (req: Request) => {
 
   const { data: mappingRows, error: mappingsError } = await supabase
     .from('org_ghl_campaign_mappings')
-    .select('id, match_type, tag, pipeline_id, pipeline_stage_id, campaign_id')
+    .select('id, match_type, tag, pipeline_id, pipeline_stage_id, campaign_id, ghl_pull_cursor')
     .eq('org_id', orgId);
   if (mappingsError) {
     console.error('[ghl-sync-now] mapping lookup failed', mappingsError.message);
@@ -141,10 +141,10 @@ Deno.serve(async (req: Request) => {
       dncTags: (integration.ghl_dnc_tags as string[] | null) ?? undefined,
       pausedTags: (integration.ghl_paused_tags as string[] | null) ?? undefined,
       enrichment,
-      // A manual sync always processes everything the mappings match, ignoring the incremental
-      // cursor -- the whole point of clicking the button is "check right now," not "only what
-      // changed since the last automatic tick."
-      sinceDate: null,
+      // A manual sync always processes everything the mappings match, ignoring each mapping's own
+      // incremental cursor -- the whole point of clicking the button is "check right now," not
+      // "only what changed since the last automatic tick."
+      forceFullSync: true,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

@@ -181,6 +181,13 @@ create table public.org_ghl_campaign_mappings (
   pipeline_stage_id text,
   campaign_id uuid not null references public.campaigns(id) on delete cascade,
   created_at timestamptz not null default now(),
+  -- Review fix-forward (eng2, audit/T1/review-eng2.md #3): the incremental pull cursor must be
+  -- PER MAPPING, not one shared org-wide value (org_integrations.ghl_pull_cursor below stays as
+  -- informational last-seen bookkeeping only). A single org-wide cursor let a fast-moving
+  -- mapping's own max dateUpdated silently advance the cutoff past a slower mapping's own
+  -- not-yet-processed contacts on the NEXT run. Null means "no cursor yet" -- process everything
+  -- fetched, same semantics runGhlPullMapping's own sinceDate already had.
+  ghl_pull_cursor timestamptz,
   constraint org_ghl_campaign_mappings_shape check (
     (match_type = 'tag' and tag is not null and pipeline_stage_id is null)
     or

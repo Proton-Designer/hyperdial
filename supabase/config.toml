@@ -412,6 +412,11 @@ verify_jwt = false
 # gateway 401s every tick once deployed, before the function's own X-Cron-Secret check ever
 # runs (TASK-P3-P3, caught in review). Auth is that header, not a JWT.
 verify_jwt = false
+[functions.ghl-pull-worker]
+# Same shape as ghl-sync-worker above: pg_net sends only X-Cron-Secret, no Supabase JWT --
+# without this the gateway 401s every tick before the function's own secret check ever runs
+# (MISSION-4 TASK-T1, review fix-forward -- audit/T1/review-eng2.md #1, BLOCKER).
+verify_jwt = false
 
 # Parallel dialer (auth required except webhook)
 [functions.dialer-session-start]

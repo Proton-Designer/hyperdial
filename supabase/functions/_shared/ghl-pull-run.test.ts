@@ -14,6 +14,7 @@ interface Tables {
   contacts: Record<string, unknown>[];
   dnc_numbers: { org_id: string; e164: string; note?: string }[];
   campaign_leads: { campaign_id: string; contact_id: string; org_id: string; status: string }[];
+  org_ghl_campaign_mappings: { id: string; ghl_pull_cursor: string | null }[];
 }
 
 function makeFakeSupabase(seed: Partial<Tables> = {}) {
@@ -22,6 +23,7 @@ function makeFakeSupabase(seed: Partial<Tables> = {}) {
     contacts: seed.contacts ?? [],
     dnc_numbers: seed.dnc_numbers ?? [],
     campaign_leads: seed.campaign_leads ?? [],
+    org_ghl_campaign_mappings: seed.org_ghl_campaign_mappings ?? [],
   };
   let nextContactId = 1;
 
@@ -295,6 +297,112 @@ Deno.test(
     assertEquals(result.dncTagged, 1);
     assertEquals(supabase.tables.campaign_leads.length, 0);
     assertExists(supabase.tables.dnc_numbers.find((r) => r.e164 === '+14155552671'));
+  }
+);
+
+Deno.test(
+  "runGhlPullForOrg: a fast mapping advancing its own cursor does not skip a slower mapping's later-arriving contact (review-eng2.md #3)",
+  async () => {
+    const FAST: GhlCampaignMappingRow = {
+      id: 'map-fast',
+      match_type: 'tag',
+      tag: 'fast',
+      pipeline_stage_id: null,
+      campaign_id: 'campaign-1',
+      ghl_pull_cursor: null,
+    };
+    const SLOW: GhlCampaignMappingRow = {
+      id: 'map-slow',
+      match_type: 'tag',
+      tag: 'slow',
+      pipeline_stage_id: null,
+      campaign_id: 'campaign-1',
+      ghl_pull_cursor: null,
+    };
+    const supabase = makeFakeSupabase({
+      org_members: [{ org_id: ORG, user_id: OWNER, role: 'owner' }],
+      org_ghl_campaign_mappings: [
+        { id: 'map-fast', ghl_pull_cursor: null },
+        { id: 'map-slow', ghl_pull_cursor: null },
+      ],
+    });
+
+    // Run 1: the "fast" mapping's own contact is already up to date (2026-09-20), the "slow"
+    // mapping's is much older (2026-09-01) -- an org-wide cursor would jump to the fast mapping's
+    // high-water mark after this run.
+    const client = makeFakeGhlClient({
+      searchContacts: async () => ({
+        contacts: [
+          {
+            id: 'g-fast-1',
+            phone: '+14155550001',
+            tags: ['fast'],
+            dateUpdated: '2026-09-20T00:00:00Z',
+          } as GhlContact,
+          {
+            id: 'g-slow-1',
+            phone: '+14155550002',
+            tags: ['slow'],
+            dateUpdated: '2026-09-01T00:00:00Z',
+          } as GhlContact,
+        ],
+        count: 2,
+      }),
+    });
+
+    await runGhlPullForOrg(supabase, client, {
+      orgId: ORG,
+      locationId: 'loc-1',
+      mappings: [FAST, SLOW],
+    });
+
+    const fastRow = supabase.tables.org_ghl_campaign_mappings.find((r) => r.id === 'map-fast')!;
+    const slowRow = supabase.tables.org_ghl_campaign_mappings.find((r) => r.id === 'map-slow')!;
+    assertEquals(fastRow.ghl_pull_cursor, '2026-09-20T00:00:00.000Z');
+    assertEquals(slowRow.ghl_pull_cursor, '2026-09-01T00:00:00.000Z');
+    assertEquals(supabase.tables.contacts.length, 2);
+
+    // Run 2 (next tick): re-read each mapping's own (now-advanced) cursor, same as a real cron
+    // tick re-querying org_ghl_campaign_mappings fresh. A new "slow"-tagged contact arrives whose
+    // dateUpdated (09-10) sits BETWEEN the slow mapping's own cursor (09-01) and the fast
+    // mapping's (09-20). Under the old org-wide-cursor bug this would have been silently dropped
+    // (09-10 < 09-20); with a per-mapping cursor it must still be picked up (09-10 > 09-01).
+    const fast2: GhlCampaignMappingRow = { ...FAST, ghl_pull_cursor: fastRow.ghl_pull_cursor };
+    const slow2: GhlCampaignMappingRow = { ...SLOW, ghl_pull_cursor: slowRow.ghl_pull_cursor };
+    const client2 = makeFakeGhlClient({
+      searchContacts: async () => ({
+        contacts: [
+          {
+            id: 'g-fast-1',
+            phone: '+14155550001',
+            tags: ['fast'],
+            dateUpdated: '2026-09-20T00:00:00Z',
+          } as GhlContact,
+          {
+            id: 'g-slow-1',
+            phone: '+14155550002',
+            tags: ['slow'],
+            dateUpdated: '2026-09-01T00:00:00Z',
+          } as GhlContact,
+          {
+            id: 'g-slow-2',
+            phone: '+14155550003',
+            tags: ['slow'],
+            dateUpdated: '2026-09-10T00:00:00Z',
+          } as GhlContact,
+        ],
+        count: 3,
+      }),
+    });
+
+    const result2 = await runGhlPullForOrg(supabase, client2, {
+      orgId: ORG,
+      locationId: 'loc-1',
+      mappings: [fast2, slow2],
+    });
+
+    assertEquals(result2.totalCreated, 1);
+    assertExists(supabase.tables.contacts.find((c) => c.ghl_contact_id === 'g-slow-2'));
   }
 );
 

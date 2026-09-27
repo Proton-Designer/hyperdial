@@ -132,7 +132,7 @@ Deno.serve(async (req: Request) => {
       }
       const { data: mappingRows } = await supabase
         .from('org_ghl_campaign_mappings')
-        .select('id, match_type, tag, pipeline_id, pipeline_stage_id, campaign_id')
+        .select('id, match_type, tag, pipeline_id, pipeline_stage_id, campaign_id, ghl_pull_cursor')
         .eq('org_id', org.org_id);
       const mappings = (mappingRows ?? []) as GhlCampaignMappingRow[];
       if (mappings.length === 0) {
@@ -159,7 +159,10 @@ Deno.serve(async (req: Request) => {
         dncTags: org.ghl_dnc_tags ?? undefined,
         pausedTags: org.ghl_paused_tags ?? undefined,
         enrichment,
-        sinceDate: org.ghl_pull_cursor ? new Date(org.ghl_pull_cursor) : null,
+        // Review fix-forward (audit/T1/review-eng2.md #3): each mapping now carries its OWN
+        // cursor (mappingRows above includes ghl_pull_cursor) -- the org-level
+        // org_integrations.ghl_pull_cursor below is informational bookkeeping only, no longer
+        // used to filter.
       });
 
       const anyMappingFailed = orgResult.results.some((r) => r.error);

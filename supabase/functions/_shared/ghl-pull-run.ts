@@ -40,6 +40,12 @@ export interface GhlCampaignMappingRow {
   tag: string | null;
   pipeline_stage_id: string | null;
   campaign_id: string;
+  /** Review fix-forward (audit/T1/review-eng2.md #3): PER-MAPPING incremental cursor, replacing
+   *  the old single org-wide `org_integrations.ghl_pull_cursor` for FILTERING purposes (that
+   *  column now only carries informational last-seen bookkeeping for the status UI). Null means
+   *  "no cursor yet for this mapping" -- process everything fetched, same semantics
+   *  runGhlPullMapping's own `sinceDate` already had. */
+  ghl_pull_cursor?: string | null;
 }
 
 export interface RunGhlPullMappingArgs {
@@ -87,6 +93,22 @@ function parseDateMs(s: string | undefined): number | null {
   if (!s) return null;
   const t = Date.parse(s);
   return Number.isNaN(t) ? null : t;
+}
+
+/** Stage mode's own fetch (`fetchContactsForStage`) is already scoped to one pipeline stage, but
+ *  tag mode's (`fetchAllGhlContacts`) is NOT scoped at all -- GHL has no server-side tag filter,
+ *  so every tag mapping in an org sees the exact same full contact fetch and only
+ *  `planGhlImport` narrows it down, per-call, by tag. Computing a mapping's own
+ *  `maxDateUpdatedIso` (used to advance ITS OWN cursor) over the whole unfiltered fetch would
+ *  silently reintroduce the exact cross-mapping cursor bug this per-mapping cursor was built to
+ *  fix (review-eng2.md #3) -- a fast-moving contact tagged for a DIFFERENT mapping would still
+ *  push this mapping's own cursor forward. Mirrors planGhlImport's own tag-match logic exactly
+ *  (trim + case-insensitive). */
+function contactMatchesMapping(contact: GhlContact, mapping: GhlCampaignMappingRow): boolean {
+  if (mapping.match_type !== 'tag') return true;
+  const wantedTag = (mapping.tag ?? '').trim().toLowerCase();
+  const tags = Array.isArray(contact.tags) ? contact.tags : [];
+  return tags.some((t) => typeof t === 'string' && t.toLowerCase() === wantedTag);
 }
 
 const STAGE_PULL_PAGE_LIMIT = 100;
@@ -189,6 +211,7 @@ export async function runGhlPullMapping(
 
   let maxDateUpdatedMs: number | null = null;
   for (const c of fetched.contacts) {
+    if (!contactMatchesMapping(c, mapping)) continue;
     const ms = parseDateMs(c.dateUpdated);
     if (ms !== null && (maxDateUpdatedMs === null || ms > maxDateUpdatedMs)) maxDateUpdatedMs = ms;
   }
@@ -405,7 +428,11 @@ export async function runGhlPullForOrg(
     dncTags?: string[];
     pausedTags?: string[];
     enrichment?: GhlImportEnrichment;
-    sinceDate?: Date | null;
+    /** Skip every mapping's own stored `ghl_pull_cursor` and process everything fetched --
+     *  "Sync now" always sets this (a manual trigger means "check right now," not "only what
+     *  changed since the last automatic tick"). The 5-minute cron path leaves this unset so each
+     *  mapping uses its own cursor. */
+    forceFullSync?: boolean;
   }
 ): Promise<GhlPullOrgResult> {
   const results: GhlPullMappingResult[] = [];
@@ -413,6 +440,8 @@ export async function runGhlPullForOrg(
 
   for (const mapping of args.mappings) {
     try {
+      const mappingSinceDate =
+        !args.forceFullSync && mapping.ghl_pull_cursor ? new Date(mapping.ghl_pull_cursor) : null;
       const result = await runGhlPullMapping(supabase, client, {
         orgId: args.orgId,
         locationId: args.locationId,
@@ -420,12 +449,26 @@ export async function runGhlPullForOrg(
         dncTags: args.dncTags,
         pausedTags: args.pausedTags,
         enrichment: args.enrichment,
-        sinceDate: args.sinceDate,
+        sinceDate: mappingSinceDate,
       });
       results.push(result);
       const ms = parseDateMs(result.maxDateUpdatedIso ?? undefined);
       if (ms !== null && (maxDateUpdatedMs === null || ms > maxDateUpdatedMs))
         maxDateUpdatedMs = ms;
+      // Advance THIS mapping's own cursor -- never the org-wide value -- so a fast-moving
+      // mapping's contacts can no longer push a slower mapping's cutoff ahead of its own progress
+      // (the exact bug review-eng2.md #3 found). Only move forward, and only on a real success
+      // with something actually fetched.
+      if (!result.error && result.maxDateUpdatedIso) {
+        const newMs = Date.parse(result.maxDateUpdatedIso);
+        const oldMs = mapping.ghl_pull_cursor ? Date.parse(mapping.ghl_pull_cursor) : null;
+        if (oldMs === null || newMs > oldMs) {
+          await supabase
+            .from('org_ghl_campaign_mappings')
+            .update({ ghl_pull_cursor: result.maxDateUpdatedIso })
+            .eq('id', mapping.id);
+        }
+      }
     } catch (err) {
       console.error(`[ghl-pull-run] mapping ${mapping.id} failed`, err);
       results.push({
