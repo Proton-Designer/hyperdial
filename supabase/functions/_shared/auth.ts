@@ -1,7 +1,10 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { corsHeaders } from './cors.ts';
 
-export type OrgRole = 'owner' | 'admin' | 'agent';
+// MISSION-5 TASK-M5-A5: 'manager' added. requireOrgRole is a generic gate -- widening this type
+// alone grants nothing; a call site only admits a manager when it explicitly lists 'manager' in
+// its own `roles` array (every existing call site keeps rejecting it by default, fail-closed).
+export type OrgRole = 'owner' | 'admin' | 'agent' | 'manager';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 

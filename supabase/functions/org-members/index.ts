@@ -18,6 +18,7 @@ interface MemberRow {
   created_at: string;
   ghl_user_id: string | null;
   removed_at: string | null;
+  pod_id: string | null;
 }
 
 // MISSION-5 TASK-M5-A3: soft-removed members are only restorable for this long -- matches the
@@ -119,7 +120,12 @@ Deno.serve(async (req) => {
   if (req.method === 'GET') {
     // Design §2: any org member can see the roster (matches org_members' own SELECT RLS --
     // "org members can view roster", not role-gated).
-    const { orgId, error: authError } = await requireOrgRole(req, ['owner', 'admin', 'agent']);
+    const {
+      orgId,
+      role: callerRole,
+      user: caller,
+      error: authError,
+    } = await requireOrgRole(req, ['owner', 'admin', 'agent', 'manager']);
     if (authError) return authError;
 
     // MISSION-5 TASK-M5-A3: "hidden from the roster by default" -- a removed member only shows
@@ -129,16 +135,31 @@ Deno.serve(async (req) => {
 
     let query = supabase
       .from('org_members')
-      .select('user_id, role, status, created_at, ghl_user_id, removed_at')
+      .select('user_id, role, status, created_at, ghl_user_id, removed_at, pod_id')
       .eq('org_id', orgId)
       .order('created_at', { ascending: true });
     if (!showRemoved) {
       query = query.neq('status', 'removed');
     }
-    const { data: members, error } = await query;
+    let { data: members, error } = await query;
     if (error) {
       console.error('org-members list error:', error.message);
       return jsonError(500, 'Failed to list members');
+    }
+
+    // MISSION-5 TASK-M5-A5: a manager only sees the roster rows for agents in their own managed
+    // pods (plus their own row) -- server-enforced here since this endpoint's response, not
+    // org_members' table-level RLS, is what the roster UI actually reads.
+    if (callerRole === 'manager') {
+      const { data: podRows } = await supabase
+        .from('org_manager_pods')
+        .select('pod_id')
+        .eq('org_id', orgId)
+        .eq('manager_user_id', caller.id);
+      const managerPodIds = new Set((podRows ?? []).map((r: { pod_id: string }) => r.pod_id));
+      members = (members ?? []).filter(
+        (m: MemberRow) => m.user_id === caller.id || (m.pod_id && managerPodIds.has(m.pod_id))
+      );
     }
 
     const { data: profiles } = await supabase
@@ -185,6 +206,7 @@ Deno.serve(async (req) => {
         last_name: profile?.last_name ?? null,
         email: emailMap.get(m.user_id) ?? null,
         ghl_user_id: m.ghl_user_id,
+        pod_id: m.pod_id,
         removed_at: m.removed_at,
         restorable_until:
           m.status === 'removed' && m.removed_at
@@ -209,7 +231,14 @@ Deno.serve(async (req) => {
   } = await requireOrgRole(req, ['owner', 'admin']);
   if (authError) return authError;
 
-  let body: { action?: string; user_id?: string; role?: string; ghl_user_id?: string | null };
+  let body: {
+    action?: string;
+    user_id?: string;
+    role?: string;
+    ghl_user_id?: string | null;
+    pod_id?: string | null;
+    pod_ids?: string[];
+  };
   try {
     body = await req.json();
   } catch {
@@ -305,10 +334,10 @@ Deno.serve(async (req) => {
 
   switch (body.action) {
     case 'change_role': {
-      if (body.role !== 'admin' && body.role !== 'agent') {
-        return jsonError(400, "role must be 'admin' or 'agent'");
+      if (body.role !== 'admin' && body.role !== 'agent' && body.role !== 'manager') {
+        return jsonError(400, "role must be 'admin', 'agent', or 'manager'");
       }
-      if (body.role === 'agent') {
+      if (body.role !== 'admin') {
         const guardError = await checkAdminGuard(
           supabase,
           orgId,
@@ -512,11 +541,109 @@ Deno.serve(async (req) => {
       });
       break;
     }
+    // MISSION-5 TASK-M5-A5: which single pod this member belongs to (an agent's or manager's
+    // OWN roster placement -- distinct from a manager's SCOPE, see 'set_manager_pods' below and
+    // this task's own migration header). Owner/admin only (this whole POST handler already is).
+    case 'set_pod': {
+      const podId = typeof body.pod_id === 'string' && body.pod_id ? body.pod_id : null;
+      if (podId) {
+        const { data: pod, error: podLookupError } = await supabase
+          .from('org_pods')
+          .select('id')
+          .eq('id', podId)
+          .eq('org_id', orgId)
+          .maybeSingle();
+        if (podLookupError) {
+          console.error('org-members set_pod lookup error:', podLookupError.message);
+          return jsonError(500, 'Failed to look up pod');
+        }
+        if (!pod) return jsonError(400, 'Pod does not belong to this org');
+      }
+      const { error } = await supabase
+        .from('org_members')
+        .update({ pod_id: podId })
+        .eq('org_id', orgId)
+        .eq('user_id', targetUserId);
+      if (error) {
+        console.error('org-members set_pod error:', error.message);
+        return jsonError(500, 'Failed to set pod');
+      }
+      await logOrgAction(supabase, {
+        orgId,
+        actorUserId: user.id,
+        action: 'member.set_pod',
+        targetType: 'org_member',
+        targetId: targetUserId,
+        details: { pod_id: podId },
+      });
+      break;
+    }
+    // MISSION-5 TASK-M5-A5: replaces the FULL set of pods a manager may supervise (a manager may
+    // be limited to "one or more pods" -- many-to-many, org_manager_pods, see the migration
+    // header for why this is a separate relationship from org_members.pod_id above). Only
+    // meaningful for a 'manager'-role target; rejected for anyone else so a stray call can't
+    // silently seed rows a role change would leave orphaned (org_manager_pods has no role check
+    // of its own -- it's just a scope table -- so this endpoint is the one place that invariant
+    // is enforced).
+    case 'set_manager_pods': {
+      if (target.role !== 'manager') {
+        return jsonError(400, 'set_manager_pods only applies to a member with role manager');
+      }
+      const podIds = Array.isArray(body.pod_ids)
+        ? Array.from(new Set(body.pod_ids.filter((id): id is string => typeof id === 'string')))
+        : [];
+      if (podIds.length > 0) {
+        const { data: pods, error: podsError } = await supabase
+          .from('org_pods')
+          .select('id')
+          .eq('org_id', orgId)
+          .in('id', podIds);
+        if (podsError) {
+          console.error('org-members set_manager_pods lookup error:', podsError.message);
+          return jsonError(500, 'Failed to look up pods');
+        }
+        if ((pods ?? []).length !== podIds.length) {
+          return jsonError(400, 'One or more pod_ids do not belong to this org');
+        }
+      }
+      const { error: deleteError } = await supabase
+        .from('org_manager_pods')
+        .delete()
+        .eq('org_id', orgId)
+        .eq('manager_user_id', targetUserId);
+      if (deleteError) {
+        console.error('org-members set_manager_pods delete error:', deleteError.message);
+        return jsonError(500, 'Failed to update manager pod scope');
+      }
+      if (podIds.length > 0) {
+        const { error: insertError } = await supabase.from('org_manager_pods').insert(
+          podIds.map((podId) => ({
+            org_id: orgId,
+            manager_user_id: targetUserId,
+            pod_id: podId,
+          }))
+        );
+        if (insertError) {
+          console.error('org-members set_manager_pods insert error:', insertError.message);
+          return jsonError(500, 'Failed to update manager pod scope');
+        }
+      }
+      await logOrgAction(supabase, {
+        orgId,
+        actorUserId: user.id,
+        action: 'member.set_manager_pods',
+        targetType: 'org_member',
+        targetId: targetUserId,
+        details: { pod_ids: podIds },
+      });
+      break;
+    }
     default:
       return jsonError(
         400,
         "action must be one of 'change_role', 'disable', 'enable', 'remove', 'restore', " +
-          "'release_queued_leads', 'set_ghl_user_id', 'offboard_preview'"
+          "'release_queued_leads', 'set_ghl_user_id', 'set_pod', 'set_manager_pods', " +
+          "'offboard_preview'"
       );
   }
 

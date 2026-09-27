@@ -26,7 +26,7 @@ interface InviteRow {
   id: string;
   org_id: string;
   email: string;
-  role: 'owner' | 'admin' | 'agent';
+  role: 'owner' | 'admin' | 'agent' | 'manager';
   expires_at: string;
   accepted_at: string | null;
   revoked_at?: string | null;

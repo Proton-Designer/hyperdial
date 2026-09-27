@@ -15,6 +15,7 @@ sources:
   - supabase/migrations/*.sql
   - supabase/migrations/20260927080000_org_audit_log.sql
   - supabase/migrations/20260927080002_org_member_offboarding.sql
+  - supabase/migrations/20260927160550_manager_role_and_pods.sql
   - supabase/functions/org-members/index.ts
   - supabase/functions/_shared/dialer-engine.ts
   - apps/web/src/contexts/AuthContext.tsx
@@ -35,9 +36,11 @@ answers:
   - "how does org/tenant scoping work now"
   - "what are the RLS helper functions and why do they exist"
   - "what happens when a team member is disabled or removed"
-covers: "Supabase auth, session handling, the two-layer Edge Function authorization model, service-role usage, org tenancy, the per-table RLS inventory, and member offboarding (disable/remove/restore)."
+  - "what can a manager role do, and how is their pod scope enforced"
+  - "what is the difference between org_members.pod_id and org_manager_pods"
+covers: "Supabase auth, session handling, the two-layer Edge Function authorization model, service-role usage, org tenancy, the per-table RLS inventory, member offboarding (disable/remove/restore), and the manager role's server-enforced pod scope."
 excludes: "Telnyx webhook signature mechanics (domain.telephony); dial-loop ownership checks (domain.dialer)."
-tokens_est: 5650
+tokens_est: 6100
 source_hash: b8d3fd311248f16889b10f531365423ec36488c32179946d09361fb21c5ce0c5
 ---
 
@@ -104,7 +107,8 @@ source_hash: b8d3fd311248f16889b10f531365423ec36488c32179946d09361fb21c5ce0c5
 | `team-performance` | false | `requireOrgRole(['owner','admin','agent'])`; owner/admin org-wide, agent own-`user_id` only | guarded |
 | `telnyx-list-numbers`/`-search-numbers`/`-purchase-number`/`-webrtc-credentials` | false | `:9`/`:8`/`:9`/`:8` | guarded |
 | `org-invite-create`, `org-members` (POST) | false | `requireOrgRole(['owner','admin'])` | guarded + role-gated |
-| `org-members` (GET) | false | `requireOrgRole(['owner','admin','agent'])` | guarded |
+| `org-members` (GET) | false | `requireOrgRole(['owner','admin','agent','manager'])`; a manager's roster is filtered to their own pod scope in app code | guarded |
+| `org-audit-log` (GET) | false | `requireOrgRole(['owner','admin','manager'])`; a manager's rows are filtered to their own pod scope in app code | guarded |
 | `org-invite-accept` | false | GET: none (token-hash lookup only); POST: `getUserFromRequest` + email match | guarded (POST) / intentionally open (GET preview) |
 | **`telnyx-webhook`** | false | **none** | **unauthenticated** |
 
@@ -130,6 +134,8 @@ are the deliberate exceptions: personal, not org-shared (see `20260924000300`'s 
 | `campaign_leads` | SELECT: owner/admin see all, agent sees only leads on a campaign they're assigned to (`campaign_agents`). INSERT `has_org_role([owner,admin])` **and** both `campaign_id` and `contact_id` verified to belong to the same `org_id` — fixes the auth.md finding that the old policy only checked campaign ownership, never the contact's. UPDATE/DELETE `has_org_role([owner,admin])`. |
 | `contacts` | SELECT/UPDATE: owner/admin see and edit all; agent sees/edits only contacts reachable through an assigned campaign (`campaign_agents` → `campaign_leads`). **The agent UPDATE is full-row, not DNC-scoped — there is no `dnc` column yet.** See known-issues #7. INSERT/DELETE `has_org_role([owner,admin])`. |
 | `user_phone_numbers` | SELECT `is_org_member` (any role, to pick a caller ID); INSERT/UPDATE/DELETE `has_org_role([owner,admin])`. |
+| `org_pods` (`20260927160550`, TASK-M5-A5) | SELECT `is_org_member`; INSERT/UPDATE/DELETE `has_org_role([owner,admin])`. Just a name — membership (`org_members.pod_id`) and a manager's scope (`org_manager_pods`) are separate tables. |
+| `org_manager_pods` (`20260927160550`, TASK-M5-A5) | SELECT: the manager's own rows (`manager_user_id = auth.uid()`), or owner/admin see all. INSERT/UPDATE/DELETE `has_org_role([owner,admin])` — a manager can view but never edit their own scope. |
 | `notifications` | Unchanged: SELECT/UPDATE `user_id = auth.uid()`. Personal, not org-scoped even though `org_id` was added to the table (FK/cascade hygiene only). |
 | `user_preferences` | Unchanged: SELECT/INSERT/UPDATE `auth.uid() = user_id`. No `org_id` column — stays per-user. |
 | `dialer_sessions` | SELECT: owner/admin see all; agent sees only their own. All writes via Edge Functions. |
@@ -164,6 +170,22 @@ are the deliberate exceptions: personal, not org-shared (see `20260924000300`'s 
 **Admin lock-out guard** (`org-members/index.ts`'s `checkAdminGuard`, Edge-Function-level, not a DB trigger — the only client write path): acting on an `admin` target needs the ORG OWNER, unless the actor is acting on **themselves** (a self-demote is allowed to reach the next check instead of being blanket-refused); either way, the action is refused if it would drop the org's active `owner`+`admin` headcount to zero. The owner's own row remains fully untouchable through this endpoint (pre-existing check, unchanged).
 
 **`team_daily_stats` historical-range fix**: its `members` CTE used to filter to `status = 'active'` only, so a member disabled/removed AFTER the fact would silently vanish from every past date-range query too — not just today's roster. Fixed to also include a non-active member whose own `dial_sessions` actually overlaps the queried `[p_start, p_end)` window (same overlap test the `hours` CTE already used) — a member removed long before an unrelated query window still doesn't clutter it. `team_live_board` (the CURRENT, right-now board) was correctly untouched: a disabled/removed agent isn't "live" and already renders as `'offline'`.
+
+## Manager role + pods (MISSION-5 TASK-M5-A5)
+
+`org_members.role` (and `org_invites.role`) gained a fourth value, `'manager'` (`20260927160550_manager_role_and_pods.sql`, sorted after eng2's B2 migration — see that migration's own header for why). A manager can see the Team page, coach, assign leads, see reports and the audit log for their own scope; they cannot buy numbers, change billing/spend, change roles, or edit org settings — enforced by simply never widening any of THOSE role checks, not by a separate "forbidden" list.
+
+**Two distinct relationships, on purpose**: `org_members.pod_id` (nullable FK to the new `org_pods`) is the single pod an agent (or manager) belongs to *as a roster member* — zero or one. A manager's own **scope** — which pod(s) they may supervise — is a separate many-to-many table, `org_manager_pods(org_id, manager_user_id, pod_id)`. A manager typically has a `pod_id` too (their own "home" pod), but it plays no role in what they can see; only `org_manager_pods` does.
+
+**The one new scoping primitive**: `private.is_agent_in_callers_pod_scope(org, agent)` — `true` unconditionally for an owner/admin caller (unchanged full visibility), `true` for a manager caller when the target agent's `pod_id` is one of the manager's own `org_manager_pods` rows, `false` otherwise. Composed into every touch point the task named that lives in this lane:
+- `team_live_board`/`team_daily_stats`: role gate widened to `['owner','admin','manager']`; the `members` CTE gets `and private.is_agent_in_callers_pod_scope(p_org, m.user_id)` — a manager's query is scoped at the row level, not just admitted at the door (unlike owner/admin, passing the role check alone doesn't mean a manager can see a SPECIFIC row).
+- `agent_time_in_state`: same role widen; the `events` CTE's WHERE gets `is_agent_in_callers_pod_scope(...) or (has_org_role(['agent']) and e.agent_id = auth.uid())` — composes with the existing agent-self-view path (the NULL-comparison privacy fix from A4/fix-A4) unchanged.
+- `assign_campaign_leads` (eng2's B3 RPC): widened via a **further `create or replace` in THIS migration**, never touching B3's own file (same non-destructive layering convention used throughout M5) — a manager may only assign TO an agent in their own pod scope, and for `mode: 'by_current_agent'`, the SOURCE agent (`p_filter.from_agent_id`) must also be in scope.
+- `org-members`'s roster GET and `org-audit-log`'s GET: both Edge Functions, scoped in application code (a manager only sees roster rows / audit rows for agents in their own pods, plus their own).
+
+**Explicitly NOT scoped yet** (coordinate once landed, don't touch concurrently): coaching (`coaching-core.ts`) and remote pause/stop (`dialer-engine.ts`) are eng2's B2 territory — B2's own task file says "manager after A5", i.e. B2 ships owner/admin-only first and picks up manager+pod scoping in its own follow-up once B2 has landed.
+
+**Client-side tab visibility** (cosmetic only, real enforcement is server-side above): a manager gets Dashboard/Dialer/Contacts/Analytics/Team/Settings, same as owner/admin, **except Campaigns** — "assign leads" is enforced server-side but deliberately has no client entry point yet (Campaigns.tsx has other un-scoped surface — CSV import, campaign creation, agent-roster assignment — that would need its own manager-safe review first). Within Settings, a manager is further restricted to just the Activity (audit log) and Security (own profile) sub-tabs — not Telephony/Team/Integrations/Dispositions/DNC/Distribution, all billing/numbers/org-settings-adjacent.
 
 ## Constraints & gotchas
 

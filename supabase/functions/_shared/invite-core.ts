@@ -48,7 +48,7 @@ export function isInviteLive(invite: InvitableFields): boolean {
 }
 
 export type OrgMemberStatus = 'active' | 'disabled' | 'removed';
-export type OrgMemberRole = 'owner' | 'admin' | 'agent';
+export type OrgMemberRole = 'owner' | 'admin' | 'agent' | 'manager';
 
 export type MembershipConflictResolution =
   | { action: 'reject_disabled' }

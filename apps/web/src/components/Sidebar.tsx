@@ -29,16 +29,21 @@ interface NavTab {
   icon: LucideIcon;
   label: string;
   agentLabel?: string;
-  ownerAdminOnly?: boolean;
+  /** undefined = every role (including agent); 'manager' = owner/admin/manager; 'admin' =
+   *  owner/admin only. MISSION-5 TASK-M5-A5: Analytics/Team are 'manager' (reports + the Team
+   *  page are explicitly in a manager's own scope); Campaigns stays 'admin' -- a manager's
+   *  "assign leads" capability is enforced server-side but deliberately has no client entry point
+   *  yet (see MainApp.tsx's MANAGER_ALLOWED_TABS comment). */
+  minRole?: 'manager' | 'admin';
 }
 
 const tabs: NavTab[] = [
   { id: 'dashboard', icon: LayoutGrid, label: 'Dashboard', agentLabel: 'My stats' },
   { id: 'dialer', icon: Phone, label: 'Dialer' },
   { id: 'contacts', icon: Users, label: 'Contacts' },
-  { id: 'campaigns', icon: Target, label: 'Campaigns', ownerAdminOnly: true },
-  { id: 'analytics', icon: BarChart3, label: 'Analytics', ownerAdminOnly: true },
-  { id: 'team', icon: UsersRound, label: 'Team', ownerAdminOnly: true },
+  { id: 'campaigns', icon: Target, label: 'Campaigns', minRole: 'admin' },
+  { id: 'analytics', icon: BarChart3, label: 'Analytics', minRole: 'manager' },
+  { id: 'team', icon: UsersRound, label: 'Team', minRole: 'manager' },
 ];
 
 export function Sidebar({
@@ -57,8 +62,13 @@ export function Sidebar({
   // its last-known value throughout, so gating on role alone is both sufficient and avoids
   // bouncing a manager out of a manager-only tab on every unrelated refetch (re-review regression).
   const isManager = role === 'owner' || role === 'admin';
+  const isManagerOrBetter = isManager || role === 'manager';
   const isAgent = role === 'agent';
-  const visibleTabs = tabs.filter((tab) => isManager || !tab.ownerAdminOnly);
+  const visibleTabs = tabs.filter((tab) => {
+    if (tab.minRole === 'admin') return isManager;
+    if (tab.minRole === 'manager') return isManagerOrBetter;
+    return true;
+  });
 
   const renderItem = (tab: NavTab, extraOnClick?: () => void) => {
     const Icon = tab.icon;
@@ -117,7 +127,7 @@ export function Sidebar({
       </nav>
 
       <div className="space-y-1 border-t border-border-subtle p-2.5">
-        {isManager && renderItem({ id: 'settings', icon: Settings, label: 'Settings' })}
+        {isManagerOrBetter && renderItem({ id: 'settings', icon: Settings, label: 'Settings' })}
 
         <button
           onClick={onToggleCollapse}

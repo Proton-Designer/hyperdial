@@ -154,6 +154,7 @@ const ROLE_LABEL: Record<TeamMemberRole, string> = {
   owner: 'Owner',
   admin: 'Admin',
   agent: 'Agent',
+  manager: 'Manager',
 };
 
 function RoleChip({ role }: { role: TeamMemberRole }) {
@@ -567,6 +568,11 @@ export function Team() {
   // extra RPC round trip). 'all' means unfiltered for both.
   const [liveStatusFilter, setLiveStatusFilter] = useState<TeamLiveStatus | 'all'>('all');
   const [liveCampaignFilter, setLiveCampaignFilter] = useState<string>('all');
+  // MISSION-5 TASK-M5-A5: pod filter, same client-side-over-already-scoped-rows shape as the
+  // campaign filter above -- a manager's own rows are ALREADY pod-scoped server-side
+  // (team_live_board), this only lets them (or an owner/admin) narrow further within what they
+  // can already see.
+  const [livePodFilter, setLivePodFilter] = useState<string>('all');
   const [liveSortKey, setLiveSortKey] = useState<
     'name' | 'status' | 'calls_today' | 'conversations_today' | 'state_since'
   >('name');
@@ -692,6 +698,7 @@ export function Team() {
     const filtered = live.filter((row) => {
       if (liveStatusFilter !== 'all' && row.status !== liveStatusFilter) return false;
       if (liveCampaignFilter !== 'all' && row.campaign_id !== liveCampaignFilter) return false;
+      if (livePodFilter !== 'all' && row.pod_id !== livePodFilter) return false;
       return true;
     });
     const dir = liveSortDir === 'asc' ? 1 : -1;
@@ -706,7 +713,7 @@ export function Team() {
       }
       return dir * (String(av).localeCompare(String(bv)) || 0);
     });
-  }, [live, liveStatusFilter, liveCampaignFilter, liveSortKey, liveSortDir]);
+  }, [live, liveStatusFilter, liveCampaignFilter, livePodFilter, liveSortKey, liveSortDir]);
 
   /** Distinct (campaign_id, campaign_name) pairs currently on the live board -- the filter's own
    *  option list, so it only ever offers a campaign someone is actually dialing right now. */
@@ -716,6 +723,19 @@ export function Team() {
     for (const row of live) {
       if (row.campaign_id && !seen.has(row.campaign_id)) {
         seen.set(row.campaign_id, row.campaign_name ?? row.campaign_id);
+      }
+    }
+    return [...seen.entries()];
+  }, [live]);
+
+  /** MISSION-5 TASK-M5-A5: same shape as liveCampaignOptions -- only offers a pod that has
+   *  someone on the (already server-scoped) board right now. */
+  const livePodOptions = useMemo(() => {
+    if (!live) return [];
+    const seen = new Map<string, string>();
+    for (const row of live) {
+      if (row.pod_id && !seen.has(row.pod_id)) {
+        seen.set(row.pod_id, row.pod_name ?? row.pod_id);
       }
     }
     return [...seen.entries()];
@@ -804,6 +824,20 @@ export function Team() {
                   >
                     <option value="all">All campaigns</option>
                     {liveCampaignOptions.map(([id, name]) => (
+                      <option key={id} value={id}>
+                        {name}
+                      </option>
+                    ))}
+                  </select>
+                )}
+                {livePodOptions.length > 0 && (
+                  <select
+                    value={livePodFilter}
+                    onChange={(e) => setLivePodFilter(e.target.value)}
+                    className="bg-surface-2 border border-white/10 rounded-app-sm px-2 py-1.5 text-sm text-text-primary"
+                  >
+                    <option value="all">All pods</option>
+                    {livePodOptions.map(([id, name]) => (
                       <option key={id} value={id}>
                         {name}
                       </option>

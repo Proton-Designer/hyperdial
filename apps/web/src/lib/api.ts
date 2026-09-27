@@ -758,7 +758,7 @@ export async function getAnalyticsSummary(
 // See 20260925080100_team_view.sql's own header for why this repo's usual "edge function does
 // the role check, a service-role client trusts it" pattern isn't used here.
 
-export type TeamMemberRole = 'owner' | 'admin' | 'agent';
+export type TeamMemberRole = 'owner' | 'admin' | 'agent' | 'manager';
 
 export interface TeamDailyStatsRow {
   agent_id: string;
@@ -815,6 +815,10 @@ export interface TeamLiveBoardRow {
    *  live board's "filter by campaign". */
   campaign_id: string | null;
   campaign_name: string | null;
+  /** MISSION-5 TASK-M5-A5: this agent's roster pod (null if unassigned) -- backs the live
+   *  board's "filter by pod". */
+  pod_id: string | null;
+  pod_name: string | null;
 }
 
 /** Poll every 5s (ADM-7) -- a single RPC round trip per poll, not N queries. */
@@ -1319,7 +1323,7 @@ export async function markAllNotificationsRead(): Promise<void> {
 
 export interface OrgMember {
   user_id: string;
-  role: 'owner' | 'admin' | 'agent';
+  role: 'owner' | 'admin' | 'agent' | 'manager';
   status: 'active' | 'disabled' | 'removed';
   created_at: string;
   first_name: string | null;
@@ -1328,6 +1332,11 @@ export interface OrgMember {
   /** MISSION-4 TASK-T1 (GHL-8): this member's GHL user id, owner/admin-set. Null until mapped.
    *  Informational only -- the dialer's own queueing/assignment logic never reads it. */
   ghl_user_id: string | null;
+  /** MISSION-5 TASK-M5-A5: the single pod this member (agent or manager) belongs to on the
+   *  roster -- distinct from a manager's own SCOPE (`getManagerPods`/`setManagerPods`). Null if
+   *  unassigned. A manager caller only ever sees rows in their own managed pods (plus their own),
+   *  server-filtered -- see org-members/index.ts's GET handler. */
+  pod_id: string | null;
   /** MISSION-5 TASK-M5-A3: set when status is 'removed'. */
   removed_at: string | null;
   /** MISSION-5 TASK-M5-A3: `restore` 403s past this instant (72h after removed_at); null unless
@@ -1361,7 +1370,7 @@ async function orgMembersAction(body: Record<string, unknown>): Promise<Record<s
   return data;
 }
 
-export const changeMemberRole = (userId: string, role: 'admin' | 'agent') =>
+export const changeMemberRole = (userId: string, role: 'admin' | 'agent' | 'manager') =>
   orgMembersAction({ action: 'change_role', user_id: userId, role });
 /** MISSION-5 TASK-M5-A3: halts new-batch dialing immediately (a live call is allowed to finish)
  *  and releases this member's assigned numbers back to the pool -- both server-side, part of the
@@ -1383,6 +1392,73 @@ export const restoreMember = (userId: string) =>
 /** MISSION-4 TASK-T1 (GHL-8). Pass an empty string/null to clear the mapping. */
 export const updateMemberGhlUserId = (userId: string, ghlUserId: string | null) =>
   orgMembersAction({ action: 'set_ghl_user_id', user_id: userId, ghl_user_id: ghlUserId });
+
+// --- MISSION-5 TASK-M5-A5: pods (Settings -> Team's pod management + a manager's scope) ---
+
+export interface OrgPod {
+  id: string;
+  org_id: string;
+  name: string;
+  created_at: string;
+}
+
+/** Any org member may list pods (org_pods' own RLS: `private.is_org_member`) -- the pod picker
+ *  needs this for every role, not just owner/admin. */
+export async function listOrgPods(): Promise<OrgPod[]> {
+  const { data, error } = await supabase.from('org_pods').select('*').order('name');
+  if (error) throw new Error(error.message);
+  return (data ?? []) as OrgPod[];
+}
+
+export async function createOrgPod(name: string): Promise<OrgPod> {
+  const orgId = await getActiveOrgId();
+  const { data, error } = await supabase
+    .from('org_pods')
+    .insert({ org_id: orgId, name })
+    .select('*')
+    .single();
+  if (error) throw new Error(error.message);
+  return data as OrgPod;
+}
+
+export async function renameOrgPod(podId: string, name: string): Promise<void> {
+  const { error } = await supabase.from('org_pods').update({ name }).eq('id', podId);
+  if (error) throw new Error(error.message);
+}
+
+/** A pod with members still assigned to it (org_members.pod_id) or in a manager's scope
+ *  (org_manager_pods) is left dangling by design -- both are `on delete set null`/cascade at the
+ *  DB level, never blocked here; the Settings UI warns before calling this if it knows the pod
+ *  isn't empty. */
+export async function deleteOrgPod(podId: string): Promise<void> {
+  const { error } = await supabase.from('org_pods').delete().eq('id', podId);
+  if (error) throw new Error(error.message);
+}
+
+/** Which single pod this member (agent or manager) belongs to on the roster -- owner/admin only
+ *  (server-enforced in org-members/index.ts, this whole POST endpoint is owner/admin-gated).
+ *  Pass null to clear. */
+export const setMemberPod = (userId: string, podId: string | null) =>
+  orgMembersAction({ action: 'set_pod', user_id: userId, pod_id: podId });
+
+/** A manager's own scope: which pod(s) they may supervise (org_manager_pods, many-to-many --
+ *  see the A5 migration header for why this is separate from `setMemberPod` above). Replaces the
+ *  FULL set every call; only valid for a member whose role is already 'manager'. */
+export const setManagerPods = (userId: string, podIds: string[]) =>
+  orgMembersAction({ action: 'set_manager_pods', user_id: userId, pod_ids: podIds });
+
+/** A manager's own pod scope, keyed by pod_id -- used both by Settings -> Team (to show/edit a
+ *  manager's assigned pods) and by Team.tsx (so a manager's own client can label "your pods" on
+ *  the live board/daily table without re-deriving it from the roster). Owner/admin can read
+ *  every manager's scope; a manager can only read their own (org_manager_pods' own RLS). */
+export async function getManagerPods(managerUserId: string): Promise<string[]> {
+  const { data, error } = await supabase
+    .from('org_manager_pods')
+    .select('pod_id')
+    .eq('manager_user_id', managerUserId);
+  if (error) throw new Error(error.message);
+  return (data ?? []).map((r: { pod_id: string }) => r.pod_id);
+}
 
 // --- MISSION-5 TASK-M5-A3: offboarding wizard ---
 
@@ -1494,7 +1570,7 @@ export interface BulkInviteResult {
 
 export async function createOrgInvites(
   emails: string[],
-  role: 'admin' | 'agent',
+  role: 'admin' | 'agent' | 'manager',
   campaignIds: string[] = []
 ): Promise<BulkInviteResult[]> {
   const res = await fetch(`${getFunctionsUrl()}/org-invite-create`, {
@@ -1510,7 +1586,7 @@ export async function createOrgInvites(
 export interface OrgInvite {
   id: string;
   email: string;
-  role: 'owner' | 'admin' | 'agent';
+  role: 'owner' | 'admin' | 'agent' | 'manager';
   invitedByName: string | null;
   campaignIds: string[];
   status: 'pending' | 'accepted' | 'expired' | 'revoked';
@@ -1552,7 +1628,7 @@ export async function revokeOrgInvite(inviteId: string): Promise<void> {
 export interface InvitePreview {
   valid: boolean;
   email: string | null;
-  role: 'owner' | 'admin' | 'agent' | null;
+  role: 'owner' | 'admin' | 'agent' | 'manager' | null;
   orgName: string | null;
   reason: 'expired' | 'accepted' | null;
 }

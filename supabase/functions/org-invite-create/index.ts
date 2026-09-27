@@ -48,7 +48,7 @@ async function hashToken(token: string): Promise<string> {
 interface InviteRow {
   id: string;
   email: string;
-  role: 'owner' | 'admin' | 'agent';
+  role: 'owner' | 'admin' | 'agent' | 'manager';
   invited_by: string;
   expires_at: string;
   accepted_at: string | null;
@@ -269,8 +269,8 @@ Deno.serve(async (req) => {
     return jsonError(400, `At most ${MAX_EMAILS_PER_BATCH} emails per batch`);
   }
   const role = body.role;
-  if (role !== 'admin' && role !== 'agent') {
-    return jsonError(400, "role must be 'admin' or 'agent'");
+  if (role !== 'admin' && role !== 'agent' && role !== 'manager') {
+    return jsonError(400, "role must be 'admin', 'agent', or 'manager'");
   }
   const campaignIds = Array.isArray(body.campaignIds)
     ? body.campaignIds.filter((id): id is string => typeof id === 'string')

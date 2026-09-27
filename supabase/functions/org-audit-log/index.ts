@@ -57,7 +57,12 @@ Deno.serve(async (req) => {
   const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
   if (req.method === 'GET') {
-    const { orgId, error: authError } = await requireOrgRole(req, ['owner', 'admin']);
+    const {
+      orgId,
+      role: callerRole,
+      user,
+      error: authError,
+    } = await requireOrgRole(req, ['owner', 'admin', 'manager']);
     if (authError) return authError;
 
     const url = new URL(req.url);
@@ -86,6 +91,34 @@ Deno.serve(async (req) => {
     if (action) query = query.eq('action', action);
     if (from) query = query.gte('created_at', from);
     if (to) query = query.lt('created_at', to);
+
+    // MISSION-5 TASK-M5-A5: "the audit log for their scope" -- a manager only sees rows where
+    // the actor OR the target is one of their own managed pods' agents (or themselves). Scope
+    // interpretation: target_id is an opaque uuid whose meaning depends on target_type, but this
+    // repo's own audit actions are almost entirely member-shaped (member.*, campaign_leads.assign
+    // with an agent_id in `details`) -- filtering on target_id regardless of target_type is a
+    // deliberate simplification, not a precise per-action scope; re-tighten to also match
+    // target_type = 'org_member' specifically if a manager ever needs a stricter view.
+    if (callerRole === 'manager') {
+      const { data: podRows } = await supabase
+        .from('org_manager_pods')
+        .select('pod_id')
+        .eq('org_id', orgId)
+        .eq('manager_user_id', user.id);
+      const podIds = (podRows ?? []).map((r: { pod_id: string }) => r.pod_id);
+      let scopedIds: string[] = [user.id];
+      if (podIds.length > 0) {
+        const { data: agentRows } = await supabase
+          .from('org_members')
+          .select('user_id')
+          .eq('org_id', orgId)
+          .eq('status', 'active')
+          .in('pod_id', podIds);
+        scopedIds = scopedIds.concat((agentRows ?? []).map((r: { user_id: string }) => r.user_id));
+      }
+      const idList = Array.from(new Set(scopedIds)).join(',');
+      query = query.or(`actor_user_id.in.(${idList}),target_id.in.(${idList})`);
+    }
 
     const { data: rows, error, count } = await query;
     if (error) {

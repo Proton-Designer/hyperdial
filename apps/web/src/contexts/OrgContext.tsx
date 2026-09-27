@@ -10,7 +10,12 @@ import {
 import { supabase } from '@/lib/supabase';
 import { useAuth } from './AuthContext';
 
-export type OrgRole = 'owner' | 'admin' | 'agent';
+// MISSION-5 TASK-M5-A5: 'manager' added. This is the client's own copy of the role union (the
+// server's real source of truth is org_members_role_check, widened in the same task's migration)
+// -- every place that reads `role` already does an explicit equality/membership check, so a
+// stale build never silently mis-classifies a manager as something more privileged; at worst it
+// fails a `=== 'manager'` check and treats them like an unrecognized/lower role until redeployed.
+export type OrgRole = 'owner' | 'admin' | 'agent' | 'manager';
 
 export interface OrgMembership {
   orgId: string;

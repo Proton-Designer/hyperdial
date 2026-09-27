@@ -27,6 +27,22 @@ export interface ParallelDialLaunchContext {
 // Dialer instead of rendering a hidden tab.
 const AGENT_ALLOWED_TABS: readonly TabType[] = ['dashboard', 'dialer', 'contacts'];
 
+// MISSION-5 TASK-M5-A5: a manager gets Analytics (reports) and Team, plus Settings (internally
+// restricted to just the Activity/audit-log sub-tab and their own profile -- see Settings.tsx's
+// own `isManagerRole` gate), but NOT Campaigns -- "assign leads" for a manager is enforced
+// server-side (assign_campaign_leads' pod-scope check) but deliberately has no client entry point
+// in this pass, since Campaigns.tsx has other unrelated, un-scoped surface (CSV import, campaign
+// creation, agent-roster assignment) that would need its own manager-safe review first. Not done;
+// see RESUME_PLAN-eng1.md/LANE-eng1.md.
+const MANAGER_ALLOWED_TABS: readonly TabType[] = [
+  'dashboard',
+  'dialer',
+  'contacts',
+  'analytics',
+  'team',
+  'settings',
+];
+
 // TASK-B1 Phase 1: minimal URL sync (B1's known gap -- no routing, refresh always lands on
 // Dashboard, Back/Forward don't move tabs, tabs aren't bookmarkable/deep-linkable). Real
 // pathname + History API, not a hash route -- vercel.json already rewrites every path to
@@ -64,7 +80,12 @@ export function MainApp() {
   // on first load/right after an invite accept, without bouncing an already-confirmed manager
   // out of a manager-only tab every time something else triggers a refetch.
   const isManager = role === 'owner' || role === 'admin';
-  const restrictToAgentTabs = !isManager;
+  // MISSION-5 TASK-M5-A5: `allowedTabs` generalizes the old binary "agent vs. everyone" gate to
+  // three tiers -- null means unrestricted (owner/admin, unchanged). A manager gets its own,
+  // narrower list (MANAGER_ALLOWED_TABS); role null/loading or 'agent' still fails closed to the
+  // most restrictive list, exactly as before.
+  const allowedTabs: readonly TabType[] | null =
+    role === 'manager' ? MANAGER_ALLOWED_TABS : isManager ? null : AGENT_ALLOWED_TABS;
   // If the deep-linked path is manager-only, we don't yet know (role hasn't resolved on first
   // paint) whether to honor it -- start on the same safe 'dialer' fallback an agent would land
   // on, and remember the real target here so the role-resolution effect below can promote to it
@@ -114,7 +135,7 @@ export function MainApp() {
   };
 
   const setActiveTab = (tab: TabType) => {
-    const resolved = restrictToAgentTabs && !AGENT_ALLOWED_TABS.includes(tab) ? 'dialer' : tab;
+    const resolved = allowedTabs !== null && !allowedTabs.includes(tab) ? 'dialer' : tab;
     setActiveTabState(resolved);
     syncUrl(resolved);
   };
@@ -122,11 +143,11 @@ export function MainApp() {
   // Guards against role loading in after a hidden tab was already selected (e.g. `role` starts
   // null while OrgContext's own fetch is still in flight) -- not just new navigation attempts.
   useEffect(() => {
-    if (restrictToAgentTabs && !AGENT_ALLOWED_TABS.includes(activeTab)) {
+    if (allowedTabs !== null && !allowedTabs.includes(activeTab)) {
       setActiveTabState('dialer');
       syncUrl('dialer', { replace: true });
     }
-  }, [restrictToAgentTabs, activeTab]);
+  }, [allowedTabs, activeTab]);
 
   // Resolves the deep-link deferred above, as soon as OrgContext's REAL fetch (the one for the
   // actual signed-in user) settles: promote to the real manager-only tab if the visitor turned
@@ -159,13 +180,13 @@ export function MainApp() {
     if (pending === null) return;
     if (!sawOrgLoadingRef.current) return; // still the spurious pre-auth cycle; wait for the real one
     pendingDeepLinkTabRef.current = null;
-    if (!restrictToAgentTabs) {
+    if (allowedTabs === null || allowedTabs.includes(pending)) {
       setActiveTabState(pending);
       syncUrl(pending, { replace: true });
     } else {
       syncUrl('dialer', { replace: true });
     }
-  }, [orgLoading, restrictToAgentTabs]);
+  }, [orgLoading, allowedTabs]);
 
   // Back/Forward: reflect the browser's own history navigation in state without pushing a new
   // entry (that would corrupt the back-stack) -- only ever replaceState, and only to correct a
@@ -173,14 +194,13 @@ export function MainApp() {
   useEffect(() => {
     const onPopState = () => {
       const urlTab = tabFromPath(window.location.pathname);
-      const resolved =
-        restrictToAgentTabs && !AGENT_ALLOWED_TABS.includes(urlTab) ? 'dialer' : urlTab;
+      const resolved = allowedTabs !== null && !allowedTabs.includes(urlTab) ? 'dialer' : urlTab;
       setActiveTabState(resolved);
       if (resolved !== urlTab) window.history.replaceState(null, '', TAB_PATHS[resolved]);
     };
     window.addEventListener('popstate', onPopState);
     return () => window.removeEventListener('popstate', onPopState);
-  }, [restrictToAgentTabs]);
+  }, [allowedTabs]);
 
   return (
     <div className="h-screen bg-surface-0 flex flex-col overflow-hidden">

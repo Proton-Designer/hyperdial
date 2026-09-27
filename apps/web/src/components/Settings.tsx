@@ -65,6 +65,14 @@ import {
   assignCampaignLeads,
   type OffboardPreview,
   updateMemberGhlUserId,
+  listOrgPods,
+  createOrgPod,
+  renameOrgPod,
+  deleteOrgPod,
+  setMemberPod,
+  setManagerPods,
+  getManagerPods,
+  type OrgPod,
   getGhlIntegrationStatus,
   connectGhl,
   disconnectGhl,
@@ -313,7 +321,12 @@ function ProfileTab() {
   );
 }
 
-const ROLE_LABEL: Record<string, string> = { owner: 'Owner', admin: 'Admin', agent: 'Agent' };
+const ROLE_LABEL: Record<string, string> = {
+  owner: 'Owner',
+  admin: 'Admin',
+  agent: 'Agent',
+  manager: 'Manager',
+};
 
 function TeamTab() {
   const { user } = useAuth();
@@ -334,7 +347,7 @@ function TeamTab() {
   // campaign set for the whole batch (matches the task's own "choose role and optional campaigns"
   // wording -- per-email role/campaigns would need a much heavier per-row form for a rare need).
   const [inviteEmailsText, setInviteEmailsText] = useState('');
-  const [inviteRole, setInviteRole] = useState<'admin' | 'agent'>('agent');
+  const [inviteRole, setInviteRole] = useState<'admin' | 'agent' | 'manager'>('agent');
   const [inviteCampaignIds, setInviteCampaignIds] = useState<string[]>([]);
   const [inviteSubmitting, setInviteSubmitting] = useState(false);
   const [bulkResults, setBulkResults] = useState<BulkInviteResult[] | null>(null);
@@ -347,6 +360,15 @@ function TeamTab() {
     mode: 'disable' | 'remove';
   } | null>(null);
 
+  // MISSION-5 TASK-M5-A5: pods (owner/admin manage them; a manager's own SCOPE -- which pods they
+  // supervise -- is a separate per-manager list, see the migration header for why the two are
+  // distinct relationships).
+  const [pods, setPods] = useState<OrgPod[]>([]);
+  const [managerPodIds, setManagerPodIds] = useState<Record<string, string[]>>({});
+  const [newPodName, setNewPodName] = useState('');
+  const [podBusy, setPodBusy] = useState(false);
+  const [podError, setPodError] = useState<string | null>(null);
+
   const canManage = role === 'owner' || role === 'admin';
 
   const load = useCallback(() => {
@@ -355,11 +377,22 @@ function TeamTab() {
       listOrgMembers(showRemoved),
       canManage ? listOrgInvites() : Promise.resolve([]),
       canManage ? listCampaigns() : Promise.resolve([]),
+      canManage ? listOrgPods() : Promise.resolve([]),
     ])
-      .then(([m, i, c]) => {
+      .then(async ([m, i, c, p]) => {
         setMembers(m);
         setInvites(i);
         setCampaigns(c);
+        setPods(p);
+        const managers = m.filter((mem) => mem.role === 'manager');
+        if (canManage && managers.length > 0) {
+          const entries = await Promise.all(
+            managers.map(async (mgr) => [mgr.user_id, await getManagerPods(mgr.user_id)] as const)
+          );
+          setManagerPodIds(Object.fromEntries(entries));
+        } else {
+          setManagerPodIds({});
+        }
       })
       .catch((e) => setError(String(e)))
       .finally(() => setLoading(false));
@@ -416,6 +449,66 @@ function TeamTab() {
 
   const handleRestore = (m: OrgMember) => {
     runAction(m.user_id, () => restoreMember(m.user_id));
+  };
+
+  const handleCreatePod = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const name = newPodName.trim();
+    if (!name) return;
+    setPodBusy(true);
+    setPodError(null);
+    try {
+      await createOrgPod(name);
+      setNewPodName('');
+      load();
+    } catch (e) {
+      setPodError(String(e));
+    } finally {
+      setPodBusy(false);
+    }
+  };
+
+  const handleRenamePod = async (pod: OrgPod) => {
+    const name = window.prompt('Rename pod', pod.name)?.trim();
+    if (!name || name === pod.name) return;
+    setPodBusy(true);
+    setPodError(null);
+    try {
+      await renameOrgPod(pod.id, name);
+      load();
+    } catch (e) {
+      setPodError(String(e));
+    } finally {
+      setPodBusy(false);
+    }
+  };
+
+  const handleDeletePod = async (pod: OrgPod) => {
+    if (!confirm(`Delete pod "${pod.name}"? Members in it become unassigned.`)) return;
+    setPodBusy(true);
+    setPodError(null);
+    try {
+      await deleteOrgPod(pod.id);
+      load();
+    } catch (e) {
+      setPodError(String(e));
+    } finally {
+      setPodBusy(false);
+    }
+  };
+
+  const handleToggleManagerPod = async (managerUserId: string, podId: string) => {
+    const current = managerPodIds[managerUserId] ?? [];
+    const next = current.includes(podId)
+      ? current.filter((id) => id !== podId)
+      : [...current, podId];
+    setManagerPodIds((prev) => ({ ...prev, [managerUserId]: next }));
+    try {
+      await setManagerPods(managerUserId, next);
+    } catch (e) {
+      setActionError(String(e));
+      setManagerPodIds((prev) => ({ ...prev, [managerUserId]: current })); // revert on failure
+    }
   };
 
   const handleResendInvite = async (inviteId: string) => {
@@ -497,6 +590,66 @@ function TeamTab() {
         </div>
       )}
 
+      {/* MISSION-5 TASK-M5-A5: pod management -- owner/admin only. A pod is just a name; which
+          member sits in which pod is set per-row in the roster table below (the "Pod" column),
+          and a manager's own SCOPE (which pods they supervise) is the checkbox list under their
+          row -- two different relationships, see the migration header. */}
+      {canManage && (
+        <div className="bg-surface-1 rounded-app-lg p-6 border border-border-subtle mb-6">
+          <h3 className="text-section-title text-text-primary mb-4">Pods</h3>
+          {podError && <p className="text-body text-danger mb-3">{podError}</p>}
+          <div className="flex flex-wrap items-center gap-2 mb-4">
+            {pods.length === 0 ? (
+              <span className="text-sm text-text-secondary">No pods yet.</span>
+            ) : (
+              pods.map((pod) => (
+                <span
+                  key={pod.id}
+                  className="flex items-center gap-2 px-3 py-1.5 bg-surface-2 border border-white/10 rounded-full text-sm text-text-primary"
+                >
+                  {pod.name}
+                  <button
+                    type="button"
+                    disabled={podBusy}
+                    onClick={() => handleRenamePod(pod)}
+                    className="text-text-secondary hover:text-text-primary disabled:opacity-50"
+                    title="Rename pod"
+                  >
+                    <Pencil className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    disabled={podBusy}
+                    onClick={() => handleDeletePod(pod)}
+                    className="text-text-secondary hover:text-danger disabled:opacity-50"
+                    title="Delete pod"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </span>
+              ))
+            )}
+          </div>
+          <form onSubmit={handleCreatePod} className="flex items-center gap-2">
+            <input
+              type="text"
+              value={newPodName}
+              onChange={(e) => setNewPodName(e.target.value)}
+              placeholder="New pod name"
+              className="bg-surface-2 border border-white/10 rounded-app-sm px-3 py-1.5 text-sm text-white placeholder-text-muted focus:outline-none focus:border-accent-to"
+            />
+            <Button
+              type="submit"
+              size="sm"
+              variant="fe-secondary"
+              disabled={podBusy || !newPodName.trim()}
+            >
+              Add pod
+            </Button>
+          </form>
+        </div>
+      )}
+
       {canManage && showInvite && (
         <div className="bg-gradient-to-r from-accent-from/10 to-accent-to/10 rounded-app-lg p-6 border border-accent-from/20 mb-6">
           <h3 className="text-section-title text-text-primary mb-4">Invite teammates</h3>
@@ -519,10 +672,11 @@ function TeamTab() {
                 <label className="block text-sm text-text-secondary mb-2">Role</label>
                 <select
                   value={inviteRole}
-                  onChange={(e) => setInviteRole(e.target.value as 'admin' | 'agent')}
+                  onChange={(e) => setInviteRole(e.target.value as 'admin' | 'agent' | 'manager')}
                   className="bg-surface-2 border border-white/10 rounded-app-md px-4 py-3 text-white focus:outline-none focus:border-accent-to"
                 >
                   <option value="agent">Agent</option>
+                  <option value="manager">Manager</option>
                   <option value="admin">Admin</option>
                 </select>
               </div>
@@ -700,6 +854,7 @@ function TeamTab() {
                 <TableHead className="text-text-secondary">Name</TableHead>
                 <TableHead className="text-text-secondary">Status</TableHead>
                 <TableHead className="text-text-secondary">Role</TableHead>
+                <TableHead className="text-text-secondary">Pod</TableHead>
                 <TableHead className="text-right text-text-secondary">Actions</TableHead>
               </TableRow>
             </TableHeader>
@@ -756,16 +911,65 @@ function TeamTab() {
                           disabled={busy}
                           onChange={(e) =>
                             runAction(m.user_id, () =>
-                              changeMemberRole(m.user_id, e.target.value as 'admin' | 'agent')
+                              changeMemberRole(
+                                m.user_id,
+                                e.target.value as 'admin' | 'agent' | 'manager'
+                              )
                             )
                           }
                           className="bg-surface-2 border border-border-subtle rounded-app-sm px-3 py-1.5 text-text-primary text-sm focus:outline-none focus:border-accent-to"
                         >
                           <option value="admin">Admin</option>
+                          <option value="manager">Manager</option>
                           <option value="agent">Agent</option>
                         </select>
                       ) : (
                         <span className="text-sm text-text-secondary">{ROLE_LABEL[m.role]}</span>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      {canManage && !isOwner && m.status !== 'removed' ? (
+                        <div className="space-y-2">
+                          <select
+                            value={m.pod_id ?? ''}
+                            disabled={busy || pods.length === 0}
+                            onChange={(e) =>
+                              runAction(m.user_id, () =>
+                                setMemberPod(m.user_id, e.target.value || null)
+                              )
+                            }
+                            className="bg-surface-2 border border-border-subtle rounded-app-sm px-2 py-1 text-text-primary text-xs focus:outline-none focus:border-accent-to"
+                          >
+                            <option value="">No pod</option>
+                            {pods.map((pod) => (
+                              <option key={pod.id} value={pod.id}>
+                                {pod.name}
+                              </option>
+                            ))}
+                          </select>
+                          {m.role === 'manager' && pods.length > 0 && (
+                            <div className="flex flex-col gap-1">
+                              <span className="text-meta text-text-secondary">Supervises:</span>
+                              {pods.map((pod) => (
+                                <label
+                                  key={pod.id}
+                                  className="flex items-center gap-1.5 text-meta text-text-secondary"
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={(managerPodIds[m.user_id] ?? []).includes(pod.id)}
+                                    onChange={() => handleToggleManagerPod(m.user_id, pod.id)}
+                                  />
+                                  {pod.name}
+                                </label>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <span className="text-sm text-text-secondary">
+                          {pods.find((p) => p.id === m.pod_id)?.name ?? '—'}
+                        </span>
                       )}
                     </TableCell>
                     <TableCell>
@@ -883,12 +1087,16 @@ function TeamTab() {
                           disabled={busy}
                           onChange={(e) =>
                             runAction(m.user_id, () =>
-                              changeMemberRole(m.user_id, e.target.value as 'admin' | 'agent')
+                              changeMemberRole(
+                                m.user_id,
+                                e.target.value as 'admin' | 'agent' | 'manager'
+                              )
                             )
                           }
                           className="bg-surface-2 border border-border-subtle rounded-app-sm px-3 py-1.5 text-text-primary text-sm focus:outline-none focus:border-accent-to"
                         >
                           <option value="admin">Admin</option>
+                          <option value="manager">Manager</option>
                           <option value="agent">Agent</option>
                         </select>
                         <button
@@ -4419,19 +4627,31 @@ export function Settings() {
   // user_phone_numbers RLS all independently reject an agent regardless of what this array
   // contains (see this task's invariant).
   const isAgent = role === 'agent';
+  // MISSION-5 TASK-M5-A5: a manager gets ONLY Activity (their own audit-log scope) and Security
+  // (their own profile) -- not Telephony/Team/Integrations/Dispositions/DNC/Distribution, all of
+  // which are billing/numbers/org-settings-adjacent and explicitly NOT a manager's capability
+  // ("cannot buy numbers, change billing/spend, change roles, or edit org settings"). Pod
+  // management/role picker live in the 'team' tab, which stays owner/admin-only for exactly this
+  // reason -- a manager never restructures pods or roles.
+  const isManagerRole = role === 'manager';
+  const hideFromManager = isAgent || isManagerRole;
   const tabs = [
     { id: 'profile' as SettingsTab, label: 'Profile', icon: User },
     // "Phone Numbers" mount point: eng2 owns the Telephony/BYO-Telnyx backend (org_telephony,
     // telnyx-connect/-disconnect) and is expected to extend this tab -- coordinate through this
     // task's log rather than restructuring it here.
-    ...(!isAgent ? [{ id: 'phone' as SettingsTab, label: 'Telephony', icon: Phone }] : []),
-    ...(!isAgent ? [{ id: 'team' as SettingsTab, label: 'Team', icon: UsersIcon }] : []),
-    ...(!isAgent ? [{ id: 'integrations' as SettingsTab, label: 'Integrations', icon: Zap }] : []),
-    ...(!isAgent
+    ...(!hideFromManager ? [{ id: 'phone' as SettingsTab, label: 'Telephony', icon: Phone }] : []),
+    ...(!hideFromManager ? [{ id: 'team' as SettingsTab, label: 'Team', icon: UsersIcon }] : []),
+    ...(!hideFromManager
+      ? [{ id: 'integrations' as SettingsTab, label: 'Integrations', icon: Zap }]
+      : []),
+    ...(!hideFromManager
       ? [{ id: 'dispositions' as SettingsTab, label: 'Dispositions', icon: ListChecks }]
       : []),
-    ...(!isAgent ? [{ id: 'dnc' as SettingsTab, label: 'Do-not-call list', icon: PhoneOff }] : []),
-    ...(!isAgent
+    ...(!hideFromManager
+      ? [{ id: 'dnc' as SettingsTab, label: 'Do-not-call list', icon: PhoneOff }]
+      : []),
+    ...(!hideFromManager
       ? [{ id: 'distribution' as SettingsTab, label: 'Distribution', icon: Share2 }]
       : []),
     ...(!isAgent ? [{ id: 'activity' as SettingsTab, label: 'Activity', icon: History }] : []),
@@ -4451,7 +4671,18 @@ export function Settings() {
     ) {
       setActiveTab('profile');
     }
-  }, [isAgent, activeTab]);
+    if (
+      isManagerRole &&
+      (activeTab === 'phone' ||
+        activeTab === 'team' ||
+        activeTab === 'integrations' ||
+        activeTab === 'dispositions' ||
+        activeTab === 'dnc' ||
+        activeTab === 'distribution')
+    ) {
+      setActiveTab('profile');
+    }
+  }, [isAgent, isManagerRole, activeTab]);
 
   const handleSearchNumbers = async () => {
     setSearchLoading(true);
@@ -4551,7 +4782,7 @@ export function Settings() {
             <>
               {activeTab === 'profile' && <ProfileTab />}
 
-              {activeTab === 'phone' && !isAgent && (
+              {activeTab === 'phone' && !hideFromManager && (
                 <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
                   <PageHeader
                     title="Telephony"
@@ -4760,15 +4991,15 @@ export function Settings() {
                 </motion.div>
               )}
 
-              {activeTab === 'team' && !isAgent && <TeamTab />}
+              {activeTab === 'team' && !hideFromManager && <TeamTab />}
 
-              {activeTab === 'integrations' && !isAgent && <IntegrationsTab />}
+              {activeTab === 'integrations' && !hideFromManager && <IntegrationsTab />}
 
-              {activeTab === 'dispositions' && !isAgent && <DispositionsTab />}
+              {activeTab === 'dispositions' && !hideFromManager && <DispositionsTab />}
 
-              {activeTab === 'dnc' && !isAgent && <DncTab />}
+              {activeTab === 'dnc' && !hideFromManager && <DncTab />}
 
-              {activeTab === 'distribution' && !isAgent && <DistributionSettingsTab />}
+              {activeTab === 'distribution' && !hideFromManager && <DistributionSettingsTab />}
 
               {activeTab === 'activity' && !isAgent && <ActivityTab />}
 
