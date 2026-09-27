@@ -649,6 +649,8 @@ export interface DashboardStats {
   conversationsPerHour: number | null;
   /** TASK-F-P1: today's own legs whose disposition has is_win=true (personal, not org-wide). */
   winsToday: number;
+  /** MISSION-5 TASK-M5-A4: today's own legs whose disposition.lead_effect = 'callback'. */
+  callbacksToday: number;
 }
 
 export async function getDashboardStats(): Promise<DashboardStats> {
@@ -809,6 +811,10 @@ export interface TeamLiveBoardRow {
   /** MISSION-5 TASK-M5-B1: the session's dial_sessions.pause_reason, only non-null while
    *  status === 'paused'. */
   pause_reason: string | null;
+  /** MISSION-5 TASK-M5-A4: the current session's campaign (null while offline) -- backs the
+   *  live board's "filter by campaign". */
+  campaign_id: string | null;
+  campaign_name: string | null;
 }
 
 /** Poll every 5s (ADM-7) -- a single RPC round trip per poll, not N queries. */
@@ -848,6 +854,63 @@ export async function getAgentTimeInState(
   });
   if (error) throw new Error(error.message);
   return (data ?? []) as AgentTimeInStateRow[];
+}
+
+/** MISSION-5 TASK-M5-A4: the org's real IANA timezone (default 'America/Chicago'), replacing
+ *  every hardcoded America/Chicago 'today' boundary this codebase had (Team.tsx, team_live_board,
+ *  dialing_hours_today, agent_daily_dial_status once wired). Same "org_<feature>_settings" shape
+ *  as getOrgPauseReasons/updateOrgPauseReasons above -- select: any member; insert/update:
+ *  owner/admin (RLS), no dedicated RPC needed. */
+export async function getOrgTimezone(): Promise<string> {
+  const orgId = await getActiveOrgId();
+  const { data, error } = await supabase
+    .from('org_timezone_settings')
+    .select('timezone')
+    .eq('org_id', orgId)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return (data?.timezone as string | undefined) ?? 'America/Chicago';
+}
+
+/** Owner/admin only -- enforced by org_timezone_settings' own RLS UPDATE policy. */
+export async function updateOrgTimezone(timezone: string): Promise<void> {
+  const orgId = await getActiveOrgId();
+  const { error } = await supabase.from('org_timezone_settings').upsert({
+    org_id: orgId,
+    timezone,
+    updated_at: new Date().toISOString(),
+  });
+  if (error) throw new Error(error.message);
+}
+
+/** MISSION-5 TASK-M5-A4: "My stats" self-view (Dashboard.tsx) -- the caller's OWN numbers for
+ *  [start, end) plus a team_median_conversations_per_hr computed server-side across every active
+ *  member for the SAME window. Callable by any org member for themselves; there is no agentId
+ *  parameter (auth.uid() inside the RPC is the only identity used) -- no other agent's individual
+ *  numbers or identity are ever returned by this RPC. */
+export interface AgentSelfStats {
+  dials: number;
+  connects: number;
+  connect_rate: number;
+  conversations: number;
+  conversations_per_hr: number | null;
+  wins: number;
+  callbacks_set: number;
+  talk_time_seconds: number;
+  dialing_hours: number;
+  team_median_conversations_per_hr: number | null;
+}
+
+export async function getAgentSelfStats(start: Date, end: Date): Promise<AgentSelfStats | null> {
+  const orgId = await getActiveOrgId();
+  const { data, error } = await supabase.rpc('agent_self_stats', {
+    p_org: orgId,
+    p_start: start.toISOString(),
+    p_end: end.toISOString(),
+  });
+  if (error) throw new Error(error.message);
+  const rows = (data ?? []) as AgentSelfStats[];
+  return rows[0] ?? null;
 }
 
 /** MISSION-5 TASK-M5-B1: org-level pause reason list (Dialer's pause-reason picker). Every org
@@ -1394,13 +1457,13 @@ export async function listAuditLog(
   return data as { entries: AuditLogEntry[]; total: number };
 }
 
-/** The two client-only actions worth an audit row today -- both already gated behind an
+/** The client-only actions worth an audit row today -- all already gated behind an
  *  owner/admin-only route (Team, Analytics), so no separate role check happens client-side here;
  *  `org-audit-log`'s own `requireOrgRole` is the real enforcement. Best-effort: a rejected promise
  *  here is swallowed by the caller (the export itself already happened locally), never blocks the
  *  download the user just triggered. */
 export async function logAuditEvent(
-  name: 'export.team_csv' | 'export.analytics_csv',
+  name: 'export.team_csv' | 'export.analytics_csv' | 'export.attendance_csv',
   details?: Record<string, unknown>
 ): Promise<void> {
   const res = await fetch(`${getFunctionsUrl()}/org-audit-log`, {

@@ -34,6 +34,9 @@ const DEFAULT_LIMIT = 50;
 const LOGGABLE_CLIENT_EVENTS: Record<string, { targetType: string }> = {
   'export.team_csv': { targetType: 'team_daily_stats' },
   'export.analytics_csv': { targetType: 'analytics' },
+  // MISSION-5 TASK-M5-A4: Team.tsx's new Attendance tab CSV export -- same client-only shape as
+  // the other two (rowsToCsv/downloadCsv never round-trips to a server on their own).
+  'export.attendance_csv': { targetType: 'agent_time_in_state' },
 };
 
 interface AuditLogRow {
