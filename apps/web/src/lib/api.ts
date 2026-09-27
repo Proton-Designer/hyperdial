@@ -136,6 +136,62 @@ export async function setPhoneNumberStatus(
   if (error) throw new Error(error.message);
 }
 
+// --- TASK-T9 (Mission 4): caller-ID health (CID-4) + local-presence fallback ---
+
+export interface NumberHealthStat {
+  number_id: string;
+  org_id: string;
+  phone_number: string;
+  status: 'active' | 'resting' | 'retired';
+  flagged_at: string | null;
+  flagged_reason: string | null;
+  dials_7d: number;
+  connected_7d: number;
+  human_answer_rate_7d: number | null;
+  avg_talk_seconds_7d: number | null;
+  dials_30d: number;
+  connected_30d: number;
+  human_answer_rate_30d: number | null;
+  avg_talk_seconds_30d: number | null;
+}
+
+/** Org-scoped read of the `number_health_stats` view (security_invoker=on) -- RLS on the
+ *  underlying `user_phone_numbers`/`call_legs` tables ("org members can view...") already scopes
+ *  this correctly for a direct authenticated-client query, same pattern as
+ *  getNumberPoolSettings above. */
+export async function getNumberHealthStats(): Promise<NumberHealthStat[]> {
+  const orgId = await getActiveOrgId();
+  const { data, error } = await supabase
+    .from('number_health_stats')
+    .select('*')
+    .eq('org_id', orgId)
+    .order('phone_number', { ascending: true });
+  if (error) throw new Error(error.message);
+  return (data ?? []) as NumberHealthStat[];
+}
+
+export interface NumberHealthCheckResult {
+  numberId: string;
+  phoneNumber: string;
+  sampleDials: number;
+  humanAnswerRate: number;
+  poolMedianRate: number;
+}
+
+/** On-demand half of CID-4's "weekly (and on demand)" check -- owner/admin only
+ *  (number-health-check's own requireOrgRole gate); runs check_number_health for THIS org
+ *  regardless of health_alerts_enabled (an explicit, user-initiated check is not "new automatic
+ *  behaviour" -- see the migration's own comment on check_number_health). */
+export async function runNumberHealthCheck(): Promise<NumberHealthCheckResult[]> {
+  const res = await fetch(`${getFunctionsUrl()}/number-health-check`, {
+    method: 'POST',
+    headers: await getEdgeFunctionHeaders(),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Failed to run number health check');
+  return (data.flagged ?? []) as NumberHealthCheckResult[];
+}
+
 // --- TASK-I1: inbound callback routing (INB-1..4, CID-6) ---
 
 export interface InboundSettings {

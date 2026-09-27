@@ -473,6 +473,13 @@ verify_jwt = false
 # dialer-sweeper/ghl-sync-worker.
 verify_jwt = false
 
+[functions.number-health-check]
+# TASK-T9: dual entry path -- pg_net cron (X-Cron-Secret, no Supabase JWT) OR an on-demand
+# owner/admin call with a real JWT, verified manually inside via requireOrgRole (same
+# "verify_jwt=false + custom auth" shape as voicemail-upload/recording-url above). Set from the
+# start, same lesson as every cron-worker function in this file.
+verify_jwt = false
+
 [edge_runtime]
 enabled = true
 # Supported request policies: `oneshot`, `per_worker`.
