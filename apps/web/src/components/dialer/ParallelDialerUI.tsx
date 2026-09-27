@@ -6,11 +6,22 @@ import { ContactBatchCard } from './ContactBatchCard';
 import { LiveCallPanel } from './LiveCallPanel';
 import { TransferModal } from './TransferModal';
 import { Button } from '@/components/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { cn } from '@/components/ui/utils';
 import { useFocusTrap } from '@/hooks/useFocusTrap';
 import { supabase } from '@/lib/supabase';
 import type { BatchContactPreview, ConnectedContactDetails } from '@/hooks/useDialerSession';
-import { getRecordingUrl, getUserPreferences, saveUserPreferences } from '@/lib/api';
+import {
+  getRecordingUrl,
+  getUserPreferences,
+  saveUserPreferences,
+  DEFAULT_PAUSE_REASONS,
+} from '@/lib/api';
 import type {
   ActiveTransfer,
   CallLegRecord,
@@ -66,7 +77,12 @@ interface ParallelDialerUIProps {
    *  fetch. Optional (undefined outside a real Dialer mount, e.g. DialerStatesHarness) so the
    *  control's own self-contained save still works standalone either way. */
   onAutoResumePrefChange?: (value: 0 | 5 | 10 | 15) => void;
-  onPause: () => void;
+  /** MISSION-5 TASK-M5-B1: the reason picked from `pauseReasons`' own dropdown. */
+  onPause: (reason: string) => void;
+  /** MISSION-5 TASK-M5-B1: the org's own pause-reason list (org_pause_reason_settings), for the
+   *  Pause button's dropdown. Optional/defaulted so a caller that doesn't care (e.g. the dev
+   *  fixture harness) doesn't have to pass one. */
+  pauseReasons?: string[];
   onResume: () => void;
   /** BUG-11: `force` is only ever passed `true` from the confirm dialog's "Hang up and stop"
    *  button -- see this component's own `StopConfirmDialog` and api.ts's `LiveCallInProgressError`. */
@@ -202,6 +218,7 @@ export function ParallelDialerUI({
   muted,
   onAutoResumePrefChange,
   onPause,
+  pauseReasons = DEFAULT_PAUSE_REASONS,
   onResume,
   onStop,
   onMuteChange,
@@ -287,14 +304,24 @@ export function ParallelDialerUI({
                 Resume
               </Button>
             ) : (
-              <Button
-                variant="warning-soft"
-                size="sm"
-                onClick={onPause}
-                disabled={!PAUSABLE_STATES.has(sessionState)}
-              >
-                Pause
-              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="warning-soft"
+                    size="sm"
+                    disabled={!PAUSABLE_STATES.has(sessionState)}
+                  >
+                    Pause
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  {pauseReasons.map((reason) => (
+                    <DropdownMenuItem key={reason} onClick={() => onPause(reason)}>
+                      {reason}
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
             )}
             {/* Stop always works, in every state, per this task's own spec -- but BUG-11 gates
                 it behind a confirm dialog while a human is actually on the line. */}

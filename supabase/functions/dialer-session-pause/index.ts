@@ -6,7 +6,10 @@ import { readJsonBody } from '../_shared/http-json.ts';
 
 interface PauseBody {
   sessionId?: string;
+  reason?: string;
 }
+
+const MAX_REASON_LENGTH = 80;
 
 function jsonResponse(status: number, payload: Record<string, unknown>): Response {
   return new Response(JSON.stringify(payload), {
@@ -51,9 +54,16 @@ Deno.serve(async (req) => {
       return jsonResponse(403, { error: 'Not your session' });
     }
 
+    // MISSION-5 TASK-M5-B1: pause reason picker. Free text, not validated against the org's own
+    // org_pause_reason_settings list (that table is a UI data source, not a server-side enum --
+    // see its migration's own comment) -- defaults to 'Other' so an old client that never sends
+    // this field keeps working exactly as before, just newly tagged.
+    const rawReason = typeof body.reason === 'string' ? body.reason.trim() : '';
+    const reason = (rawReason || 'Other').slice(0, MAX_REASON_LENGTH);
+
     // Only meaningful while actively refilling (`dialing`) -- pauseSession no-ops (returns
     // false) from any other state, e.g. already `wrap_up`/`paused`/`stopped`.
-    const paused = await pauseSession(supabase, orgId, sessionId);
+    const paused = await pauseSession(supabase, orgId, sessionId, reason);
     if (!paused) {
       return jsonResponse(409, {
         error: 'Session is not currently dialing, so it cannot be paused.',

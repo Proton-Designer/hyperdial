@@ -1674,3 +1674,44 @@ circuit-breaker shape: once the drop rate crosses 3%, dialing above 7 is no long
 for this campaign, so it goes straight back to the last known-safe value and the flag turns off,
 requiring a human to review and deliberately re-enable rather than the system quietly limping
 along at 8 or 9.
+
+## MISSION-5 TASK-M5-B1: agent state log + pause reasons
+
+**Decision 1 -- hook the state-event log into `transition_session` itself (plus one `AFTER
+INSERT` trigger for the session's very first state), not into every TypeScript call site.**
+11 functions across `dialer-engine.ts` call `transition_session`; wiring event-logging into any
+number of individual TS call sites would need every future call site to remember it too. Both
+hooks are SQL, inside the two functions that are already the ONLY places a `dial_sessions.state`
+change can happen at all -- structurally impossible to add a new state transition that skips the
+log, matching the task's own "keep it inside the existing transition functions so it can't
+drift" instruction as literally as possible.
+
+**Decision 2 -- `agent_state_events.state`/`.reason` mirror `dial_sessions.state`/
+`.pause_reason` verbatim, never a bucketed vocabulary written at insert time.** Any grouping a
+consumer needs (e.g. "dialing" + "connecting" as one bucket for an attendance tab) is a read-time
+`CASE`, the same way `team_live_board` already collapses `paused`/`paused_agent_lost` for
+display. Keeping the write side a lossless 1:1 mirror means a future `dial_sessions` state
+addition can't silently fall outside what gets logged, and a consumer that wants finer detail
+later never has to backfill anything.
+
+**Decision 3 -- a dedicated `org_pause_reason_settings` table, not a column on `orgs`.**
+`orgs`' own UPDATE RLS policy is owner-only (`20260924000100`); the task wants owner+admin
+editable. Widening `orgs`' UPDATE policy to admin for the sake of one column would also hand
+admin write access to every other `orgs` column with no way to scope it back down. A dedicated
+table gets its own narrow RLS instead, same `org_<feature>_settings` singleton shape already
+established by `org_number_pool_settings`/`org_spend_settings`/etc. -- no new RPC needed, plain
+`.from(...).upsert()` from the client, gated by RLS alone.
+
+**Decision 4 -- `dialer-session-pause` does not validate an incoming `reason` against the org's
+own configured list.** `dial_sessions.pause_reason` was already deliberately free-form text with
+no CHECK constraint (`20260925070000`'s own comment: "only trusted engine code ever writes it");
+`org_pause_reason_settings` is a UI data source for the picker, not a server-side enum -- an org
+can edit the list at any time, and an old client's cached copy (or a stale reason value from
+before an edit) should never become a 400. Defaults to `'Other'` when omitted, so an old client
+that never sends the field keeps working exactly as before, just newly tagged.
+
+**Decision 5 -- `agent_time_in_state` is owner/admin only; there is no agent self-view path in
+this task.** TASK-M5-A4's own item is the agent-facing "my stats" self-view (TM-E6); B1 only
+needed to prove the data model and expose the read RPC an attendance tab can build on. Same
+`if not has_org_role(...) then return;` empty-result gate as `team_daily_stats`/`team_live_board`,
+enforced server-side, not by the client choosing not to ask for someone else's `agent_id`.

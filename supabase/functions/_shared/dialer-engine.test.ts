@@ -768,6 +768,44 @@ Deno.test(
 );
 
 Deno.test(
+  'MISSION-5 TASK-M5-B1: pauseSession forwards a custom reason into dial_sessions.pause_reason (dialer-session-pause is about to start sending one, not just null/inbound_call)',
+  async () => {
+    const db = new FakeDb();
+    const { orgId, agentId, campaignId } = seedFixtures(db);
+    const supabase = createFakeSupabase(db);
+
+    const sessionId = 'session-b1-reason-1';
+    db.insert('dial_sessions', {
+      id: sessionId,
+      org_id: orgId,
+      campaign_id: campaignId,
+      agent_id: agentId,
+      state: 'dialing',
+      lines: 3,
+    });
+    const paused = await pauseSession(supabase, orgId, sessionId, 'Lunch');
+    assertEquals(paused, true);
+    assertEquals(db.table('dial_sessions').get(sessionId)!.pause_reason, 'Lunch');
+
+    // Positive control: prove this isn't just always returning the SAME reason regardless of
+    // what's passed -- a second, independent session with a DIFFERENT reason must round-trip
+    // its own value, not 'Lunch' or null.
+    const sessionId2 = 'session-b1-reason-2';
+    db.insert('dial_sessions', {
+      id: sessionId2,
+      org_id: orgId,
+      campaign_id: campaignId,
+      agent_id: 'agent-2',
+      state: 'ready',
+      lines: 3,
+    });
+    const paused2 = await pauseSession(supabase, orgId, sessionId2, 'Training');
+    assertEquals(paused2, true);
+    assertEquals(db.table('dial_sessions').get(sessionId2)!.pause_reason, 'Training');
+  }
+);
+
+Deno.test(
   'dialer-engine re-review fix M4: paused_agent_lost_from actually persists through the real transition_session field list, so Reconnect from a manual pause returns to paused',
   async () => {
     const db = new FakeDb();

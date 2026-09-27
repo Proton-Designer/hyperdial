@@ -570,6 +570,46 @@ Records the WINNING contact leg only, never a loser, starting the moment it's ac
   is now tracked under `EdgeRuntime.waitUntil`, not a bare `queueMicrotask` (the same
   background-work risk TASK-P2-E2's own review already flagged for a different call site).
 
+### Agent state log + pause reasons (MISSION-5 TASK-M5-B1)
+
+- `agent_state_events(org_id, agent_id, session_id, state, reason, started_at, ended_at)` mirrors
+  `dial_sessions.state` 1:1 (never a bucketed vocabulary) -- one open row (`ended_at is null`) per
+  agent, enforced by a partial unique index, not just convention. Written from exactly two
+  choke points, both already the sole place any `dial_sessions.state` change happens, so no
+  future call site can drift out of sync: an `AFTER INSERT` trigger on `dial_sessions` (the
+  session's very first state, `'ready_pending'`, is a plain `.insert()`, not `transition_session`)
+  and `transition_session` itself (every other transition -- 11 functions across
+  `dialer-engine.ts` call it). Both close the agent's currently-open row before opening the new
+  one. RLS: agent sees own, owner/admin see the org, same twin-policy shape as `dial_sessions`.
+- `reason` is populated from the same `pause_reason` key already flowing through
+  `p_fields`/`pauseSession` (pre-existing since TASK-I1's `'inbound_call'` reason) -- never a
+  second, independently-maintained value. `dialer-session-pause` now accepts an optional `reason`
+  in its body (trimmed, capped at 80 chars, defaults `'Other'` so an old client keeps working
+  unchanged); `pauseSession`'s own reason param is unchanged (still `string | null = null`,
+  still used as-is by `inbound-engine.ts`'s system-initiated pause).
+- `org_pause_reason_settings(org_id, reasons text[])`: the org's own editable list (defaults
+  Break/Lunch/Training/Meeting/Admin/Other), seeded on org creation by a trigger, same
+  `org_<feature>_settings` singleton shape as `org_number_pool_settings`/`org_spend_settings`
+  (select: any member; insert/update: owner/admin) -- deliberately NOT a column on `orgs` itself,
+  since `orgs`' own UPDATE policy is owner-only and widening it to admin for one column would
+  also hand admin write access to every other `orgs` column. `dialer-session-pause` does NOT
+  validate an incoming reason against this list server-side -- `dial_sessions.pause_reason` is
+  already free-form text with no CHECK constraint by design (20260925070000's own comment); this
+  table is a UI picker data source, not a server-side enum.
+- `agent_time_in_state(org, from, to[, agent], tz default 'America/Chicago')`: per agent/day
+  seconds by state and pause reason, owner/admin only (same `has_org_role` return-empty gate as
+  `team_daily_stats`/`team_live_board` -- an agent-facing self-view is explicitly TASK-M5-A4's own
+  item, not this one). Day-buckets a row that spans a civil-day boundary via
+  `generate_series` + per-day overlap clipping, in the given timezone (not a fixed 24h offset --
+  correct across a DST transition inside the queried range).
+- `team_live_board` gained a `pause_reason` column (from `dial_sessions.pause_reason`, null unless
+  the session is actually `paused`/`paused_agent_lost`) -- server-side only; wiring it into
+  `Team.tsx`'s own rendering is TASK-M5-A4's job (eng1 owns `Team.tsx`).
+- The Dialer's Pause button is now a small dropdown (`ParallelDialerUI.tsx`, shadcn
+  `DropdownMenu`) listing the org's own `org_pause_reason_settings.reasons`, fetched once per
+  `Dialer.tsx` mount and falling back to the hardcoded default list on any fetch failure --
+  never blocks the button on that fetch succeeding.
+
 ## Not covered here
 
 - Telnyx numbers, WebRTC credentials, raw API wrappers → `.brain/domains/telephony.md`; campaigns

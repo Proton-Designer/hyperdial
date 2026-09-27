@@ -24,6 +24,8 @@ import {
   startDialerSession,
   updateMyPresenceHeartbeat,
   getUserPreferences,
+  getOrgPauseReasons,
+  DEFAULT_PAUSE_REASONS,
   ActiveSessionExistsError,
   ReconnectAlreadyInFlightError,
   LiveCallInProgressError,
@@ -259,6 +261,24 @@ function DialerBody({
   // `agentLineConnecting` are read via refs inside the retry closure instead of being dependency-
   // array entries, so a connect attempt's own state transitions can no longer re-trigger this
   // effect and bypass the backoff the way the original bug did.
+  // MISSION-5 TASK-M5-B1: fetched once, not per-render -- the org's own reason list rarely
+  // changes and a stale copy for the rest of this mount is harmless (the picker is just a
+  // convenience list, dialer-session-pause never validates against it server-side).
+  const [pauseReasons, setPauseReasons] = useState<string[]>(DEFAULT_PAUSE_REASONS);
+  useEffect(() => {
+    let cancelled = false;
+    getOrgPauseReasons()
+      .then((reasons) => {
+        if (!cancelled && reasons.length > 0) setPauseReasons(reasons);
+      })
+      .catch(() => {
+        /* keep the default list -- this is a convenience picker, not a required load */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const [orgTelnyxConnected, setOrgTelnyxConnected] = useState<boolean | null>(null);
   useEffect(() => {
     if (!isAgentLineOwner) {
@@ -739,18 +759,21 @@ function DialerBody({
     parallelSession.currentBatchContacts.find((c) => c.id === parallelSession.connectedContactId) ??
     null;
 
-  const handleParallelPause = useCallback(async () => {
-    if (!parallelSession.sessionId) {
-      toast.error('Session not loaded yet');
-      return;
-    }
-    try {
-      await parallelSession.pause();
-      toast.success('Dialing paused');
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Failed to pause');
-    }
-  }, [parallelSession.sessionId, parallelSession.pause]);
+  const handleParallelPause = useCallback(
+    async (reason: string) => {
+      if (!parallelSession.sessionId) {
+        toast.error('Session not loaded yet');
+        return;
+      }
+      try {
+        await parallelSession.pause(reason);
+        toast.success('Dialing paused');
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : 'Failed to pause');
+      }
+    },
+    [parallelSession.sessionId, parallelSession.pause]
+  );
 
   const handleParallelStop = useCallback(
     async (opts?: { force?: boolean }) => {
@@ -936,6 +959,7 @@ function DialerBody({
                 connectedContactHistory={parallelSession.connectedContactHistory}
                 campaignScript={parallelSession.campaignScript}
                 onPause={handleParallelPause}
+                pauseReasons={pauseReasons}
                 onResume={() => void handleParallelResume()}
                 onStop={(opts) => void handleParallelStop(opts)}
                 muted={isMuted}

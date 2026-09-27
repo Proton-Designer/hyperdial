@@ -190,12 +190,15 @@ export function useDialerSession(initialSessionId: string | null = null) {
     [loadSession, state.sessionId]
   );
 
-  const pause = useCallback(async () => {
-    if (!state.sessionId) return null;
-    const res = await pauseDialerSession(state.sessionId);
-    await loadSession(state.sessionId);
-    return res;
-  }, [loadSession, state.sessionId]);
+  const pause = useCallback(
+    async (reason?: string) => {
+      if (!state.sessionId) return null;
+      const res = await pauseDialerSession(state.sessionId, reason);
+      await loadSession(state.sessionId);
+      return res;
+    },
+    [loadSession, state.sessionId]
+  );
 
   /** TASK-L2b: resumes a manually `paused` session (the counterpart `pause()` never had). */
   const resume = useCallback(async () => {
