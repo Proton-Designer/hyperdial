@@ -92,23 +92,33 @@ export function recordingStoragePath(orgId: string, callLegId: string): string {
 }
 
 export interface RecordingAccessContext {
-  role: 'owner' | 'admin' | 'agent';
+  role: 'owner' | 'admin' | 'agent' | 'manager';
   callerUserId: string;
   legOrgId: string;
   callerOrgId: string;
   /** `dial_sessions.agent_id` for the leg's own session -- null if the session lookup itself
    *  failed, which must never be treated as "no restriction". */
   sessionAgentId: string | null;
+  /** MISSION-5 TASK-M5-B5: only meaningful when `role === 'manager'` -- the caller (recording-
+   *  url/index.ts) resolves this via `private.is_agent_in_callers_pod_scope` (a DB round trip)
+   *  BEFORE calling this pure predicate, same "caller does the query, this function only
+   *  decides" split canAccessRecording already used for owner/admin/agent. Never used for any
+   *  other role -- a manager with no pod scope over this leg's agent gets false, same as if the
+   *  role weren't manager at all. */
+  isAgentInCallerPodScope?: boolean;
 }
 
 /** REC-4's auth matrix, as a pure predicate (recording-url/index.ts's only decision point):
- *  owner/admin see any leg in their own org; an agent only a leg whose session is their own.
- *  Mirrors call_legs' own RLS exactly (20260924000700_dialer_schema.sql's "owner or admin can
- *  view all call_legs" / "agent can view own call_legs" policies) -- this function does the
- *  same check in TS because recording-url uses the service-role client (RLS never applies). */
+ *  owner/admin see any leg in their own org; an agent only a leg whose session is their own;
+ *  MISSION-5 TASK-M5-B5 added a manager, pod-scoped (see `isAgentInCallerPodScope`'s own
+ *  comment). Mirrors call_legs' own RLS exactly (20260924000700_dialer_schema.sql's "owner or
+ *  admin can view all call_legs" / "agent can view own call_legs" policies, plus B5's new
+ *  "manager can view pod-scoped call_legs" policy) -- this function does the same check in TS
+ *  because recording-url uses the service-role client (RLS never applies). */
 export function canAccessRecording(ctx: RecordingAccessContext): boolean {
   if (ctx.legOrgId !== ctx.callerOrgId) return false;
   if (ctx.role === 'owner' || ctx.role === 'admin') return true;
+  if (ctx.role === 'manager') return ctx.isAgentInCallerPodScope === true;
   return ctx.sessionAgentId !== null && ctx.sessionAgentId === ctx.callerUserId;
 }
 

@@ -5,16 +5,46 @@
  * signed URL from this function, service-role, with its own explicit auth check below, is the
  * sole way a recording ever reaches a browser.
  *
- * Auth (mirrors call_legs' own RLS exactly, 20260924000700_dialer_schema.sql): owner/admin see
- * any leg in the org; an agent only a leg whose session is their own. Anything else (wrong org,
- * no recording yet, unknown leg) is a plain 404 -- never a 403 that would confirm a leg id
- * exists in another org.
+ * Auth (mirrors call_legs' own RLS exactly, 20260924000700_dialer_schema.sql plus MISSION-5
+ * TASK-M5-B5's new manager pod-scope policy): owner/admin see any leg in the org; a manager only
+ * a leg whose session's agent is in their own `org_manager_pods` scope; an agent only a leg
+ * whose session is their own. Anything else (wrong org, no recording yet, unknown leg) is a
+ * plain 404 -- never a 403 that would confirm a leg id exists in another org.
  */
-import { createClient } from 'npm:@supabase/supabase-js@2';
+import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2';
 import { corsHeaders, corsPreflightResponse } from '../_shared/cors.ts';
 import { requireTelnyxOrgRole } from '../_shared/telnyx-org-context.ts';
 import { readJsonBody } from '../_shared/http-json.ts';
 import { canAccessRecording } from '../_shared/recording-core.ts';
+
+/** MISSION-5 TASK-M5-B5: mirrors `private.is_agent_in_callers_pod_scope`'s own SQL semantics in
+ *  application code, same "manager pod-scoping done in JS, not SQL" pattern org-members/org-
+ *  audit-log's own GET handlers already established (A5) -- this Edge Function uses a service-
+ *  role client, so RLS never applies and this check has to happen here regardless. */
+async function isAgentInManagerPodScope(
+  supabase: SupabaseClient,
+  orgId: string,
+  managerId: string,
+  agentId: string
+): Promise<boolean> {
+  const { data: agentRow } = await supabase
+    .from('org_members')
+    .select('pod_id')
+    .eq('org_id', orgId)
+    .eq('user_id', agentId)
+    .eq('status', 'active')
+    .maybeSingle();
+  if (!agentRow?.pod_id) return false;
+
+  const { data: scopeRow } = await supabase
+    .from('org_manager_pods')
+    .select('pod_id')
+    .eq('org_id', orgId)
+    .eq('manager_user_id', managerId)
+    .eq('pod_id', agentRow.pod_id)
+    .maybeSingle();
+  return !!scopeRow;
+}
 
 // 10 minutes, matching the task's own spec and Telnyx's own recording_urls TTL (so the app
 // link's own signed URL feels consistent with the source, even though they're unrelated URLs).
@@ -44,7 +74,7 @@ Deno.serve(async (req: Request) => {
     orgId,
     role,
     error: authError,
-  } = await requireTelnyxOrgRole(req, ['owner', 'admin', 'agent']);
+  } = await requireTelnyxOrgRole(req, ['owner', 'admin', 'manager', 'agent']);
   if (authError) return authError;
 
   const { body, errorResponse } = await readJsonBody<RecordingUrlBody>(req);
@@ -70,12 +100,19 @@ Deno.serve(async (req: Request) => {
     .maybeSingle();
   if (sessionError) return jsonResponse(500, { error: sessionError.message });
 
+  const sessionAgentId = session?.agent_id ?? null;
+  const isAgentInCallerPodScope =
+    role === 'manager' && sessionAgentId
+      ? await isAgentInManagerPodScope(supabase, orgId, user.id, sessionAgentId)
+      : undefined;
+
   const allowed = canAccessRecording({
     role,
     callerUserId: user.id,
     legOrgId: leg.org_id,
     callerOrgId: orgId,
-    sessionAgentId: session?.agent_id ?? null,
+    sessionAgentId,
+    isAgentInCallerPodScope,
   });
   if (!allowed) return jsonResponse(404, { error: 'Recording not found' });
 

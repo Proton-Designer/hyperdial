@@ -17,6 +17,10 @@ sources:
   - supabase/migrations/20260927080002_org_member_offboarding.sql
   - supabase/migrations/20260927160550_manager_role_and_pods.sql
   - supabase/migrations/20260927164816_goals_and_broadcasts.sql
+  - supabase/migrations/20260927171355_call_review_library.sql
+  - supabase/functions/recording-url/index.ts
+  - supabase/functions/_shared/recording-core.ts
+  - supabase/functions/_shared/telnyx-org-context.ts
   - supabase/functions/org-members/index.ts
   - supabase/functions/_shared/dialer-engine.ts
   - apps/web/src/contexts/AuthContext.tsx
@@ -41,9 +45,11 @@ answers:
   - "what is the difference between org_members.pod_id and org_manager_pods"
   - "how are daily goals set and resolved (org vs pod vs agent level)"
   - "how do team broadcasts work, who can post one, and how does an agent dismiss it"
-covers: "Supabase auth, session handling, the two-layer Edge Function authorization model, service-role usage, org tenancy, the per-table RLS inventory, member offboarding (disable/remove/restore), the manager role's server-enforced pod scope, and daily goals + team broadcasts."
+  - "who can see/flag/comment on/score a call recording, and how is a manager's pod scope enforced there"
+  - "why does telnyx-org-context.ts have its own separate OrgRole type instead of importing _shared/auth.ts's"
+covers: "Supabase auth, session handling, the two-layer Edge Function authorization model, service-role usage, org tenancy, the per-table RLS inventory, member offboarding (disable/remove/restore), the manager role's server-enforced pod scope, daily goals + team broadcasts, and the call review library's access model."
 excludes: "Telnyx webhook signature mechanics (domain.telephony); dial-loop ownership checks (domain.dialer)."
-tokens_est: 6650
+tokens_est: 7150
 source_hash: b8d3fd311248f16889b10f531365423ec36488c32179946d09361fb21c5ce0c5
 ---
 
@@ -142,6 +148,9 @@ are the deliberate exceptions: personal, not org-shared (see `20260924000300`'s 
 | `org_goals` (`20260927164816`, TASK-M5-A6) | SELECT: owner/admin see all; a manager sees org-wide rows plus pod/agent rows inside their own `org_manager_pods` scope; any agent sees their own agent-level row. **No client INSERT/UPDATE/DELETE policy at all** — writes only via `set_org_goal`/`delete_org_goal` (same reasoning as `org_audit_log`: the manager-tier pod-scope check is easier to express in plpgsql than a single RLS `WITH CHECK`). |
 | `org_broadcasts` (`20260927164816`, TASK-M5-A6) | SELECT: `is_org_member` and (org-wide, or owner/admin, or the caller's own `org_members.pod_id` matches). No client write policy — `create_org_broadcast`/`delete_org_broadcast` only. |
 | `org_broadcast_dismissals` (`20260927164816`, TASK-M5-A6) | ALL: `user_id = auth.uid()` only — a caller may only ever touch their OWN dismissal rows; no privileged check needed (dismissing a broadcast you can't otherwise see is harmless), so this is the one write in this task done as a plain client insert, not an RPC. |
+| `call_legs` (new policy, `20260927171355`, TASK-M5-B5) | Additive THIRD permissive SELECT policy on top of the two pre-existing ones (owner/admin all; agent own) — a manager sees a leg whose session's agent is in their own `org_manager_pods` scope. Without this a manager could not see `call_legs` at all (it predates the manager role). |
+| `recording_flags`/`recording_comments`/`call_scorecards`/`call_scorecard_scores` (`20260927171355`, TASK-M5-B5) | SELECT: `private.can_view_call_leg(call_leg_id)` (owner/admin any, manager pod-scoped, agent own) — one shared helper, not four hand-written copies. `recording_flags` is also client-writable (`for all`, same check + an org_id cross-check in `WITH CHECK`) — flag/unflag needs no server-side scope logic beyond visibility. `recording_comments` is INSERT-only client-side (append-only, `author_user_id = auth.uid()` enforced) — no update/delete policy. `call_scorecards`/`call_scorecard_scores` have NO client write policy at all — `set_call_scorecard` is the only writer (manager-write needs pod-scope + rubric/criterion validation, easier in plpgsql). |
+| `scorecard_rubrics`/`scorecard_rubric_criteria` (`20260927171355`, TASK-M5-B5) | SELECT: any org member. INSERT/UPDATE/DELETE: owner/admin only (`for all`). |
 | `notifications` | Unchanged: SELECT/UPDATE `user_id = auth.uid()`. Personal, not org-scoped even though `org_id` was added to the table (FK/cascade hygiene only). |
 | `user_preferences` | Unchanged: SELECT/INSERT/UPDATE `auth.uid() = user_id`. No `org_id` column — stays per-user. |
 | `dialer_sessions` | SELECT: owner/admin see all; agent sees only their own. All writes via Edge Functions. |
@@ -237,6 +246,57 @@ fetches). Dashboard.tsx's My stats card and Dialer.tsx's header both render the 
 today-vs-goal progress bars via one shared component (`MyGoalHeader`/`GoalProgressBars`) — a
 metric with no goal set anywhere is left out of the bars entirely, and the whole card/section
 renders nothing if no goal is set at all.
+
+## Call review library (MISSION-5 TASK-M5-B5)
+
+`20260927171355_call_review_library.sql`. Same three-tier access everywhere (owner/admin any,
+manager pod-scoped, agent own) — composed ONCE as `private.can_view_call_leg(p_leg_id)` (built
+from `is_agent_in_callers_pod_scope` + a self-match, see its own header) rather than hand-written
+per table, specifically to avoid the exact drift `org_broadcasts`' own fix-forward (this same
+session, `20260927164816`) just proved happens when the same OR-chain is copied by hand more than
+once. `call_legs` itself predates the manager role and had no manager-visibility policy at all
+until this task added a third, additive permissive SELECT policy for it.
+
+- **Recordings browser**: `recordings_search(p_org, p_agent_id?, p_campaign_id?, p_disposition_
+  key?, p_min/max_duration_seconds?, p_start?/p_end?, p_flagged_only?, p_limit, p_offset)` — one
+  RPC, pod-scoped row filter inlined (not a `can_view_call_leg` call per row, since the query
+  already joins `dial_sessions` for other columns); narrowing to a specific `p_agent_id` outside
+  the caller's own scope raises rather than returning an empty-looking result.
+- **Signed URLs (eng2's lane, non-destructively extended)**: `recording-url/index.ts` reuses the
+  SAME Storage/Telnyx machinery, only its own auth widened — `canAccessRecording` (`_shared/
+  recording-core.ts`) gained a `manager` role + an `isAgentInCallerPodScope` flag the CALLER
+  resolves (a plain `org_members.pod_id` + `org_manager_pods` JS query, since this function uses
+  a service-role client and RLS never applies — same "manager pod-scoping done in JS" pattern
+  `org-members`/`org-audit-log`'s own GET handlers established in A5). **Gotcha**: `_shared/
+  telnyx-org-context.ts` has its OWN independent `OrgRole` type (`owner`/`admin`/`agent` — never
+  imported `_shared/auth.ts`'s own widened one, see that file's own header on why the two lanes
+  don't share this type) — it needed its own separate widening to admit `'manager'` here, purely
+  additive and safe for every other `dialer-session-*`/`telnyx-*` function that imports it (none
+  of them list `'manager'` in their own `roles` array yet, so none of them newly admit a manager
+  caller just because the TYPE now allows it in principle).
+- **Flag for review**: `recording_flags`, one row per call leg (upsert — re-flagging overwrites
+  reason/flagger, unflagging deletes the row). Anyone who can view a leg may flag/unflag it
+  (agent-flags-own-call included, not excluded — the task's "agent or manager" wording is
+  illustrative of who actually uses this, not a role exclusion; owner/admin already have
+  equal-or-greater access everywhere else in this app).
+- **Timestamped comments**: `recording_comments` (`author_user_id`, `at_second`, `text`) —
+  append-only (no update/delete policy, same convention as `org_audit_log`). An agent's own
+  visibility already restricts them to their own calls, so "agents can reply on their own calls"
+  needs no separate reply-vs-comment distinction — it's the same INSERT policy.
+- **Scorecards, no AI**: owner/admin define `scorecard_rubrics` (named, `active` for retiring one
+  without losing history) with `scorecard_rubric_criteria` (`scale_1_5` or `yes_no`). A manager
+  (pod-scoped) or owner/admin scores a call via `set_call_scorecard` (upserts `call_scorecards` +
+  fully replaces `call_scorecard_scores` for that call each time — simplest correct semantics,
+  not a merge) — validates the target agent is in scope AND every criterion actually belongs to
+  the rubric being scored against, then audit-logs `scorecard.set` (the task's own explicit
+  requirement; flags/comments are NOT audit-logged, only scorecard edits are). `my_scorecard_
+  trend(p_org)` is the agent's own self-view: blends `scale_1_5` (rescaled 0-100) and `yes_no`
+  (100/0) into one comparable `score_pct` per scorecard, oldest to newest.
+- **NOT done this task**: the Recordings page UI itself (`apps/web/src/components/Recordings.tsx`
+  and the corresponding `api.ts` wrappers) — the full backend (schema, RLS, RPCs, the signed-URL
+  widening) is complete and dry-run-tested (`audit/M5-B5/dryrun-tests.sql`), but no frontend was
+  wired this session; NEEDS-LIVE-VERIFY for the same reason every DB-only task in this mission is
+  (no QA browser access this pass).
 
 ## Constraints & gotchas
 

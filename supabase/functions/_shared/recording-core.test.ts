@@ -248,3 +248,68 @@ Deno.test(
     );
   }
 );
+
+// MISSION-5 TASK-M5-B5: manager, pod-scoped -- the caller (recording-url/index.ts) resolves
+// isAgentInCallerPodScope via a DB round trip BEFORE calling this predicate; here we only prove
+// the predicate itself trusts that flag and nothing else for the manager role.
+
+Deno.test('canAccessRecording: a manager in pod scope can access the leg', () => {
+  assertEquals(
+    canAccessRecording({
+      role: 'manager',
+      callerUserId: 'manager-1',
+      legOrgId: 'org-1',
+      callerOrgId: 'org-1',
+      sessionAgentId: 'agent-1',
+      isAgentInCallerPodScope: true,
+    }),
+    true
+  );
+});
+
+Deno.test('canAccessRecording: a manager OUTSIDE pod scope is denied, same org or not', () => {
+  assertEquals(
+    canAccessRecording({
+      role: 'manager',
+      callerUserId: 'manager-1',
+      legOrgId: 'org-1',
+      callerOrgId: 'org-1',
+      sessionAgentId: 'agent-1',
+      isAgentInCallerPodScope: false,
+    }),
+    false
+  );
+});
+
+Deno.test(
+  'canAccessRecording: a manager with the pod-scope flag omitted entirely defaults to denied, not open',
+  () => {
+    assertEquals(
+      canAccessRecording({
+        role: 'manager',
+        callerUserId: 'manager-1',
+        legOrgId: 'org-1',
+        callerOrgId: 'org-1',
+        sessionAgentId: 'agent-1',
+      }),
+      false
+    );
+  }
+);
+
+Deno.test(
+  'canAccessRecording: a manager from a DIFFERENT org is denied even with pod scope true',
+  () => {
+    assertEquals(
+      canAccessRecording({
+        role: 'manager',
+        callerUserId: 'manager-1',
+        legOrgId: 'org-2',
+        callerOrgId: 'org-1',
+        sessionAgentId: 'agent-1',
+        isAgentInCallerPodScope: true,
+      }),
+      false
+    );
+  }
+);

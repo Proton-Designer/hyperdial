@@ -12,7 +12,14 @@ import { corsHeaders } from './cors.ts';
 import { getUserFromRequest } from './auth.ts';
 import { createTelnyxClient, type TelnyxClient } from './telnyx-client.ts';
 
-export type OrgRole = 'owner' | 'admin' | 'agent';
+// MISSION-5 TASK-M5-B5: widened to admit 'manager' -- purely additive (every existing caller's
+// own `roles: OrgRole[]` array is untouched and still only lists the roles it always did; this
+// only lets a NEW caller, like recording-url, pass 'manager' in its own list and have it
+// typecheck). recording-url is the first caller through THIS role path to need it; every
+// dialer-session-*/telnyx-* function here still only recognizes owner/admin/agent until its own
+// task widens it (same deferred-scoping precedent TASK-M5-B2 itself established for remote
+// pause/end/hang-up -- "manager after A5" landing one call site at a time, not all at once).
+export type OrgRole = 'owner' | 'admin' | 'agent' | 'manager';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
