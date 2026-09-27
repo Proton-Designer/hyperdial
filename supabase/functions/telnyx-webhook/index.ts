@@ -323,7 +323,22 @@ Deno.serve(async (req: Request) => {
       inboundClientState,
       coachingClientState,
       transferTargetClientState
-    ).catch((err) => console.error('telnyx-webhook async processing error:', err));
+    ).catch((err) => {
+      console.error('telnyx-webhook async processing error:', err);
+      // TASK-T10 (SEC-7 rest): the one integration point for the webhook-error-spike alert --
+      // record_webhook_processing_error is itself best-effort (never let alert bookkeeping turn
+      // a real processing error into an unhandled rejection).
+      supabase
+        .rpc('record_webhook_processing_error', {
+          p_org: orgId,
+          p_event_type: body?.data?.event_type ?? null,
+          p_error_message: err instanceof Error ? err.message : String(err),
+        })
+        .then(({ error }) => {
+          if (error)
+            console.error('[telnyx-webhook] record_webhook_processing_error failed', error.message);
+        });
+    });
     if (typeof EdgeRuntime !== 'undefined') {
       // Ack 200 immediately; EdgeRuntime keeps processingPromise alive past the response.
       EdgeRuntime.waitUntil(processingPromise);
