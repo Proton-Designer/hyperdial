@@ -765,6 +765,38 @@ export async function getFunnelSummary(
   return row ?? { dials: 0, human_answers: 0, conversations: 0, wins: 0 };
 }
 
+// --- MISSION-4 TASK-T8 (compliance): drop-rate tracking. Same "front door read" RPC/scoping
+// shape as getFunnelSummary above (a new, additive function -- funnel_summary itself is
+// untouched, see the migration's own header for why). ---
+
+export interface DropRateSummary {
+  dials: number;
+  human_answers: number;
+  dropped: number;
+  /** 0-100, one decimal place. `0` when human_answers is 0 (nothing to divide), never NaN. */
+  drop_rate_pct: number;
+}
+
+/** "Drop rate" = a human answered but was hung up before connecting (dropped/abandoned) as a
+ *  fraction of every human answer (connected + dropped + abandoned) -- REQ-1's own wording. The
+ *  UI's own 3% guideline warning is a pure display concern (Analytics.tsx), not computed here. */
+export async function getCampaignDropRateSummary(
+  campaignId: string | null,
+  start: Date,
+  end: Date
+): Promise<DropRateSummary> {
+  const orgId = await getActiveOrgId();
+  const { data, error } = await supabase.rpc('campaign_drop_rate_summary', {
+    p_org: orgId,
+    p_campaign_id: campaignId,
+    p_start: start.toISOString(),
+    p_end: end.toISOString(),
+  });
+  if (error) throw new Error(error.message);
+  const row = (data ?? [])[0] as DropRateSummary | undefined;
+  return row ?? { dials: 0, human_answers: 0, dropped: 0, drop_rate_pct: 0 };
+}
+
 export interface AnswerRateHeatmapCell {
   /** 0=Sunday..6=Saturday (Postgres extract(dow)), in the CONTACT's own local time. */
   weekday: number;
@@ -2036,6 +2068,11 @@ export interface CallLegRecord {
    *  id, or an E.164 number, depending on `transfer_type`'s own target kind. */
   transferred_to: string | null;
   transfer_type: 'cold' | 'warm' | null;
+  /** MISSION-4 TASK-T8: null until `maybeStartRecording` first starts recording this leg (or
+   *  recording is disabled for the org). Drives the live "Pause/Resume recording" button --
+   *  only 'recording'/'paused' are actionable states for it. */
+  recording_status:
+    'recording' | 'paused' | 'saved' | 'download_failed' | 'recording_failed' | 'deleted' | null;
   /** TASK-T5 (CRD-1): widened for the connected-call card's business-details panel.
    *  license_number/service_zips/tier live inside `ghl_custom_fields`, keyed by our own
    *  target-key names (not a GHL field id) -- read directly, e.g.
@@ -2254,6 +2291,28 @@ export async function hangupLiveCall(sessionId: string): Promise<void> {
   });
   const data = (await res.json()) as { error?: string };
   if (!res.ok) throw new Error(data.error || 'Failed to end live call');
+}
+
+/** MISSION-4 TASK-T8: pauses/resumes the currently-recording winner leg's own recording during a
+ *  live call -- the intern-facing "Pause/Resume recording" button. */
+async function setSessionRecordingPaused(sessionId: string, paused: boolean): Promise<void> {
+  const res = await fetch(`${getFunctionsUrl()}/dialer-session-recording`, {
+    method: 'POST',
+    headers: await getEdgeFunctionHeaders(),
+    body: JSON.stringify({ sessionId, action: paused ? 'pause' : 'resume' }),
+  });
+  const data = (await res.json()) as { error?: string };
+  if (!res.ok) {
+    throw new Error(data.error || `Failed to ${paused ? 'pause' : 'resume'} recording`);
+  }
+}
+
+export async function pauseSessionRecording(sessionId: string): Promise<void> {
+  await setSessionRecordingPaused(sessionId, true);
+}
+
+export async function resumeSessionRecording(sessionId: string): Promise<void> {
+  await setSessionRecordingPaused(sessionId, false);
 }
 
 export async function getDialerSession(sessionId: string): Promise<{
@@ -2916,6 +2975,61 @@ export async function setRecordingEnabled(enabled: boolean): Promise<void> {
   const { error } = await supabase
     .from('org_recording_settings')
     .upsert({ org_id: orgId, recording_enabled: enabled, updated_at: new Date().toISOString() });
+  if (error) throw new Error(error.message);
+}
+
+// --- MISSION-4 TASK-T8 (compliance): recording consent notice. Same owner/admin-RLS-enforced,
+// plain-table read/write shape as getRecordingEnabled/setRecordingEnabled above. ---
+
+export type AnnounceRecordingMode = 'never' | 'all' | 'all_party_consent_states';
+
+export interface RecordingConsentSettings {
+  announceRecordingMode: AnnounceRecordingMode;
+  allPartyConsentStates: string[];
+}
+
+const DEFAULT_ALL_PARTY_CONSENT_STATES = [
+  'CA',
+  'CT',
+  'FL',
+  'IL',
+  'MD',
+  'MA',
+  'MT',
+  'NH',
+  'PA',
+  'WA',
+  'NV',
+  'OR',
+  'DE',
+  'MI',
+];
+
+export async function getRecordingConsentSettings(): Promise<RecordingConsentSettings> {
+  const orgId = await getActiveOrgId();
+  const { data, error } = await supabase
+    .from('org_recording_settings')
+    .select('announce_recording_mode, all_party_consent_states')
+    .eq('org_id', orgId)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return {
+    announceRecordingMode:
+      (data?.announce_recording_mode as AnnounceRecordingMode | undefined) ?? 'never',
+    allPartyConsentStates: data?.all_party_consent_states ?? DEFAULT_ALL_PARTY_CONSENT_STATES,
+  };
+}
+
+export async function setRecordingConsentSettings(
+  settings: RecordingConsentSettings
+): Promise<void> {
+  const orgId = await getActiveOrgId();
+  const { error } = await supabase.from('org_recording_settings').upsert({
+    org_id: orgId,
+    announce_recording_mode: settings.announceRecordingMode,
+    all_party_consent_states: settings.allPartyConsentStates,
+    updated_at: new Date().toISOString(),
+  });
   if (error) throw new Error(error.message);
 }
 

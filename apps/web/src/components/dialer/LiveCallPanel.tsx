@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
-import { Mic, MicOff, PauseCircle, PhoneForwarded, PhoneOff, User } from 'lucide-react';
+import { Disc, Mic, MicOff, PauseCircle, PhoneForwarded, PhoneOff, User } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import type { CallLegRecord } from '@/lib/api';
 
 /** TASK-T4: a plain "mm:ss since this timestamp" ticker -- shared by the call-duration timer
  *  above and the new on-hold timer below (LiveCallPanel's own original inline version, factored
@@ -65,6 +66,12 @@ interface LiveCallPanelProps {
    *  `handleToggleMute`. Defaults to `false` is the caller's job now, not this component's. */
   muted: boolean;
   onToggleMute: (muted: boolean) => void;
+  /** MISSION-4 TASK-T8: the winner leg's own `recording_status` -- only 'recording'/'paused'
+   *  make the button actionable (anything else, including null, hides it entirely: nothing to
+   *  pause, or recording is off/already finished). Omit `onToggleRecording` for a panel that
+   *  shouldn't offer this at all (same optional-callback shape as `onHold`/`onResume`). */
+  recordingStatus?: CallLegRecord['recording_status'];
+  onToggleRecording?: () => void;
   onEndCall: () => void;
 }
 
@@ -83,6 +90,8 @@ export function LiveCallPanel({
   onCancelTransfer,
   muted,
   onToggleMute,
+  recordingStatus,
+  onToggleRecording,
   onEndCall,
 }: LiveCallPanelProps) {
   const callTimer = useElapsedSince(answeredAt);
@@ -145,11 +154,7 @@ export function LiveCallPanel({
             </Button>
           ) : (
             <>
-              <Button
-                type="button"
-                variant="fe-secondary"
-                onClick={() => onToggleMute(!muted)}
-              >
+              <Button type="button" variant="fe-secondary" onClick={() => onToggleMute(!muted)}>
                 {muted ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
                 {muted ? 'Unmute' : 'Mute'}
               </Button>
@@ -159,6 +164,13 @@ export function LiveCallPanel({
                   Hold
                 </Button>
               )}
+              {onToggleRecording &&
+                (recordingStatus === 'recording' || recordingStatus === 'paused') && (
+                  <Button type="button" variant="fe-secondary" onClick={onToggleRecording}>
+                    <Disc className="w-4 h-4" />
+                    {recordingStatus === 'paused' ? 'Resume recording' : 'Pause recording'}
+                  </Button>
+                )}
               {onOpenTransfer && !activeTransfer && (
                 <Button type="button" variant="fe-secondary" onClick={onOpenTransfer}>
                   <PhoneForwarded className="w-4 h-4" />

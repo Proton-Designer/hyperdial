@@ -426,6 +426,38 @@ Records the WINNING contact leg only, never a loser, starting the moment it's ac
   -- no such surface exists anywhere in the app yet. Deferred to TASK-F-P4; the signal it would
   need (`call_legs.recording_path is not null`) already exists.
 
+### Recording consent notice, pause/resume, drop-rate, gatekeeper retry (MISSION-4 TASK-T8)
+
+- **Consent notice**: `org_recording_settings.announce_recording_mode` ('never'/'all'/
+  'all_party_consent_states', default 'never') + an editable `all_party_consent_states` text[]
+  (seeded with a 14-state reference default, NOT legal advice). Decided by
+  `shouldAnnounceRecordingConsent` (`recording-core.ts`, pure), applied in `handleWin`'s
+  `maybeAnnounceRecordingConsent`, right AFTER `maybeStartRecording` -- the notice, if spoken, is
+  itself part of the recording. State comes from the contact's phone number via
+  `_shared/area-code-state.ts` (`stateForE164`, best-effort, same caveats as `area-code-tz.ts` --
+  an unmapped/non-`+1` number is null, never a guess, so it can only ever fail to announce, never
+  wrongly announce). Speaks via the SAME `client.speak()` wrapper the abandon message already uses.
+- **Pause/resume recording**: two new `TelnyxClient` methods, `recordPause`/`recordResume`
+  (`POST /calls/{id}/actions/record_{pause,resume}`, empty body -- see `audit/T8/api-evidence.md`).
+  `pauseRecording`/`resumeRecording` (dialer-engine.ts) act on the session's `active_leg_id`; no
+  CAS needed (a single agent's own button click, no concurrent webhook racing it, unlike
+  `transition_leg`/`transition_session`). New Edge Function `dialer-session-recording` (mirrors
+  `dialer-session-hangup-live`'s shape) is the intern-facing endpoint. `call_legs.recording_status`
+  gained `'paused'`; `recording_paused_at` (the currently-open span, if any) + append-only
+  `recording_paused_spans jsonb` (closed `{paused_at, resumed_at}` pairs, written on resume) record
+  the history. UI: `LiveCallPanel`'s "Pause/Resume recording" button (next to Hold), wired through
+  `ParallelDialerUI` -> `useDialerSession`'s `toggleRecording`.
+- **Drop-rate tracking**: mostly already existed before this task (verify, don't assume) --
+  `apply_leg_outcome` already sets `priority_requeue`+`next_attempt_at=now()` for dropped/abandoned
+  (queues them first, next batch) and `sendAbandonMessage` already plays a short message gated on
+  `campaigns.abandon_message_enabled`. Only the metric was missing: `campaign_drop_rate_summary`
+  (new, additive RPC, same scoping shape as eng1's `funnel_summary` -- that function itself is
+  untouched), surfaced as a "Drop rate (last 30 days)" card in `Analytics.tsx` with a >3% warning
+  banner (`DROP_RATE_WARNING_PCT`).
+- **QUE-2 (gatekeeper's own shorter retry)**: seeded at 1440 minutes (not the no_answer/voicemail
+  4-day default) -- see `.brain/memory/known-issues.md` #32 for why 1440 specifically, and why a
+  genuinely same-day retry isn't actually possible today regardless of the value chosen.
+
 ## Not covered here
 
 - Telnyx numbers, WebRTC credentials, raw API wrappers → `.brain/domains/telephony.md`; campaigns

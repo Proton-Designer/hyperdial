@@ -448,6 +448,30 @@ architecturally sound per the spec but unverified against a real multi-party cal
 
 ---
 
+### B23 -- Compliance: recording consent notice + pause/resume recording (MISSION-4 TASK-T8) -- **needs a real Telnyx call**
+
+An agent on a live parallel-dialer call with a real or test contact, recording enabled for the org.
+
+| #     | Step                                                                                                                                   | Expected                                                                                                                                                                           | ☐   |
+| ----- | -------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --- |
+| B23.1 | Settings → Call recording → set "Recording consent notice" to "Announce on every recorded call". Dial and connect a real contact.      | Right after connecting, both the agent and the contact hear "This call ... may be recorded for quality purposes" (or the org-name variant) before normal conversation audio.       | ☐   |
+| B23.2 | Set the mode back to "Announce only in all-party-consent states", with a real contact whose area code IS in the configured state list. | Same announcement plays.                                                                                                                                                           | ☐   |
+| B23.3 | Same mode, a contact whose area code is NOT in the list (or set the list to exclude their state).                                      | No announcement plays -- straight to normal conversation audio, exactly like today.                                                                                                | ☐   |
+| B23.4 | Set the mode to "Never" (the default). Connect a call.                                                                                 | No announcement, unchanged from before this task existed.                                                                                                                          | ☐   |
+| B23.5 | While connected (recording on), click **Pause recording**.                                                                             | Button flips to "Resume recording"; confirm via the Telnyx dashboard (or a subsequent recording-url check) that no new audio is captured while paused.                             | ☐   |
+| B23.6 | Click **Resume recording**.                                                                                                            | Recording resumes; the final saved recording/metadata reflects a paused span (`call_legs.recording_paused_spans`, checkable via the Supabase dashboard) covering the pause window. | ☐   |
+| B23.7 | As an agent, try to pause/resume a DIFFERENT agent's session's recording (via a raw request).                                          | 403 -- an agent may only control their OWN session's recording; owner/admin may act on any session in the org.                                                                     | ☐   |
+
+The decision logic (`shouldAnnounceRecordingConsent`) and the pause/resume wiring itself are
+covered by deno tests (`recording-core.test.ts`, `dialer-engine.test.ts`, `telnyx-client.test.ts`
+-- against a fake Supabase + a stubbed-fetch real `TelnyxClient`, never a real Telnyx call). B23
+above only covers what a real call + real audio can add on top of that. **NOT live-verified**:
+whether `record_pause`/`record_resume` actually leave an audible gap or artifact in the final
+saved recording, and whether the spoken consent notice is intelligible/correctly timed in
+practice (architecturally sound per spec3.json, unverified against a real call tonight).
+
+---
+
 ## C. Evidence to capture
 
 - Screenshots of each `DialerStateBanner` state seen during B2/B3 (Ready, Ringing, Connecting,

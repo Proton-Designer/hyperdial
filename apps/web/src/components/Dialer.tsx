@@ -199,7 +199,7 @@ function DialerBody({
       setIsMuted(next);
       setMuted(next);
     },
-    [setMuted],
+    [setMuted]
   );
 
   // TASK-I1 review fix (eng1 review-eng1.md finding #6): resolve the caller's contact name for
@@ -929,6 +929,8 @@ function DialerBody({
                 inboundCall={parallelSession.inboundCall}
                 coachingMode={parallelSession.coachingMode}
                 heldAt={parallelSession.heldAt}
+                recordingStatus={parallelSession.recordingStatus}
+                onToggleRecording={() => void parallelSession.toggleRecording()}
                 activeTransfer={parallelSession.activeTransfer}
                 connectedContact={parallelSession.connectedContact}
                 connectedContactHistory={parallelSession.connectedContactHistory}

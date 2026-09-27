@@ -487,6 +487,20 @@ export interface TelnyxClient {
   ): Promise<void>;
 
   recordStart(callControlId: string, args: RecordStartArgs): Promise<void>;
+  /**
+   * MISSION-4 TASK-T8: `POST /calls/{id}/actions/record_pause` -- verified against spec3.json's
+   * `PauseRecordingRequest`: every property (`client_state`/`command_id`/`recording_id`) is
+   * OPTIONAL, so an empty body is a valid request; this lane only ever has one active recording
+   * per call leg (`maybeStartRecording` calls `record_start` at most once per leg), so there is
+   * no `recording_id` to disambiguate. No webhook is associated with this command (spec's own
+   * words) -- the caller updates `call_legs` itself, synchronously, same as this file's own
+   * `recordStart` callers already do for `recording_status`.
+   */
+  recordPause(callControlId: string): Promise<void>;
+  /** MISSION-4 TASK-T8: `POST /calls/{id}/actions/record_resume` -- verified against spec3.json's
+   *  `ResumeRecordingRequest`, same all-optional-properties shape as `PauseRecordingRequest`
+   *  above, same "no associated webhook" note. */
+  recordResume(callControlId: string): Promise<void>;
   transcriptionStart(callControlId: string, args?: TranscriptionStartArgs): Promise<void>;
   playbackStart(callControlId: string, args: PlaybackStartArgs): Promise<void>;
 
@@ -693,6 +707,20 @@ export function createTelnyxClient(
       await req(`/calls/${encodeURIComponent(callControlId)}/actions/record_start`, {
         method: 'POST',
         body: JSON.stringify(buildRecordStartPayload(args)),
+      });
+    },
+
+    async recordPause(callControlId) {
+      await req(`/calls/${encodeURIComponent(callControlId)}/actions/record_pause`, {
+        method: 'POST',
+        body: JSON.stringify({}),
+      });
+    },
+
+    async recordResume(callControlId) {
+      await req(`/calls/${encodeURIComponent(callControlId)}/actions/record_resume`, {
+        method: 'POST',
+        body: JSON.stringify({}),
       });
     },
 

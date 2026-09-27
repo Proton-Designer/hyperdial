@@ -80,6 +80,9 @@ import {
   removeDncNumber,
   getRecordingEnabled,
   setRecordingEnabled,
+  getRecordingConsentSettings,
+  setRecordingConsentSettings,
+  type AnnounceRecordingMode,
   getAllowExternalTransfers,
   setAllowExternalTransfers,
   getUserPreferences,
@@ -1989,15 +1992,33 @@ function RecordingSettingsCard() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // MISSION-4 TASK-T8 (recording consent notice): a second, independent setting on the same
+  // table/card -- "should recording be on at all" (above) is orthogonal to "should the prospect
+  // be told it's on" (below). Own loading/saving/error state so a failure in one never blocks
+  // the other.
+  const [consentMode, setConsentMode] = useState<AnnounceRecordingMode>('never');
+  const [consentStatesText, setConsentStatesText] = useState('');
+  const [consentLoading, setConsentLoading] = useState(true);
+  const [consentSaving, setConsentSaving] = useState(false);
+  const [consentError, setConsentError] = useState<string | null>(null);
+
   useEffect(() => {
     if (!isAdmin) {
       setLoading(false);
+      setConsentLoading(false);
       return;
     }
     getRecordingEnabled()
       .then(setEnabled)
       .catch((e) => setError(String(e)))
       .finally(() => setLoading(false));
+    getRecordingConsentSettings()
+      .then((s) => {
+        setConsentMode(s.announceRecordingMode);
+        setConsentStatesText(s.allPartyConsentStates.join(', '));
+      })
+      .catch((e) => setConsentError(String(e)))
+      .finally(() => setConsentLoading(false));
   }, [isAdmin]);
 
   const handleToggle = async (next: boolean) => {
@@ -2012,6 +2033,34 @@ function RecordingSettingsCard() {
     } finally {
       setSaving(false);
     }
+  };
+
+  const saveConsentSettings = async (nextMode: AnnounceRecordingMode, nextStatesText: string) => {
+    setConsentSaving(true);
+    setConsentError(null);
+    try {
+      const states = nextStatesText
+        .split(',')
+        .map((s) => s.trim().toUpperCase())
+        .filter((s) => s.length > 0);
+      await setRecordingConsentSettings({
+        announceRecordingMode: nextMode,
+        allPartyConsentStates: states,
+      });
+    } catch (e) {
+      setConsentError(String(e));
+    } finally {
+      setConsentSaving(false);
+    }
+  };
+
+  const handleConsentModeChange = (next: AnnounceRecordingMode) => {
+    setConsentMode(next);
+    void saveConsentSettings(next, consentStatesText);
+  };
+
+  const handleConsentStatesBlur = () => {
+    void saveConsentSettings(consentMode, consentStatesText);
   };
 
   if (!isAdmin) return null;
@@ -2037,6 +2086,50 @@ function RecordingSettingsCard() {
           Record calls
         </label>
       )}
+
+      <div className="mt-5 pt-5 border-t border-border-subtle">
+        <h4 className="text-body font-medium text-text-primary mb-1">Recording consent notice</h4>
+        <p className="text-sm text-text-secondary mb-3">
+          Whether the prospect hears "this call may be recorded" right after connecting. Not legal
+          advice -- the state list below is a common reference default, editable for your own org's
+          actual compliance needs.
+        </p>
+        {consentError && <p className="text-sm text-danger mb-3">{consentError}</p>}
+        {consentLoading ? (
+          <Skeleton className="h-16 w-full" />
+        ) : (
+          <div className="space-y-3">
+            <select
+              className="bg-surface-2 border border-border-subtle rounded-app-md px-3 py-2 text-sm text-text-primary"
+              value={consentMode}
+              disabled={consentSaving}
+              onChange={(e) => handleConsentModeChange(e.target.value as AnnounceRecordingMode)}
+            >
+              <option value="never">Never announce</option>
+              <option value="all">Announce on every recorded call</option>
+              <option value="all_party_consent_states">
+                Announce only in all-party-consent states
+              </option>
+            </select>
+            {consentMode === 'all_party_consent_states' && (
+              <div>
+                <label className="block text-sm text-text-secondary mb-1">
+                  All-party-consent states (comma-separated 2-letter codes)
+                </label>
+                <input
+                  type="text"
+                  className="bg-surface-2 border border-border-subtle rounded-app-md px-3 py-2 text-sm text-text-primary w-full"
+                  value={consentStatesText}
+                  disabled={consentSaving}
+                  onChange={(e) => setConsentStatesText(e.target.value)}
+                  onBlur={handleConsentStatesBlur}
+                  placeholder="CA, CT, FL, ..."
+                />
+              </div>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -2260,7 +2353,8 @@ function AutoResumeSettingsCard() {
       <p className="text-sm text-text-secondary mb-4">
         After you submit a disposition, choose how the next batch starts: right away after a short
         countdown, or only when you click Resume (or press Space).
-        {value === null && ' Default: resumes immediately, exactly like before this setting existed.'}
+        {value === null &&
+          ' Default: resumes immediately, exactly like before this setting existed.'}
       </p>
       {error && <p className="text-sm text-danger mb-3">{error}</p>}
       {loading ? (

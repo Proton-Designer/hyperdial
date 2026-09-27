@@ -1,6 +1,7 @@
 import { assertEquals } from 'jsr:@std/assert@1';
 import {
   isRecordingEnabled,
+  shouldAnnounceRecordingConsent,
   parseRecordingSavedPayload,
   parseRecordingErrorPayload,
   recordingStoragePath,
@@ -16,6 +17,41 @@ Deno.test('isRecordingEnabled: explicit true/false rows are respected', () => {
   assertEquals(isRecordingEnabled({ recording_enabled: true }), true);
   assertEquals(isRecordingEnabled({ recording_enabled: false }), false);
 });
+
+Deno.test('shouldAnnounceRecordingConsent: no row (never configured) = never announce', () => {
+  assertEquals(shouldAnnounceRecordingConsent(null, 'CA'), false);
+});
+
+Deno.test(
+  'shouldAnnounceRecordingConsent: mode "never" never announces, regardless of state',
+  () => {
+    const row = { announce_recording_mode: 'never' as const, all_party_consent_states: ['CA'] };
+    assertEquals(shouldAnnounceRecordingConsent(row, 'CA'), false);
+    assertEquals(shouldAnnounceRecordingConsent(row, null), false);
+  }
+);
+
+Deno.test(
+  'shouldAnnounceRecordingConsent: mode "all" always announces, even with no known state',
+  () => {
+    const row = { announce_recording_mode: 'all' as const, all_party_consent_states: [] };
+    assertEquals(shouldAnnounceRecordingConsent(row, 'CA'), true);
+    assertEquals(shouldAnnounceRecordingConsent(row, null), true);
+  }
+);
+
+Deno.test(
+  'shouldAnnounceRecordingConsent: mode "all_party_consent_states" checks the org list',
+  () => {
+    const row = {
+      announce_recording_mode: 'all_party_consent_states' as const,
+      all_party_consent_states: ['CA', 'FL'],
+    };
+    assertEquals(shouldAnnounceRecordingConsent(row, 'CA'), true);
+    assertEquals(shouldAnnounceRecordingConsent(row, 'NY'), false);
+    assertEquals(shouldAnnounceRecordingConsent(row, null), false); // unmapped area code -- never guess
+  }
+);
 
 Deno.test('parseRecordingSavedPayload: full real-shaped payload (spec3.json example)', () => {
   const result = parseRecordingSavedPayload({

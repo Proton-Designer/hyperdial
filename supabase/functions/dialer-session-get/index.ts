@@ -63,7 +63,7 @@ Deno.serve(async (req) => {
     const { data: legs, error: legsError } = await supabase
       .from('call_legs')
       .select(
-        'id, kind, state, outcome, contact_id, lead_id, call_control_id, amd_result, hangup_cause, answered_at, claimed_at, ended_at, created_at, dispositioned_at, held_at, transferred_to, transfer_type, ' +
+        'id, kind, state, outcome, contact_id, lead_id, call_control_id, amd_result, hangup_cause, answered_at, claimed_at, ended_at, created_at, dispositioned_at, held_at, transferred_to, transfer_type, recording_status, ' +
           // TASK-T5 (CRD-1): widened for the connected-call card's business-details panel --
           // license_number/service_zips/tier live inside ghl_custom_fields (keyed by our own
           // target-key names, not a GHL field id -- see ghl-import.ts's own enrichment code),

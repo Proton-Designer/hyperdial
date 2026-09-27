@@ -13,6 +13,7 @@ import type { BatchContactPreview, ConnectedContactDetails } from '@/hooks/useDi
 import { getRecordingUrl, getUserPreferences, saveUserPreferences } from '@/lib/api';
 import type {
   ActiveTransfer,
+  CallLegRecord,
   CampaignScriptInfo,
   ContactHistoryEntry,
   DialSessionState,
@@ -43,6 +44,8 @@ interface ParallelDialerUIProps {
   coachingMode: 'whisper' | 'barge' | null;
   /** TASK-T4 (AUD-6): the connected contact leg's own `held_at`, if any. */
   heldAt: string | null;
+  /** MISSION-4 TASK-T8: the connected contact leg's own `recording_status`, if any. */
+  recordingStatus: CallLegRecord['recording_status'];
   /** TASK-T4: the session's in-flight warm/cold transfer, if any. */
   activeTransfer: ActiveTransfer | null;
   /** TASK-T5 (CRD-1): the connected contact's own business details, if the leg has a contact
@@ -65,6 +68,11 @@ interface ParallelDialerUIProps {
   onEndLiveCall: () => void;
   onHoldCall: () => void;
   onResumeCall: () => void;
+  /** MISSION-4 TASK-T8: the Pause/Resume-recording button -- one handler for both directions,
+   *  same "the button already knows which state it's in" shape as `onResume`/`onHold` being two
+   *  separate props instead. Kept as ONE prop (not two) since, unlike hold, there's no third
+   *  "neither" affordance to render -- the button's own label flips on `recordingStatus`. */
+  onToggleRecording: () => void;
   onStartTransfer: (args: {
     type: 'cold' | 'warm';
     targetKind: 'member' | 'external';
@@ -179,6 +187,7 @@ export function ParallelDialerUI({
   inboundCall,
   coachingMode,
   heldAt,
+  recordingStatus,
   activeTransfer,
   connectedContact,
   connectedContactHistory,
@@ -191,6 +200,7 @@ export function ParallelDialerUI({
   onEndLiveCall,
   onHoldCall,
   onResumeCall,
+  onToggleRecording,
   onStartTransfer,
   onCompleteTransfer,
   onCancelTransfer,
@@ -328,6 +338,8 @@ export function ParallelDialerUI({
             heldAt={heldAt}
             onHold={onHoldCall}
             onResume={onResumeCall}
+            recordingStatus={recordingStatus}
+            onToggleRecording={onToggleRecording}
             activeTransfer={activeTransferForPanel}
             onOpenTransfer={() => setShowTransferModal(true)}
             onCompleteTransfer={onCompleteTransfer}

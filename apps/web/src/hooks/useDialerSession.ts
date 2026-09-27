@@ -9,6 +9,8 @@ import {
   stopDialerSession,
   holdCall,
   resumeCall,
+  pauseSessionRecording,
+  resumeSessionRecording,
   startTransfer,
   completeTransfer,
   cancelTransfer,
@@ -238,6 +240,23 @@ export function useDialerSession(initialSessionId: string | null = null) {
     return res;
   }, [loadSession, state.sessionId]);
 
+  // MISSION-4 TASK-T8: same "call the API, then refresh from the server's own resulting state"
+  // shape as hold/unhold above. One toggle, not two separate actions -- reads the CURRENT
+  // recording_status fresh off `state.legs` each call (not a stale closed-over value), so it
+  // stays correct even if the leg's status changed since the last render for some other reason.
+  const toggleRecording = useCallback(async () => {
+    if (!state.sessionId) return;
+    const activeLeg = state.legs.find((l) => l.id === state.session?.active_leg_id);
+    if (activeLeg?.recording_status === 'paused') {
+      await resumeSessionRecording(state.sessionId);
+    } else if (activeLeg?.recording_status === 'recording') {
+      await pauseSessionRecording(state.sessionId);
+    } else {
+      return;
+    }
+    await loadSession(state.sessionId);
+  }, [loadSession, state.sessionId, state.legs, state.session]);
+
   const beginTransfer = useCallback(
     async (args: {
       type: 'cold' | 'warm';
@@ -313,6 +332,10 @@ export function useDialerSession(initialSessionId: string | null = null) {
     const connectedAnsweredAt = activeLeg?.answered_at ?? null;
     // TASK-T4: 'On hold mm:ss' timer anchor -- null whenever the active leg isn't held.
     const heldAt = activeLeg?.held_at ?? null;
+    // MISSION-4 TASK-T8: drives the live Pause/Resume recording button -- only 'recording'/
+    // 'paused' are ever actionable (LiveCallPanel's own gate), everything else (null, 'saved',
+    // etc.) hides the button.
+    const recordingStatus = activeLeg?.recording_status ?? null;
     // TASK-T5 (CRD-1): built straight from the active leg's own widened contact join -- every
     // field individually nullable ("graceful when missing"). ghl_custom_fields is keyed by our
     // own target-key names, not a GHL field id (confirmed against ghl-import.ts's own
@@ -392,6 +415,7 @@ export function useDialerSession(initialSessionId: string | null = null) {
       wrapUpLeg,
       progress,
       heldAt,
+      recordingStatus,
       connectedContact,
       connectedContactHistory,
     };
@@ -408,6 +432,7 @@ export function useDialerSession(initialSessionId: string | null = null) {
     endLiveCall,
     hold,
     unhold,
+    toggleRecording,
     beginTransfer,
     completeActiveTransfer,
     cancelActiveTransfer,

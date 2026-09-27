@@ -126,10 +126,12 @@ import { getOrCreateMemberCredentialId } from './agent-webrtc-credential.ts';
 import type { TelnyxClient } from './telnyx-client.ts';
 import {
   isRecordingEnabled,
+  shouldAnnounceRecordingConsent,
   parseRecordingSavedPayload,
   parseRecordingErrorPayload,
   recordingStoragePath,
 } from './recording-core.ts';
+import { stateForE164 } from './area-code-state.ts';
 import {
   amdModeSupportsVoicemailDrop,
   shouldAttemptVoicemailDrop,
@@ -191,6 +193,14 @@ const DEFAULT_SPEAK_VOICE = 'AWS.Polly.Joanna-Neural';
 
 function abandonMessage(orgName: string | null): string {
   return `Sorry, we missed you${orgName ? ` at ${orgName}` : ''}. We'll try to reach you again soon.`;
+}
+
+/** MISSION-4 TASK-T8: spoken once, right after bridge, when `shouldAnnounceRecordingConsent`
+ *  says to. Deliberately generic wording (no state-specific legal phrasing) -- this feature
+ *  decides WHEN to announce, not what a compliant script must say; see the org setting's own
+ *  "not legal advice" comment. */
+function recordingConsentMessage(orgName: string | null): string {
+  return `This call${orgName ? ` with ${orgName}` : ''} may be recorded for quality purposes.`;
 }
 
 // ---------------------------------------------------------------------------
@@ -2148,6 +2158,59 @@ async function maybeStartRecording(
   }
 }
 
+/** MISSION-4 TASK-T8 (recording consent notice): spoken to the winner leg right after it's
+ *  actually bridged (same "only once actually bridged" gating as `maybeStartRecording`, which
+ *  this always runs after -- so a consent notice, if any, is itself part of the recording it
+ *  announces). Best-effort, non-blocking (mirrors `sendAbandonMessage`'s own `try`/`catch` +
+ *  `dialerLog`-and-continue shape) -- a failed lookup or a Telnyx error here must never affect
+ *  the live call itself. */
+async function maybeAnnounceRecordingConsent(
+  supabase: SupabaseClient,
+  client: TelnyxClient,
+  session: DialSessionRow,
+  winnerLeg: CallLegRow
+): Promise<void> {
+  try {
+    const { data: settings, error: settingsError } = await supabase
+      .from('org_recording_settings')
+      .select('announce_recording_mode, all_party_consent_states')
+      .eq('org_id', session.org_id)
+      .maybeSingle();
+    if (settingsError) throw new Error(settingsError.message);
+
+    let contactState: string | null = null;
+    if (winnerLeg.contact_id) {
+      const { data: contact } = await supabase
+        .from('contacts')
+        .select('phone_number')
+        .eq('id', winnerLeg.contact_id)
+        .maybeSingle();
+      contactState = stateForE164((contact?.phone_number as string | undefined) ?? null);
+    }
+
+    if (!shouldAnnounceRecordingConsent(settings, contactState)) {
+      return;
+    }
+
+    const orgName = await loadOrgName(supabase, session.org_id);
+    await client.speak(winnerLeg.call_control_id, {
+      payload: recordingConsentMessage(orgName),
+      voice: DEFAULT_SPEAK_VOICE,
+    });
+    dialerLog('recording_consent_announced', {
+      sessionId: session.id,
+      legId: winnerLeg.id,
+      contactState,
+    });
+  } catch (err) {
+    dialerLog('recording_consent_announce_failed', {
+      sessionId: session.id,
+      legId: winnerLeg.id,
+      error: String(err),
+    });
+  }
+}
+
 async function handleWin(
   supabase: SupabaseClient,
   session: DialSessionRow,
@@ -2208,6 +2271,9 @@ async function handleWin(
       // REC-1: only ever the winner, only once actually bridged -- see maybeStartRecording's
       // own header for why this can never fail/block the call itself.
       await maybeStartRecording(supabase, client, session, winnerLeg);
+      // MISSION-4 TASK-T8: runs AFTER recording starts, so the announcement (if any) is itself
+      // part of the recording it's disclosing -- see maybeAnnounceRecordingConsent's own header.
+      await maybeAnnounceRecordingConsent(supabase, client, session, winnerLeg);
     }
   } catch (err) {
     dialerLog('handle_win_conference_failed', { sessionId: session.id, error: String(err) });
@@ -2388,5 +2454,74 @@ export async function endLiveCall(
   // hangup itself. Reuses the client already fetched above, no second Telnyx-context lookup.
   await cancelInFlightTransferForSession(supabase, client, orgId, sessionId, 'agent_hangup');
   await client.hangup(leg.call_control_id as string);
+  return true;
+}
+
+/** MISSION-4 TASK-T8: pauses the currently-recording winner leg's own recording. Only acts on a
+ *  leg whose `recording_status` is actually `'recording'` right now -- a stale double-click (the
+ *  UI already disables the button once paused, but this is the server-side guard, not just a UI
+ *  nicety) is a safe no-op. No CAS/race protection needed beyond that single read-then-act check
+ *  -- unlike `transition_leg`/`transition_session` (which race real Telnyx webhooks arriving
+ *  concurrently), this is a single agent's own button click, handled by one edge-function
+ *  invocation at a time; there is no second writer to lose a race against. */
+export async function pauseRecording(
+  supabase: SupabaseClient,
+  orgId: string,
+  sessionId: string
+): Promise<boolean> {
+  const session = await loadSession(supabase, sessionId);
+  if (!session || session.org_id !== orgId || !session.active_leg_id) return false;
+  const { data: leg } = await supabase
+    .from('call_legs')
+    .select('call_control_id, recording_status')
+    .eq('id', session.active_leg_id)
+    .maybeSingle();
+  if (!leg || leg.recording_status !== 'recording') return false;
+  const { client } = await getConnectedOrgTelnyxContext(supabase, orgId);
+  if (!client) return false;
+  await client.recordPause(leg.call_control_id as string);
+  await supabase
+    .from('call_legs')
+    .update({ recording_status: 'paused', recording_paused_at: new Date().toISOString() })
+    .eq('id', session.active_leg_id);
+  return true;
+}
+
+/** MISSION-4 TASK-T8: resumes a paused winner-leg recording, and closes the just-finished pause
+ *  span into `recording_paused_spans` (REC's own "the recording's metadata notes the paused
+ *  spans" ask) -- read-then-append rather than a jsonb `||` expression, since this is a single
+ *  agent-initiated action (no concurrent writer to race, see `pauseRecording`'s own comment) and
+ *  reads far more plainly. */
+export async function resumeRecording(
+  supabase: SupabaseClient,
+  orgId: string,
+  sessionId: string
+): Promise<boolean> {
+  const session = await loadSession(supabase, sessionId);
+  if (!session || session.org_id !== orgId || !session.active_leg_id) return false;
+  const { data: leg } = await supabase
+    .from('call_legs')
+    .select('call_control_id, recording_status, recording_paused_at, recording_paused_spans')
+    .eq('id', session.active_leg_id)
+    .maybeSingle();
+  if (!leg || leg.recording_status !== 'paused') return false;
+  const { client } = await getConnectedOrgTelnyxContext(supabase, orgId);
+  if (!client) return false;
+  await client.recordResume(leg.call_control_id as string);
+  const pausedAt = leg.recording_paused_at as string | null;
+  const spans = Array.isArray(leg.recording_paused_spans)
+    ? (leg.recording_paused_spans as unknown[])
+    : [];
+  const nextSpans = pausedAt
+    ? [...spans, { paused_at: pausedAt, resumed_at: new Date().toISOString() }]
+    : spans;
+  await supabase
+    .from('call_legs')
+    .update({
+      recording_status: 'recording',
+      recording_paused_at: null,
+      recording_paused_spans: nextSpans,
+    })
+    .eq('id', session.active_leg_id);
   return true;
 }

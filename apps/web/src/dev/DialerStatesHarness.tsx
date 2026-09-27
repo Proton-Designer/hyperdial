@@ -256,6 +256,7 @@ export function DialerStatesHarness() {
           inboundCall={null}
           coachingMode={null}
           heldAt={null}
+          recordingStatus={null}
           activeTransfer={null}
           connectedContact={
             scenario.connectedContactId
@@ -306,6 +307,7 @@ export function DialerStatesHarness() {
           onEndLiveCall={() => window.alert('End live call clicked (fixture, no-op)')}
           onHoldCall={() => window.alert('Hold clicked (fixture, no-op)')}
           onResumeCall={() => window.alert('Resume call clicked (fixture, no-op)')}
+          onToggleRecording={() => window.alert('Toggle recording clicked (fixture, no-op)')}
           onStartTransfer={async () => window.alert('Start transfer (fixture, no-op)')}
           onCompleteTransfer={() => window.alert('Complete transfer clicked (fixture, no-op)')}
           onCancelTransfer={() => window.alert('Cancel transfer clicked (fixture, no-op)')}

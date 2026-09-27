@@ -17,18 +17,21 @@ import {
 import {
   getAnalyticsSummary,
   getFunnelSummary,
+  getCampaignDropRateSummary,
   getAnswerRateHeatmap,
   getConnectRateByNumber,
   getConnectRateByHour,
   listCampaigns,
   type AnalyticsSummary,
   type FunnelSummary,
+  type DropRateSummary,
   type AnswerRateHeatmapCell,
   type ConnectRateByNumberRow,
   type ConnectRateByHourRow,
   type CampaignWithStats,
 } from '@/lib/api';
 import { rowsToCsv, downloadCsv } from '@/lib/csv';
+import { cn } from '@/components/ui/utils';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
 import { PageHeader } from '@/components/app/PageHeader';
@@ -55,10 +58,16 @@ function rate(numerator: number, denominator: number): number {
  *  admin see every section; an agent only sees the funnel + heatmap (both RPCs scope those to the
  *  caller's own legs for a non-admin) -- the two connect-rate RPCs return empty for an agent, so
  *  those two cards are simply omitted rather than shown empty. */
+/** MISSION-4 TASK-T8: the drop-rate card's own guideline threshold -- a fraction of human answers
+ *  hung up before connecting (dropped/abandoned) above this is worth a manager's attention. Not
+ *  a hard limit, just a visual nudge (REQ-1's own "3% guideline warning" wording). */
+const DROP_RATE_WARNING_PCT = 3;
+
 function FunnelAndInsights({ start, end }: { start: Date; end: Date }) {
   const [campaigns, setCampaigns] = useState<CampaignWithStats[]>([]);
   const [campaignId, setCampaignId] = useState<string | null>(null);
   const [funnel, setFunnel] = useState<FunnelSummary | null>(null);
+  const [dropRate, setDropRate] = useState<DropRateSummary | null>(null);
   const [heatmap, setHeatmap] = useState<AnswerRateHeatmapCell[] | null>(null);
   const [byNumber, setByNumber] = useState<ConnectRateByNumberRow[] | null>(null);
   const [byHour, setByHour] = useState<ConnectRateByHourRow[] | null>(null);
@@ -74,14 +83,21 @@ function FunnelAndInsights({ start, end }: { start: Date; end: Date }) {
   useEffect(() => {
     setLoading(true);
     setLoadError(null);
+    // TASK-T8: the drop-rate card is always trailing 30 DAYS ("a per-campaign 30-day drop
+    // rate", REQ-1's own words), independent of this page's own 7d/30d range toggle above it --
+    // computed fresh each fetch, not reusing `start`/`end` (which can be a 7-day window).
+    const dropRateEnd = new Date();
+    const dropRateStart = new Date(dropRateEnd.getTime() - 30 * 24 * 60 * 60 * 1000);
     Promise.all([
       getFunnelSummary(campaignId, start, end),
+      getCampaignDropRateSummary(campaignId, dropRateStart, dropRateEnd),
       getAnswerRateHeatmap(campaignId, start, end),
       getConnectRateByNumber(start, end).catch(() => []),
       getConnectRateByHour(start, end).catch(() => []),
     ])
-      .then(([f, h, n, byh]) => {
+      .then(([f, d, h, n, byh]) => {
         setFunnel(f);
+        setDropRate(d);
         setHeatmap(h);
         setByNumber(n);
         setByHour(byh);
@@ -197,6 +213,54 @@ function FunnelAndInsights({ start, end }: { start: Date; end: Date }) {
               </div>
             ))}
           </div>
+        )}
+      </div>
+
+      {/* MISSION-4 TASK-T8: drop rate, always trailing 30 days regardless of the page's own
+          range toggle above -- see this card's own fetch comment. */}
+      <div className="rounded-app-lg border border-border-subtle bg-surface-1 p-6 shadow-app-sm">
+        <h2 className="text-section-title text-text-primary mb-1">Drop rate (last 30 days)</h2>
+        <p className="text-meta text-text-secondary mb-4">
+          Human answers that were hung up before connecting -- another line won the race.
+        </p>
+        {!dropRate || dropRate.human_answers === 0 ? (
+          <p className="text-meta text-text-secondary">No human answers in the last 30 days.</p>
+        ) : (
+          <>
+            {dropRate.drop_rate_pct > DROP_RATE_WARNING_PCT && (
+              <div className="mb-4 p-3 rounded-app-md bg-warning-soft border border-warning/30 text-warning text-body">
+                {dropRate.drop_rate_pct}% is above the {DROP_RATE_WARNING_PCT}% guideline --
+                consider adding a line or lowering lines-per-agent for this campaign.
+              </div>
+            )}
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+              <div className="bg-surface-2 rounded-app-md p-4">
+                <div className="text-meta text-text-secondary mb-1">Drop rate</div>
+                <div
+                  className={cn(
+                    'text-page-title font-semibold',
+                    dropRate.drop_rate_pct > DROP_RATE_WARNING_PCT
+                      ? 'text-warning'
+                      : 'text-text-primary'
+                  )}
+                >
+                  {dropRate.drop_rate_pct}%
+                </div>
+              </div>
+              <div className="bg-surface-2 rounded-app-md p-4">
+                <div className="text-meta text-text-secondary mb-1">Dropped</div>
+                <div className="text-page-title font-semibold text-text-primary">
+                  {dropRate.dropped.toLocaleString()}
+                </div>
+              </div>
+              <div className="bg-surface-2 rounded-app-md p-4">
+                <div className="text-meta text-text-secondary mb-1">Human answers</div>
+                <div className="text-page-title font-semibold text-text-primary">
+                  {dropRate.human_answers.toLocaleString()}
+                </div>
+              </div>
+            </div>
+          </>
         )}
       </div>
 

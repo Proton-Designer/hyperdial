@@ -37,6 +37,8 @@ import {
   pauseSession,
   stopSession,
   endLiveCall,
+  pauseRecording,
+  resumeRecording,
   AGENT_DIAL_TIMEOUT_SECS,
   AGENT_DIAL_TIME_LIMIT_SECS,
   type RawTelnyxEvent,
@@ -98,6 +100,9 @@ class FakeTelnyxServer {
       return Response.json({ data: {} });
     }
     if (method === 'POST' && /\/v2\/calls\/[^/]+\/actions\/record_start$/.test(path)) {
+      return Response.json({ data: {} });
+    }
+    if (method === 'POST' && /\/v2\/calls\/[^/]+\/actions\/record_(pause|resume)$/.test(path)) {
       return Response.json({ data: {} });
     }
     if (method === 'POST' && /\/v2\/calls\/[^/]+\/actions\/playback_start$/.test(path)) {
@@ -1347,6 +1352,241 @@ Deno.test('REC-1: recording_enabled=false on the org skips record_start entirely
     restoreFetch();
   }
 });
+
+Deno.test(
+  'TASK-T8: handleWin speaks a consent notice on the winner leg when announce_recording_mode is "all"',
+  async () => {
+    const db = new FakeDb();
+    const server = new FakeTelnyxServer();
+    const restoreFetch = stubTelnyxFetch(server);
+    const supabase = createFakeSupabase(db);
+    const { orgId, campaignId, agentId } = seedFixtures(db);
+    db.insert('org_recording_settings', {
+      id: orgId,
+      org_id: orgId,
+      recording_enabled: true,
+      announce_recording_mode: 'all',
+      all_party_consent_states: [],
+    });
+    try {
+      const { winnerCallControlId } = await bootstrapToOnCall(db, supabase, {
+        orgId,
+        campaignId,
+        agentId,
+      });
+      const speakReq = server.requests.find(
+        (r) => r.method === 'POST' && r.path === `/v2/calls/${winnerCallControlId}/actions/speak`
+      );
+      assertExists(speakReq, 'mode "all" must speak a consent notice on the winner leg');
+    } finally {
+      restoreFetch();
+    }
+  }
+);
+
+Deno.test(
+  'TASK-T8: handleWin never speaks a consent notice when announce_recording_mode is "never" (the default)',
+  async () => {
+    const db = new FakeDb();
+    const server = new FakeTelnyxServer();
+    const restoreFetch = stubTelnyxFetch(server);
+    const supabase = createFakeSupabase(db);
+    const { orgId, campaignId, agentId } = seedFixtures(db);
+    // No org_recording_settings row at all -- missing row = default 'never', same "missing row
+    // = default" contract as recording_enabled itself.
+    try {
+      const { winnerCallControlId } = await bootstrapToOnCall(db, supabase, {
+        orgId,
+        campaignId,
+        agentId,
+      });
+      const speakReq = server.requests.find(
+        (r) => r.method === 'POST' && r.path === `/v2/calls/${winnerCallControlId}/actions/speak`
+      );
+      assertEquals(speakReq, undefined, 'default mode "never" must not speak a consent notice');
+    } finally {
+      restoreFetch();
+    }
+  }
+);
+
+Deno.test(
+  'TASK-T8: "all_party_consent_states" mode announces when the contact\'s area code IS in the org list',
+  async () => {
+    const db = new FakeDb();
+    const server = new FakeTelnyxServer();
+    const restoreFetch = stubTelnyxFetch(server);
+    const supabase = createFakeSupabase(db);
+    const { orgId, campaignId, agentId } = seedFixtures(db);
+    db.insert('org_recording_settings', {
+      id: orgId,
+      org_id: orgId,
+      recording_enabled: true,
+      announce_recording_mode: 'all_party_consent_states',
+      all_party_consent_states: ['CA'],
+    });
+    // Every seeded contact gets a real CA (415) number, so whichever contact wins the race is
+    // still a positive case -- avoids depending on which of several fixture legs happens to
+    // answer first.
+    for (const contact of db.table('contacts').values()) {
+      contact.phone_number = '+14155550000';
+    }
+    try {
+      const { winnerCallControlId } = await bootstrapToOnCall(db, supabase, {
+        orgId,
+        campaignId,
+        agentId,
+      });
+      const speakReq = server.requests.find(
+        (r) => r.method === 'POST' && r.path === `/v2/calls/${winnerCallControlId}/actions/speak`
+      );
+      assertExists(speakReq, "CA (415) is in the org's consent-state list -- must announce");
+    } finally {
+      restoreFetch();
+    }
+  }
+);
+
+Deno.test(
+  'TASK-T8: "all_party_consent_states" mode does NOT announce when the contact\'s area code is not in the org list',
+  async () => {
+    const db = new FakeDb();
+    const server = new FakeTelnyxServer();
+    const restoreFetch = stubTelnyxFetch(server);
+    const supabase = createFakeSupabase(db);
+    const { orgId, campaignId, agentId } = seedFixtures(db);
+    db.insert('org_recording_settings', {
+      id: orgId,
+      org_id: orgId,
+      recording_enabled: true,
+      announce_recording_mode: 'all_party_consent_states',
+      all_party_consent_states: ['CA'],
+    });
+    // Every seeded contact gets a real NY (212) number -- not in the org's list.
+    for (const contact of db.table('contacts').values()) {
+      contact.phone_number = '+12125550000';
+    }
+    try {
+      const { winnerCallControlId } = await bootstrapToOnCall(db, supabase, {
+        orgId,
+        campaignId,
+        agentId,
+      });
+      const speakReq = server.requests.find(
+        (r) => r.method === 'POST' && r.path === `/v2/calls/${winnerCallControlId}/actions/speak`
+      );
+      assertEquals(speakReq, undefined, "NY (212) is not in the org's consent-state list");
+    } finally {
+      restoreFetch();
+    }
+  }
+);
+
+Deno.test(
+  'TASK-T8: pauseRecording pauses the active winner leg and stamps recording_paused_at',
+  async () => {
+    const db = new FakeDb();
+    const server = new FakeTelnyxServer();
+    const restoreFetch = stubTelnyxFetch(server);
+    const supabase = createFakeSupabase(db);
+    const { orgId, campaignId, agentId } = seedFixtures(db);
+    try {
+      const { sessionId, winnerLegId, winnerCallControlId } = await bootstrapToOnCall(
+        db,
+        supabase,
+        {
+          orgId,
+          campaignId,
+          agentId,
+        }
+      );
+      const before = db.table('call_legs').get(winnerLegId)!;
+      assertEquals(before.recording_status, 'recording');
+
+      const ok = await pauseRecording(supabase, orgId, sessionId);
+      assertEquals(ok, true);
+
+      const pauseReq = server.requests.find(
+        (r) =>
+          r.method === 'POST' && r.path === `/v2/calls/${winnerCallControlId}/actions/record_pause`
+      );
+      assertExists(pauseReq, 'record_pause must be called on the winner leg');
+
+      const after = db.table('call_legs').get(winnerLegId)!;
+      assertEquals(after.recording_status, 'paused');
+      assertExists(after.recording_paused_at, 'recording_paused_at must be stamped');
+    } finally {
+      restoreFetch();
+    }
+  }
+);
+
+Deno.test(
+  'TASK-T8: pauseRecording is a no-op (false, no Telnyx call) when the leg is not currently recording',
+  async () => {
+    const db = new FakeDb();
+    const server = new FakeTelnyxServer();
+    const restoreFetch = stubTelnyxFetch(server);
+    const supabase = createFakeSupabase(db);
+    const { orgId, campaignId, agentId } = seedFixtures(db);
+    db.insert('org_recording_settings', { id: orgId, org_id: orgId, recording_enabled: false });
+    try {
+      const { sessionId } = await bootstrapToOnCall(db, supabase, { orgId, campaignId, agentId });
+      const ok = await pauseRecording(supabase, orgId, sessionId);
+      assertEquals(ok, false);
+      const pauseReq = server.requests.find((r) => r.path.endsWith('/actions/record_pause'));
+      assertEquals(pauseReq, undefined, 'no recording was ever started, so pause must no-op');
+    } finally {
+      restoreFetch();
+    }
+  }
+);
+
+Deno.test(
+  'TASK-T8: resumeRecording resumes the leg, clears recording_paused_at, and appends the closed span',
+  async () => {
+    const db = new FakeDb();
+    const server = new FakeTelnyxServer();
+    const restoreFetch = stubTelnyxFetch(server);
+    const supabase = createFakeSupabase(db);
+    const { orgId, campaignId, agentId } = seedFixtures(db);
+    try {
+      const { sessionId, winnerLegId, winnerCallControlId } = await bootstrapToOnCall(
+        db,
+        supabase,
+        {
+          orgId,
+          campaignId,
+          agentId,
+        }
+      );
+      const paused = await pauseRecording(supabase, orgId, sessionId);
+      assertEquals(paused, true);
+
+      const resumed = await resumeRecording(supabase, orgId, sessionId);
+      assertEquals(resumed, true);
+
+      const resumeReq = server.requests.find(
+        (r) =>
+          r.method === 'POST' && r.path === `/v2/calls/${winnerCallControlId}/actions/record_resume`
+      );
+      assertExists(resumeReq, 'record_resume must be called on the winner leg');
+
+      const after = db.table('call_legs').get(winnerLegId)!;
+      assertEquals(after.recording_status, 'recording');
+      assertEquals(after.recording_paused_at, null);
+      const spans = after.recording_paused_spans as Array<{
+        paused_at: string;
+        resumed_at: string;
+      }>;
+      assertEquals(spans.length, 1);
+      assertExists(spans[0].paused_at);
+      assertExists(spans[0].resumed_at);
+    } finally {
+      restoreFetch();
+    }
+  }
+);
 
 Deno.test(
   'REC-2/REC-3: call.recording.saved downloads the mp3, uploads it, and stores path/duration/status',

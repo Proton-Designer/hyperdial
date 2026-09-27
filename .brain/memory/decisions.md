@@ -1542,3 +1542,57 @@ position in claim_next_leads' own ORDER BY, callback ownership still first.** A 
 time commitment outranks a manager's own priority tag; priority_requeue (an immediately-preceding
 dropped/abandoned retry) still resurfaces before a merely "high"-tagged lead that hasn't been
 touched yet.
+
+## TASK-T8 (MISSION-4, compliance: drop-rate tracking, recording consent, pause/resume recording, QUE-2)
+
+**Decision 1 -- drop-rate tracking, the abandon message, and "queue them first" were mostly ALREADY
+BUILT before this task; only the analytics metric was missing.** Verified by reading the code, not
+assumed: `apply_leg_outcome` (20260925050000_voicemail_drop.sql) already sets
+`priority_requeue = (v_outcome in ('dropped','abandoned'))` and `next_attempt_at = now()` (attempts
+NOT incremented) for a dropped/abandoned leg, and `sendAbandonMessage` (dialer-engine.ts) already
+plays a short message gated on `campaigns.abandon_message_enabled` (default true). This task added
+only the genuinely missing piece: `campaign_drop_rate_summary`, a new additive RPC (same
+security/scoping shape as eng1's `funnel_summary`, 20260926080300 -- deliberately not editing that
+already-applied function) + a "Drop rate (last 30 days)" card in Analytics.tsx with a >3% warning
+banner.
+
+**Decision 2 -- recording consent state is derived from the contact's area code, not a new stored
+field.** No `contacts.state` column exists today; rather than add one, a new best-effort
+`_shared/area-code-state.ts` (area code -> US state, same "best-effort, not authoritative" spirit
+and sourcing discipline as the existing `area-code-tz.ts`) backs the decision. `announce_recording_
+mode` ('never'/'all'/'all_party_consent_states') and an editable `all_party_consent_states` array
+(seeded with a 14-state reference default, explicitly NOT legal advice) both live as new columns on
+the existing `org_recording_settings` table -- same "widen the existing small settings table"
+pattern `org_transfer_settings` already established. The announcement (`maybeAnnounceRecordingConsent`)
+runs in `handleWin`, right AFTER recording starts (so the notice is itself part of what it discloses),
+speaking to the winner leg via the same `client.speak()` wrapper `sendAbandonMessage` already uses.
+
+**Decision 3 -- recording pause/resume needed two new `TelnyxClient` methods
+(`recordPause`/`recordResume`) and no CAS/race protection.** Verified against a freshly-curled
+spec3.json (`audit/T8/api-evidence.md`): both `record_pause`/`record_resume` request bodies have
+every property optional (no `recording_id` needed -- this lane only ever starts one recording per
+leg) and neither has an associated webhook, so `dialer-session-recording/index.ts` updates
+`call_legs` synchronously in the same request. Unlike `transition_leg`/`transition_session` (which
+race real concurrent Telnyx webhooks), a single agent's own button click has no second writer to
+race against -- `pauseRecording`/`resumeRecording` (dialer-engine.ts) do a plain read-then-act, not
+an `.update().select().maybeSingle()` CAS read-back (which the shared test fake doesn't even
+support returning rows for on `.update()` -- discovered while writing the positive-controlled
+tests, fixed by simplifying the production code instead of the fake, since no real race exists
+here to justify the CAS shape in the first place). Paused spans are recorded as an append-only
+`call_legs.recording_paused_spans jsonb` array (`{paused_at, resumed_at}`), closed on resume.
+
+**Decision 4 (QUE-2) -- gatekeeper's retry delay is seeded at 1440 minutes (1 day), not fixed via a
+new "flat offset" retry mode.** Discovered while implementing this: `campaign_retry_rules.
+rotate_block`'s own comment claims `rotate_block=false` means "a flat now()+delay_minutes offset",
+but NEITHER `apply_leg_outcome` nor `submit_disposition` ever actually branches on it -- both
+unconditionally call `private.rotated_retry_schedule`, which always rotates the block AND always
+floors to `greatest(1, delay_minutes/1440)` days out, regardless of `rotate_block`'s value. So the
+shortest a 'retry' rule can genuinely land is "tomorrow, in a different block" -- still correctly
+SHORTER than no_answer/voicemail's 4-day cadence, so that's what gatekeeper now seeds. Fixing the
+dead `rotate_block=false` path itself was deliberately out of scope (would mean re-deploying two
+already-applied, security-definer core functions in an already-high-risk task) -- logged instead in
+`.brain/memory/known-issues.md` for whoever picks it up. Existing campaigns' already-seeded
+gatekeeper rows are backfilled to 1440 ONLY if still at the untouched 5760 default (an org that
+already customized it is left alone) -- `seed_default_campaign_retry_rules`'s own `ON CONFLICT DO
+NOTHING` re-confirmed idempotent (a manager's customization always survives a re-seed) in
+`audit/T8/dryrun-tests.sql`.

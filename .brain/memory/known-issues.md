@@ -1168,6 +1168,35 @@ writable directly by any authenticated user, bypassing their base tables' zero-p
   explicitly -- `grant select` alone is not sufficient, Supabase's default privileges already gave
   those roles everything else.
 
+## 32. `campaign_retry_rules.rotate_block = false`'s own documented behaviour ("a flat
+now()+delay_minutes offset") does not exist in either of its two callers
+
+- Found while implementing TASK-T8's QUE-2 (gatekeeper's own shorter retry delay). The column's
+  comment (`20260925030000_queue_v2_retry_dnc.sql`) says: "a non-rotating retry (action='retry',
+  rotate_block=false) is a flat now()+delay_minutes offset instead -- not used by either seeded
+  retry rule today, but a future org-added rule can choose it." That branch was never actually
+  written. Both `apply_leg_outcome` (`20260925050000_voicemail_drop.sql`) and `submit_disposition`
+  (`20260926080500_auto_resume_pref.sql`) have their own copy of the same `retry` branch, and BOTH
+  unconditionally call `private.rotated_retry_schedule(...)` for ANY row with `action = 'retry'`,
+  never reading `rotate_block` at all. `rotated_retry_schedule` itself always rotates the time
+  block AND always floors to `greatest(1, p_delay_days)` -- i.e. at minimum "tomorrow, in a
+  different block" -- regardless of how small `delay_minutes` is (`240/1440` integer-divides to
+  `0`, floored back up to `1`, so 4 hours and 4 days both currently mean "one day out" for a
+  `rotate_block=true` row, and `rotate_block=false` changes nothing since it's never checked).
+- **Practical effect**: there is currently no way to configure a genuinely same-day (sub-24-hour)
+  campaign retry via `campaign_retry_rules`, no matter what `rotate_block`/`delay_minutes` combo is
+  set. TASK-T8 worked around this rather than fixing it (out of scope to re-deploy two already-
+  applied, security-definer core functions in an already-high-risk task): gatekeeper is seeded at
+  `delay_minutes = 1440` (reads as "1 day" for a future maintainer, though any value 1..2879 would
+  produce the identical live behaviour today) -- still genuinely shorter than no_answer/voicemail's
+  4-day default, which is all QUE-2 actually asked for.
+- **If a future task needs a real same-day retry**: implement the missing `rotate_block = false`
+  branch in BOTH `apply_leg_outcome` and `submit_disposition` (`create or replace`, new migration,
+  same pattern every other change to these functions already uses) -- a flat
+  `now() + make_interval(mins => v_rule.delay_minutes)`, skipping `rotated_retry_schedule`
+  entirely when `rotate_block` is false. Test both call sites; they're separate copies of the same
+  logic, not one shared function.
+
 ---
 
 ## Not issues — deliberate, documented elsewhere

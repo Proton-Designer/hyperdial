@@ -1031,3 +1031,45 @@ Deno.test(
     }
   }
 );
+
+Deno.test(
+  'createTelnyxClient.recordPause: hits /calls/{id}/actions/record_pause with an empty body',
+  async () => {
+    let seenUrl = '';
+    let seenBody: unknown = null;
+    const restore = stubFetch((url, init) => {
+      seenUrl = url;
+      seenBody = JSON.parse(String(init?.body ?? '{}'));
+      return new Response(JSON.stringify({ data: {} }), { status: 200 });
+    });
+    try {
+      const client = createTelnyxClient('test-api-key');
+      await client.recordPause('call-1');
+      assertEquals(seenUrl, 'https://api.telnyx.com/v2/calls/call-1/actions/record_pause');
+      assertEquals(seenBody, {});
+    } finally {
+      restore();
+    }
+  }
+);
+
+Deno.test(
+  'createTelnyxClient.recordResume: hits /calls/{id}/actions/record_resume with an empty body',
+  async () => {
+    let seenUrl = '';
+    let seenBody: unknown = null;
+    const restore = stubFetch((url, init) => {
+      seenUrl = url;
+      seenBody = JSON.parse(String(init?.body ?? '{}'));
+      return new Response(JSON.stringify({ data: {} }), { status: 200 });
+    });
+    try {
+      const client = createTelnyxClient('test-api-key');
+      await client.recordResume('call-1');
+      assertEquals(seenUrl, 'https://api.telnyx.com/v2/calls/call-1/actions/record_resume');
+      assertEquals(seenBody, {});
+    } finally {
+      restore();
+    }
+  }
+);

@@ -16,6 +16,30 @@ export function isRecordingEnabled(settingsRow: { recording_enabled: boolean } |
   return settingsRow?.recording_enabled !== false;
 }
 
+export type AnnounceRecordingMode = 'never' | 'all' | 'all_party_consent_states';
+
+/** MISSION-4 TASK-T8: pure decision for whether a recording-consent notice should be spoken to
+ *  the prospect at bridge time. A missing settings row means the column's own `default 'never'`
+ *  (org never touched this setting -- unchanged behaviour, same "missing row = default" contract
+ *  as `isRecordingEnabled` above). `contactState` is the best-effort area-code-derived state
+ *  (`_shared/area-code-state.ts`); null (unmapped area code, or no phone number at all) can never
+ *  match a configured state, so `'all_party_consent_states'` mode safely does nothing for it
+ *  rather than guessing. */
+export function shouldAnnounceRecordingConsent(
+  settingsRow: {
+    announce_recording_mode: AnnounceRecordingMode;
+    all_party_consent_states: string[];
+  } | null,
+  contactState: string | null
+): boolean {
+  const mode = settingsRow?.announce_recording_mode ?? 'never';
+  if (mode === 'never') return false;
+  if (mode === 'all') return true;
+  return (
+    contactState != null && (settingsRow?.all_party_consent_states ?? []).includes(contactState)
+  );
+}
+
 export interface ParsedRecordingSaved {
   mp3Url: string | null;
   telnyxCallLegId: string | null;

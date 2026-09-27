@@ -76,6 +76,7 @@ mock data, no empty-by-construction tables, as of TASK-P4-P1.
 | Client contract | `apps/web/src/lib/api.ts` | `DashboardStats`/`TeamPerformancePoint` unchanged; `AnalyticsSummary` new; `TeamDailyStatsRow`/`TeamLiveBoardRow` new (TASK-M2) |
 | Notification bell | `apps/web/src/components/TopNavigation.tsx` | Unchanged |
 | Schema + RLS | `supabase/migrations/20250213000001_create_call_events_and_notifications.sql` | `notifications`/`user_preferences` still relevant; the `call_events` half of this file is dropped as of `20260924002500` |
+| **New**: per-campaign drop rate (MISSION-4 TASK-T8) | `supabase/migrations/20260926070004_compliance_drop_consent_pause.sql` (`campaign_drop_rate_summary`), `Analytics.tsx`'s "Drop rate (last 30 days)" card | Same additive-RPC, same-scoping-shape convention as `funnel_summary` (org-scoped, owner/admin see the whole campaign, an agent only their own legs) — that function itself is untouched. Always a trailing 30-day window, independent of the page's own 7d/30d toggle. `dropped / human_answers`, a >3% guideline warning banner, not a hard limit. |
 
 ## How it works
 
