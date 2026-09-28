@@ -31,7 +31,8 @@ export function CollapsibleSection({
 
   return (
     <Collapsible open={open} onOpenChange={setOpen} className="mb-8">
-      <div className="flex items-start justify-between gap-4">
+      {/* Stacks at phone width so the actions don't squeeze the subtitle into a narrow column. */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
         <CollapsibleTrigger asChild>
           <button type="button" className="flex items-start gap-2 text-left min-w-0">
             <ChevronDown
@@ -48,7 +49,7 @@ export function CollapsibleSection({
             </span>
           </button>
         </CollapsibleTrigger>
-        {actions && <div className="shrink-0 pt-0.5">{actions}</div>}
+        {actions && <div className="shrink-0 pl-6 sm:pl-0 sm:pt-0.5">{actions}</div>}
       </div>
       <CollapsibleContent className="mt-4">{children}</CollapsibleContent>
     </Collapsible>
