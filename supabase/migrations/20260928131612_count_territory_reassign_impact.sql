@@ -35,15 +35,26 @@ revoke all on function private.resolve_territory_assignments(uuid, uuid, boolean
 --      - resolved_agent_id is not null            (point 1: unmatched leads never move)
 --      - current assigned_agent_id is not null
 --        and is distinct from resolved_agent_id    (a real move to a DIFFERENT owner, not a no-op)
---      - current owner in caller's pod scope        (point 3: otherwise assign_campaign_leads' own
---                                                     per-lead candidate filter would silently
---                                                     skip it even though the group succeeds)
---      - resolved target in caller's pod scope       (point 2: otherwise the whole group would be
---                                                     caught and skipped by
---                                                     resolve_campaign_assign_access's own gate)
 --    No separate active-member re-check on resolved_agent_id needed -- resolve_territory_
 --    assignments' own agent_target/pod_pool CTEs already filter to active org_members only
 --    (notes.md point 4), so a resolved target can never fail that re-check in practice.
+--
+--    Review fix (the lead, dry-run finding): the original version also required BOTH the current
+--    owner and the resolved target to be `is_agent_in_callers_pod_scope` -- copied from
+--    apply_territory_rules' own real behavior (points 2-3 in notes.md) without noticing those
+--    checks can never actually filter anything out HERE. `resolve_territory_assignments`'s own
+--    "eligible" CTE only considers a lead at all when `p_reassign or assigned_agent_id is null` --
+--    so `cl.assigned_agent_id is not null` (this query's own condition, above) can only ever be
+--    true when p_reassign=true. And p_reassign=true is itself owner/admin-only (the role check
+--    above) -- `is_agent_in_callers_pod_scope` returns true unconditionally for owner/admin
+--    (20260927160550). So by the time this query's WHERE clause could ever see a non-null current
+--    owner, the caller is guaranteed to already be in scope of everyone -- the two pod-scope
+--    conditions were dead code, always true when reached, never false. Removed rather than kept
+--    as "harmless" -- keeping them implied a manager could reach this branch, which is false and
+--    would have misled the next reader. (apply_territory_rules' OWN pod-scope enforcement, inside
+--    assign_campaign_leads, is a separate and very much LIVE code path -- reachable by a manager
+--    applying with p_reassign=false against a rule that resolves outside their pods. Nothing about
+--    that changes here.)
 -- =================================================================================================
 
 create function public.count_territory_reassign_impact(p_campaign_id uuid, p_reassign boolean default false)
@@ -75,9 +86,7 @@ begin
   join public.campaign_leads cl on cl.id = r.lead_id
   where r.resolved_agent_id is not null
     and cl.assigned_agent_id is not null
-    and cl.assigned_agent_id is distinct from r.resolved_agent_id
-    and private.is_agent_in_callers_pod_scope(v_org_id, cl.assigned_agent_id)
-    and private.is_agent_in_callers_pod_scope(v_org_id, r.resolved_agent_id);
+    and cl.assigned_agent_id is distinct from r.resolved_agent_id;
 
   return coalesce(v_count, 0);
 end;
