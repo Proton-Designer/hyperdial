@@ -43,6 +43,9 @@ $$;
 
 revoke all on function private.reopen_stale_inbox_claims_all() from public, anon, authenticated;
 
+-- G7 review SHOULD (eng2): the cross-org sweep has no org_id predicate, so give it its own index.
+create index if not exists idx_inbox_items_claimed_at_claimed on public.inbox_items (claimed_at) where status = 'claimed';
+
 -- =================================================================================================
 -- 2. Schedule with pg_cron, every 5 minutes. `cron.schedule(job_name, ...)` is upsert-by-name --
 --    pg_cron's own documented behavior for the named-job overload is "if a job with this
