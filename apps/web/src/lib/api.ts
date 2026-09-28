@@ -1355,6 +1355,27 @@ export async function switchCoachingMode(
   return data as { coachingId: string; mode: CoachingMode };
 }
 
+/** MISSION-5 TASK-M5-N1 (deferred backlog item): converts an ALREADY-active coaching attempt
+ *  (`coachingId` from `startCoaching`) into a takeover -- the agent's own leg leaves the
+ *  conference and hangs up, this supervisor becomes the only agent-side party with the prospect.
+ *  Owner/admin, or a manager for an agent in their own pod scope; 403s with `TAKEOVER_DISABLED`
+ *  if the org hasn't turned this on (`getCallTakeoverSettings`/`updateCallTakeoverSettings`
+ *  below). `roleUpdateFailed: true` in the response means the agent leg was still detached
+ *  correctly but promoting this supervisor's own conference role to `barge` failed -- the caller
+ *  should suggest switching mode manually via `switchCoachingMode`. */
+export async function takeoverCall(
+  coachingId: string
+): Promise<{ ok: true; roleUpdateFailed: boolean }> {
+  const res = await fetch(`${getFunctionsUrl()}/dialer-coaching`, {
+    method: 'POST',
+    headers: await getEdgeFunctionHeaders(),
+    body: JSON.stringify({ action: 'takeover', coachingId }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new CoachingActionError(data.error || 'Failed to take over the call', data.code);
+  return data as { ok: true; roleUpdateFailed: boolean };
+}
+
 // ---------------------------------------------------------------------------
 // TASK-T4: warm/cold transfer + hold (AUD-6 + NEW).
 // ---------------------------------------------------------------------------
@@ -4363,5 +4384,148 @@ export async function getAgentOnboardingChecklist(): Promise<AgentOnboardingChec
     numberAssigned: r.number_assigned,
     campaignAssigned: r.campaign_assigned,
     firstCallMade: r.first_call_made,
+  }));
+}
+
+// --- Deferred backlog item TASK-M5-F3: agent working-hours schedules ---
+
+export interface AgentScheduleShift {
+  weekday: number; // 0=Sunday..6=Saturday (Postgres extract(dow) convention, matches the RPC)
+  start: string; // 'HH:MM' local wall-clock time in effectiveTimezone
+  end: string; // 'HH:MM'; end <= start means the shift wraps past midnight
+}
+
+export interface AgentScheduleRow extends AgentScheduleShift {
+  agentUserId: string;
+  effectiveTimezone: string;
+}
+
+/** Every shift row the caller can see -- owner/admin: every active member; manager: pod-scoped +
+ *  their own; an agent-role caller with no wider role: only their own (read-only -- there is no
+ *  agent-callable write path, see setAgentScheduleDay). Omit agentId to fetch the whole team the
+ *  caller is scoped to in one round trip (backs AgentSchedulesPanel's editor). */
+export async function listAgentSchedules(agentId?: string): Promise<AgentScheduleRow[]> {
+  const orgId = await getActiveOrgId();
+  const { data, error } = await supabase.rpc('list_agent_schedules', {
+    p_org: orgId,
+    p_agent: agentId ?? null,
+  });
+  if (error) throw new Error(error.message);
+  return (
+    (data ?? []) as {
+      agent_user_id: string;
+      weekday: number;
+      start_time: string;
+      end_time: string;
+      effective_timezone: string;
+    }[]
+  ).map((r) => ({
+    agentUserId: r.agent_user_id,
+    weekday: r.weekday,
+    start: r.start_time.slice(0, 5),
+    end: r.end_time.slice(0, 5),
+    effectiveTimezone: r.effective_timezone,
+  }));
+}
+
+/** Replaces one weekday's ENTIRE shift list atomically (delete + insert) -- the same call backs
+ *  "copy day to other days" (call once per target weekday with the source day's shifts) and
+ *  "apply to selected agents" (call once per selected agent), no separate bulk RPC. Owner/admin
+ *  edit anyone active; a manager only their own pod-scoped agents; an agent can never call this
+ *  (server rejects, even for their own id). */
+export async function setAgentScheduleDay(
+  agentId: string,
+  weekday: number,
+  shifts: { start: string; end: string }[]
+): Promise<void> {
+  const orgId = await getActiveOrgId();
+  const { error } = await supabase.rpc('set_agent_schedule_day', {
+    p_org: orgId,
+    p_agent: agentId,
+    p_weekday: weekday,
+    p_shifts: shifts,
+  });
+  if (error) throw new Error(error.message);
+}
+
+/** Sets (or, with `timezone: null`, clears back to the org default) an agent's own IANA timezone
+ *  override -- same owner/admin-any/manager-pod-scoped/agent-never gate as setAgentScheduleDay,
+ *  kept as its own RPC so this never has to touch an unrelated weekday's shifts. Server validates
+ *  the zone name by actually using it (an invalid name raises), not a hand-rolled check. */
+export async function setAgentTimezone(agentId: string, timezone: string | null): Promise<void> {
+  const orgId = await getActiveOrgId();
+  const { error } = await supabase.rpc('set_agent_timezone', {
+    p_org: orgId,
+    p_agent: agentId,
+    p_timezone: timezone,
+  });
+  if (error) throw new Error(error.message);
+}
+
+export interface AgentScheduleLiveStatusRow {
+  agentId: string;
+  hasSchedule: boolean;
+  dialingOutsideSchedule: boolean;
+}
+
+/** Real-time, point-in-time only -- for every agent currently in an active dial_session (pod-
+ *  scoped to the caller), is "now" inside any of today's shifts? Owner/admin/manager only (empty
+ *  for anyone else). Backs the cockpit's "Dialing outside schedule" badge; the client merges this
+ *  by agentId onto team_live_board's own rows rather than a widen-in-place (that function is
+ *  B2's, in flux this session -- see the migration's own header). Poll it the same way
+ *  getTeamLiveBoard is. */
+export async function getAgentScheduleLiveStatus(): Promise<AgentScheduleLiveStatusRow[]> {
+  const orgId = await getActiveOrgId();
+  const { data, error } = await supabase.rpc('agent_schedule_live_status', { p_org: orgId });
+  if (error) throw new Error(error.message);
+  return (
+    (data ?? []) as { agent_id: string; has_schedule: boolean; dialing_outside_schedule: boolean }[]
+  ).map((r) => ({
+    agentId: r.agent_id,
+    hasSchedule: r.has_schedule,
+    dialingOutsideSchedule: r.dialing_outside_schedule,
+  }));
+}
+
+export interface AgentScheduleAttendanceSignalRow {
+  agentId: string;
+  day: string;
+  scheduledNotSignedIn: boolean;
+  dialedOutsideSchedule: boolean;
+}
+
+/** One row per (agent, local day) that had >=1 shift scheduled -- a day with NO schedule at all
+ *  emits NO row (never a false "not scheduled" warning; merge this onto the Attendance tab's rows
+ *  by agentId+day the same way firstActivityRows already is in groupAttendance). Same
+ *  p_from/p_to/p_agent/p_tz shape and CURRENT role gate as getAgentFirstActivity. Informational
+ *  only -- see the migration header for exactly what each boolean means and its documented
+ *  approximation. */
+export async function getAgentScheduleAttendanceSignal(
+  from: Date,
+  to: Date,
+  agentId?: string,
+  tz?: string
+): Promise<AgentScheduleAttendanceSignalRow[]> {
+  const orgId = await getActiveOrgId();
+  const { data, error } = await supabase.rpc('agent_schedule_attendance_signal', {
+    p_org: orgId,
+    p_from: from.toISOString(),
+    p_to: to.toISOString(),
+    p_agent: agentId ?? null,
+    p_tz: tz ?? 'America/Chicago',
+  });
+  if (error) throw new Error(error.message);
+  return (
+    (data ?? []) as {
+      agent_id: string;
+      day: string;
+      scheduled_not_signed_in: boolean;
+      dialed_outside_schedule: boolean;
+    }[]
+  ).map((r) => ({
+    agentId: r.agent_id,
+    day: r.day,
+    scheduledNotSignedIn: r.scheduled_not_signed_in,
+    dialedOutsideSchedule: r.dialed_outside_schedule,
   }));
 }

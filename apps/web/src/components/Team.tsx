@@ -9,6 +9,8 @@ import {
   getOrgTimezone,
   getAgentTimeInState,
   getAgentFirstActivity,
+  getAgentScheduleAttendanceSignal,
+  getAgentScheduleLiveStatus,
   listOrgMembers,
   startCoaching,
   CoachingActionError,
@@ -24,6 +26,8 @@ import {
   type CoachingMode,
   type AgentTimeInStateRow,
   type AgentFirstActivityRow,
+  type AgentScheduleAttendanceSignalRow,
+  type AgentScheduleLiveStatusRow,
   type OrgMember,
 } from '@/lib/api';
 import { PageHeader } from '@/components/app/PageHeader';
@@ -34,6 +38,7 @@ import { useFocusTrap } from '@/hooks/useFocusTrap';
 import { TeamGoalsAndBroadcastPanel } from '@/components/goals/TeamGoalsAndBroadcastPanel';
 import { TeamGoalAttainment } from '@/components/goals/TeamGoalAttainment';
 import { OnboardingChecklistPanel } from '@/components/onboarding/OnboardingChecklistPanel';
+import { AgentSchedulesPanel } from '@/components/schedules/AgentSchedulesPanel';
 
 type Range = 'today' | 'yesterday' | '7d' | 'custom';
 type TeamView = 'overview' | 'attendance';
@@ -262,6 +267,7 @@ function LiveBoardCard({
   onRemoteHangup,
   remoteBusy,
   remoteError,
+  dialingOutsideSchedule,
 }: {
   row: TeamLiveBoardRow;
   /** TASK-T3: undefined for interns viewing their OWN row is never possible here -- Team.tsx is
@@ -279,6 +285,8 @@ function LiveBoardCard({
   onRemoteHangup: (row: TeamLiveBoardRow) => void;
   remoteBusy: boolean;
   remoteError: string | null;
+  /** Deferred backlog item TASK-M5-F3: real-time, informational only -- never blocks dialing. */
+  dialingOutsideSchedule: boolean;
 }) {
   const meta = STATUS_META[row.status];
   return (
@@ -298,6 +306,14 @@ function LiveBoardCard({
               >
                 <Hand className="w-3 h-3" />
                 Raised hand
+              </span>
+            )}
+            {dialingOutsideSchedule && (
+              <span
+                className="flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-warning-soft text-warning flex-shrink-0"
+                title="This agent is dialing outside their scheduled shift"
+              >
+                Outside schedule
               </span>
             )}
           </div>
@@ -464,6 +480,10 @@ interface AttendanceRow {
    *  this agent/day (shouldn't happen if `agent_time_in_state` has one, since both read the same
    *  underlying events -- kept nullable defensively rather than assumed). */
   first_started_at: string | null;
+  /** Deferred backlog item TASK-M5-F3: null means "no schedule for this agent/day at all" (the
+   *  signal RPC emits no row for that case -- never a false warning), not "false". */
+  scheduled_not_signed_in: boolean | null;
+  dialed_outside_schedule: boolean | null;
 }
 
 /** MISSION-5 TASK-M5-A4: groups agent_time_in_state's per (agent, day, state, reason) seconds
@@ -475,26 +495,30 @@ interface AttendanceRow {
 function groupAttendance(
   rows: AgentTimeInStateRow[],
   firstActivityRows: AgentFirstActivityRow[],
+  scheduleSignalRows: AgentScheduleAttendanceSignalRow[],
   namesById: Map<string, string>
 ): AttendanceRow[] {
   const byKey = new Map<string, AttendanceRow>();
+  const blankRow = (agentId: string, day: string): AttendanceRow => ({
+    agent_id: agentId,
+    name: namesById.get(agentId) ?? 'Former member',
+    day,
+    dialing_seconds: 0,
+    on_call_seconds: 0,
+    wrap_up_seconds: 0,
+    paused_seconds: 0,
+    paused_by_reason: {},
+    total_seconds: 0,
+    productive_pct: null,
+    first_started_at: null,
+    scheduled_not_signed_in: null,
+    dialed_outside_schedule: null,
+  });
   for (const r of rows) {
     const key = `${r.agent_id}|${r.day}`;
     let row = byKey.get(key);
     if (!row) {
-      row = {
-        agent_id: r.agent_id,
-        name: namesById.get(r.agent_id) ?? 'Former member',
-        day: r.day,
-        dialing_seconds: 0,
-        on_call_seconds: 0,
-        wrap_up_seconds: 0,
-        paused_seconds: 0,
-        paused_by_reason: {},
-        total_seconds: 0,
-        productive_pct: null,
-        first_started_at: null,
-      };
+      row = blankRow(r.agent_id, r.day);
       byKey.set(key, row);
     }
     row.total_seconds += r.seconds;
@@ -514,22 +538,23 @@ function groupAttendance(
       // Defensive only -- agent_time_in_state's own `having sum(...) > 0` should mean every real
       // event contributes a row there too, but don't silently drop a first-activity value if it
       // ever doesn't.
-      row = {
-        agent_id: fa.agent_id,
-        name: namesById.get(fa.agent_id) ?? 'Former member',
-        day: fa.day,
-        dialing_seconds: 0,
-        on_call_seconds: 0,
-        wrap_up_seconds: 0,
-        paused_seconds: 0,
-        paused_by_reason: {},
-        total_seconds: 0,
-        productive_pct: null,
-        first_started_at: null,
-      };
+      row = blankRow(fa.agent_id, fa.day);
       byKey.set(key, row);
     }
     row.first_started_at = fa.first_started_at;
+  }
+  for (const sig of scheduleSignalRows) {
+    const key = `${sig.agentId}|${sig.day}`;
+    let row = byKey.get(key);
+    if (!row) {
+      // A scheduled day with zero dial activity at all still needs its own row so the "scheduled,
+      // not signed in" badge has somewhere to render -- agent_time_in_state/agent_first_activity
+      // both only emit rows where at least one event happened.
+      row = blankRow(sig.agentId, sig.day);
+      byKey.set(key, row);
+    }
+    row.scheduled_not_signed_in = sig.scheduledNotSignedIn;
+    row.dialed_outside_schedule = sig.dialedOutsideSchedule;
   }
   for (const row of byKey.values()) {
     const productiveSeconds = row.dialing_seconds + row.on_call_seconds + row.wrap_up_seconds;
@@ -552,7 +577,20 @@ const ATTENDANCE_COLUMNS: { key: keyof AttendanceRow | 'paused_label'; label: st
   { key: 'wrap_up_seconds', label: 'Wrap-up (s)' },
   { key: 'paused_seconds', label: 'Paused (s)' },
   { key: 'productive_pct', label: 'Productive %' },
+  { key: 'scheduled_not_signed_in', label: 'Not signed in' },
+  { key: 'dialed_outside_schedule', label: 'Outside schedule' },
 ];
+
+/** Deferred backlog item TASK-M5-F3: null (no schedule that day) renders as a plain dash, never a
+ *  warning -- see AttendanceRow's own field comment. */
+function ScheduleSignalCell({ value }: { value: boolean | null }) {
+  if (value === null) return <span className="text-text-muted">—</span>;
+  return value ? (
+    <span className="text-warning font-medium">Yes</span>
+  ) : (
+    <span className="text-text-secondary">No</span>
+  );
+}
 
 function AttendanceTab({ orgTz }: { orgTz: string }) {
   const [range, setRange] = useState<Range>('7d');
@@ -575,9 +613,10 @@ function AttendanceTab({ orgTz }: { orgTz: string }) {
     Promise.all([
       getAgentTimeInState(resolved.start, resolved.end, undefined, orgTz),
       getAgentFirstActivity(resolved.start, resolved.end, undefined, orgTz),
+      getAgentScheduleAttendanceSignal(resolved.start, resolved.end, undefined, orgTz),
       listOrgMembers(true),
     ])
-      .then(([timeRows, firstActivityRows, members]) => {
+      .then(([timeRows, firstActivityRows, scheduleSignalRows, members]) => {
         if (cancelled) return;
         const namesById = new Map<string, string>(
           members.map((m: OrgMember) => [
@@ -585,7 +624,7 @@ function AttendanceTab({ orgTz }: { orgTz: string }) {
             [m.first_name, m.last_name].filter(Boolean).join(' ') || m.email || 'Member',
           ])
         );
-        setRows(groupAttendance(timeRows, firstActivityRows, namesById));
+        setRows(groupAttendance(timeRows, firstActivityRows, scheduleSignalRows, namesById));
       })
       .catch((e) => {
         if (!cancelled) setError(e instanceof Error ? e.message : String(e));
@@ -714,6 +753,12 @@ function AttendanceTab({ orgTz }: { orgTz: string }) {
                   <td className="p-3 text-text-secondary">
                     {row.productive_pct !== null ? `${row.productive_pct}%` : '—'}
                   </td>
+                  <td className="p-3">
+                    <ScheduleSignalCell value={row.scheduled_not_signed_in} />
+                  </td>
+                  <td className="p-3">
+                    <ScheduleSignalCell value={row.dialed_outside_schedule} />
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -742,6 +787,9 @@ export function Team() {
   const [dailyError, setDailyError] = useState<string | null>(null);
   const [live, setLive] = useState<TeamLiveBoardRow[] | null>(null);
   const [liveError, setLiveError] = useState<string | null>(null);
+  // Deferred backlog item TASK-M5-F3: best-effort, informational only -- a failure here never
+  // surfaces as liveError (it would incorrectly read as "the whole live board is broken").
+  const [scheduleLiveStatus, setScheduleLiveStatus] = useState<AgentScheduleLiveStatusRow[]>([]);
   const [sortKey, setSortKey] = useState<SortKey>('dials');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   // MISSION-5 TASK-M5-A4: live board filters (client-side over the already-polled rows -- no
@@ -902,6 +950,12 @@ export function Team() {
       } finally {
         pollingRef.current = false;
       }
+      try {
+        const signals = await getAgentScheduleLiveStatus();
+        if (!cancelled) setScheduleLiveStatus(signals);
+      } catch {
+        // best-effort informational badge -- next 5s tick tries again, never blocks the live board
+      }
     };
     void poll();
     const interval = setInterval(poll, LIVE_POLL_MS);
@@ -951,6 +1005,11 @@ export function Team() {
       return dir * (((av ?? 0) as number) - ((bv ?? 0) as number));
     });
   }, [daily, sortKey, sortDir]);
+
+  const outsideScheduleAgentIds = useMemo(
+    () => new Set(scheduleLiveStatus.filter((s) => s.dialingOutsideSchedule).map((s) => s.agentId)),
+    [scheduleLiveStatus]
+  );
 
   const filteredSortedLive = useMemo(() => {
     if (!live) return [];
@@ -1065,6 +1124,10 @@ export function Team() {
           {/* Deferred backlog item TM-B2: onboarding checklist, same server-enforced pod scoping. */}
           <OnboardingChecklistPanel />
 
+          {/* Deferred backlog item TASK-M5-F3: per-agent weekly schedule editor, same server-
+              enforced pod scoping (owner/admin any active member, manager pod-scoped). */}
+          <AgentSchedulesPanel />
+
           {/* ADM-7: live board */}
           <div className="mb-8">
             <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
@@ -1176,6 +1239,7 @@ export function Team() {
                     onRemoteHangup={handleRemoteHangup}
                     remoteBusy={remoteBusy[row.agent_id] ?? false}
                     remoteError={remoteErrors[row.agent_id] || null}
+                    dialingOutsideSchedule={outsideScheduleAgentIds.has(row.agent_id)}
                   />
                 ))}
               </div>
