@@ -75,6 +75,7 @@ E.164 validation (TASK-P2-P1, design §7).
 | Import wizard | `apps/web/src/components/contacts/ImportContactsModal.tsx` | `FIELD_OPTIONS`, invalid-phone warning |
 | Add / edit / detail modal | `apps/web/src/components/contacts/` | `AddContactModal.tsx`; `ContactDetailModal.tsx` now has a real edit mode + DNC toggle |
 | GHL pull import | `supabase/functions/_shared/ghl-import.ts` (pure paging/dedupe plan, deno-tested), `ghl-import/index.ts` (thin wrapper) | `ImportFromGhlModal.tsx`; GHL-API side → `.brain/domains/crm.md` |
+| Notes thread + @mentions + change history (TASK-M5-G5) | `supabase/migrations/20260927215820_contact_notes_mentions_history.sql` | `contact_notes`, `contact_change_history`, `add/edit/delete_contact_note`, `list_contact_notes`, `list_contact_change_history`; UI: `apps/web/src/components/contacts/ContactNotesPanel.tsx`, `ContactChangeHistoryPanel.tsx`, wired into `ContactDetailModal.tsx`'s tabs and the live call card (`ParallelDialerUI.tsx`) |
 
 ## The canonical field set
 
@@ -155,6 +156,34 @@ flag, and a contact's own `dnc` flag flipped some other way does not retroactive
 `dnc_numbers` row — known, intentionally-scoped gap (see `mem.known-issues`), not a silent one:
 building a sync trigger wasn't asked for by either task and would have coupled two signals this
 task's own design deliberately keeps independent.
+
+## Collaboration: notes thread, @mentions, change history (TASK-M5-G5)
+
+The legacy `contacts.notes` column is untouched (still shown as a pinned "legacy note" in
+`ContactDetailModal`) — new collaboration lives in two append-only tables, both readable only by
+whoever can already read the contact (`private.contact_read_access`, the same owner/admin-or-
+assigned-agent condition as contacts' own SELECT policy) and writable only through RPCs, never a
+direct client insert/update/delete:
+
+- **`contact_notes`** — a thread per contact. Author may edit/delete their own note within 15
+  minutes of posting; owner/admin may delete any note at any time. Soft-deleted (`deleted_at`), not
+  hard-deleted. `@mention` support is client-side name-search (`listOrgMembers()`, no new endpoint)
+  + server-side validation: `add_contact_note` drops any mentioned id that isn't an ACTIVE member of
+  the contact's org and sends one `notifications` row (`type = 'mention'`) per surviving id, gated
+  by `user_notification_preferences` (same table TASK-M5-B4 built for supervisor alerts — its
+  `alert_type` CHECK now also allows `'mention'`), skipping the author's own id.
+- **`contact_change_history`** — an `AFTER UPDATE` trigger on `contacts` batches every TRACKED
+  field a single UPDATE changes (`assigned_user_id`, `contact_status`, `dnc`, `phone_number`,
+  `{first_name,last_name,business_name}` as one `name` entry, `ghl_tags`) into ONE jsonb row, never
+  one row per field. `contacts-import` (CSV) is INSERT-only so it never fires this trigger at all;
+  `ghl-import`/`ghl-pull-run` DO update existing contacts, one `.update()` call per contact carrying
+  every changed field — already exactly "one row per contact per import." `source` distinguishes a
+  real end-user edit (`'user'`, `changed_by = auth.uid()`) from any service-role writer
+  (`'import'`, `changed_by = null`).
+
+Both tables `on delete cascade` from `contacts` — a hard delete (owner/admin-only, no soft-delete
+column on `contacts`) takes its notes/history with it. Full edge-case list:
+`.claude/overnight/*/audit/M5-G5/notes.md` (run-folder scoped, gitignored).
 
 ## Enums
 

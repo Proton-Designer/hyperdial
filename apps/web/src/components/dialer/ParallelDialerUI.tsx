@@ -5,6 +5,7 @@ import { Play } from 'lucide-react';
 import { ContactBatchCard } from './ContactBatchCard';
 import { LiveCallPanel } from './LiveCallPanel';
 import { TransferModal } from './TransferModal';
+import { ContactNotesPanel } from '@/components/contacts/ContactNotesPanel';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -411,6 +412,16 @@ export function ParallelDialerUI({
           {connectedContact && <ContactDetailsPanel contact={connectedContact} />}
           {connectedContactHistory.length > 0 && (
             <ContactHistoryPanel history={connectedContactHistory} />
+          )}
+          {connectedContact && (
+            <details className="rounded-xl border border-white/10 bg-surface-1 p-3">
+              <summary className="text-sm font-medium text-white cursor-pointer select-none">
+                Notes
+              </summary>
+              <div className="mt-2">
+                <ContactNotesPanel contactId={connectedContact.id} compact />
+              </div>
+            </details>
           )}
           {campaignScript && (campaignScript.scriptText || campaignScript.objectionSheetText) && (
             <CampaignScriptPanel

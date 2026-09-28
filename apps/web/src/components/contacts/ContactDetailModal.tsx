@@ -15,6 +15,10 @@ import {
 import { motion } from 'motion/react';
 import { updateContact, type Contact } from '@/lib/api';
 import { useOrg } from '@/contexts/OrgContext';
+import { ContactNotesPanel } from './ContactNotesPanel';
+import { ContactChangeHistoryPanel } from './ContactChangeHistoryPanel';
+
+type DetailTab = 'details' | 'notes' | 'history';
 
 const TIMEZONE_OPTIONS: { value: string; label: string }[] = [
   { value: 'America/New_York', label: 'Eastern (New York)' },
@@ -96,6 +100,7 @@ export function ContactDetailModal({ contact, open, onClose, onUpdated }: Contac
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [dncSaving, setDncSaving] = useState(false);
+  const [tab, setTab] = useState<DetailTab>('details');
 
   if (!open) return null;
   const c = contact;
@@ -115,6 +120,7 @@ export function ContactDetailModal({ contact, open, onClose, onUpdated }: Contac
     setEditing(false);
     setForm(null);
     setError(null);
+    setTab('details');
     onClose();
   };
 
@@ -239,245 +245,268 @@ export function ContactDetailModal({ contact, open, onClose, onUpdated }: Contac
             <span>{c.dnc ? 'On — click to clear' : 'Off — click to mark'}</span>
           </button>
 
-          {!editing ? (
-            <>
-              <div className="flex items-center gap-4">
-                <div className="w-14 h-14 rounded-full bg-gradient-to-br from-accent-from to-accent-to flex items-center justify-center text-white text-lg font-bold flex-shrink-0">
-                  {name
-                    .replace('—', '')
-                    .split(' ')
-                    .map((n) => n[0])
-                    .filter(Boolean)
-                    .join('')
-                    .slice(0, 2) || '?'}
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="font-bold text-white text-lg line-clamp-2">{name}</div>
-                  <div className="flex gap-2 mt-1 flex-wrap">
-                    <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-white/10 text-text-secondary">
-                      {category}
-                    </span>
-                    <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-white/10 text-text-secondary">
-                      {contactStatus}
-                    </span>
-                  </div>
-                </div>
-              </div>
+          {!editing && (
+            <div className="flex gap-1 border-b border-white/10">
+              {(['details', 'notes', 'history'] as const).map((t) => (
+                <button
+                  key={t}
+                  type="button"
+                  onClick={() => setTab(t)}
+                  className={`px-3 py-2 text-sm font-medium capitalize border-b-2 -mb-px ${
+                    tab === t
+                      ? 'border-accent-to text-white'
+                      : 'border-transparent text-text-secondary hover:text-white'
+                  }`}
+                >
+                  {t}
+                </button>
+              ))}
+            </div>
+          )}
 
-              <div className="grid gap-3 text-sm">
-                {c.business_type && (
-                  <div className="flex gap-2">
-                    <Building2 className="w-4 h-4 text-accent-to flex-shrink-0 mt-0.5" />
-                    <div className="min-w-0 text-text-secondary">{c.business_type}</div>
-                  </div>
-                )}
-                {c.phone_number && (
-                  <div className="flex gap-2 items-center">
-                    <Phone className="w-4 h-4 text-accent-to flex-shrink-0" />
-                    <a
-                      href={`tel:${c.phone_number}`}
-                      className="text-accent-to hover:underline truncate block"
-                    >
-                      {c.phone_number}
-                    </a>
-                  </div>
-                )}
-                {c.timezone && (
-                  <div className="flex gap-2 items-center">
-                    <FileText className="w-4 h-4 text-accent-to flex-shrink-0" />
-                    <div className="text-text-secondary">
-                      {TIMEZONE_OPTIONS.find((t) => t.value === c.timezone)?.label ?? c.timezone}
+          {tab === 'notes' && !editing && <ContactNotesPanel contactId={c.id} />}
+          {tab === 'history' && !editing && <ContactChangeHistoryPanel contactId={c.id} />}
+
+          {!editing
+            ? tab === 'details' && (
+                <>
+                  <div className="flex items-center gap-4">
+                    <div className="w-14 h-14 rounded-full bg-gradient-to-br from-accent-from to-accent-to flex items-center justify-center text-white text-lg font-bold flex-shrink-0">
+                      {name
+                        .replace('—', '')
+                        .split(' ')
+                        .map((n) => n[0])
+                        .filter(Boolean)
+                        .join('')
+                        .slice(0, 2) || '?'}
                     </div>
-                  </div>
-                )}
-                {c.owner_contact?.includes('@') && (
-                  <div className="flex gap-2 items-center">
-                    <Mail className="w-4 h-4 text-accent-to flex-shrink-0 mt-0.5" />
-                    <a
-                      href={`mailto:${c.owner_contact}`}
-                      className="text-accent-to hover:underline truncate block"
-                      title={c.owner_contact}
-                    >
-                      {truncateUrl(c.owner_contact, 50)}
-                    </a>
-                  </div>
-                )}
-                {c.website && (
-                  <div className="flex gap-2 items-center">
-                    <Globe className="w-4 h-4 text-accent-to flex-shrink-0 mt-0.5" />
-                    <a
-                      href={c.website.startsWith('http') ? c.website : `https://${c.website}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-accent-to hover:underline truncate block"
-                      title={c.website}
-                    >
-                      {truncateUrl(c.website, 50)}
-                    </a>
-                  </div>
-                )}
-                {c.address && (
-                  <div className="flex gap-2">
-                    <MapPin className="w-4 h-4 text-accent-to flex-shrink-0 mt-0.5" />
-                    <div className="text-text-secondary line-clamp-2">{c.address}</div>
-                  </div>
-                )}
-                {c.business_link && (
-                  <div className="flex gap-2">
-                    <Globe className="w-4 h-4 text-accent-to flex-shrink-0 mt-0.5" />
-                    <a
-                      href={
-                        c.business_link.startsWith('http')
-                          ? c.business_link
-                          : `https://${c.business_link}`
-                      }
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-accent-to hover:underline truncate block"
-                      title={c.business_link}
-                    >
-                      {truncateUrl(c.business_link, 50)}
-                    </a>
-                  </div>
-                )}
-                {(c.first_name || c.last_name) &&
-                  (c.first_name || c.last_name) !== (c.business_name ?? '') && (
-                    <div className="flex gap-2">
-                      <User className="w-4 h-4 text-accent-to flex-shrink-0 mt-0.5" />
-                      <div className="text-text-secondary">
-                        {[c.first_name, c.last_name].filter(Boolean).join(' ')}
+                    <div className="min-w-0 flex-1">
+                      <div className="font-bold text-white text-lg line-clamp-2">{name}</div>
+                      <div className="flex gap-2 mt-1 flex-wrap">
+                        <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-white/10 text-text-secondary">
+                          {category}
+                        </span>
+                        <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-white/10 text-text-secondary">
+                          {contactStatus}
+                        </span>
                       </div>
                     </div>
-                  )}
-                {(c.rating != null || c.review_count != null) && (
-                  <div className="flex gap-2 text-text-secondary">
-                    <FileText className="w-4 h-4 text-accent-to flex-shrink-0 mt-0.5" />
-                    <span>
-                      {c.rating != null && `Rating: ${c.rating}`}
-                      {c.rating != null && c.review_count != null && ' · '}
-                      {c.review_count != null && `Reviews: ${c.review_count}`}
-                    </span>
                   </div>
-                )}
-                {c.open_hours && (
-                  <div className="flex gap-2">
-                    <FileText className="w-4 h-4 text-accent-to flex-shrink-0 mt-0.5" />
-                    <div className="text-text-secondary line-clamp-2">{c.open_hours}</div>
-                  </div>
-                )}
-                {c.notes && (
-                  <div className="flex gap-2">
-                    <FileText className="w-4 h-4 text-accent-to flex-shrink-0 mt-0.5" />
-                    <div className="text-text-secondary line-clamp-3">{c.notes}</div>
-                  </div>
-                )}
-              </div>
 
-              <div className="text-xs text-text-secondary pt-2 border-t border-white/5">
-                Added {new Date(c.created_at).toLocaleDateString()}
-                {c.updated_at !== c.created_at &&
-                  ` · Updated ${new Date(c.updated_at).toLocaleDateString()}`}
-              </div>
-            </>
-          ) : (
-            form && (
-              <div className="space-y-3">
-                <div className="grid grid-cols-2 gap-3">
+                  <div className="grid gap-3 text-sm">
+                    {c.business_type && (
+                      <div className="flex gap-2">
+                        <Building2 className="w-4 h-4 text-accent-to flex-shrink-0 mt-0.5" />
+                        <div className="min-w-0 text-text-secondary">{c.business_type}</div>
+                      </div>
+                    )}
+                    {c.phone_number && (
+                      <div className="flex gap-2 items-center">
+                        <Phone className="w-4 h-4 text-accent-to flex-shrink-0" />
+                        <a
+                          href={`tel:${c.phone_number}`}
+                          className="text-accent-to hover:underline truncate block"
+                        >
+                          {c.phone_number}
+                        </a>
+                      </div>
+                    )}
+                    {c.timezone && (
+                      <div className="flex gap-2 items-center">
+                        <FileText className="w-4 h-4 text-accent-to flex-shrink-0" />
+                        <div className="text-text-secondary">
+                          {TIMEZONE_OPTIONS.find((t) => t.value === c.timezone)?.label ??
+                            c.timezone}
+                        </div>
+                      </div>
+                    )}
+                    {c.owner_contact?.includes('@') && (
+                      <div className="flex gap-2 items-center">
+                        <Mail className="w-4 h-4 text-accent-to flex-shrink-0 mt-0.5" />
+                        <a
+                          href={`mailto:${c.owner_contact}`}
+                          className="text-accent-to hover:underline truncate block"
+                          title={c.owner_contact}
+                        >
+                          {truncateUrl(c.owner_contact, 50)}
+                        </a>
+                      </div>
+                    )}
+                    {c.website && (
+                      <div className="flex gap-2 items-center">
+                        <Globe className="w-4 h-4 text-accent-to flex-shrink-0 mt-0.5" />
+                        <a
+                          href={c.website.startsWith('http') ? c.website : `https://${c.website}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-accent-to hover:underline truncate block"
+                          title={c.website}
+                        >
+                          {truncateUrl(c.website, 50)}
+                        </a>
+                      </div>
+                    )}
+                    {c.address && (
+                      <div className="flex gap-2">
+                        <MapPin className="w-4 h-4 text-accent-to flex-shrink-0 mt-0.5" />
+                        <div className="text-text-secondary line-clamp-2">{c.address}</div>
+                      </div>
+                    )}
+                    {c.business_link && (
+                      <div className="flex gap-2">
+                        <Globe className="w-4 h-4 text-accent-to flex-shrink-0 mt-0.5" />
+                        <a
+                          href={
+                            c.business_link.startsWith('http')
+                              ? c.business_link
+                              : `https://${c.business_link}`
+                          }
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-accent-to hover:underline truncate block"
+                          title={c.business_link}
+                        >
+                          {truncateUrl(c.business_link, 50)}
+                        </a>
+                      </div>
+                    )}
+                    {(c.first_name || c.last_name) &&
+                      (c.first_name || c.last_name) !== (c.business_name ?? '') && (
+                        <div className="flex gap-2">
+                          <User className="w-4 h-4 text-accent-to flex-shrink-0 mt-0.5" />
+                          <div className="text-text-secondary">
+                            {[c.first_name, c.last_name].filter(Boolean).join(' ')}
+                          </div>
+                        </div>
+                      )}
+                    {(c.rating != null || c.review_count != null) && (
+                      <div className="flex gap-2 text-text-secondary">
+                        <FileText className="w-4 h-4 text-accent-to flex-shrink-0 mt-0.5" />
+                        <span>
+                          {c.rating != null && `Rating: ${c.rating}`}
+                          {c.rating != null && c.review_count != null && ' · '}
+                          {c.review_count != null && `Reviews: ${c.review_count}`}
+                        </span>
+                      </div>
+                    )}
+                    {c.open_hours && (
+                      <div className="flex gap-2">
+                        <FileText className="w-4 h-4 text-accent-to flex-shrink-0 mt-0.5" />
+                        <div className="text-text-secondary line-clamp-2">{c.open_hours}</div>
+                      </div>
+                    )}
+                    {c.notes && (
+                      <div className="flex gap-2">
+                        <FileText className="w-4 h-4 text-accent-to flex-shrink-0 mt-0.5" />
+                        <div className="text-text-secondary line-clamp-3">{c.notes}</div>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="text-xs text-text-secondary pt-2 border-t border-white/5">
+                    Added {new Date(c.created_at).toLocaleDateString()}
+                    {c.updated_at !== c.created_at &&
+                      ` · Updated ${new Date(c.updated_at).toLocaleDateString()}`}
+                  </div>
+                </>
+              )
+            : form && (
+                <div className="space-y-3">
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-sm text-text-secondary mb-1">First name</label>
+                      <input
+                        className={inputClass}
+                        value={form.first_name}
+                        onChange={(e) => setField('first_name', e.target.value)}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm text-text-secondary mb-1">Last name</label>
+                      <input
+                        className={inputClass}
+                        value={form.last_name}
+                        onChange={(e) => setField('last_name', e.target.value)}
+                      />
+                    </div>
+                  </div>
                   <div>
-                    <label className="block text-sm text-text-secondary mb-1">First name</label>
+                    <label className="block text-sm text-text-secondary mb-1">Business name</label>
                     <input
                       className={inputClass}
-                      value={form.first_name}
-                      onChange={(e) => setField('first_name', e.target.value)}
+                      value={form.business_name}
+                      onChange={(e) => setField('business_name', e.target.value)}
                     />
                   </div>
                   <div>
-                    <label className="block text-sm text-text-secondary mb-1">Last name</label>
+                    <label className="block text-sm text-text-secondary mb-1">Business type</label>
                     <input
                       className={inputClass}
-                      value={form.last_name}
-                      onChange={(e) => setField('last_name', e.target.value)}
+                      value={form.business_type}
+                      onChange={(e) => setField('business_type', e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm text-text-secondary mb-1">Phone number</label>
+                    <input
+                      type="tel"
+                      className={inputClass}
+                      value={form.phone_number}
+                      onChange={(e) => setField('phone_number', e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm text-text-secondary mb-1">Timezone</label>
+                    <select
+                      className={inputClass}
+                      value={form.timezone}
+                      onChange={(e) => setField('timezone', e.target.value)}
+                    >
+                      <option value="">Not set</option>
+                      {TIMEZONE_OPTIONS.map((t) => (
+                        <option key={t.value} value={t.value}>
+                          {t.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm text-text-secondary mb-1">Website</label>
+                    <input
+                      type="url"
+                      className={inputClass}
+                      value={form.website}
+                      onChange={(e) => setField('website', e.target.value)}
+                      placeholder="https://..."
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm text-text-secondary mb-1">Owner / email</label>
+                    <input
+                      className={inputClass}
+                      value={form.owner_contact}
+                      onChange={(e) => setField('owner_contact', e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm text-text-secondary mb-1">Address</label>
+                    <input
+                      className={inputClass}
+                      value={form.address}
+                      onChange={(e) => setField('address', e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm text-text-secondary mb-1">Notes</label>
+                    <textarea
+                      className={inputClass}
+                      rows={3}
+                      value={form.notes}
+                      onChange={(e) => setField('notes', e.target.value)}
                     />
                   </div>
                 </div>
-                <div>
-                  <label className="block text-sm text-text-secondary mb-1">Business name</label>
-                  <input
-                    className={inputClass}
-                    value={form.business_name}
-                    onChange={(e) => setField('business_name', e.target.value)}
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm text-text-secondary mb-1">Business type</label>
-                  <input
-                    className={inputClass}
-                    value={form.business_type}
-                    onChange={(e) => setField('business_type', e.target.value)}
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm text-text-secondary mb-1">Phone number</label>
-                  <input
-                    type="tel"
-                    className={inputClass}
-                    value={form.phone_number}
-                    onChange={(e) => setField('phone_number', e.target.value)}
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm text-text-secondary mb-1">Timezone</label>
-                  <select
-                    className={inputClass}
-                    value={form.timezone}
-                    onChange={(e) => setField('timezone', e.target.value)}
-                  >
-                    <option value="">Not set</option>
-                    {TIMEZONE_OPTIONS.map((t) => (
-                      <option key={t.value} value={t.value}>
-                        {t.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-sm text-text-secondary mb-1">Website</label>
-                  <input
-                    type="url"
-                    className={inputClass}
-                    value={form.website}
-                    onChange={(e) => setField('website', e.target.value)}
-                    placeholder="https://..."
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm text-text-secondary mb-1">Owner / email</label>
-                  <input
-                    className={inputClass}
-                    value={form.owner_contact}
-                    onChange={(e) => setField('owner_contact', e.target.value)}
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm text-text-secondary mb-1">Address</label>
-                  <input
-                    className={inputClass}
-                    value={form.address}
-                    onChange={(e) => setField('address', e.target.value)}
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm text-text-secondary mb-1">Notes</label>
-                  <textarea
-                    className={inputClass}
-                    rows={3}
-                    value={form.notes}
-                    onChange={(e) => setField('notes', e.target.value)}
-                  />
-                </div>
-              </div>
-            )
-          )}
+              )}
         </div>
         <div className="p-4 border-t border-white/10 flex justify-end gap-2">
           {editing ? (

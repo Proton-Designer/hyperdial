@@ -1006,20 +1006,29 @@ export async function updateSupervisorAlertSettings(
   if (error) throw new Error(error.message);
 }
 
-/** MISSION-5 TASK-M5-B4: per-user opt-out for the 4 alert types above (in-app only). Absence of a
- *  row means on -- "defaults = everything on for owner/admin" (and, by the same absence-means-on
- *  rule, for a manager too, since a manager who never touched this should still receive their own
- *  pod's alerts by default -- the whole point of routing them there). Self OR owner/admin (RLS). */
-const SUPERVISOR_ALERT_TYPES: SupervisorAlertType[] = [
+/** MISSION-5 TASK-M5-G5: the same per-(org, user, type) opt-out row B4 built for the 4 supervisor
+ *  alerts also covers 'mention' (a contact-note @mention) -- the migration widened
+ *  user_notification_preferences' own CHECK constraint rather than adding a second table. Kept as
+ *  a separate type from `SupervisorAlertType` (not a union alias applied there) since
+ *  `filterByNotificationPreference`'s TS-side callers (pod-scope.ts) are specifically about the 4
+ *  supervisor conditions and never need to know 'mention' exists. */
+export type NotificationPrefType = SupervisorAlertType | 'mention';
+
+/** MISSION-5 TASK-M5-B4 (+ G5's 'mention'): per-user opt-out for the alert types above (in-app
+ *  only). Absence of a row means on -- "defaults = everything on for owner/admin" (and, by the
+ *  same absence-means-on rule, for a manager and an agent too, since 'mention' now needs the same
+ *  default for every role, not just owner/admin). Self OR owner/admin (RLS). */
+const NOTIFICATION_PREF_TYPES: NotificationPrefType[] = [
   'wrap_up_stuck',
   'paused_stuck',
   'call_stuck',
   'zero_connects',
+  'mention',
 ];
 
 export async function getUserNotificationPreferences(
   userId: string
-): Promise<Record<SupervisorAlertType, boolean>> {
+): Promise<Record<NotificationPrefType, boolean>> {
   const orgId = await getActiveOrgId();
   const { data, error } = await supabase
     .from('user_notification_preferences')
@@ -1030,8 +1039,8 @@ export async function getUserNotificationPreferences(
   const overrides = new Map(
     (data ?? []).map((r: { alert_type: string; enabled: boolean }) => [r.alert_type, r.enabled])
   );
-  const result = {} as Record<SupervisorAlertType, boolean>;
-  for (const type of SUPERVISOR_ALERT_TYPES) {
+  const result = {} as Record<NotificationPrefType, boolean>;
+  for (const type of NOTIFICATION_PREF_TYPES) {
     result[type] = overrides.get(type) ?? true;
   }
   return result;
@@ -1039,7 +1048,7 @@ export async function getUserNotificationPreferences(
 
 export async function setUserNotificationPreference(
   userId: string,
-  alertType: SupervisorAlertType,
+  alertType: NotificationPrefType,
   enabled: boolean
 ): Promise<void> {
   const orgId = await getActiveOrgId();
@@ -2383,6 +2392,152 @@ export async function deleteContacts(ids: string[]): Promise<void> {
   if (ids.length === 0) return;
   const { error } = await supabase.from('contacts').delete().in('id', ids);
   if (error) throw new Error(error.message);
+}
+
+/** MISSION-5 TASK-M5-G5: one entry in a contact's notes thread. `canEdit`/`canDelete` are
+ *  computed server-side (author within the 15-minute window, or owner/admin for delete) so the UI
+ *  never has to re-derive the same "who may act on this row" logic the RPC already enforces. */
+export interface ContactNote {
+  id: string;
+  authorUserId: string;
+  authorName: string;
+  /** True when the author's own org_members row is no longer 'active' (TASK-M5-A3) -- the note
+   *  itself is untouched, only how the UI labels it ("(removed)"). */
+  authorRemoved: boolean;
+  body: string;
+  mentionedUserIds: string[];
+  createdAt: string;
+  editedAt: string | null;
+  canEdit: boolean;
+  canDelete: boolean;
+}
+
+interface ContactNoteRow {
+  id: string;
+  author_user_id: string;
+  author_name: string;
+  author_removed: boolean;
+  body: string;
+  mentioned_user_ids: string[];
+  created_at: string;
+  edited_at: string | null;
+  can_edit: boolean;
+  can_delete: boolean;
+}
+
+function fromContactNoteRow(r: ContactNoteRow): ContactNote {
+  return {
+    id: r.id,
+    authorUserId: r.author_user_id,
+    authorName: r.author_name,
+    authorRemoved: r.author_removed,
+    body: r.body,
+    mentionedUserIds: r.mentioned_user_ids ?? [],
+    createdAt: r.created_at,
+    editedAt: r.edited_at,
+    canEdit: r.can_edit,
+    canDelete: r.can_delete,
+  };
+}
+
+/** Oldest first (a thread reads top-to-bottom). RLS mirrors contacts' own read policy (owner,
+ *  admin, or an assigned agent) -- anyone who can read the contact can read its notes. */
+export async function listContactNotes(contactId: string): Promise<ContactNote[]> {
+  const orgId = await getActiveOrgId();
+  const { data, error } = await supabase.rpc('list_contact_notes', {
+    p_org: orgId,
+    p_contact: contactId,
+  });
+  if (error) throw new Error(error.message);
+  return ((data ?? []) as ContactNoteRow[]).map(fromContactNoteRow);
+}
+
+/** `mentionedUserIds`: every org member typed after an `@` in this note's text. The server
+ *  silently drops any id that isn't an ACTIVE member of this contact's org (a stale suggestion is
+ *  not an error) and sends one 'mention' in-app notification per surviving id, skipping the author
+ *  themselves and anyone who has turned the 'mention' notification preference off. */
+export async function addContactNote(
+  contactId: string,
+  body: string,
+  mentionedUserIds: string[] = []
+): Promise<void> {
+  const orgId = await getActiveOrgId();
+  const { error } = await supabase.rpc('add_contact_note', {
+    p_org: orgId,
+    p_contact: contactId,
+    p_body: body,
+    p_mentioned_user_ids: mentionedUserIds,
+  });
+  if (error) throw new Error(error.message);
+}
+
+/** Author only, and only within 15 minutes of posting (server-enforced -- the 400 the RPC raises
+ *  past that window is surfaced as-is via the thrown Error's message). */
+export async function editContactNote(noteId: string, body: string): Promise<void> {
+  const orgId = await getActiveOrgId();
+  const { error } = await supabase.rpc('edit_contact_note', {
+    p_org: orgId,
+    p_note_id: noteId,
+    p_body: body,
+  });
+  if (error) throw new Error(error.message);
+}
+
+/** Author within 15 minutes, or owner/admin at any time (server-enforced). Soft-delete --
+ *  the row stays but is filtered out of list_contact_notes from this point on. */
+export async function deleteContactNote(noteId: string): Promise<void> {
+  const orgId = await getActiveOrgId();
+  const { error } = await supabase.rpc('delete_contact_note', {
+    p_org: orgId,
+    p_note_id: noteId,
+  });
+  if (error) throw new Error(error.message);
+}
+
+/** MISSION-5 TASK-M5-G5: one contact_change_history row -- every TRACKED field (owner/assigned
+ *  agent, status, DNC, phone, name, tags) that changed together in ONE update, batched into a
+ *  single `changes` map keyed by field name -- never one row per field. `source` distinguishes a
+ *  real end-user edit ('user') from a bulk importer's service-role write ('import', `changedBy`
+ *  null -- shown as "Imported"). */
+export interface ContactChangeHistoryEntry {
+  id: string;
+  changedBy: string | null;
+  changedByName: string | null;
+  changedByRemoved: boolean;
+  source: 'user' | 'import';
+  changes: Record<string, { old: unknown; new: unknown }>;
+  createdAt: string;
+}
+
+interface ContactChangeHistoryRow {
+  id: string;
+  changed_by: string | null;
+  changed_by_name: string | null;
+  changed_by_removed: boolean;
+  source: 'user' | 'import';
+  changes: Record<string, { old: unknown; new: unknown }>;
+  created_at: string;
+}
+
+/** Newest first. RLS mirrors contacts' own read policy, same as listContactNotes above. */
+export async function listContactChangeHistory(
+  contactId: string
+): Promise<ContactChangeHistoryEntry[]> {
+  const orgId = await getActiveOrgId();
+  const { data, error } = await supabase.rpc('list_contact_change_history', {
+    p_org: orgId,
+    p_contact: contactId,
+  });
+  if (error) throw new Error(error.message);
+  return ((data ?? []) as ContactChangeHistoryRow[]).map((r) => ({
+    id: r.id,
+    changedBy: r.changed_by,
+    changedByName: r.changed_by_name,
+    changedByRemoved: r.changed_by_removed,
+    source: r.source,
+    changes: r.changes,
+    createdAt: r.created_at,
+  }));
 }
 
 // --- Campaigns ---

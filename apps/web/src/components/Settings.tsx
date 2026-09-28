@@ -137,6 +137,7 @@ import {
   type SpendStatus,
   type AutoRechargePrefs,
   type AutoRechargePreference,
+  type NotificationPrefType,
   type BillingEvent,
   type InboundSettings,
   type VoicemailDropInfo,
@@ -155,7 +156,6 @@ import {
   getSupervisorAlertSettings,
   updateSupervisorAlertSettings,
   type SupervisorAlertSettings,
-  type SupervisorAlertType,
   getUserNotificationPreferences,
   setUserNotificationPreference,
   getCurrentUserId,
@@ -1290,17 +1290,18 @@ function SupervisorAlertSettingsCard() {
   );
 }
 
-/** MISSION-5 TASK-M5-B4: per-user opt-out for the 4 supervisor-alert types above. Owner/admin may
- *  pick anyone from the roster; the picker defaults to "myself" so the common case (an owner
- *  tuning their own noise) needs no searching. A plain agent/manager has no Settings entry point
- *  today (MainApp.tsx's own tab gate) -- see the task report for why this card is owner/admin-only
- *  for now, not a narrower gap specific to this feature. */
+/** MISSION-5 TASK-M5-B4: per-user opt-out for the 4 supervisor-alert types above (+ TASK-M5-G5's
+ *  'mention', reusing the same table/RLS/card unchanged). Owner/admin may pick anyone from the
+ *  roster; the picker defaults to "myself" so the common case (an owner tuning their own noise)
+ *  needs no searching. A plain agent/manager has no Settings entry point today (MainApp.tsx's own
+ *  tab gate) -- see the task report for why this card is owner/admin-only for now, not a narrower
+ *  gap specific to this feature. */
 function NotificationPreferencesCard({ members }: { members: OrgMember[] }) {
   const { role } = useOrg();
   const isAdmin = role === 'owner' || role === 'admin';
 
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
-  const [prefs, setPrefs] = useState<Record<SupervisorAlertType, boolean> | null>(null);
+  const [prefs, setPrefs] = useState<Record<NotificationPrefType, boolean> | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1325,7 +1326,7 @@ function NotificationPreferencesCard({ members }: { members: OrgMember[] }) {
       .finally(() => setLoading(false));
   }, [selectedUserId]);
 
-  const handleToggle = async (type: SupervisorAlertType, enabled: boolean) => {
+  const handleToggle = async (type: NotificationPrefType, enabled: boolean) => {
     if (!selectedUserId || !prefs) return;
     setPrefs({ ...prefs, [type]: enabled });
     setSaving(true);
@@ -1341,11 +1342,12 @@ function NotificationPreferencesCard({ members }: { members: OrgMember[] }) {
 
   if (!isAdmin) return null;
 
-  const options: { type: SupervisorAlertType; label: string }[] = [
+  const options: { type: NotificationPrefType; label: string }[] = [
     { type: 'wrap_up_stuck', label: 'Agent stuck in wrap-up' },
     { type: 'paused_stuck', label: 'Agent paused too long' },
     { type: 'call_stuck', label: 'Agent on a call too long' },
     { type: 'zero_connects', label: 'Zero connects while dialing' },
+    { type: 'mention', label: 'Someone @mentions them in a contact note' },
   ];
 
   return (
