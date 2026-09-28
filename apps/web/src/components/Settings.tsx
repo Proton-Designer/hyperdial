@@ -3378,6 +3378,8 @@ const AUDIT_ACTION_LABELS: Record<string, string> = {
   'settings.reliability_alerts.update': 'Updated reliability alert settings',
   'settings.recording.update': 'Updated recording/consent settings',
   'settings.transfer.update': 'Updated transfer settings',
+  'settings.supervisor_alerts.update': 'Updated supervisor alert settings',
+  'settings.notification_preferences.update': 'Updated notification preferences',
   'export.team_csv': 'Exported the team daily CSV',
   'export.analytics_csv': 'Exported the analytics CSV',
   'goal.set': 'Set a team goal',
