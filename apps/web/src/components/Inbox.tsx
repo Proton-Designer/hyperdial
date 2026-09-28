@@ -51,6 +51,8 @@ export function Inbox({ onNavigateToDialer }: InboxProps) {
   const { role } = useOrg();
   const { user } = useAuth();
   const isManagerOrBetter = role === 'owner' || role === 'admin' || role === 'manager';
+  // G6 review (eng1): set_shared_inbox_settings is owner/admin only, so the settings card is too.
+  const canEditSettings = role === 'owner' || role === 'admin';
 
   const [items, setItems] = useState<InboxItem[] | null>(null);
   const [members, setMembers] = useState<OrgMember[]>([]);
@@ -87,14 +89,14 @@ export function Inbox({ onNavigateToDialer }: InboxProps) {
   }, []);
 
   useEffect(() => {
-    if (!isManagerOrBetter) return;
+    if (!canEditSettings) return;
     getSharedInboxSettings()
       .then((s) => {
         setSharedInboxEnabled(s.sharedInboxEnabled);
         setClaimStaleMinutes(s.claimStaleMinutes);
       })
       .catch(() => {});
-  }, [isManagerOrBetter]);
+  }, [canEditSettings]);
 
   const nameFor = (userId: string | null): string | null => {
     if (!userId) return null;
@@ -151,7 +153,7 @@ export function Inbox({ onNavigateToDialer }: InboxProps) {
         }
       />
 
-      {isManagerOrBetter && (
+      {canEditSettings && (
         <div className="mb-6 rounded-app-lg border border-border-subtle bg-surface-1 p-4">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>

@@ -267,6 +267,12 @@ begin
     );
   end if;
   return new;
+exception when others then
+  -- G6 review (lead + eng1): same "never block the write it's attached to" rule as E7/N4. This
+  -- runs inside telnyx-webhook's own update of inbound_calls to 'ended'; an inbox failure must
+  -- never roll that back.
+  raise warning 'create_inbox_item_from_ended_inbound_call failed for call %: %', new.id, sqlerrm;
+  return new;
 end;
 $$;
 
