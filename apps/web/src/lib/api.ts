@@ -2580,6 +2580,11 @@ export interface Campaign {
   /** The drop rate (0-100) observed at the moment the guard last tripped. Paired with
    *  high_lines_guard_last_triggered_at. */
   high_lines_guard_last_drop_rate_pct: number | null;
+  /** TASK-M5-N4: 'manual' (default, today's behaviour) or 'round_robin' (every lead that enters
+   *  this campaign unassigned is auto-assigned via a rotating cursor, after territory rules get
+   *  first shot). Set only via setCampaignDistributionMode -- owner/admin, or a manager whose
+   *  campaign roster is fully inside their own pods. */
+  distribution_mode: 'manual' | 'round_robin';
   created_at: string;
   updated_at: string;
 }
@@ -2963,6 +2968,31 @@ export async function applyTerritoryRules(
   });
   if (error) throw new Error(error.message);
   return data as TerritoryApplyResult;
+}
+
+/** TASK-M5-N4: owner/admin, or a manager whose campaign roster is fully inside their own pods
+ *  (server-checked -- private.is_campaign_in_callers_pod_scope). 'manual' stops future
+ *  auto-assignment but never touches leads already assigned. */
+export async function setCampaignDistributionMode(
+  campaignId: string,
+  mode: 'manual' | 'round_robin'
+): Promise<void> {
+  const { error } = await supabase.rpc('set_campaign_distribution_mode', {
+    p_campaign_id: campaignId,
+    p_mode: mode,
+  });
+  if (error) throw new Error(error.message);
+}
+
+/** TASK-M5-N4: "Rebalance now" -- round-robins every currently-unassigned queued lead in the
+ *  campaign (never an already-assigned one). Requires the campaign to already be in
+ *  round_robin mode. Returns the number of leads it assigned. */
+export async function rebalanceCampaignDistribution(campaignId: string): Promise<number> {
+  const { data, error } = await supabase.rpc('rebalance_campaign_distribution', {
+    p_campaign_id: campaignId,
+  });
+  if (error) throw new Error(error.message);
+  return (data ?? 0) as number;
 }
 
 /** TASK-T6: a plain column update through the EXISTING owner/admin-only RLS policy on

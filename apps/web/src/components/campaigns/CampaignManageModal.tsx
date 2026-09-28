@@ -16,6 +16,7 @@ import {
   SkipForward,
   UserCog,
   MapPin,
+  Shuffle,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import {
@@ -36,6 +37,8 @@ import {
   listContacts,
   listCampaignRetryRules,
   upsertCampaignRetryRules,
+  setCampaignDistributionMode,
+  rebalanceCampaignDistribution,
   type CampaignWithStats,
   type CampaignSettingsInput,
   type CampaignLead,
@@ -245,6 +248,8 @@ export function CampaignManageModal({
   const [confirmBulkRemove, setConfirmBulkRemove] = useState(false);
   const [assignModalOpen, setAssignModalOpen] = useState(false);
   const [territoryModalOpen, setTerritoryModalOpen] = useState(false);
+  const [savingDistributionMode, setSavingDistributionMode] = useState(false);
+  const [rebalancing, setRebalancing] = useState(false);
 
   const fetchCampaign = useCallback(async () => {
     if (!campaignId) return;
@@ -529,6 +534,45 @@ export function CampaignManageModal({
     toast.success(agentId ? `Assigned ${count} lead(s)` : `Unassigned ${count} lead(s)`);
     fetchLeads();
     fetchAssignment();
+  };
+
+  /** TASK-M5-N4: server re-checks role+scope on every call (owner/admin, or a manager whose
+   *  whole campaign roster is in their own pods) -- this control is shown to every manager, same
+   *  as Territory rules above, and an out-of-scope call simply surfaces the server's rejection. */
+  const handleDistributionModeChange = async (mode: 'manual' | 'round_robin') => {
+    if (!campaignId) return;
+    setSavingDistributionMode(true);
+    try {
+      await setCampaignDistributionMode(campaignId, mode);
+      await fetchCampaign();
+      toast.success(
+        mode === 'round_robin'
+          ? 'Round-robin distribution enabled'
+          : 'Switched to manual distribution'
+      );
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to update distribution mode');
+    } finally {
+      setSavingDistributionMode(false);
+    }
+  };
+
+  const handleRebalance = async () => {
+    if (!campaignId) return;
+    setRebalancing(true);
+    try {
+      const count = await rebalanceCampaignDistribution(campaignId);
+      toast.success(
+        count > 0
+          ? `Rebalanced ${count} lead(s)`
+          : 'Nothing to rebalance -- no unassigned queued leads'
+      );
+      fetchLeads();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to rebalance');
+    } finally {
+      setRebalancing(false);
+    }
   };
 
   const handleCallLead = (phoneNumber: string | null) => {
@@ -1129,6 +1173,43 @@ export function CampaignManageModal({
                         <MapPin className="w-4 h-4" />
                         Territory rules
                       </button>
+                    )}
+                    {(role === 'owner' || role === 'admin' || role === 'manager') && (
+                      <div
+                        className="flex items-center gap-2 px-2 py-1 bg-surface-1 border border-white/10 rounded-lg"
+                        title="Distribution mode: manual (today's behaviour) or round-robin (every new unassigned lead auto-rotates across the campaign's agents; territory rules still get first shot)"
+                      >
+                        <Shuffle className="w-4 h-4 text-text-secondary ml-1" />
+                        <select
+                          value={campaign.distribution_mode}
+                          disabled={savingDistributionMode}
+                          onChange={(e) =>
+                            void handleDistributionModeChange(
+                              e.target.value as 'manual' | 'round_robin'
+                            )
+                          }
+                          className="bg-surface-1 text-white text-sm focus:outline-none disabled:opacity-60"
+                        >
+                          <option value="manual">Manual distribution</option>
+                          <option value="round_robin">Round-robin distribution</option>
+                        </select>
+                        {campaign.distribution_mode === 'round_robin' && (
+                          <button
+                            type="button"
+                            onClick={() => void handleRebalance()}
+                            disabled={rebalancing}
+                            className="flex items-center gap-1 px-2 py-1 rounded-md hover:bg-white/10 text-white text-xs disabled:opacity-60"
+                            title="Round-robin every currently unassigned queued lead (never touches an already-assigned one)"
+                          >
+                            {rebalancing ? (
+                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            ) : (
+                              <RotateCw className="w-3.5 h-3.5" />
+                            )}
+                            Rebalance now
+                          </button>
+                        )}
+                      </div>
                     )}
                     {selectedLeadIds.size > 0 && (
                       <button
