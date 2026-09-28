@@ -67,6 +67,11 @@ interface ParallelDialerUIProps {
   connectedContactHistory: ContactHistoryEntry[];
   /** TASK-T5 (CRD-4, card-side): the connected call's own campaign script/objection sheet. */
   campaignScript: CampaignScriptInfo | null;
+  /** MISSION-5 TASK-M5-G3 (EC-20): a newer script the server returned while this call is
+   *  connected, withheld from `campaignScript` itself so it's never swapped in silently --
+   *  non-null only when there's something to offer. */
+  pendingCampaignScript: CampaignScriptInfo | null;
+  onApplyPendingCampaignScript: () => void;
   /** TASK-T7: lifted out of LiveCallPanel's own local state so the Dialer's global "M" hotkey
    *  can read the same value the Mute button itself does. */
   muted: boolean;
@@ -219,6 +224,8 @@ export function ParallelDialerUI({
   connectedContact,
   connectedContactHistory,
   campaignScript,
+  pendingCampaignScript,
+  onApplyPendingCampaignScript,
   muted,
   onAutoResumePrefChange,
   onPause,
@@ -406,7 +413,11 @@ export function ParallelDialerUI({
             <ContactHistoryPanel history={connectedContactHistory} />
           )}
           {campaignScript && (campaignScript.scriptText || campaignScript.objectionSheetText) && (
-            <CampaignScriptPanel script={campaignScript} />
+            <CampaignScriptPanel
+              script={campaignScript}
+              hasUpdate={pendingCampaignScript !== null}
+              onApplyUpdate={onApplyPendingCampaignScript}
+            />
           )}
         </>
       )}
@@ -664,13 +675,40 @@ function ContactHistoryPanel({ history }: { history: ContactHistoryEntry[] }) {
 
 /** TASK-T5 (CRD-4, card-side): collapsible so it doesn't compete for space with the live call
  *  controls above -- closed by default, same "not mandatory to look at" spirit as the admin-side
- *  editor (CampaignManageModal) it mirrors. Live refetch on change comes for free from the same
- *  3s poll that already refreshes everything else on this screen. */
-function CampaignScriptPanel({ script }: { script: CampaignScriptInfo }) {
+ *  editor (CampaignManageModal) it mirrors.
+ *
+ *  MISSION-5 TASK-M5-G3 (EC-20): this used to refetch silently every 3s poll tick (the exact
+ *  "live refetch on change" this comment used to advertise as a feature) -- an admin editing the
+ *  script mid-call would swap the text out from under the agent with no warning. The hook
+ *  (useDialerSession's `campaignScript`/`pendingCampaignScript`) now withholds a changed value
+ *  while the call is connected; `hasUpdate` is only true when there's a newer version waiting, and
+ *  the agent must click to bring it in. */
+function CampaignScriptPanel({
+  script,
+  hasUpdate,
+  onApplyUpdate,
+}: {
+  script: CampaignScriptInfo;
+  hasUpdate: boolean;
+  onApplyUpdate: () => void;
+}) {
   return (
     <details className="rounded-app-lg border border-border-subtle bg-surface-1 p-4">
-      <summary className="text-meta text-text-secondary cursor-pointer select-none">
+      <summary className="text-meta text-text-secondary cursor-pointer select-none flex items-center gap-2">
         Call script &amp; objections
+        {hasUpdate && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              onApplyUpdate();
+            }}
+            className="px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-warning-soft text-warning"
+          >
+            Script updated — refresh
+          </button>
+        )}
       </summary>
       <div className="mt-3 space-y-3 text-body">
         {script.scriptText && (

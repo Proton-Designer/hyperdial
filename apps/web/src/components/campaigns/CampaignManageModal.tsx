@@ -45,6 +45,7 @@ import {
   type CampaignRetryRule,
   type RetryRuleAction,
 } from '../../lib/api';
+import { ScriptHistoryPanel } from './ScriptHistoryPanel';
 import { ImportContactsModal } from '../contacts/ImportContactsModal';
 import { AddContactModal } from '../contacts/AddContactModal';
 import { AssignLeadsModal } from './AssignLeadsModal';
@@ -982,6 +983,14 @@ export function CampaignManageModal({
                         Shown collapsible on the intern's call card once a human answers. No AI --
                         plain reference text.
                       </p>
+                      {campaignId && (
+                        <ScriptHistoryPanel
+                          campaignId={campaignId}
+                          field="script_text"
+                          canRestore={canManage}
+                          onRestored={fetchCampaign}
+                        />
+                      )}
                     </div>
                     <div className="sm:col-span-2 lg:col-span-3">
                       <label className="text-sm text-text-secondary block mb-1">
@@ -998,6 +1007,14 @@ export function CampaignManageModal({
                         placeholder={'Objection: "Not interested"\nResponse: ...'}
                         className="w-full bg-surface-1 border border-white/10 rounded-lg px-3 py-2 text-white placeholder:text-text-secondary/50 resize-y"
                       />
+                      {campaignId && (
+                        <ScriptHistoryPanel
+                          campaignId={campaignId}
+                          field="objection_sheet_text"
+                          canRestore={canManage}
+                          onRestored={fetchCampaign}
+                        />
+                      )}
                     </div>
                   </div>
                 </div>

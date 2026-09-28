@@ -1009,6 +1009,8 @@ function DialerBody({
                 connectedContact={parallelSession.connectedContact}
                 connectedContactHistory={parallelSession.connectedContactHistory}
                 campaignScript={parallelSession.campaignScript}
+                pendingCampaignScript={parallelSession.pendingCampaignScript}
+                onApplyPendingCampaignScript={parallelSession.applyPendingCampaignScript}
                 onPause={handleParallelPause}
                 pauseReasons={pauseReasons}
                 onResume={() => void handleParallelResume()}

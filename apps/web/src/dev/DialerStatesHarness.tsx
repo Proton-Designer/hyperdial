@@ -295,6 +295,10 @@ export function DialerStatesHarness() {
             scriptText: 'Hi, this is {agent} calling from {company}...',
             objectionSheetText: '"Not interested" -> acknowledge, then ask what changed.',
           }}
+          pendingCampaignScript={null}
+          onApplyPendingCampaignScript={() =>
+            window.alert('Apply pending script clicked (fixture, no-op)')
+          }
           onPause={() => window.alert('Pause clicked (fixture, no-op)')}
           onResume={() => window.alert('Resume clicked (fixture, no-op)')}
           onStop={(opts) =>

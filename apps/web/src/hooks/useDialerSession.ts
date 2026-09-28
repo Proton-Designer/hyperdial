@@ -84,8 +84,21 @@ interface DialerHookState {
   history: Record<string, ContactHistoryEntry[]>;
   /** TASK-T5 (CRD-4): the connected call's own campaign script/objection sheet, if any. */
   campaignScript: CampaignScriptInfo | null;
+  /** MISSION-5 TASK-M5-G3 (EC-20): a NEWER campaignScript the server returned while the session
+   *  is `on_call` and it differs (by value) from the one already rendered -- withheld from
+   *  `campaignScript` itself so the poll never silently swaps the text out from under an agent
+   *  reading it mid-call. Null whenever there's nothing pending (including the whole time the
+   *  session isn't on_call, when a change just applies immediately -- see loadSession). Call
+   *  `applyPendingCampaignScript()` (an explicit agent click) to promote it. */
+  pendingCampaignScript: CampaignScriptInfo | null;
   loading: boolean;
   error: string | null;
+}
+
+function campaignScriptEqual(a: CampaignScriptInfo | null, b: CampaignScriptInfo | null): boolean {
+  if (a === b) return true;
+  if (a === null || b === null) return false;
+  return a.scriptText === b.scriptText && a.objectionSheetText === b.objectionSheetText;
 }
 
 const POLL_INTERVAL_MS = 3000;
@@ -131,6 +144,7 @@ export function useDialerSession(initialSessionId: string | null = null) {
     activeTransfer: null,
     history: {},
     campaignScript: null,
+    pendingCampaignScript: null,
     loading: false,
     error: null,
   });
@@ -141,17 +155,25 @@ export function useDialerSession(initialSessionId: string | null = null) {
     try {
       const { session, legs, inboundCall, coachingMode, activeTransfer, history, campaignScript } =
         await getDialerSession(sessionId);
-      setState((prev) => ({
-        ...prev,
-        session,
-        sessionId,
-        legs,
-        inboundCall,
-        coachingMode,
-        activeTransfer,
-        history,
-        campaignScript,
-      }));
+      setState((prev) => {
+        // MISSION-5 TASK-M5-G3 (EC-20): only withhold a CHANGED script while the session is
+        // actually on_call -- every other state (including the very first load, where
+        // prev.campaignScript is still null) applies it immediately, same as before this task.
+        const isNewValue = !campaignScriptEqual(prev.campaignScript, campaignScript);
+        const withhold = isNewValue && prev.campaignScript !== null && session.state === 'on_call';
+        return {
+          ...prev,
+          session,
+          sessionId,
+          legs,
+          inboundCall,
+          coachingMode,
+          activeTransfer,
+          history,
+          campaignScript: withhold ? prev.campaignScript : campaignScript,
+          pendingCampaignScript: withhold ? campaignScript : null,
+        };
+      });
     } catch (e) {
       setState((prev) => ({
         ...prev,
@@ -239,6 +261,17 @@ export function useDialerSession(initialSessionId: string | null = null) {
     await hangupLiveCall(state.sessionId);
     await loadSession(state.sessionId);
   }, [loadSession, state.sessionId]);
+
+  /** MISSION-5 TASK-M5-G3 (EC-20): the agent's explicit click promoting a withheld
+   *  pendingCampaignScript to campaignScript -- a pure client-side state move, no API call (the
+   *  server-side value was already fetched, just not applied yet). No-op if nothing is pending. */
+  const applyPendingCampaignScript = useCallback(() => {
+    setState((prev) =>
+      prev.pendingCampaignScript
+        ? { ...prev, campaignScript: prev.pendingCampaignScript, pendingCampaignScript: null }
+        : prev
+    );
+  }, []);
 
   // TASK-T4 (AUD-6 + warm/cold transfer). Each action re-loads the session afterward, same
   // "call the API, then refresh from the server's own resulting state" shape as pause/resume
@@ -449,6 +482,7 @@ export function useDialerSession(initialSessionId: string | null = null) {
     setRaisedHand,
     reconnect,
     endLiveCall,
+    applyPendingCampaignScript,
     hold,
     unhold,
     toggleRecording,

@@ -1372,7 +1372,8 @@ export async function takeoverCall(
     body: JSON.stringify({ action: 'takeover', coachingId }),
   });
   const data = await res.json();
-  if (!res.ok) throw new CoachingActionError(data.error || 'Failed to take over the call', data.code);
+  if (!res.ok)
+    throw new CoachingActionError(data.error || 'Failed to take over the call', data.code);
   return data as { ok: true; roleUpdateFailed: boolean };
 }
 
@@ -4528,4 +4529,88 @@ export async function getAgentScheduleAttendanceSignal(
     scheduledNotSignedIn: r.scheduled_not_signed_in,
     dialedOutsideSchedule: r.dialed_outside_schedule,
   }));
+}
+
+// --- MISSION-5 TASK-M5-N1: org-level call-takeover setting, OFF by default per org. ---
+
+export async function getCallTakeoverSettings(): Promise<{ enabled: boolean }> {
+  const orgId = await getActiveOrgId();
+  const { data, error } = await supabase
+    .from('org_call_takeover_settings')
+    .select('enabled')
+    .eq('org_id', orgId)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return { enabled: data?.enabled ?? false };
+}
+
+/** Owner/admin only -- enforced by org_call_takeover_settings' own RLS UPDATE policy. */
+export async function updateCallTakeoverSettings(enabled: boolean): Promise<void> {
+  const orgId = await getActiveOrgId();
+  const { error } = await supabase
+    .from('org_call_takeover_settings')
+    .upsert({ org_id: orgId, enabled, updated_at: new Date().toISOString() });
+  if (error) throw new Error(error.message);
+}
+
+// --- Deferred backlog item TASK-M5-G3: campaign script/objection-sheet version history + restore ---
+
+export type CampaignScriptField = 'script_text' | 'objection_sheet_text';
+
+export interface CampaignScriptVersion {
+  id: string;
+  version: number;
+  oldText: string | null;
+  newText: string;
+  editedBy: string | null;
+  editedByName: string;
+  editedAt: string;
+}
+
+/** Every version of this campaign's script or objection sheet, newest first. RLS mirrors
+ *  "org members can view campaigns" -- anyone who can read the campaign can read its history, the
+ *  RPC just also joins in a display name so the client doesn't need a second round trip. */
+export async function listCampaignScriptVersions(
+  campaignId: string,
+  field: CampaignScriptField
+): Promise<CampaignScriptVersion[]> {
+  const orgId = await getActiveOrgId();
+  const { data, error } = await supabase.rpc('list_campaign_script_versions', {
+    p_org: orgId,
+    p_campaign: campaignId,
+    p_field: field,
+  });
+  if (error) throw new Error(error.message);
+  return (
+    (data ?? []) as {
+      id: string;
+      version: number;
+      old_text: string | null;
+      new_text: string;
+      edited_by: string | null;
+      edited_by_name: string;
+      edited_at: string;
+    }[]
+  ).map((r) => ({
+    id: r.id,
+    version: r.version,
+    oldText: r.old_text,
+    newText: r.new_text,
+    editedBy: r.edited_by,
+    editedByName: r.edited_by_name,
+    editedAt: r.edited_at,
+  }));
+}
+
+/** Restores one field to a prior version's text -- a plain UPDATE on campaigns under the hood, so
+ *  it produces its own new version row (same trigger every other edit goes through) plus one
+ *  explicit audit-log row. Same gate as editing the campaign at all (owner/admin), enforced
+ *  server-side -- not by this function's caller. */
+export async function restoreCampaignScriptVersion(versionId: string): Promise<void> {
+  const orgId = await getActiveOrgId();
+  const { error } = await supabase.rpc('restore_campaign_script_version', {
+    p_org: orgId,
+    p_version_id: versionId,
+  });
+  if (error) throw new Error(error.message);
 }
