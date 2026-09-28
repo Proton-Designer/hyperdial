@@ -5,10 +5,16 @@ import {
   listOrgMembers,
   setOrgGoal,
   createBroadcast,
+  listOrgGoals,
+  deleteOrgGoal,
+  getActiveBroadcasts,
+  deleteBroadcast,
   type OrgPod,
   type OrgMember,
   type GoalScope,
   type GoalMetric,
+  type OrgGoal,
+  type OrgBroadcast,
 } from '@/lib/api';
 
 const METRIC_OPTIONS: { value: GoalMetric; label: string }[] = [
@@ -28,6 +34,17 @@ const METRIC_OPTIONS: { value: GoalMetric; label: string }[] = [
 export function TeamGoalsAndBroadcastPanel() {
   const [pods, setPods] = useState<OrgPod[]>([]);
   const [members, setMembers] = useState<OrgMember[]>([]);
+  const [goals, setGoals] = useState<OrgGoal[]>([]);
+  const [broadcasts, setBroadcasts] = useState<OrgBroadcast[]>([]);
+
+  const loadGoals = () =>
+    listOrgGoals()
+      .then(setGoals)
+      .catch(() => {});
+  const loadBroadcasts = () =>
+    getActiveBroadcasts()
+      .then(setBroadcasts)
+      .catch(() => {});
 
   useEffect(() => {
     listOrgPods()
@@ -36,6 +53,8 @@ export function TeamGoalsAndBroadcastPanel() {
     listOrgMembers(false)
       .then((m) => setMembers(m.filter((x) => x.role === 'agent' || x.role === 'manager')))
       .catch(() => {});
+    loadGoals();
+    loadBroadcasts();
   }, []);
 
   // --- goal form ---
@@ -74,10 +93,69 @@ export function TeamGoalsAndBroadcastPanel() {
       );
       setGoalMessage({ ok: true, text: 'Goal saved.' });
       setGoalTarget('');
+      loadGoals();
     } catch (e) {
       setGoalMessage({ ok: false, text: e instanceof Error ? e.message : 'Failed to save goal' });
     } finally {
       setGoalBusy(false);
+    }
+  };
+
+  // --- existing-goals list (edit/delete) ---
+  const [goalEdits, setGoalEdits] = useState<Record<string, string>>({});
+  const [goalRowBusy, setGoalRowBusy] = useState<string | null>(null);
+  const [goalRowError, setGoalRowError] = useState<Record<string, string>>({});
+
+  const goalLabel = (g: OrgGoal): string => {
+    if (g.scope === 'org') return 'Whole org';
+    if (g.scope === 'pod') return pods.find((p) => p.id === g.podId)?.name ?? 'Unknown pod';
+    const m = members.find((x) => x.user_id === g.agentUserId);
+    return m
+      ? [m.first_name, m.last_name].filter(Boolean).join(' ') || m.email || m.user_id
+      : 'Unknown agent';
+  };
+
+  const handleEditGoal = async (g: OrgGoal) => {
+    const raw = goalEdits[g.id];
+    const target = Number(raw);
+    if (!Number.isFinite(target) || target <= 0) {
+      setGoalRowError((e) => ({ ...e, [g.id]: 'Enter a positive whole number.' }));
+      return;
+    }
+    setGoalRowBusy(g.id);
+    setGoalRowError((e) => ({ ...e, [g.id]: '' }));
+    try {
+      await setOrgGoal(
+        g.scope,
+        g.metric,
+        Math.round(target),
+        g.scope === 'pod' ? (g.podId ?? undefined) : undefined,
+        g.scope === 'agent' ? (g.agentUserId ?? undefined) : undefined
+      );
+      loadGoals();
+    } catch (e) {
+      setGoalRowError((err) => ({
+        ...err,
+        [g.id]: e instanceof Error ? e.message : 'Failed to update goal',
+      }));
+    } finally {
+      setGoalRowBusy(null);
+    }
+  };
+
+  const handleDeleteGoal = async (g: OrgGoal) => {
+    setGoalRowBusy(g.id);
+    setGoalRowError((e) => ({ ...e, [g.id]: '' }));
+    try {
+      await deleteOrgGoal(g.id);
+      setGoals((rows) => rows.filter((r) => r.id !== g.id));
+    } catch (e) {
+      setGoalRowError((err) => ({
+        ...err,
+        [g.id]: e instanceof Error ? e.message : 'Failed to delete goal',
+      }));
+    } finally {
+      setGoalRowBusy(null);
     }
   };
 
@@ -107,6 +185,7 @@ export function TeamGoalsAndBroadcastPanel() {
       setBroadcastResult({ ok: true, text: 'Broadcast posted.' });
       setBroadcastMessage('');
       setBroadcastExpiresAt('');
+      loadBroadcasts();
     } catch (e) {
       setBroadcastResult({
         ok: false,
@@ -114,6 +193,26 @@ export function TeamGoalsAndBroadcastPanel() {
       });
     } finally {
       setBroadcastBusy(false);
+    }
+  };
+
+  // --- active-broadcasts list (delete) ---
+  const [broadcastRowBusy, setBroadcastRowBusy] = useState<string | null>(null);
+  const [broadcastRowError, setBroadcastRowError] = useState<Record<string, string>>({});
+
+  const handleDeleteBroadcast = async (b: OrgBroadcast) => {
+    setBroadcastRowBusy(b.id);
+    setBroadcastRowError((e) => ({ ...e, [b.id]: '' }));
+    try {
+      await deleteBroadcast(b.id);
+      setBroadcasts((rows) => rows.filter((r) => r.id !== b.id));
+    } catch (e) {
+      setBroadcastRowError((err) => ({
+        ...err,
+        [b.id]: e instanceof Error ? e.message : 'Failed to delete broadcast',
+      }));
+    } finally {
+      setBroadcastRowBusy(null);
     }
   };
 
@@ -241,6 +340,84 @@ export function TeamGoalsAndBroadcastPanel() {
           </p>
         )}
       </form>
+
+      <div className="rounded-app-lg border border-border-subtle bg-surface-1 p-4 space-y-2">
+        <h3 className="text-body font-medium text-text-primary">Current goals</h3>
+        {goals.length === 0 && (
+          <p className="text-meta text-text-secondary">No standing goals set.</p>
+        )}
+        {goals.map((g) => (
+          <div
+            key={g.id}
+            className="flex items-center gap-2 py-1 border-t border-border-subtle first:border-t-0 first:pt-0"
+          >
+            <div className="flex-1 min-w-0">
+              <div className="text-sm text-text-primary truncate">
+                {goalLabel(g)} ·{' '}
+                {METRIC_OPTIONS.find((m) => m.value === g.metric)?.label ?? g.metric}
+              </div>
+              {goalRowError[g.id] && <p className="text-meta text-danger">{goalRowError[g.id]}</p>}
+            </div>
+            <input
+              type="number"
+              min={1}
+              step={1}
+              value={goalEdits[g.id] ?? g.targetValue}
+              disabled={goalRowBusy === g.id}
+              onChange={(e) => setGoalEdits((edits) => ({ ...edits, [g.id]: e.target.value }))}
+              className={`${inputClass} w-20`}
+            />
+            <Button
+              size="sm"
+              variant="fe-ghost"
+              disabled={goalRowBusy === g.id}
+              onClick={() => handleEditGoal(g)}
+            >
+              Save
+            </Button>
+            <Button
+              size="sm"
+              variant="fe-ghost"
+              disabled={goalRowBusy === g.id}
+              onClick={() => handleDeleteGoal(g)}
+            >
+              Delete
+            </Button>
+          </div>
+        ))}
+      </div>
+
+      <div className="rounded-app-lg border border-border-subtle bg-surface-1 p-4 space-y-2">
+        <h3 className="text-body font-medium text-text-primary">Active broadcasts</h3>
+        {broadcasts.length === 0 && (
+          <p className="text-meta text-text-secondary">No active broadcasts.</p>
+        )}
+        {broadcasts.map((b) => (
+          <div
+            key={b.id}
+            className="flex items-center gap-2 py-1 border-t border-border-subtle first:border-t-0 first:pt-0"
+          >
+            <div className="flex-1 min-w-0">
+              <p className="text-sm text-text-primary truncate">{b.message}</p>
+              <p className="text-meta text-text-secondary">
+                {b.pod_id ? (pods.find((p) => p.id === b.pod_id)?.name ?? 'A pod') : 'Everyone'}
+                {b.expires_at ? ` · expires ${new Date(b.expires_at).toLocaleString()}` : ''}
+              </p>
+              {broadcastRowError[b.id] && (
+                <p className="text-meta text-danger">{broadcastRowError[b.id]}</p>
+              )}
+            </div>
+            <Button
+              size="sm"
+              variant="fe-ghost"
+              disabled={broadcastRowBusy === b.id}
+              onClick={() => handleDeleteBroadcast(b)}
+            >
+              Delete
+            </Button>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

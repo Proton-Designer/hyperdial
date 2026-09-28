@@ -4258,3 +4258,40 @@ export async function getMyScorecardTrend(): Promise<ScorecardTrendPoint[]> {
     (r) => ({ callLegId: r.call_leg_id, scoredAt: r.scored_at, scorePct: r.score_pct })
   );
 }
+
+// --- MISSION-5 TASK-M5-A6 follow-up: list existing goals for management (edit/delete). ---
+
+export interface OrgGoal {
+  id: string;
+  scope: GoalScope;
+  podId: string | null;
+  agentUserId: string | null;
+  metric: GoalMetric;
+  targetValue: number;
+  updatedAt: string;
+}
+
+/** Every standing goal row this caller can see -- `org_goals` is a plain table, RLS already
+ *  scopes it correctly (owner/admin: all; manager: org-wide + their own pod/agent rows; agent:
+ *  their own agent-level row), so no RPC is needed for this read, same reasoning as
+ *  `listScorecardRubrics`. Backs the Team page's "current goals" management list (edit via
+ *  `setOrgGoal`, same scope/pod/agent + a new target; delete via `deleteOrgGoal`). */
+export async function listOrgGoals(): Promise<OrgGoal[]> {
+  const orgId = await getActiveOrgId();
+  const { data, error } = await supabase
+    .from('org_goals')
+    .select('id, scope, pod_id, agent_user_id, metric, target_value, updated_at')
+    .eq('org_id', orgId)
+    .order('scope', { ascending: true })
+    .order('metric', { ascending: true });
+  if (error) throw new Error(error.message);
+  return (data ?? []).map((r) => ({
+    id: r.id,
+    scope: r.scope as GoalScope,
+    podId: r.pod_id,
+    agentUserId: r.agent_user_id,
+    metric: r.metric as GoalMetric,
+    targetValue: r.target_value,
+    updatedAt: r.updated_at,
+  }));
+}
