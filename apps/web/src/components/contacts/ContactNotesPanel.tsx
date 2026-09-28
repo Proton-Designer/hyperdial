@@ -17,6 +17,26 @@ function memberDisplayName(m: OrgMember): string {
   return [m.first_name, m.last_name].filter(Boolean).join(' ').trim() || m.email || 'Member';
 }
 
+/** Q1 NIT (G5 follow-up): the composer resolves a mention by checking whether the PICKED
+ *  member's display name is still present as a substring in the draft, not by any real id token
+ *  in the text -- two active members sharing a display name are indistinguishable by that check,
+ *  so picking one, deleting it, and picking the other-same-named one instead could still send
+ *  BOTH ids (the stale entry's name substring is still "present," just because of the new pick).
+ *  Fix: when 2+ ACTIVE members share a display name, the text actually inserted (and therefore
+ *  matched against) is disambiguated with the email, making every person's own mention text
+ *  unique -- the common case (no name collision) is completely unaffected. */
+function mentionInsertText(member: OrgMember, activeMembers: OrgMember[]): string {
+  const name = memberDisplayName(member);
+  const isAmbiguous =
+    activeMembers.filter((m) => m.user_id !== member.user_id && memberDisplayName(m) === name)
+      .length > 0;
+  if (!isAmbiguous) return name;
+  // Email is the normal disambiguator (always unique per member); fall back to a short id
+  // fragment on the rare chance email is also null, so this can never collapse back to a bare,
+  // ambiguous name.
+  return `${name} (${member.email ?? member.user_id.slice(0, 8)})`;
+}
+
 /** MISSION-5 TASK-M5-G5: the contact notes thread, shared between ContactDetailModal's own
  *  "Notes" tab (`compact=false`) and the live call card (`compact=true`, ParallelDialerUI.tsx) --
  *  same component, same RPCs, so an agent adding a note mid-call and an admin reading it later
@@ -96,7 +116,7 @@ export function ContactNotesPanel({
 
   const pickMention = (member: OrgMember) => {
     if (!mentionQuery) return;
-    const name = memberDisplayName(member);
+    const name = mentionInsertText(member, activeMembers);
     const before = draft.slice(0, mentionQuery.start);
     const after = draft.slice(mentionQuery.start + 1 + mentionQuery.query.length);
     setDraft(`${before}@${name} ${after}`);
@@ -253,7 +273,7 @@ export function ContactNotesPanel({
                 onClick={() => pickMention(m)}
                 className="block w-full text-left px-3 py-1.5 text-xs text-white hover:bg-white/10"
               >
-                {memberDisplayName(m)}
+                {mentionInsertText(m, activeMembers)}
               </button>
             ))}
           </div>
