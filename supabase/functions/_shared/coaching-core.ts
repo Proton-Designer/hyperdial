@@ -113,6 +113,26 @@ async function agentLegCallControlId(
   return (data?.call_control_id as string | undefined) ?? null;
 }
 
+/** MISSION-5 TASK-M5-N1 (call takeover): same lookup as `agentLegCallControlId`, but also
+ *  returns the leg's own CURRENT `state` -- `runTakeoverAction` needs it as the exact CAS
+ *  `p_expected_states` value for its own `transition_leg` call (same "read fresh, CAS on
+ *  whatever it actually is" idiom `handleAgentLegLost` uses in dialer-engine.ts, not a guessed
+ *  fixed state). */
+async function agentLegRow(
+  supabase: SupabaseClient,
+  agentLegId: string | null
+): Promise<{ callControlId: string; state: string } | null> {
+  if (!agentLegId) return null;
+  const { data } = await supabase
+    .from('call_legs')
+    .select('call_control_id, state')
+    .eq('id', agentLegId)
+    .maybeSingle();
+  const row = data as { call_control_id: string; state: string } | null;
+  if (!row?.call_control_id) return null;
+  return { callControlId: row.call_control_id, state: row.state };
+}
+
 /** MISSION-5 TASK-M5-B2: "Already being coached by X" needs a human name, not a bare uuid.
  *  Deliberately profiles-only (no auth.users email fallback, unlike team_daily_stats' own
  *  coalesce chain) -- this is a same-org manager-to-manager message, not a roster display, and
@@ -420,6 +440,197 @@ export async function runSwitchCoachingModeAction(
 
   await supabase.from('coaching_sessions').update({ mode }).eq('id', coachingId);
   return { status: 200, body: { coachingId, mode } };
+}
+
+/**
+ * MISSION-5 TASK-M5-N1 (deferred backlog item): supervisor call takeover. Converts an ALREADY
+ * active coaching attempt (listen/whisper/barge, T3/B2) into a takeover -- the supervisor's own
+ * conference role is promoted to `barge` (if it wasn't already), then the AGENT's own leg leaves
+ * the conference (`leaveConference`) and hangs up (`hangup`) -- see audit/M5-N1/api-evidence.md
+ * for why it's those two Telnyx commands, not one ("leave" only parks the leg, it doesn't end the
+ * call -- an unhung-up parked leg would be exactly the "orphaned batch leg" the task's own
+ * requirements forbid).
+ *
+ * Authorization is entirely "are you the manager already coaching this call" -- there is no
+ * separate takeover-specific role/pod-scope grant to check beyond re-confirming the SAME pod
+ * scope `runStartCoachingAction` already checked at coaching-start time (re-checked here too,
+ * defense in depth, in case the agent's pod changed mid-call -- same standing rule every other
+ * B4 remote action already follows). Owner/admin need no pod check, same as everywhere else.
+ *
+ * DB-side session/leg detach happens BEFORE any Telnyx command -- see this file's own module
+ * header note (TODO: none needed, see audit/M5-N1/notes.md) for why: clearing
+ * `dial_sessions.agent_leg_id` before issuing `leaveConference`/`hangup` means that by the time
+ * Telnyx's real `call.hangup` webhook for the agent leg eventually arrives,
+ * `processAgentLegEvent`'s OWN existing stale-leg guard (`leg.id !== session.agent_leg_id`,
+ * dialer-engine.ts:1663) already treats it as stale and no-ops -- the generic "agent leg lost ->
+ * paused_agent_lost" cascade never runs a second time on top of this function's own clean
+ * transition. Zero changes to dialer-engine.ts.
+ */
+export async function runTakeoverAction(
+  supabase: SupabaseClient,
+  client: TelnyxClient,
+  orgId: string,
+  managerId: string,
+  callerRole: string,
+  body: Record<string, unknown>
+): Promise<ActionResult> {
+  const coachingId = typeof body.coachingId === 'string' ? body.coachingId : '';
+  if (!coachingId) return { status: 400, body: { error: 'coachingId is required.' } };
+
+  const { data: row, error: rowError } = await supabase
+    .from('coaching_sessions')
+    .select(
+      'id, target_session_id, target_user_id, manager_id, manager_call_control_id, mode, status, taken_over_at'
+    )
+    .eq('id', coachingId)
+    .eq('org_id', orgId)
+    .eq('manager_id', managerId)
+    .maybeSingle();
+  if (rowError) {
+    console.error('[coaching-core] takeover row lookup failed', rowError.message);
+    return { status: 500, body: { error: 'Failed to look up the coaching attempt' } };
+  }
+  if (!row) return { status: 404, body: { error: 'Coaching attempt not found.' } };
+  if (row.status !== 'active' || !row.manager_call_control_id) {
+    return {
+      status: 409,
+      body: { error: 'This coaching attempt is not connected yet.', code: 'NOT_ACTIVE' },
+    };
+  }
+  if (row.taken_over_at) {
+    return {
+      status: 409,
+      body: { error: 'You already took over this call.', code: 'ALREADY_TAKEN_OVER' },
+    };
+  }
+
+  if (callerRole === 'manager') {
+    const inScope = await isManagerScopedToAgent(
+      supabase,
+      orgId,
+      managerId,
+      row.target_user_id as string
+    );
+    if (!inScope) {
+      return { status: 403, body: { error: 'That agent is outside your managed pods' } };
+    }
+  }
+
+  const { data: settings } = await supabase
+    .from('org_call_takeover_settings')
+    .select('enabled')
+    .eq('org_id', orgId)
+    .maybeSingle();
+  if (!settings?.enabled) {
+    return {
+      status: 403,
+      body: { error: 'Call takeover is not enabled for your org.', code: 'TAKEOVER_DISABLED' },
+    };
+  }
+
+  // Re-read the target session FRESH (same "pin by the row's own target_session_id, don't
+  // re-derive by agent_id" reasoning runSwitchCoachingModeAction's own comment already gives).
+  const { data: targetSession } = await supabase
+    .from('dial_sessions')
+    .select('id, state, conference_id, agent_leg_id')
+    .eq('id', row.target_session_id)
+    .maybeSingle();
+  if (!targetSession || targetSession.state !== 'on_call' || !targetSession.conference_id) {
+    return {
+      status: 409,
+      body: { error: 'This member is no longer on a call.', code: 'TARGET_NOT_ON_CALL' },
+    };
+  }
+
+  const agentLeg = await agentLegRow(supabase, targetSession.agent_leg_id as string | null);
+  if (!agentLeg) {
+    return {
+      status: 409,
+      body: { error: 'This member is no longer on a call.', code: 'TARGET_NOT_ON_CALL' },
+    };
+  }
+
+  // The race-guard: "two clicks land at once" (a double-click/double-tab, since only ONE manager
+  // can ever hold this row at all -- coaching_sessions_one_active_per_target) reduces to two
+  // concurrent claims on this SAME row. Whichever request's conditional UPDATE actually matches a
+  // row wins; the other gets null back and a clean rejection before ever touching Telnyx.
+  const { data: claimed } = await supabase
+    .from('coaching_sessions')
+    .update({ taken_over_at: new Date().toISOString(), mode: 'barge' })
+    .eq('id', coachingId)
+    .eq('status', 'active')
+    .is('taken_over_at', null)
+    .select('id')
+    .maybeSingle();
+  if (!claimed) {
+    return {
+      status: 409,
+      body: { error: 'You already took over this call.', code: 'ALREADY_TAKEN_OVER' },
+    };
+  }
+
+  // DB-side detach BEFORE any Telnyx command -- see this function's own header for why the
+  // ordering matters. `['on_call', 'paused_agent_lost']` covers both "the normal case" and "the
+  // agent's own leg hung up at almost the same moment and the generic cascade already landed the
+  // session in paused_agent_lost" -- either way this overwrites it with the clean takeover state.
+  await supabase.rpc('transition_leg', {
+    p_call_control_id: agentLeg.callControlId,
+    p_expected_states: [agentLeg.state],
+    p_new_state: 'ended',
+    p_fields: { hangup_cause: 'supervisor_takeover', ended_at: new Date().toISOString() },
+  });
+  await supabase.rpc('transition_session', {
+    p_session: targetSession.id,
+    p_expected_states: ['on_call', 'paused_agent_lost'],
+    p_new_state: 'paused',
+    p_fields: {
+      pause_reason: 'call_taken_over_by_manager',
+      taken_over_by_manager_id: managerId,
+      agent_leg_id: null,
+      active_leg_id: null,
+      conference_id: null,
+      paused_agent_lost_from: null,
+    },
+  });
+
+  // Telnyx commands last, now that the DB already reflects the final state regardless of how
+  // any of these three turn out -- all three are best-effort from here (a taken-over call whose
+  // agent leg was somehow already gone, or a role-promotion that fails, still leaves the org's
+  // own data in a consistent, recoverable state; see audit/M5-N1/notes.md's edge-case table).
+  let roleUpdateFailed = false;
+  if (row.mode !== 'barge') {
+    try {
+      await client.updateConferenceSupervisorRole(targetSession.conference_id as string, {
+        callControlId: row.manager_call_control_id as string,
+        supervisorRole: 'barge',
+      });
+    } catch (err) {
+      console.error('[coaching-core] takeover role promotion failed', err);
+      roleUpdateFailed = true;
+    }
+  }
+
+  try {
+    await client.leaveConference(targetSession.conference_id as string, agentLeg.callControlId);
+  } catch (err) {
+    console.warn('[coaching-core] takeover leaveConference failed', err);
+  }
+  try {
+    await client.hangup(agentLeg.callControlId);
+  } catch (err) {
+    console.warn('[coaching-core] takeover hangup failed', err);
+  }
+
+  await logOrgAction(supabase, {
+    orgId,
+    actorUserId: managerId,
+    action: 'session.call_takeover',
+    targetType: 'dial_session',
+    targetId: targetSession.id,
+    details: { agentId: row.target_user_id, coachingId, previousMode: row.mode },
+  });
+
+  return { status: 200, body: { ok: true, roleUpdateFailed } };
 }
 
 /**

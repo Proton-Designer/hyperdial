@@ -3069,6 +3069,12 @@ export interface DialSessionRecord {
   pause_reason: string | null;
   /** MISSION-5 TASK-M5-B2: the agent's own "raise hand" -- non-null means still raised. */
   raised_hand_at: string | null;
+  /** MISSION-5 TASK-M5-N1 (deferred backlog item): set once a supervisor takes this call over --
+   *  permanent for this session (never cleared back to null), so it stays a correct audit
+   *  breadcrumb even after the agent moves on. Only meaningful for display purposes while
+   *  `pause_reason === 'call_taken_over_by_manager'`; `getDialerSession`'s own
+   *  `takenOverByManagerName` resolves this id to a display name server-side. */
+  taken_over_by_manager_id: string | null;
 }
 
 export interface CallLegRecord {
@@ -3395,6 +3401,10 @@ export async function getDialerSession(sessionId: string): Promise<{
   /** TASK-T5 (CRD-4): the connected call's own campaign script/objection sheet, if the campaign
    *  has one set. Null campaign lookup (should never happen) degrades to null, not an error. */
   campaignScript: CampaignScriptInfo | null;
+  /** MISSION-5 TASK-M5-N1: resolved from `session.taken_over_by_manager_id` server-side --
+   *  null whenever that id is null, or (should never happen) the manager's own profile row is
+   *  gone. Drives DialerStateBanner's "Your call was taken over by <name>" state. */
+  takenOverByManagerName: string | null;
 }> {
   const res = await fetch(
     `${getFunctionsUrl()}/dialer-session-get?sessionId=${encodeURIComponent(sessionId)}`,
@@ -3413,6 +3423,7 @@ export async function getDialerSession(sessionId: string): Promise<{
     activeTransfer: ActiveTransfer | null;
     history: Record<string, ContactHistoryEntry[]>;
     campaignScript: CampaignScriptInfo | null;
+    takenOverByManagerName: string | null;
   };
 }
 

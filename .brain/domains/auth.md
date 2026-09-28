@@ -157,6 +157,7 @@ are the deliberate exceptions: personal, not org-shared (see `20260924000300`'s 
 | `user_notification_preferences` (`20260927171444`, TASK-M5-B4) | SELECT/ALL: `user_id = auth.uid() OR has_org_role([owner,admin])` — the only table in this inventory where owner/admin may write a row keyed to someone ELSE's `user_id`, per the task's own explicit "owner/admin can set them for someone else" requirement. `WITH CHECK` additionally requires an `org_members` row to exist for that `(org_id, user_id)` pair, so this can't seed a preference for a non-member. |
 | `scorecard_rubrics`/`scorecard_rubric_criteria` (`20260927171355`, TASK-M5-B5) | SELECT: any org member. INSERT/UPDATE/DELETE: owner/admin only (`for all`). |
 | `notifications` | Unchanged: SELECT/UPDATE `user_id = auth.uid()`. Personal, not org-scoped even though `org_id` was added to the table (FK/cascade hygiene only). |
+| `org_call_takeover_settings` (`20260927212609`, TASK-M5-N1) | SELECT `is_org_member`; INSERT/UPDATE `has_org_role([owner,admin])`. Same singleton-per-org shape as `org_supervisor_alert_settings`/`org_timezone_settings` — gates an ACTION's authorization (call takeover), not an alert threshold, so kept as its own table rather than a column on either. |
 | `user_preferences` | Unchanged: SELECT/INSERT/UPDATE `auth.uid() = user_id`. No `org_id` column — stays per-user. |
 | `dialer_sessions` | SELECT: owner/admin see all; agent sees only their own. All writes via Edge Functions. |
 | `call_logs` | Same shape as `dialer_sessions`. |
@@ -330,6 +331,37 @@ until this task added a third, additive permissive SELECT policy for it.
   widening) is complete and dry-run-tested (`audit/M5-B5/dryrun-tests.sql`), but no frontend was
   wired this session; NEEDS-LIVE-VERIFY for the same reason every DB-only task in this mission is
   (no QA browser access this pass).
+
+## Supervisor call takeover (MISSION-5 TASK-M5-N1, deferred backlog item)
+
+`20260927212609_call_takeover.sql`. See `.brain/domains/dialer.md`'s own section on this task for
+the mechanism (leave-then-hangup, DB-before-Telnyx ordering, the sweeper fix-forward) — this
+section covers only the authorization surface.
+
+- **Two independent gates, checked in this order by `runTakeoverAction`**: (1) the org's own
+  `org_call_takeover_settings.enabled` (OFF by default, 403 `TAKEOVER_DISABLED` if off — checked
+  server-side, never trusting that the UI hid the button); (2) for a `manager` caller (not
+  owner/admin), `isManagerScopedToAgent` re-checked against the target session's CURRENT agent —
+  same helper `dialer-coaching`'s `runStartCoachingAction` already uses, re-run here rather than
+  trusted from whenever the underlying coaching attempt started (a manager's pod assignment could
+  have changed in between).
+- **Disposition ownership after a takeover: the supervisor, scoped to EXACTLY the leg they took
+  over — a deliberately narrow grant, not a pod-scope widening.** `dialer-session-disposition`
+  now admits `role==='manager'`, but only when a `coaching_sessions` row exists with `manager_id
+  = auth.uid()` and `target_session_id = session.id` and `taken_over_at is not null` — checked in
+  the Edge Function body (service-role client, no RLS), not via a table policy. A manager who
+  merely coached (never took over) still gets the pre-existing 403; a manager who took over a
+  DIFFERENT agent's call gets it too.
+- **CAS race-guard, not a lock**: two managers (or one manager, double-click) both attempting
+  `takeoverCall` on the same `coachingId` race on a single conditional UPDATE (`coaching_sessions`
+  `.eq('status','active').is('taken_over_at', null)`) — exactly one gets a row back and proceeds
+  to touch Telnyx; the other's UPDATE affects 0 rows and returns 409 `ALREADY_TAKEN_OVER` before
+  any Telnyx command is issued (verified by a dedicated deno test asserting the losing path never
+  calls the fake Telnyx client at all).
+- **`taken_over_by_manager_id`** (`dial_sessions`, nullable FK `on delete set null`) is an audit
+  breadcrumb, not an authorization check anywhere — `dialer-session-get` resolves it to a display
+  name (`profiles.first_name/last_name`) server-side for the agent-facing banner; nothing reads
+  this column to decide who may act on the session.
 
 ## Constraints & gotchas
 

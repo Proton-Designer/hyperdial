@@ -29,6 +29,7 @@ import {
   Share2,
   Bell,
   AlertTriangle,
+  UserCog,
 } from 'lucide-react';
 import { usePhoneNumbers } from '@/contexts/PhoneNumbersContext';
 import { useAuth } from '@/contexts/AuthContext';
@@ -156,6 +157,8 @@ import {
   getSupervisorAlertSettings,
   updateSupervisorAlertSettings,
   type SupervisorAlertSettings,
+  getCallTakeoverSettings,
+  updateCallTakeoverSettings,
   getUserNotificationPreferences,
   setUserNotificationPreference,
   getCurrentUserId,
@@ -662,6 +665,7 @@ function TeamTab() {
       {canManage && (
         <>
           <SupervisorAlertSettingsCard />
+          <CallTakeoverSettingsCard />
           <NotificationPreferencesCard members={members} />
         </>
       )}
@@ -1286,6 +1290,75 @@ function SupervisorAlertSettingsCard() {
           );
         })}
       </div>
+    </div>
+  );
+}
+
+/** MISSION-5 TASK-M5-N1 (deferred backlog item): org-level gate for supervisor call takeover --
+ *  same load/save/error shape as ExternalTransferSettingsCard. OFF by default; server-side
+ *  rejects the takeover action itself if this is off (TAKEOVER_DISABLED), this toggle is not the
+ *  only enforcement. */
+function CallTakeoverSettingsCard() {
+  const { role } = useOrg();
+  const isAdmin = role === 'owner' || role === 'admin';
+
+  const [enabled, setEnabled] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isAdmin) {
+      setLoading(false);
+      return;
+    }
+    getCallTakeoverSettings()
+      .then((s) => setEnabled(s.enabled))
+      .catch((e) => setError(String(e)))
+      .finally(() => setLoading(false));
+  }, [isAdmin]);
+
+  const handleToggle = async (next: boolean) => {
+    setEnabled(next);
+    setSaving(true);
+    setError(null);
+    try {
+      await updateCallTakeoverSettings(next);
+    } catch (e) {
+      setError(String(e));
+      setEnabled(!next);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (!isAdmin) return null;
+
+  return (
+    <div className="bg-surface-1 rounded-app-lg p-6 border border-border-subtle mb-6">
+      <h3 className="text-section-title text-text-primary mb-1 flex items-center gap-2">
+        <UserCog className="w-4 h-4 text-warning" />
+        Call takeover
+      </h3>
+      <p className="text-sm text-text-secondary mb-4">
+        Let a supervisor already monitoring/whispering/barging on a live call take it over -- the
+        agent's leg leaves the call and the supervisor becomes the only agent-side party with the
+        prospect. Off by default.
+      </p>
+      {error && <p className="text-sm text-danger mb-3">{error}</p>}
+      {loading ? (
+        <Skeleton className="h-6 w-40" />
+      ) : (
+        <label className="flex items-center gap-2 text-sm text-white">
+          <input
+            type="checkbox"
+            checked={enabled}
+            disabled={saving}
+            onChange={(e) => void handleToggle(e.target.checked)}
+          />
+          Allow supervisors to take over live calls
+        </label>
+      )}
     </div>
   );
 }

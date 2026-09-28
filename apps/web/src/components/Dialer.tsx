@@ -972,6 +972,7 @@ function DialerBody({
               <DialerStateBanner
                 sessionState={parallelSession.session.state}
                 pauseReason={parallelSession.session.pause_reason}
+                takenOverByManagerName={parallelSession.takenOverByManagerName}
                 ringingCount={parallelSession.currentBatchContacts.length}
                 connectedContact={connectedContactPreview}
                 connectedAnsweredAt={parallelSession.connectedAnsweredAt}

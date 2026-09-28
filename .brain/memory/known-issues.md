@@ -1290,6 +1290,25 @@ now()+delay_minutes offset") does not exist in either of its two callers
 
 ---
 
+## 38. `docs/validation/launch-live-test.md`'s B20.8 + "Known open items" (live coaching does NOT auto-end) was stale — it does, and has for a while
+
+- Found while adding B25 for MISSION-5 TASK-M5-N1 (supervisor call takeover), 2026-09-27.
+  Decisions.md's TASK-T3 Decision 5 explicitly scoped OUT a poll-and-auto-hangup watcher for the
+  coaching leg; `.brain/domains/dialer.md`'s own coaching section already says a later "review
+  fix-forward" added exactly that (confirmed by reading the current `CoachingBanner.tsx`: its
+  `TARGET_SESSION_POLL_MS` effect calls `onLeave()` the moment the target session leaves
+  `on_call`). Nobody had gone back to update B20.8/the "Known open items" bullet after that
+  fix-forward landed, so the live-test checklist still told a tester to expect the OLD ("stays
+  connected until Leave") behavior. Fixed both spots in the same pass as B25 -- this task's own
+  `runTakeoverAction` had to reason carefully about this exact poll (see its `tookOverRef` guard
+  in `CoachingBanner.tsx`, added so a takeover's own state change doesn't trip this same
+  auto-hangup and disconnect the SUPERVISOR mid-takeover), so the drift was impossible to miss
+  once actually reading the current code instead of trusting the older doc. decisions.md's
+  Decision 5 text itself was left as a historical record (it was correct AT THE TIME) rather than
+  rewritten.
+
+---
+
 ## Not issues — deliberate, documented elsewhere
 
 - Redis alongside Postgres → `mem.decisions`

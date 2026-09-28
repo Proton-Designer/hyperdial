@@ -1,4 +1,4 @@
-import { AlertTriangle, Mic, Pause, Phone, PhoneOff, Wifi } from 'lucide-react';
+import { AlertTriangle, Mic, Pause, Phone, PhoneOff, UserCog, Wifi } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import type { DialSessionState } from '@/lib/api';
 
@@ -25,6 +25,12 @@ interface DialerStateBannerProps {
    *  field comment (api.ts) for why a stale value must never be read once the session has moved
    *  on to a different state. */
   pauseReason: string | null;
+  /** MISSION-5 TASK-M5-N1 (deferred backlog item): only meaningful while
+   *  `pauseReason === 'call_taken_over_by_manager'` -- see getDialerSession's own comment
+   *  (api.ts) for how this is resolved. Null renders a name-less fallback sentence rather than
+   *  blocking the banner on it (the manager's own profile row missing is not this agent's
+   *  problem to be stuck on). */
+  takenOverByManagerName: string | null;
   /** Contacts currently in a non-terminal state ("Ringing N lines"). */
   ringingCount: number;
   connectedContact: { name: string; phone: string } | null;
@@ -47,6 +53,7 @@ interface DialerStateBannerProps {
 export function DialerStateBanner({
   sessionState,
   pauseReason,
+  takenOverByManagerName,
   ringingCount,
   webrtcReady,
   webrtcConnecting,
@@ -179,6 +186,26 @@ export function DialerStateBanner({
         icon={<Pause className="w-5 h-5" />}
         title="Paused by a manager"
         detail="No new lines will dial until you resume."
+        action={
+          <Button variant="primary" onClick={onResume} disabled={resuming}>
+            {resuming ? 'Resuming…' : 'Resume'}
+          </Button>
+        }
+      />
+    );
+  }
+
+  if (sessionState === 'paused' && pauseReason === 'call_taken_over_by_manager') {
+    return (
+      <StatusBanner
+        tone="info"
+        icon={<UserCog className="w-5 h-5" />}
+        title={
+          takenOverByManagerName
+            ? `Your call was taken over by ${takenOverByManagerName}`
+            : 'Your call was taken over by a supervisor'
+        }
+        detail="They're continuing the conversation with the prospect. Resume when you're ready for your next batch."
         action={
           <Button variant="primary" onClick={onResume} disabled={resuming}>
             {resuming ? 'Resuming…' : 'Resume'}

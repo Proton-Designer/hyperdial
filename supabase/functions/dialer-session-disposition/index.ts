@@ -13,6 +13,17 @@ import { logOrgAction } from '../_shared/audit.ts';
  * leg's session and checks the caller is that session's own agent (or admin+) BEFORE calling
  * `submit_disposition`, which re-checks the same thing itself as defense in depth.
  *
+ * MISSION-5 TASK-M5-N1 (call takeover): `manager` is now also let through the role gate, but ONLY
+ * for a leg they personally took over (a `coaching_sessions` row with `manager_id = caller` and
+ * `taken_over_at is not null` targeting this leg's session) -- NOT a general pod-scoped grant to
+ * disposition any of their agents' other calls, which is out of scope for this task and would be
+ * a real authorization widening nobody asked for. `submit_disposition`'s own SQL re-check needs no
+ * change: it only restricts `role = 'agent'`, so a manager caller already passes it once the TS
+ * layer lets them through -- and its own trailing `transition_session(..., ['wrap_up'], ...)` call
+ * is a harmless no-op CAS-miss for a takeover leg's session, which is never in `wrap_up` (it went
+ * straight from `on_call` to `paused` at takeover time, per that task's own "skip wrap-up"
+ * instruction) -- confirmed by reading the RPC body, not assumed.
+ *
  * `submit_disposition` (the SQL RPC) does everything transactional: writes the leg's disposition
  * fields, applies the lead effect (including DNC propagation across every campaign_leads row for
  * the contact), enqueues the GHL push job, and moves the session wrap_up -> dialing. Only the
@@ -49,7 +60,7 @@ Deno.serve(async (req) => {
     orgId,
     role,
     error: authError,
-  } = await requireTelnyxOrgRole(req, ['owner', 'admin', 'agent']);
+  } = await requireTelnyxOrgRole(req, ['owner', 'admin', 'agent', 'manager']);
   if (authError) return authError;
 
   const { body, errorResponse } = await readJsonBody<SubmitDispositionBody>(req);
@@ -100,6 +111,24 @@ Deno.serve(async (req) => {
     }
     if (role === 'agent' && session.agent_id !== user.id) {
       return jsonResponse(403, { error: 'Not your session' });
+    }
+    if (role === 'manager') {
+      // MISSION-5 TASK-M5-N1: a manager may disposition this leg ONLY if they personally took
+      // over the call it belongs to -- not a general pod-scope grant (see this file's own header
+      // comment). `.limit(1)` since a leg's session can have at most one `coaching_sessions` row
+      // ever take it over in practice (one active coach per target, EC-8), but this reads as "did
+      // ANY of my own rows for this session get taken over," not "the most recent one."
+      const { data: takeover } = await supabase
+        .from('coaching_sessions')
+        .select('id')
+        .eq('target_session_id', session.id)
+        .eq('manager_id', user.id)
+        .not('taken_over_at', 'is', null)
+        .limit(1)
+        .maybeSingle();
+      if (!takeover) {
+        return jsonResponse(403, { error: 'Not your session' });
+      }
     }
 
     const { data, error: rpcError } = await supabase

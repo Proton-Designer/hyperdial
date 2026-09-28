@@ -623,6 +623,67 @@ Records the WINNING contact leg only, never a loser, starting the moment it's ac
   `org_timezone_settings` — none of them audit-log their own update either, despite pre-seeded
   `AUDIT_ACTION_LABELS` entries for some of them that nothing has ever actually fired).
 
+### Supervisor call takeover (MISSION-5 TASK-M5-N1, deferred backlog item)
+
+- **Promotes an ALREADY-active coaching attempt** (listen/whisper/barge, TASK-T3) into a
+  takeover — not a 5th mode requested at coaching-start time. `dialer-coaching`'s new
+  `'takeover'` action (`coaching-core.ts`'s `runTakeoverAction`), given the same `coachingId`
+  `startCoaching` returned. `taken_over_at` on `coaching_sessions` (nullable, also the CAS
+  race-guard for two clicks landing at once) distinguishes "coaching" from "took over" — `mode`
+  itself is NOT widened with a 4th value, since the supervisor's real Telnyx conference role
+  after a takeover is just `barge` (Telnyx has no "takeover" `supervisor_role`).
+- **Mechanism is `leave` (parks the agent's leg) then `hangup` (ends it) — verified against
+  `spec3.json` that Telnyx has no "kick" endpoint at all.** `POST /conferences/{id}/actions/leave`
+  only moves a leg back to `parked`; a separate `POST /calls/{id}/actions/hangup` actually ends
+  it. Both are pre-existing `TelnyxClient` methods, reused unmodified.
+- **DB transitions happen BEFORE any Telnyx command — load-bearing, not incidental.** Clearing
+  `dial_sessions.agent_leg_id` to null (via `transition_leg` + `transition_session`) before
+  issuing `leaveConference`/`hangup` means the REAL webhook for the agent leg's eventual hangup
+  hits `processAgentLegEvent`'s existing stale-leg guard (`if (leg.id !== session.agent_leg_id)
+  return`) and no-ops — avoiding a double-cascade race with the generic "agent leg lost" handling,
+  with ZERO changes to `dialer-engine.ts`. `conference_id` is also cleared to null in the same
+  transition (`ensureAgentConference`'s existing null-conference-id fallback creates a fresh one
+  if the agent ever dials again) — a session's `conference_id` must never point at an abandoned
+  conference.
+- **Target session lands in `paused`, `pause_reason: 'call_taken_over_by_manager'`,
+  `taken_over_by_manager_id` set — permanently, for that session.** The agent's existing Resume
+  button works for free: `resumeToDialing` already accepts ANY `pause_reason` string from any
+  `'paused'`/`'wrap_up'` starting state. `DialerStateBanner.tsx` shows "Your call was taken over
+  by \<name\>" (name resolved server-side by `dialer-session-get`, new `takenOverByManagerName`
+  field, from `profiles` — never trusted from the client).
+- **The sweeper needed a fix-forward found by reasoning, not a live failure**:
+  `reap_stale_coaching_sessions`'s staleness condition (`state <> 'on_call' and updated_at <
+  now() - stuck_after`) would eventually match ANY taken-over `coaching_sessions` row too, since
+  the target session's `state` is deliberately never `on_call` again post-takeover — without a
+  fix, the sweeper would eventually hang up the SUPERVISOR's own live leg. Fixed by adding
+  `taken_over_at is null` to the staleness CTE (both the stuck-after and hard-cap branches).
+- **Disposition ownership: the supervisor, scoped to EXACTLY the leg they took over — not a
+  general pod-scope grant.** `dialer-session-disposition` admits `role==='manager'` now, but only
+  when a `coaching_sessions` row exists with `manager_id = caller` and `taken_over_at is not
+  null` for that target session; `submit_disposition`'s own SQL needed no change (its trailing
+  `transition_session(..., ['wrap_up'], ...)` call is a harmless CAS-miss no-op for a takeover
+  leg's session, which is never in `wrap_up`).
+- **`org_call_takeover_settings`** (org_id pk, `enabled boolean default false`) — OFF by default,
+  owner/admin only (same select-any-member/write-owner-admin RLS shape as
+  `org_supervisor_alert_settings`), reuses the existing generic `audit_log_settings_change_trigger`.
+  A dedicated table, not a column on an existing settings table, because this gates an ACTION's
+  authorization, not an alert threshold or a consent disclosure. `runTakeoverAction` re-checks it
+  server-side (403 `TAKEOVER_DISABLED`) — the Settings → Team `CallTakeoverSettingsCard` toggle is
+  not the only enforcement. `CoachingBanner.tsx`'s "Take over" button is itself hidden when the
+  org has this off (fetched once on mount), not just disabled-with-a-tooltip.
+- **`CoachingBanner.tsx`'s existing 4s poll (the T3/review-fix-forward auto-hangup — see this
+  file's own coaching section above) had to be taught about takeover explicitly**: that poll
+  already calls `onLeave()` (hangs up the MANAGER'S OWN leg) the moment the target session leaves
+  `on_call` — which a successful takeover ALSO does, by design. A `tookOverRef` guard added to
+  that same effect skips the auto-hangup once `handleTakeover` has resolved, so the supervisor's
+  own leg survives past the moment they take over (they end it deliberately later, via the same
+  Hang up button, now relabeled).
+- **NOT built this pass**: no UI retry surfaced for a Telnyx-side `updateConferenceSupervisorRole`
+  failure beyond the banner's own inline "Retry" link (calls `switchCoachingMode('barge')`
+  again) — `takeoverCall`'s `roleUpdateFailed: true` response flag exists specifically so the
+  client can offer this, never silently. NEEDS-LIVE-VERIFY: the exact real-call timing/audio
+  behavior around the takeover moment — see `docs/validation/launch-live-test.md` B25.
+
 ### Hold + warm/cold transfer (MISSION-4 TASK-T4, AUD-6 + NEW)
 
 - **Hold**: the prospect leg is held IN PLACE in the session's own persistent conference (Telnyx

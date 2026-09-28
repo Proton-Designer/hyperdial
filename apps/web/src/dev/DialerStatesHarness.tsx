@@ -79,7 +79,9 @@ export function DialerStatesHarness() {
   // REAL ticking countdown (not a static fixture number) so the Cancel button has something
   // genuine to cancel; 'manual' shows the post_wrapup banner with no countdown running at all
   // (the agent's own "Manual" preference).
-  const [pausedFixture, setPausedFixture] = useState<'off' | 'counting' | 'manual'>('off');
+  const [pausedFixture, setPausedFixture] = useState<'off' | 'counting' | 'manual' | 'takenOver'>(
+    'off'
+  );
   const [autoResumeSecondsLeft, setAutoResumeSecondsLeft] = useState<number | null>(null);
   useEffect(() => {
     if (pausedFixture !== 'counting') {
@@ -206,6 +208,15 @@ export function DialerStatesHarness() {
               />
               TASK-T7: pause_reason = 'post_wrapup', manual (no timer)
             </label>
+            <label className="flex items-center gap-2 text-sm text-[#B0BEC5]">
+              <input
+                type="radio"
+                name="paused-fixture"
+                checked={pausedFixture === 'takenOver'}
+                onChange={() => setPausedFixture('takenOver')}
+              />
+              MISSION-5 TASK-M5-N1: pause_reason = 'call_taken_over_by_manager'
+            </label>
           </div>
         )}
       </div>
@@ -216,9 +227,14 @@ export function DialerStatesHarness() {
           pauseReason={
             selectedState === 'paused' && noNumbersAvailable
               ? 'no_numbers_available'
-              : selectedState === 'paused' && pausedFixture !== 'off'
-                ? 'post_wrapup'
-                : null
+              : selectedState === 'paused' && pausedFixture === 'takenOver'
+                ? 'call_taken_over_by_manager'
+                : selectedState === 'paused' && pausedFixture !== 'off'
+                  ? 'post_wrapup'
+                  : null
+          }
+          takenOverByManagerName={
+            selectedState === 'paused' && pausedFixture === 'takenOver' ? 'Jamie Chen' : null
           }
           autoResumeSecondsLeft={autoResumeSecondsLeft}
           onCancelAutoResume={() => setAutoResumeSecondsLeft(null)}

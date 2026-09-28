@@ -37,7 +37,7 @@ Deno.serve(async (req) => {
     const { data: session, error: sessionError } = await supabase
       .from('dial_sessions')
       .select(
-        'id, org_id, campaign_id, agent_id, state, lines, amd_mode, agent_leg_id, active_leg_id, conference_id, started_at, ended_at, updated_at, pause_reason, raised_hand_at'
+        'id, org_id, campaign_id, agent_id, state, lines, amd_mode, agent_leg_id, active_leg_id, conference_id, started_at, ended_at, updated_at, pause_reason, raised_hand_at, taken_over_by_manager_id'
       )
       .eq('id', sessionId)
       .maybeSingle();
@@ -242,6 +242,25 @@ Deno.serve(async (req) => {
         : null;
     }
 
+    // MISSION-5 TASK-M5-N1: resolves once, not polled separately -- this whole response is
+    // already on the 3s poll, so a name resolved here is at most one tick stale, same as every
+    // other field on `session`. Only ever non-null while `session.state === 'paused'` and
+    // `pause_reason === 'call_taken_over_by_manager'` (DialerStateBanner's own gate), but resolved
+    // whenever the column is set regardless of current state/pause_reason -- cheap, and it means
+    // a client that's mid-transition never sees a stale null.
+    let takenOverByManagerName: string | null = null;
+    if (session.taken_over_by_manager_id) {
+      const { data: manager } = await supabase
+        .from('profiles')
+        .select('first_name, last_name')
+        .eq('user_id', session.taken_over_by_manager_id)
+        .maybeSingle();
+      const fullName = manager
+        ? `${manager.first_name ?? ''} ${manager.last_name ?? ''}`.trim()
+        : '';
+      takenOverByManagerName = fullName || null;
+    }
+
     return new Response(
       JSON.stringify({
         session,
@@ -251,6 +270,7 @@ Deno.serve(async (req) => {
         activeTransfer: activeTransfer ?? null,
         history,
         campaignScript,
+        takenOverByManagerName,
       }),
       {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },

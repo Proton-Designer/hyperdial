@@ -4,6 +4,7 @@ import {
   processTelnyxCoachingEvent,
   runStartCoachingAction,
   runSwitchCoachingModeAction,
+  runTakeoverAction,
   endActiveCoachingSessionsForManager,
 } from './coaching-core.ts';
 
@@ -52,6 +53,26 @@ function updateChain(onSettle: () => void) {
   return chain;
 }
 
+/** MISSION-5 TASK-M5-N1: models the ONE conditional-update-with-a-returned-row shape this module
+ *  needs (`runTakeoverAction`'s own race-guard claim on `coaching_sessions.taken_over_at`) --
+ *  distinct from the generic fire-and-forget `updateChain` above, which has no `.select()` at
+ *  all. `result` is configurable per test: a row back means "this call won the claim," `null`
+ *  data means "lost the race." */
+function claimChain(onSettle: () => void, result: Result) {
+  // deno-lint-ignore no-explicit-any
+  const chain: any = {
+    eq: () => chain,
+    is: () => chain,
+    select: () => ({
+      maybeSingle: async () => {
+        onSettle();
+        return result;
+      },
+    }),
+  };
+  return chain;
+}
+
 function makeFakeSupabase(cfg: {
   dial_sessions?: Result[];
   call_legs?: Result[];
@@ -62,6 +83,14 @@ function makeFakeSupabase(cfg: {
   coachingInsert?: Result;
   // deno-lint-ignore no-explicit-any
   coachingSelect?: Result<any>[];
+  // MISSION-5 TASK-M5-N1
+  org_call_takeover_settings?: Result[];
+  // Result of runTakeoverAction's own conditional-claim UPDATE (`.select('id').maybeSingle()`)
+  // -- a row back means "won the claim", `null` data means "lost the race" (already taken over).
+  takeoverClaimResult?: Result;
+  // MISSION-5 TASK-M5-N1: transition_leg/transition_session results, in CALL ORDER
+  // (runTakeoverAction always calls transition_leg first, then transition_session).
+  rpcResults?: Result[];
 }) {
   const counters: Record<string, number> = {};
   const next = (key: string, arr?: Result[]): Result => {
@@ -71,8 +100,15 @@ function makeFakeSupabase(cfg: {
     return arr[i];
   };
   const writes: { table: string; patch: Record<string, unknown> }[] = [];
+  const rpcCalls: { name: string; args: Record<string, unknown> }[] = [];
 
   const supabase = {
+    // deno-lint-ignore no-explicit-any
+    rpc(name: string, args: Record<string, unknown>): any {
+      rpcCalls.push({ name, args });
+      const result = cfg.rpcResults ? next('rpc', cfg.rpcResults) : { data: true, error: null };
+      return Promise.resolve(result);
+    },
     from(table: string) {
       switch (table) {
         case 'dial_sessions':
@@ -112,8 +148,27 @@ function makeFakeSupabase(cfg: {
               };
             },
             select: () => selectChain(next('coaching_sessions', cfg.coachingSelect)),
-            update: (patch: Record<string, unknown>) =>
-              updateChain(() => writes.push({ table, patch })),
+            // MISSION-5 TASK-M5-N1: runTakeoverAction's own conditional claim is the ONE update
+            // on this table that reads its own result back (`.select('id').maybeSingle()`) --
+            // routed to `claimChain` by the presence of `taken_over_at` in the patch; every other
+            // caller (runSwitchCoachingModeAction's plain `{mode}` patch) keeps the old
+            // fire-and-forget `updateChain` behavior unchanged.
+            update: (patch: Record<string, unknown>) => {
+              writes.push({ table, patch });
+              if ('taken_over_at' in patch) {
+                return claimChain(
+                  () => {},
+                  cfg.takeoverClaimResult ?? { data: { id: 'coaching-1' }, error: null }
+                );
+              }
+              return updateChain(() => {});
+            },
+          };
+        // MISSION-5 TASK-M5-N1
+        case 'org_call_takeover_settings':
+          return {
+            select: () =>
+              selectChain(next('org_call_takeover_settings', cfg.org_call_takeover_settings)),
           };
         // TASK-A1: logOrgAction's own insert -- a plain fire-and-forget write, modeled the same
         // "capture into _writes, always succeed" way as every other insert in this fake.
@@ -129,6 +184,7 @@ function makeFakeSupabase(cfg: {
       }
     },
     _writes: writes,
+    _rpcCalls: rpcCalls,
     // deno-lint-ignore no-explicit-any
   } as any;
   return supabase;
@@ -151,6 +207,9 @@ function makeFakeTelnyxClient(overrides: Partial<TelnyxClient> = {}): {
     createTelephonyCredential: async () => ({ id: 'cred-new' }),
     joinConference: async (conferenceId: string, args: unknown) =>
       record('joinConference', [conferenceId, args]),
+    // MISSION-5 TASK-M5-N1
+    leaveConference: async (conferenceId: string, callControlId: string) =>
+      record('leaveConference', [conferenceId, callControlId]),
     updateConferenceSupervisorRole: async (conferenceId: string, args: unknown) =>
       record('updateConferenceSupervisorRole', [conferenceId, args]),
     ...overrides,
@@ -695,6 +754,268 @@ Deno.test(
       supervisorRole: 'whisper',
       whisperCallControlIds: ['call-agent-1'],
     });
+  }
+);
+
+// ---------------------------------------------------------------------------
+// MISSION-5 TASK-M5-N1: runTakeoverAction
+// ---------------------------------------------------------------------------
+
+function baseTakeoverRow(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 'coaching-1',
+    target_session_id: 's-target',
+    target_user_id: 'agent-1',
+    manager_id: 'mgr-1',
+    manager_call_control_id: 'call-manager-1',
+    mode: 'whisper',
+    status: 'active',
+    taken_over_at: null,
+    ...overrides,
+  };
+}
+
+function baseTakeoverTargetSession(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 's-target',
+    state: 'on_call',
+    conference_id: 'conf-1',
+    agent_leg_id: 'leg-agent',
+    ...overrides,
+  };
+}
+
+Deno.test(
+  'runTakeoverAction: happy path -- promotes to barge, leaves then hangs up the agent leg, transitions leg+session, logs once',
+  async () => {
+    const supabase = makeFakeSupabase({
+      coachingSelect: [OK(baseTakeoverRow())],
+      org_call_takeover_settings: [OK({ enabled: true })],
+      dial_sessions: [OK(baseTakeoverTargetSession())],
+      call_legs: [OK({ call_control_id: 'call-agent-1', state: 'answered' })],
+    });
+    const { client, calls } = makeFakeTelnyxClient();
+    const result = await runTakeoverAction(supabase, client, 'org-1', 'mgr-1', 'owner', {
+      coachingId: 'coaching-1',
+    });
+
+    assertEquals(result.status, 200);
+    assertEquals(result.body, { ok: true, roleUpdateFailed: false });
+
+    const roleCall = calls.find((c) => c.method === 'updateConferenceSupervisorRole');
+    assertExists(roleCall);
+    assertEquals(roleCall!.args[0], 'conf-1');
+    assertEquals(roleCall!.args[1], { callControlId: 'call-manager-1', supervisorRole: 'barge' });
+
+    const leaveIndex = calls.findIndex((c) => c.method === 'leaveConference');
+    const hangupIndex = calls.findIndex((c) => c.method === 'hangup');
+    assertEquals(leaveIndex >= 0, true);
+    assertEquals(calls[leaveIndex].args, ['conf-1', 'call-agent-1']);
+    assertEquals(calls[hangupIndex].args, ['call-agent-1']);
+    // MISSION-5 TASK-M5-N1 (api-evidence.md): leave BEFORE hangup, not the other order.
+    assertEquals(leaveIndex < hangupIndex, true);
+
+    // deno-lint-ignore no-explicit-any
+    const rpcCalls = (supabase as { _rpcCalls: { name: string; args: any }[] })._rpcCalls;
+    assertEquals(rpcCalls[0].name, 'transition_leg');
+    assertEquals(rpcCalls[0].args.p_call_control_id, 'call-agent-1');
+    assertEquals(rpcCalls[0].args.p_expected_states, ['answered']);
+    assertEquals(rpcCalls[0].args.p_new_state, 'ended');
+    assertEquals(rpcCalls[0].args.p_fields.hangup_cause, 'supervisor_takeover');
+    assertExists(rpcCalls[0].args.p_fields.ended_at);
+    assertEquals(rpcCalls[1].name, 'transition_session');
+    assertEquals(rpcCalls[1].args.p_session, 's-target');
+    assertEquals(rpcCalls[1].args.p_expected_states, ['on_call', 'paused_agent_lost']);
+    assertEquals(rpcCalls[1].args.p_new_state, 'paused');
+    assertEquals(rpcCalls[1].args.p_fields, {
+      pause_reason: 'call_taken_over_by_manager',
+      taken_over_by_manager_id: 'mgr-1',
+      agent_leg_id: null,
+      active_leg_id: null,
+      conference_id: null,
+      paused_agent_lost_from: null,
+    });
+
+    const writes = (supabase as { _writes: { table: string; patch: Record<string, unknown> }[] })
+      ._writes;
+    const auditWrite = writes.find((w) => w.table === 'org_audit_log:insert');
+    assertExists(auditWrite);
+    assertEquals(auditWrite!.patch.action, 'session.call_takeover');
+    assertEquals(auditWrite!.patch.actor_user_id, 'mgr-1');
+    // Exactly ONE audit row per takeover.
+    assertEquals(writes.filter((w) => w.table === 'org_audit_log:insert').length, 1);
+  }
+);
+
+Deno.test(
+  'runTakeoverAction: already barge -- does not re-call updateConferenceSupervisorRole',
+  async () => {
+    const supabase = makeFakeSupabase({
+      coachingSelect: [OK(baseTakeoverRow({ mode: 'barge' }))],
+      org_call_takeover_settings: [OK({ enabled: true })],
+      dial_sessions: [OK(baseTakeoverTargetSession())],
+      call_legs: [OK({ call_control_id: 'call-agent-1', state: 'answered' })],
+    });
+    const { client, calls } = makeFakeTelnyxClient();
+    const result = await runTakeoverAction(supabase, client, 'org-1', 'mgr-1', 'owner', {
+      coachingId: 'coaching-1',
+    });
+    assertEquals(result.status, 200);
+    assertEquals(
+      calls.find((c) => c.method === 'updateConferenceSupervisorRole'),
+      undefined
+    );
+    assertExists(calls.find((c) => c.method === 'leaveConference'));
+    assertExists(calls.find((c) => c.method === 'hangup'));
+  }
+);
+
+Deno.test(
+  'runTakeoverAction: a leaveConference failure does not stop hangup or the session-side transition',
+  async () => {
+    const supabase = makeFakeSupabase({
+      coachingSelect: [OK(baseTakeoverRow({ mode: 'barge' }))],
+      org_call_takeover_settings: [OK({ enabled: true })],
+      dial_sessions: [OK(baseTakeoverTargetSession())],
+      call_legs: [OK({ call_control_id: 'call-agent-1', state: 'answered' })],
+    });
+    const { client, calls } = makeFakeTelnyxClient({
+      leaveConference: async () => {
+        throw new Error('call not found (already gone)');
+      },
+    });
+    const result = await runTakeoverAction(supabase, client, 'org-1', 'mgr-1', 'owner', {
+      coachingId: 'coaching-1',
+    });
+    assertEquals(result.status, 200);
+    assertExists(calls.find((c) => c.method === 'hangup'));
+    const rpcCalls = (supabase as { _rpcCalls: { name: string }[] })._rpcCalls;
+    assertEquals(rpcCalls.length, 2);
+  }
+);
+
+Deno.test('runTakeoverAction: coaching attempt not found -> 404', async () => {
+  const supabase = makeFakeSupabase({ coachingSelect: [EMPTY] });
+  const { client } = makeFakeTelnyxClient();
+  const result = await runTakeoverAction(supabase, client, 'org-1', 'mgr-1', 'owner', {
+    coachingId: 'coaching-1',
+  });
+  assertEquals(result.status, 404);
+});
+
+Deno.test('runTakeoverAction: not yet connected -> 409 NOT_ACTIVE', async () => {
+  const supabase = makeFakeSupabase({
+    coachingSelect: [OK(baseTakeoverRow({ status: 'starting', manager_call_control_id: null }))],
+  });
+  const { client } = makeFakeTelnyxClient();
+  const result = await runTakeoverAction(supabase, client, 'org-1', 'mgr-1', 'owner', {
+    coachingId: 'coaching-1',
+  });
+  assertEquals(result.status, 409);
+  assertEquals(result.body.code, 'NOT_ACTIVE');
+});
+
+Deno.test(
+  'runTakeoverAction: already taken over -> 409 ALREADY_TAKEN_OVER, before touching Telnyx',
+  async () => {
+    const supabase = makeFakeSupabase({
+      coachingSelect: [OK(baseTakeoverRow({ taken_over_at: '2026-09-27T00:00:00Z' }))],
+    });
+    const { client, calls } = makeFakeTelnyxClient();
+    const result = await runTakeoverAction(supabase, client, 'org-1', 'mgr-1', 'owner', {
+      coachingId: 'coaching-1',
+    });
+    assertEquals(result.status, 409);
+    assertEquals(result.body.code, 'ALREADY_TAKEN_OVER');
+    assertEquals(calls.length, 0);
+  }
+);
+
+Deno.test(
+  'runTakeoverAction: manager outside the target agent pod scope -> 403, before touching Telnyx',
+  async () => {
+    const supabase = makeFakeSupabase({
+      coachingSelect: [OK(baseTakeoverRow())],
+      org_members: [OK({ pod_id: 'pod-a' })],
+      org_manager_pods: [EMPTY],
+    });
+    const { client, calls } = makeFakeTelnyxClient();
+    const result = await runTakeoverAction(supabase, client, 'org-1', 'mgr-1', 'manager', {
+      coachingId: 'coaching-1',
+    });
+    assertEquals(result.status, 403);
+    assertEquals(calls.length, 0);
+  }
+);
+
+Deno.test('runTakeoverAction: org has takeover disabled -> 403 TAKEOVER_DISABLED', async () => {
+  const supabase = makeFakeSupabase({
+    coachingSelect: [OK(baseTakeoverRow())],
+    org_call_takeover_settings: [OK({ enabled: false })],
+  });
+  const { client, calls } = makeFakeTelnyxClient();
+  const result = await runTakeoverAction(supabase, client, 'org-1', 'mgr-1', 'owner', {
+    coachingId: 'coaching-1',
+  });
+  assertEquals(result.status, 403);
+  assertEquals(result.body.code, 'TAKEOVER_DISABLED');
+  assertEquals(calls.length, 0);
+});
+
+Deno.test(
+  'runTakeoverAction: target no longer on_call (already in wrap-up) -> 409 TARGET_NOT_ON_CALL',
+  async () => {
+    const supabase = makeFakeSupabase({
+      coachingSelect: [OK(baseTakeoverRow())],
+      org_call_takeover_settings: [OK({ enabled: true })],
+      dial_sessions: [OK(baseTakeoverTargetSession({ state: 'wrap_up' }))],
+    });
+    const { client, calls } = makeFakeTelnyxClient();
+    const result = await runTakeoverAction(supabase, client, 'org-1', 'mgr-1', 'owner', {
+      coachingId: 'coaching-1',
+    });
+    assertEquals(result.status, 409);
+    assertEquals(result.body.code, 'TARGET_NOT_ON_CALL');
+    assertEquals(calls.length, 0);
+  }
+);
+
+Deno.test(
+  "runTakeoverAction: the agent's own leg is already gone -> 409 TARGET_NOT_ON_CALL",
+  async () => {
+    const supabase = makeFakeSupabase({
+      coachingSelect: [OK(baseTakeoverRow())],
+      org_call_takeover_settings: [OK({ enabled: true })],
+      dial_sessions: [OK(baseTakeoverTargetSession())],
+      call_legs: [EMPTY],
+    });
+    const { client, calls } = makeFakeTelnyxClient();
+    const result = await runTakeoverAction(supabase, client, 'org-1', 'mgr-1', 'owner', {
+      coachingId: 'coaching-1',
+    });
+    assertEquals(result.status, 409);
+    assertEquals(result.body.code, 'TARGET_NOT_ON_CALL');
+    assertEquals(calls.length, 0);
+  }
+);
+
+Deno.test(
+  'runTakeoverAction: two clicks land at once -- the loser gets 409 ALREADY_TAKEN_OVER, never touches Telnyx',
+  async () => {
+    const supabase = makeFakeSupabase({
+      coachingSelect: [OK(baseTakeoverRow())],
+      org_call_takeover_settings: [OK({ enabled: true })],
+      dial_sessions: [OK(baseTakeoverTargetSession())],
+      call_legs: [OK({ call_control_id: 'call-agent-1', state: 'answered' })],
+      takeoverClaimResult: EMPTY,
+    });
+    const { client, calls } = makeFakeTelnyxClient();
+    const result = await runTakeoverAction(supabase, client, 'org-1', 'mgr-1', 'owner', {
+      coachingId: 'coaching-1',
+    });
+    assertEquals(result.status, 409);
+    assertEquals(result.body.code, 'ALREADY_TAKEN_OVER');
+    assertEquals(calls.length, 0);
   }
 );
 

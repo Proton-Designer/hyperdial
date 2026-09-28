@@ -91,6 +91,10 @@ interface DialerHookState {
    *  session isn't on_call, when a change just applies immediately -- see loadSession). Call
    *  `applyPendingCampaignScript()` (an explicit agent click) to promote it. */
   pendingCampaignScript: CampaignScriptInfo | null;
+  /** MISSION-5 TASK-M5-N1 (deferred backlog item): resolved from `session.taken_over_by_manager_id`
+   *  server-side -- see getDialerSession's own comment (api.ts). Drives DialerStateBanner's
+   *  "Your call was taken over by <name>" state. */
+  takenOverByManagerName: string | null;
   loading: boolean;
   error: string | null;
 }
@@ -145,6 +149,7 @@ export function useDialerSession(initialSessionId: string | null = null) {
     history: {},
     campaignScript: null,
     pendingCampaignScript: null,
+    takenOverByManagerName: null,
     loading: false,
     error: null,
   });
@@ -153,8 +158,16 @@ export function useDialerSession(initialSessionId: string | null = null) {
   const loadSession = useCallback(async (sessionId: string) => {
     setState((prev) => ({ ...prev, loading: true, error: null }));
     try {
-      const { session, legs, inboundCall, coachingMode, activeTransfer, history, campaignScript } =
-        await getDialerSession(sessionId);
+      const {
+        session,
+        legs,
+        inboundCall,
+        coachingMode,
+        activeTransfer,
+        history,
+        campaignScript,
+        takenOverByManagerName,
+      } = await getDialerSession(sessionId);
       setState((prev) => {
         // MISSION-5 TASK-M5-G3 (EC-20): only withhold a CHANGED script while the session is
         // actually on_call -- every other state (including the very first load, where
@@ -172,6 +185,7 @@ export function useDialerSession(initialSessionId: string | null = null) {
           history,
           campaignScript: withhold ? prev.campaignScript : campaignScript,
           pendingCampaignScript: withhold ? campaignScript : null,
+          takenOverByManagerName,
         };
       });
     } catch (e) {
