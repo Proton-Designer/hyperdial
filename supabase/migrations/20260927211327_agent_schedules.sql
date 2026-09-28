@@ -184,6 +184,9 @@ begin
     end loop;
   end loop;
 
+  -- eng2 review SHOULD: serialize concurrent saves for the same agent (otherwise two delete+insert
+  -- runs can't see each other's uncommitted rows and both sets of shifts survive).
+  perform 1 from public.org_members where org_id = p_org and user_id = p_agent for update;
   delete from public.agent_schedules where org_id = p_org and agent_user_id = p_agent and weekday = p_weekday;
 
   for v_shift in select * from jsonb_array_elements(p_shifts)
