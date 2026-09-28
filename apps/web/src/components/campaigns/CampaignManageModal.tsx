@@ -1473,6 +1473,7 @@ export function CampaignManageModal({
         <TerritoryRulesModal
           campaignId={campaignId}
           members={orgMembers}
+          distributionMode={campaign?.distribution_mode ?? 'manual'}
           onClose={() => setTerritoryModalOpen(false)}
         />
       )}

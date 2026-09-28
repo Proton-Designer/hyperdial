@@ -24,6 +24,7 @@ import { ArrowUp, ArrowDown, Trash2, Pencil } from 'lucide-react';
 interface TerritoryRulesModalProps {
   campaignId: string;
   members: OrgMember[];
+  distributionMode: 'manual' | 'round_robin';
   onClose: () => void;
 }
 
@@ -38,7 +39,12 @@ function memberName(m: OrgMember): string {
  *  error the RPC raises). Applying is preview-then-commit through the SAME `assign_campaign_leads`
  *  path a manual assignment uses (`_shared`/api.ts's own comment on `applyTerritoryRules`), so
  *  nothing here bypasses B3's own guards. */
-export function TerritoryRulesModal({ campaignId, members, onClose }: TerritoryRulesModalProps) {
+export function TerritoryRulesModal({
+  campaignId,
+  members,
+  distributionMode,
+  onClose,
+}: TerritoryRulesModalProps) {
   const modalRef = useRef<HTMLDivElement>(null);
   useFocusTrap(modalRef, true);
   const { role } = useOrg();
@@ -387,6 +393,16 @@ export function TerritoryRulesModal({ campaignId, members, onClose }: TerritoryR
                 />
                 Also reassign leads that already have an agent
               </label>
+            )}
+            {/* TASK-M5-T2 (EC-2, edge-cases-v2.md): apply_territory_rules(p_reassign=true)
+             *  re-touches already-assigned leads, including ones round-robin fairly distributed
+             *  (N4) -- preview_territory_rules doesn't break out "already assigned" per target,
+             *  so this is a plain mode-level warning, not a specific count. */}
+            {reassign && distributionMode === 'round_robin' && (
+              <div className="rounded-app-md bg-warning-soft border border-warning/30 text-warning text-body p-3">
+                This campaign uses round-robin distribution. Reassigning will also move leads that
+                were already fairly distributed by round-robin.
+              </div>
             )}
             <div className="flex items-center gap-2">
               <Button
