@@ -33,6 +33,7 @@ import { Button } from '@/components/ui/button';
 import { useFocusTrap } from '@/hooks/useFocusTrap';
 import { TeamGoalsAndBroadcastPanel } from '@/components/goals/TeamGoalsAndBroadcastPanel';
 import { TeamGoalAttainment } from '@/components/goals/TeamGoalAttainment';
+import { OnboardingChecklistPanel } from '@/components/onboarding/OnboardingChecklistPanel';
 
 type Range = 'today' | 'yesterday' | '7d' | 'custom';
 type TeamView = 'overview' | 'attendance';
@@ -1060,6 +1061,9 @@ export function Team() {
           {/* MISSION-5 TASK-M5-A6: goals + broadcasts. Server-enforced pod scoping (no client-side
               role/pod-scope filtering here -- see the panel's own header comment). */}
           <TeamGoalsAndBroadcastPanel />
+
+          {/* Deferred backlog item TM-B2: onboarding checklist, same server-enforced pod scoping. */}
+          <OnboardingChecklistPanel />
 
           {/* ADM-7: live board */}
           <div className="mb-8">

@@ -4323,3 +4323,40 @@ export async function listOrgGoals(): Promise<OrgGoal[]> {
     updatedAt: r.updated_at,
   }));
 }
+
+// --- Deferred backlog item TM-B2: onboarding checklist per agent, derived from existing data. ---
+
+export interface AgentOnboardingChecklistRow {
+  agentId: string;
+  agentName: string;
+  preflightPassed: boolean;
+  numberAssigned: boolean;
+  campaignAssigned: boolean;
+  firstCallMade: boolean;
+}
+
+/** Owner/admin see every active agent; a manager sees only their own pod-scoped agents (server-
+ *  enforced, `agent_onboarding_checklist`'s own gate). A current-state snapshot, not a time-window
+ *  query -- no from/to params, unlike agent_time_in_state/agent_first_activity. */
+export async function getAgentOnboardingChecklist(): Promise<AgentOnboardingChecklistRow[]> {
+  const orgId = await getActiveOrgId();
+  const { data, error } = await supabase.rpc('agent_onboarding_checklist', { p_org: orgId });
+  if (error) throw new Error(error.message);
+  return (
+    (data ?? []) as {
+      agent_id: string;
+      agent_name: string;
+      preflight_passed: boolean;
+      number_assigned: boolean;
+      campaign_assigned: boolean;
+      first_call_made: boolean;
+    }[]
+  ).map((r) => ({
+    agentId: r.agent_id,
+    agentName: r.agent_name,
+    preflightPassed: r.preflight_passed,
+    numberAssigned: r.number_assigned,
+    campaignAssigned: r.campaign_assigned,
+    firstCallMade: r.first_call_made,
+  }));
+}
