@@ -195,7 +195,11 @@ Depends on `domain.auth`; depended on by `domain.campaigns` (via `campaign_leads
 `call_count`, and reads `dnc`/`timezone` at claim time). Owner/admin see and edit every contact in the org; an agent sees and edits only contacts reachable through a
 campaign they're assigned to (`campaign_agents` → `campaign_leads`), and — as of TASK-P2-P1 — **an agent's UPDATE is now genuinely DNC-scoped**, not full-row: the
 `contacts_agent_update_scope` trigger rejects any other column change with a `42501`, closing `.brain/memory/known-issues.md` #7. Import (INSERT) and delete stay
-owner/admin only.
+owner/admin only. As of TASK-M5-P1, a **manager** also has READ (SELECT only, no write) on any
+contact with a `campaign_leads` row whose `assigned_agent_id` is in the manager's own pod scope
+(`private.manager_has_contact_access`) — a different, narrower shape than the agent branch's
+campaign-membership grant, and it flows into `contact_notes`/`contact_change_history` automatically
+via the shared `private.contact_read_access` helper (TASK-M5-G5).
 
 ## Constraints & gotchas
 

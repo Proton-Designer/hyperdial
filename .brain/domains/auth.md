@@ -362,6 +362,13 @@ section covers only the authorization surface.
   breadcrumb, not an authorization check anywhere — `dialer-session-get` resolves it to a display
   name (`profiles.first_name/last_name`) server-side for the agent-facing banner; nothing reads
   this column to decide who may act on the session.
+- **Manager READ access to `contacts` (TASK-M5-P1) is keyed on `campaign_leads.assigned_agent_id`
+  + pod scope, not campaign membership** — deliberately a DIFFERENT shape than the pre-existing
+  agent branch (`agent_has_contact_access`, campaign-membership-based: an agent sees every contact
+  with a lead in a campaign they're assigned to, regardless of who that specific lead is assigned
+  to). `private.manager_has_contact_access` checks `has_org_role` internally, so every caller
+  (the contacts SELECT policy, `contact_read_access`) gets the role gate for free. READ only — no
+  manager INSERT/UPDATE/DELETE grant on `contacts`.
 
 ## Constraints & gotchas
 
