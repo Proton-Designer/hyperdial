@@ -90,6 +90,9 @@ exception when others then
 end;
 $$;
 
+-- O1 review SHOULD (eng2): only the guarded trigger functions (owner-executed) call this.
+revoke all on function private.log_trigger_failure(uuid, text, uuid, text) from public, anon, authenticated;
+
 -- =================================================================================================
 -- 3. public.acknowledge_trigger_failure -- owner/admin dismiss, cheap (a timestamp flip, no
 --    delete -- the row survives for history same as every other soft-state column in this
