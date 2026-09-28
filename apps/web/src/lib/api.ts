@@ -2845,6 +2845,72 @@ export async function assignCampaignLeads(
   return (data as number) ?? 0;
 }
 
+/** TASK-M5-D1 (EC-5): a client-side preview of `assignCampaignLeads`'s own blast radius, for the
+ *  "N of these leads are currently assigned to other agents and will be reassigned" warning.
+ *  Mirrors `assign_campaign_leads`'s own `ranked`/`candidates` CTEs (queued leads, ranked by
+ *  `position`, filtered by mode) closely enough for a warning count -- not a byte-exact
+ *  reimplementation, and deliberately NOT a new RPC/migration (this stays a plain read via the
+ *  existing owner/admin/manager campaign_leads SELECT policy, same as `listCampaignLeads`'s own
+ *  two-query style). `range`/`percentage`'s only sees a lead's rank relative to OTHER queued
+ *  leads, exactly like the RPC. */
+export async function countLeadsAssignedToOthers(
+  campaignId: string,
+  filter: AssignLeadsFilter,
+  targetAgentId: string | null
+): Promise<number> {
+  const { data, error } = await supabase
+    .from('campaign_leads')
+    .select('id, position, contact_id, assigned_agent_id')
+    .eq('campaign_id', campaignId)
+    .eq('status', 'queued')
+    .order('position', { ascending: true });
+  if (error) throw new Error(error.message);
+  const rows = (data ?? []) as {
+    id: string;
+    position: number;
+    contact_id: string;
+    assigned_agent_id: string | null;
+  }[];
+  if (rows.length === 0) return 0;
+
+  let tagMatchedIds: Set<string> | null = null;
+  if (filter.mode === 'tag') {
+    const contactIds = [...new Set(rows.map((r) => r.contact_id))];
+    const { data: contactsData, error: contactsError } = await supabase
+      .from('contacts')
+      .select('id, ghl_tags')
+      .in('id', contactIds);
+    if (contactsError) throw new Error(contactsError.message);
+    tagMatchedIds = new Set(
+      ((contactsData ?? []) as { id: string; ghl_tags: string[] | null }[])
+        .filter((c) => (c.ghl_tags ?? []).includes(filter.tag))
+        .map((c) => c.id)
+    );
+  }
+
+  const total = rows.length;
+  const candidates = rows.filter((row, index) => {
+    const rank = index + 1; // matches the RPC's own row_number() over (order by position)
+    switch (filter.mode) {
+      case 'all':
+        return true;
+      case 'range':
+        return rank >= filter.start && rank <= filter.end;
+      case 'percentage':
+        return rank <= Math.ceil((total * filter.percentage) / 100);
+      case 'tag':
+        return tagMatchedIds!.has(row.contact_id);
+      default:
+        // by_current_agent/lead_ids: AssignLeadsModal never sends these, no preview needed.
+        return false;
+    }
+  });
+
+  return candidates.filter(
+    (row) => row.assigned_agent_id !== null && row.assigned_agent_id !== targetAgentId
+  ).length;
+}
+
 // --- MISSION-5 TASK-M5-C4: territory rules (route leads by state/area code to an agent or pod) ---
 
 export interface TerritoryRule {
@@ -5398,4 +5464,53 @@ export async function getPowerHourBoard(id: string): Promise<PowerHourBoardRow[]
     metricPerHour: r.metric_per_hour,
     boardRank: r.board_rank,
   }));
+}
+
+// --- MISSION-5 TASK-M5-O1 Part B (R3's next-5 #1): guarded-trigger failure visibility. ---
+
+export type TriggerFailureSource =
+  'disposition_quality_checks' | 'round_robin_distribution' | 'shared_inbox';
+
+export interface TriggerFailure {
+  id: string;
+  source: TriggerFailureSource;
+  rowId: string | null;
+  error: string;
+  acknowledgedAt: string | null;
+  createdAt: string;
+}
+
+/** Owner/admin only (RLS: `trigger_failures`' own SELECT policy) -- reads directly, no RPC
+ *  needed, same "SELECT-only RLS, no client writes" shape as `power_hours`/`org_pods`. */
+export async function listTriggerFailures(days = 7): Promise<TriggerFailure[]> {
+  const { data, error } = await supabase
+    .from('trigger_failures')
+    .select('id, source, row_id, error, acknowledged_at, created_at')
+    .gte('created_at', new Date(Date.now() - days * 86400000).toISOString())
+    .order('created_at', { ascending: false })
+    .limit(200);
+  if (error) throw new Error(error.message);
+  return (
+    (data ?? []) as Array<{
+      id: string;
+      source: TriggerFailureSource;
+      row_id: string | null;
+      error: string;
+      acknowledged_at: string | null;
+      created_at: string;
+    }>
+  ).map((r) => ({
+    id: r.id,
+    source: r.source,
+    rowId: r.row_id,
+    error: r.error,
+    acknowledgedAt: r.acknowledged_at,
+    createdAt: r.created_at,
+  }));
+}
+
+export async function acknowledgeTriggerFailure(id: string): Promise<void> {
+  const orgId = await getActiveOrgId();
+  const { error } = await supabase.rpc('acknowledge_trigger_failure', { p_org: orgId, p_id: id });
+  if (error) throw new Error(error.message);
 }

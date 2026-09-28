@@ -36,6 +36,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useOrg } from '@/contexts/OrgContext';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { NumberHealthPanel } from '@/components/settings/NumberHealthPanel';
+import { SystemHealthPanel } from '@/components/settings/SystemHealthPanel';
 import { PageHeader } from '@/components/app/PageHeader';
 import { EmptyState } from '@/components/app/EmptyState';
 import { Button } from '@/components/ui/button';
@@ -3820,6 +3821,8 @@ function ActivityTab() {
         title="Activity"
         description="Who did what, when -- role changes, invites, coaching, integrations and settings"
       />
+
+      <SystemHealthPanel />
 
       <div className="flex flex-wrap items-end gap-3 mb-4">
         <div>
