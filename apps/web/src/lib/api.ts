@@ -881,8 +881,9 @@ export async function getAgentTimeInState(
 
 /** MISSION-5 TASK-M5-A4 follow-up: "first activity" (a literal clock time) per agent/day --
  *  `agent_time_in_state` aggregates away individual event start times, so this is a sibling RPC,
- *  same owner/admin-only gate, `p_agent` narrowing, and `p_tz` default. Backs the Attendance
- *  tab's "First activity" column. */
+ *  same `p_agent` narrowing and `p_tz` default. Gate: owner/admin/pod-scoped-manager/agent-self-
+ *  view, mirroring `agent_time_in_state`'s own current (post-A5) widened gate, not the original
+ *  owner/admin-only one (see `a7f3b65`). Backs the Attendance tab's "First activity" column. */
 export interface AgentFirstActivityRow {
   agent_id: string;
   day: string;
@@ -1774,11 +1775,15 @@ export interface OrgBroadcast {
   pod_id: string | null;
   created_at: string;
   expires_at: string | null;
+  created_by: string;
 }
 
 /** Every broadcast the caller can currently see (their own pod, or org-wide, not expired, not
  *  already dismissed by them) -- pre-filtered server-side so Dialer.tsx never has to reconstruct
- *  that visibility logic itself. Polled the same way `getTeamLiveBoard` is. */
+ *  that visibility logic itself. Polled the same way `getTeamLiveBoard` is. `created_by` lets a
+ *  manager-facing management list (TeamGoalsAndBroadcastPanel) tell "my own pod_id-null
+ *  broadcast" (deletable) from "someone else's" (delete_org_broadcast rejects it) without a
+ *  round-trip. */
 export async function getActiveBroadcasts(): Promise<OrgBroadcast[]> {
   const orgId = await getActiveOrgId();
   const { data, error } = await supabase.rpc('active_org_broadcasts', { p_org: orgId });

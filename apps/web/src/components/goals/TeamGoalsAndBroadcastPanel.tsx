@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
+import { useAuth } from '@/contexts/AuthContext';
+import { useOrg } from '@/contexts/OrgContext';
 import {
   listOrgPods,
   listOrgMembers,
@@ -32,6 +34,18 @@ const METRIC_OPTIONS: { value: GoalMetric; label: string }[] = [
  *  fetches its own pods/members, no props, so Team.tsx's own diff to add this is one import + one
  *  line. */
 export function TeamGoalsAndBroadcastPanel() {
+  const { user } = useAuth();
+  const { role } = useOrg();
+  // eng2 review of 74e26af (audit/M5-followups/review-eng2.md, SHOULD): a manager could see live
+  // Edit/Delete on rows the RPCs will reject (a scope='org' goal is owner/admin-only regardless
+  // of who set it; a pod_id-null broadcast someone else posted is poster-or-owner/admin-only) --
+  // not a security bug (the RPC is the real gate), but a routine, confusing failed round-trip on
+  // rows a manager can plainly see. Hide/disable exactly where the server would reject.
+  const canManageGoal = (g: OrgGoal): boolean =>
+    role === 'owner' || role === 'admin' || g.scope !== 'org';
+  const canManageBroadcast = (b: OrgBroadcast): boolean =>
+    role === 'owner' || role === 'admin' || b.pod_id !== null || b.created_by === user?.id;
+
   const [pods, setPods] = useState<OrgPod[]>([]);
   const [members, setMembers] = useState<OrgMember[]>([]);
   const [goals, setGoals] = useState<OrgGoal[]>([]);
@@ -358,31 +372,37 @@ export function TeamGoalsAndBroadcastPanel() {
               </div>
               {goalRowError[g.id] && <p className="text-meta text-danger">{goalRowError[g.id]}</p>}
             </div>
-            <input
-              type="number"
-              min={1}
-              step={1}
-              value={goalEdits[g.id] ?? g.targetValue}
-              disabled={goalRowBusy === g.id}
-              onChange={(e) => setGoalEdits((edits) => ({ ...edits, [g.id]: e.target.value }))}
-              className={`${inputClass} w-20`}
-            />
-            <Button
-              size="sm"
-              variant="fe-ghost"
-              disabled={goalRowBusy === g.id}
-              onClick={() => handleEditGoal(g)}
-            >
-              Save
-            </Button>
-            <Button
-              size="sm"
-              variant="fe-ghost"
-              disabled={goalRowBusy === g.id}
-              onClick={() => handleDeleteGoal(g)}
-            >
-              Delete
-            </Button>
+            {canManageGoal(g) ? (
+              <>
+                <input
+                  type="number"
+                  min={1}
+                  step={1}
+                  value={goalEdits[g.id] ?? g.targetValue}
+                  disabled={goalRowBusy === g.id}
+                  onChange={(e) => setGoalEdits((edits) => ({ ...edits, [g.id]: e.target.value }))}
+                  className={`${inputClass} w-20`}
+                />
+                <Button
+                  size="sm"
+                  variant="fe-ghost"
+                  disabled={goalRowBusy === g.id}
+                  onClick={() => handleEditGoal(g)}
+                >
+                  Save
+                </Button>
+                <Button
+                  size="sm"
+                  variant="fe-ghost"
+                  disabled={goalRowBusy === g.id}
+                  onClick={() => handleDeleteGoal(g)}
+                >
+                  Delete
+                </Button>
+              </>
+            ) : (
+              <span className="text-meta text-text-secondary">{g.targetValue}</span>
+            )}
           </div>
         ))}
       </div>
@@ -407,14 +427,16 @@ export function TeamGoalsAndBroadcastPanel() {
                 <p className="text-meta text-danger">{broadcastRowError[b.id]}</p>
               )}
             </div>
-            <Button
-              size="sm"
-              variant="fe-ghost"
-              disabled={broadcastRowBusy === b.id}
-              onClick={() => handleDeleteBroadcast(b)}
-            >
-              Delete
-            </Button>
+            {canManageBroadcast(b) && (
+              <Button
+                size="sm"
+                variant="fe-ghost"
+                disabled={broadcastRowBusy === b.id}
+                onClick={() => handleDeleteBroadcast(b)}
+              >
+                Delete
+              </Button>
+            )}
           </div>
         ))}
       </div>
