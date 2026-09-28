@@ -15,6 +15,7 @@ import {
   RotateCw,
   SkipForward,
   UserCog,
+  MapPin,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import {
@@ -49,6 +50,7 @@ import { ScriptHistoryPanel } from './ScriptHistoryPanel';
 import { ImportContactsModal } from '../contacts/ImportContactsModal';
 import { AddContactModal } from '../contacts/AddContactModal';
 import { AssignLeadsModal } from './AssignLeadsModal';
+import { TerritoryRulesModal } from './TerritoryRulesModal';
 import { usePhoneNumbers } from '../../contexts/PhoneNumbersContext';
 import { useOrg } from '../../contexts/OrgContext';
 import { setPendingStartCampaignId } from '../../lib/dialerLaunchIntent';
@@ -242,6 +244,7 @@ export function CampaignManageModal({
   useFocusTrap(modalRef, open);
   const [confirmBulkRemove, setConfirmBulkRemove] = useState(false);
   const [assignModalOpen, setAssignModalOpen] = useState(false);
+  const [territoryModalOpen, setTerritoryModalOpen] = useState(false);
 
   const fetchCampaign = useCallback(async () => {
     if (!campaignId) return;
@@ -1116,6 +1119,17 @@ export function CampaignManageModal({
                       <UserCog className="w-4 h-4" />
                       Assign leads
                     </button>
+                    {(role === 'owner' || role === 'admin' || role === 'manager') && (
+                      <button
+                        type="button"
+                        onClick={() => setTerritoryModalOpen(true)}
+                        className="flex items-center gap-2 px-3 py-2 bg-surface-1 hover:bg-surface-3 border border-white/10 rounded-lg text-white text-sm"
+                        title="Route queued leads by contact state/area code to an agent or pod"
+                      >
+                        <MapPin className="w-4 h-4" />
+                        Territory rules
+                      </button>
+                    )}
                     {selectedLeadIds.size > 0 && (
                       <button
                         type="button"
@@ -1369,6 +1383,15 @@ export function CampaignManageModal({
           members={orgMembers}
           onClose={() => setAssignModalOpen(false)}
           onAssign={handleAssignLeads}
+        />
+      )}
+
+      {/* Territory rules (TASK-M5-C4) */}
+      {territoryModalOpen && campaignId && (
+        <TerritoryRulesModal
+          campaignId={campaignId}
+          members={orgMembers}
+          onClose={() => setTerritoryModalOpen(false)}
         />
       )}
 

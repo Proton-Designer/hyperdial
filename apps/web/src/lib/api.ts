@@ -2840,6 +2840,127 @@ export async function assignCampaignLeads(
   return (data as number) ?? 0;
 }
 
+// --- MISSION-5 TASK-M5-C4: territory rules (route leads by state/area code to an agent or pod) ---
+
+export interface TerritoryRule {
+  id: string;
+  org_id: string;
+  priority: number;
+  match_state: string | null;
+  match_area_code: string | null;
+  target_type: 'agent' | 'pod';
+  target_agent_id: string | null;
+  target_pod_id: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/** SELECT-only RLS (owner/admin/manager) -- every write goes through the RPCs below. */
+export async function listTerritoryRules(): Promise<TerritoryRule[]> {
+  const { data, error } = await supabase
+    .from('org_territory_rules')
+    .select('*')
+    .order('priority', { ascending: true });
+  if (error) throw new Error(error.message);
+  return (data ?? []) as TerritoryRule[];
+}
+
+export interface TerritoryRuleInput {
+  matchState: string | null;
+  matchAreaCode: string | null;
+  targetType: 'agent' | 'pod';
+  targetAgentId: string | null;
+  targetPodId: string | null;
+}
+
+export async function createTerritoryRule(input: TerritoryRuleInput): Promise<string> {
+  const orgId = await getActiveOrgId();
+  const { data, error } = await supabase.rpc('create_territory_rule', {
+    p_org: orgId,
+    p_match_state: input.matchState,
+    p_match_area_code: input.matchAreaCode,
+    p_target_type: input.targetType,
+    p_target_agent_id: input.targetAgentId,
+    p_target_pod_id: input.targetPodId,
+  });
+  if (error) throw new Error(error.message);
+  return data as string;
+}
+
+export async function updateTerritoryRule(
+  ruleId: string,
+  input: TerritoryRuleInput
+): Promise<void> {
+  const orgId = await getActiveOrgId();
+  const { error } = await supabase.rpc('update_territory_rule', {
+    p_org: orgId,
+    p_rule_id: ruleId,
+    p_match_state: input.matchState,
+    p_match_area_code: input.matchAreaCode,
+    p_target_type: input.targetType,
+    p_target_agent_id: input.targetAgentId,
+    p_target_pod_id: input.targetPodId,
+  });
+  if (error) throw new Error(error.message);
+}
+
+export async function deleteTerritoryRule(ruleId: string): Promise<void> {
+  const orgId = await getActiveOrgId();
+  const { error } = await supabase.rpc('delete_territory_rule', {
+    p_org: orgId,
+    p_rule_id: ruleId,
+  });
+  if (error) throw new Error(error.message);
+}
+
+/** Owner/admin only server-side -- pass the FULL current rule id list, in the new order. */
+export async function reorderTerritoryRules(ruleIds: string[]): Promise<void> {
+  const orgId = await getActiveOrgId();
+  const { error } = await supabase.rpc('reorder_territory_rules', {
+    p_org: orgId,
+    p_rule_ids: ruleIds,
+  });
+  if (error) throw new Error(error.message);
+}
+
+export interface TerritoryPreviewRow {
+  target_type: 'agent' | 'unmatched';
+  target_id: string | null;
+  target_name: string;
+  lead_count: number;
+}
+
+export async function previewTerritoryRules(
+  campaignId: string,
+  reassign = false
+): Promise<TerritoryPreviewRow[]> {
+  const { data, error } = await supabase.rpc('preview_territory_rules', {
+    p_campaign_id: campaignId,
+    p_reassign: reassign,
+  });
+  if (error) throw new Error(error.message);
+  return (data ?? []) as TerritoryPreviewRow[];
+}
+
+export interface TerritoryApplyResult {
+  assigned: number;
+  unmatched: number;
+  by_agent: { agent_id: string; assigned: number; error?: string }[];
+}
+
+export async function applyTerritoryRules(
+  campaignId: string,
+  reassign = false
+): Promise<TerritoryApplyResult> {
+  const { data, error } = await supabase.rpc('apply_territory_rules', {
+    p_campaign_id: campaignId,
+    p_reassign: reassign,
+  });
+  if (error) throw new Error(error.message);
+  return data as TerritoryApplyResult;
+}
+
 /** TASK-T6: a plain column update through the EXISTING owner/admin-only RLS policy on
  *  campaign_leads (20260924000300) -- no new RPC, same "a simple settings toggle is fine" shape
  *  as campaign retry rules/recording settings. */
