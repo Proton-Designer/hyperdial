@@ -8,6 +8,7 @@ import {
   getTeamLiveBoard,
   getOrgTimezone,
   getAgentTimeInState,
+  getAgentFirstActivity,
   listOrgMembers,
   startCoaching,
   CoachingActionError,
@@ -22,6 +23,7 @@ import {
   type TeamMemberRole,
   type CoachingMode,
   type AgentTimeInStateRow,
+  type AgentFirstActivityRow,
   type OrgMember,
 } from '@/lib/api';
 import { PageHeader } from '@/components/app/PageHeader';
@@ -433,6 +435,18 @@ function formatDuration(totalSeconds: number): string {
   return hours > 0 ? `${hours}h ${mins}m` : `${mins}m`;
 }
 
+/** MISSION-5 TASK-M5-A4 follow-up: renders an ISO instant as a local clock time in the org's own
+ *  timezone -- same Intl-based approach as localTodayParts/localMidnightUtc above, just for
+ *  display rather than day-boundary math. */
+function formatClockTime(iso: string | null, tz: string): string {
+  if (!iso) return '—';
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone: tz,
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(new Date(iso));
+}
+
 interface AttendanceRow {
   agent_id: string;
   name: string;
@@ -445,17 +459,21 @@ interface AttendanceRow {
   total_seconds: number;
   /** null when total_seconds is 0 -- nothing tracked that day, not "0% productive". */
   productive_pct: number | null;
+  /** MISSION-5 TASK-M5-A4 follow-up: null only if `agent_first_activity` truly has no row for
+   *  this agent/day (shouldn't happen if `agent_time_in_state` has one, since both read the same
+   *  underlying events -- kept nullable defensively rather than assumed). */
+  first_started_at: string | null;
 }
 
 /** MISSION-5 TASK-M5-A4: groups agent_time_in_state's per (agent, day, state, reason) seconds
  *  into one row per (agent, day). "Productive %" = (dialing + on_call + wrap_up) / every tracked
  *  second that day (now that agent_time_in_state excludes 'stopped'/'completed' -- see the A4
- *  migration -- "tracked" no longer includes time after a session ended). NOT built this pass:
- *  "first activity" (a literal clock time) -- agent_time_in_state aggregates away individual
- *  event start times, so there is nothing to read it from without another SQL change; said
- *  explicitly here rather than faked from the aggregated seconds. */
+ *  migration -- "tracked" no longer includes time after a session ended). "First activity" comes
+ *  from the sibling `agent_first_activity` RPC (follow-up) -- merged in here by the same
+ *  (agent_id, day) key. */
 function groupAttendance(
   rows: AgentTimeInStateRow[],
+  firstActivityRows: AgentFirstActivityRow[],
   namesById: Map<string, string>
 ): AttendanceRow[] {
   const byKey = new Map<string, AttendanceRow>();
@@ -474,6 +492,7 @@ function groupAttendance(
         paused_by_reason: {},
         total_seconds: 0,
         productive_pct: null,
+        first_started_at: null,
       };
       byKey.set(key, row);
     }
@@ -486,6 +505,30 @@ function groupAttendance(
       const reason = r.reason ?? 'Unspecified';
       row.paused_by_reason[reason] = (row.paused_by_reason[reason] ?? 0) + r.seconds;
     }
+  }
+  for (const fa of firstActivityRows) {
+    const key = `${fa.agent_id}|${fa.day}`;
+    let row = byKey.get(key);
+    if (!row) {
+      // Defensive only -- agent_time_in_state's own `having sum(...) > 0` should mean every real
+      // event contributes a row there too, but don't silently drop a first-activity value if it
+      // ever doesn't.
+      row = {
+        agent_id: fa.agent_id,
+        name: namesById.get(fa.agent_id) ?? 'Former member',
+        day: fa.day,
+        dialing_seconds: 0,
+        on_call_seconds: 0,
+        wrap_up_seconds: 0,
+        paused_seconds: 0,
+        paused_by_reason: {},
+        total_seconds: 0,
+        productive_pct: null,
+        first_started_at: null,
+      };
+      byKey.set(key, row);
+    }
+    row.first_started_at = fa.first_started_at;
   }
   for (const row of byKey.values()) {
     const productiveSeconds = row.dialing_seconds + row.on_call_seconds + row.wrap_up_seconds;
@@ -502,6 +545,7 @@ function groupAttendance(
 const ATTENDANCE_COLUMNS: { key: keyof AttendanceRow | 'paused_label'; label: string }[] = [
   { key: 'name', label: 'Agent' },
   { key: 'day', label: 'Date' },
+  { key: 'first_started_at', label: 'First activity' },
   { key: 'dialing_seconds', label: 'Dialing (s)' },
   { key: 'on_call_seconds', label: 'On call (s)' },
   { key: 'wrap_up_seconds', label: 'Wrap-up (s)' },
@@ -529,9 +573,10 @@ function AttendanceTab({ orgTz }: { orgTz: string }) {
     setError(null);
     Promise.all([
       getAgentTimeInState(resolved.start, resolved.end, undefined, orgTz),
+      getAgentFirstActivity(resolved.start, resolved.end, undefined, orgTz),
       listOrgMembers(true),
     ])
-      .then(([timeRows, members]) => {
+      .then(([timeRows, firstActivityRows, members]) => {
         if (cancelled) return;
         const namesById = new Map<string, string>(
           members.map((m: OrgMember) => [
@@ -539,7 +584,7 @@ function AttendanceTab({ orgTz }: { orgTz: string }) {
             [m.first_name, m.last_name].filter(Boolean).join(' ') || m.email || 'Member',
           ])
         );
-        setRows(groupAttendance(timeRows, namesById));
+        setRows(groupAttendance(timeRows, firstActivityRows, namesById));
       })
       .catch((e) => {
         if (!cancelled) setError(e instanceof Error ? e.message : String(e));
@@ -612,8 +657,7 @@ function AttendanceTab({ orgTz }: { orgTz: string }) {
       )}
 
       <p className="text-meta text-text-muted mb-4">
-        Per agent, per day. Paused time is broken down by reason below each row. "First activity"
-        (the clock time an agent's day started) isn't available yet.
+        Per agent, per day. Paused time is broken down by reason below each row.
       </p>
 
       {error && (
@@ -650,6 +694,9 @@ function AttendanceTab({ orgTz }: { orgTz: string }) {
                 >
                   <td className="p-3 text-white font-medium">{row.name}</td>
                   <td className="p-3 text-text-secondary">{row.day}</td>
+                  <td className="p-3 text-text-secondary">
+                    {formatClockTime(row.first_started_at, orgTz)}
+                  </td>
                   <td className="p-3 text-text-secondary">{formatDuration(row.dialing_seconds)}</td>
                   <td className="p-3 text-text-secondary">{formatDuration(row.on_call_seconds)}</td>
                   <td className="p-3 text-text-secondary">{formatDuration(row.wrap_up_seconds)}</td>

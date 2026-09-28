@@ -879,6 +879,34 @@ export async function getAgentTimeInState(
   return (data ?? []) as AgentTimeInStateRow[];
 }
 
+/** MISSION-5 TASK-M5-A4 follow-up: "first activity" (a literal clock time) per agent/day --
+ *  `agent_time_in_state` aggregates away individual event start times, so this is a sibling RPC,
+ *  same owner/admin-only gate, `p_agent` narrowing, and `p_tz` default. Backs the Attendance
+ *  tab's "First activity" column. */
+export interface AgentFirstActivityRow {
+  agent_id: string;
+  day: string;
+  first_started_at: string;
+}
+
+export async function getAgentFirstActivity(
+  from: Date,
+  to: Date,
+  agentId?: string,
+  tz?: string
+): Promise<AgentFirstActivityRow[]> {
+  const orgId = await getActiveOrgId();
+  const { data, error } = await supabase.rpc('agent_first_activity', {
+    p_org: orgId,
+    p_from: from.toISOString(),
+    p_to: to.toISOString(),
+    p_agent: agentId ?? null,
+    p_tz: tz ?? 'America/Chicago',
+  });
+  if (error) throw new Error(error.message);
+  return (data ?? []) as AgentFirstActivityRow[];
+}
+
 /** MISSION-5 TASK-M5-A4: the org's real IANA timezone (default 'America/Chicago'), replacing
  *  every hardcoded America/Chicago 'today' boundary this codebase had (Team.tsx, team_live_board,
  *  dialing_hours_today, agent_daily_dial_status once wired). Same "org_<feature>_settings" shape
