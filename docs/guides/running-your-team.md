@@ -297,7 +297,7 @@ Unclaim to release it back if you can't get to it.
 **Claim expiry:** a claim left untouched past the org's own stale window reopens automatically. It
 used to only reopen the next time _anyone_ opened the Inbox — an org where nobody checked it could
 keep a claim marked forever. A background sweep now also reopens stale claims across every org
-every 5 minutes regardless, on top of the on-open check. _(rolling out — pending deploy)_ This
+every 5 minutes regardless, on top of the on-open check. This
 changes nothing about what counts as "stale," only how promptly it's caught when nobody's looking.
 
 ## 9. Contact collaboration
@@ -357,7 +357,6 @@ attached to (disposition quality checks, round-robin distribution, the shared in
 handler) — if one fails internally, the disposition/assignment/inbox item still saves correctly,
 but the background step itself silently no-ops. Failures from the last 7 days show up with a
 count, source, error, and an acknowledge action, capped at 100 logged failures per org per day.
-_(rolling out — pending deploy)_
 
 **Admin lock-out guard:** not a setting — built into every role/status change. Nobody can demote,
 disable, or remove the last remaining active owner/admin from an org, and only the owner (not
