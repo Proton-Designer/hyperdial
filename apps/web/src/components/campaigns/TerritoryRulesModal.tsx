@@ -15,6 +15,7 @@ import {
   reorderTerritoryRules,
   previewTerritoryRules,
   applyTerritoryRules,
+  countTerritoryReassignImpact,
 } from '@/lib/api';
 import { useOrg } from '@/contexts/OrgContext';
 import { Button } from '@/components/ui/button';
@@ -66,6 +67,7 @@ export function TerritoryRulesModal({
   const [preview, setPreview] = useState<TerritoryPreviewRow[] | null>(null);
   const [previewing, setPreviewing] = useState(false);
   const [applying, setApplying] = useState(false);
+  const [reassignImpact, setReassignImpact] = useState<number | null>(null);
 
   const load = () => {
     setLoading(true);
@@ -79,6 +81,28 @@ export function TerritoryRulesModal({
   };
 
   useEffect(load, []);
+
+  /** TASK-M5-T3: fetch the exact reassign-impact count whenever the checkbox is on, for any
+   *  distribution mode. Fails open (D2/EC-5 convention) -- a failed call just leaves the count
+   *  unshown, never blocks applying. Cleared immediately when unchecked so a stale count never
+   *  lingers under the checkbox. */
+  useEffect(() => {
+    if (!reassign) {
+      setReassignImpact(null);
+      return;
+    }
+    let cancelled = false;
+    countTerritoryReassignImpact(campaignId, true)
+      .then((n) => {
+        if (!cancelled) setReassignImpact(n);
+      })
+      .catch(() => {
+        if (!cancelled) setReassignImpact(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [reassign, campaignId]);
 
   const targetName = (rule: TerritoryRule): string => {
     if (rule.target_type === 'agent') {
@@ -394,10 +418,22 @@ export function TerritoryRulesModal({
                 Also reassign leads that already have an agent
               </label>
             )}
+            {/* TASK-M5-T3: an exact count (count_territory_reassign_impact), for any distribution
+             *  mode -- mirrors apply_territory_rules' own two-layer scope gate, so this is the
+             *  honest minimum of what will actually move, not an approximation. Fails open: if the
+             *  count call errors, reassignImpact stays null and this line just doesn't render. */}
+            {reassign && reassignImpact !== null && reassignImpact > 0 && (
+              <div className="rounded-app-md bg-warning-soft border border-warning/30 text-warning text-body p-3">
+                {reassignImpact} lead{reassignImpact === 1 ? '' : 's'} currently assigned to other
+                agents will move.
+              </div>
+            )}
             {/* TASK-M5-T2 (EC-2, edge-cases-v2.md): apply_territory_rules(p_reassign=true)
              *  re-touches already-assigned leads, including ones round-robin fairly distributed
              *  (N4) -- preview_territory_rules doesn't break out "already assigned" per target,
-             *  so this is a plain mode-level warning, not a specific count. */}
+             *  so this is a plain mode-level warning, not a specific count. Kept alongside the
+             *  count above -- they say different things: one is "this many leads will move", the
+             *  other is "round-robin's own fair distribution specifically will be disturbed". */}
             {reassign && distributionMode === 'round_robin' && (
               <div className="rounded-app-md bg-warning-soft border border-warning/30 text-warning text-body p-3">
                 This campaign uses round-robin distribution. Reassigning will also move leads that

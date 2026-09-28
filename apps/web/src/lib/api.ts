@@ -2982,6 +2982,24 @@ export async function previewTerritoryRules(
   return (data ?? []) as TerritoryPreviewRow[];
 }
 
+/** TASK-M5-T3: exact count of currently-assigned leads that would actually move if territory
+ *  rules were applied with reassign checked -- mirrors apply_territory_rules' own two-layer scope
+ *  gate exactly (server-side, count_territory_reassign_impact), for ANY distribution mode, not
+ *  just round_robin (the existing mode-level warning below is round-robin-specific; this is a
+ *  precise count regardless of mode). Fails open like countLeadsAssignedToOthers (D2) -- the
+ *  caller's own try/catch just skips showing the number on any error, never blocks applying. */
+export async function countTerritoryReassignImpact(
+  campaignId: string,
+  reassign = false
+): Promise<number> {
+  const { data, error } = await supabase.rpc('count_territory_reassign_impact', {
+    p_campaign_id: campaignId,
+    p_reassign: reassign,
+  });
+  if (error) throw new Error(error.message);
+  return (data as number) ?? 0;
+}
+
 export interface TerritoryApplyResult {
   assigned: number;
   unmatched: number;
