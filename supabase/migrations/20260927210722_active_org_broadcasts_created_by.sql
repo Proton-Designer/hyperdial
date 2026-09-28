@@ -6,6 +6,9 @@
 -- on org_broadcasts (every writer sets it) -- this just widens the read RPC to expose it. Additive
 -- only: existing callers that don't destructure the new column are unaffected.
 
+-- The OUT columns change, so create or replace alone fails with 42P13 (lead dry-run): drop first.
+drop function if exists public.active_org_broadcasts(uuid);
+
 create or replace function public.active_org_broadcasts(p_org uuid)
 returns table (
   id uuid,
