@@ -61,7 +61,7 @@ export function NumberHealthPanel() {
   return (
     <div className="bg-surface-1 rounded-app-lg p-6 border border-border-subtle max-w-4xl mt-6">
       <div className="flex items-center justify-between mb-1">
-        <h3 className="text-section-title text-text-primary">Number health (CID-4)</h3>
+        <h3 className="text-section-title text-text-primary">Number health</h3>
         <button
           type="button"
           onClick={() => void handleCheckNow()}

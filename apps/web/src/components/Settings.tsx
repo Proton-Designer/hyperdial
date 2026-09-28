@@ -4379,8 +4379,8 @@ function NumberPoolCard() {
       {/* CID-2's two org-level defaults. TASK-U2: equal widths/labels/helper-text lines and a
        *  column stack at phone width -- previously only the first field had a helper line, so the
        *  two columns were visibly different heights. */}
-      <div className="bg-surface-1 rounded-app-lg p-6 border border-border-subtle mb-6 flex flex-col sm:flex-row gap-6">
-        <div className="flex-1 sm:max-w-[240px]">
+      <div className="bg-surface-1 rounded-app-lg p-6 border border-border-subtle mb-6 grid grid-cols-1 sm:grid-cols-2 gap-6">
+        <div>
           <label className="block text-meta text-text-secondary mb-1">Default daily cap</label>
           <input
             type="number"
@@ -4398,7 +4398,7 @@ function NumberPoolCard() {
           />
           <p className="text-meta text-text-muted mt-1">New numbers start with this cap.</p>
         </div>
-        <div className="flex-1 sm:max-w-[240px]">
+        <div>
           <label className="block text-meta text-text-secondary mb-1">Rest days after cap</label>
           <input
             type="number"
@@ -4430,7 +4430,9 @@ function NumberPoolCard() {
         <ListSkeleton rows={2} />
       ) : numbers.length === 0 ? (
         <div className="bg-surface-1 rounded-app-lg p-8 border border-border-subtle text-center">
-          <p className="text-text-secondary">No phone numbers yet. Search and purchase below.</p>
+          <p className="text-text-secondary">
+            No phone numbers yet. Use Purchase numbers to add one.
+          </p>
         </div>
       ) : (
         <div className="bg-surface-1 rounded-app-lg border border-border-subtle overflow-x-auto">
@@ -5525,27 +5527,20 @@ export function Settings() {
                       rests for a few days once it hits its daily dial cap, to protect deliverability."
                     defaultOpen
                     actions={
-                      isTelnyxConnected ? (
-                        <button
-                          type="button"
-                          onClick={() => setPurchaseModalOpen(true)}
-                          className="px-4 py-2 bg-gradient-to-r from-accent-from to-accent-to rounded-app-md text-white text-sm font-semibold flex items-center gap-1.5"
-                        >
-                          <Search className="w-4 h-4" />
-                          Purchase numbers
-                        </button>
-                      ) : undefined
+                      <button
+                        type="button"
+                        onClick={() => isTelnyxConnected && setPurchaseModalOpen(true)}
+                        disabled={!isTelnyxConnected}
+                        title={isTelnyxConnected ? undefined : 'Connect Telnyx to purchase numbers'}
+                        className="px-4 py-2 bg-gradient-to-r from-accent-from to-accent-to rounded-app-md text-white text-sm font-semibold flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
+                      >
+                        <Search className="w-4 h-4" />
+                        Purchase numbers
+                      </button>
                     }
                   >
                     <NumberPoolCard />
                     <NumberHealthPanel />
-                    {!isTelnyxConnected && (
-                      <div className="bg-gradient-to-r from-accent-from/10 to-accent-to/10 rounded-app-lg p-8 border border-accent-from/20 text-center">
-                        <p className="text-text-secondary">
-                          Connect your org's Telnyx account above to search and purchase numbers.
-                        </p>
-                      </div>
-                    )}
                   </CollapsibleSection>
 
                   <PurchaseNumbersModal
