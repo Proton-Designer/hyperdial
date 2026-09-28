@@ -299,6 +299,7 @@ security definer
 stable
 set search_path = ''
 as $$
+#variable_conflict use_column
 begin
   if not private.has_org_role(p_org, array['owner', 'admin', 'manager']) then
     return;
@@ -372,6 +373,7 @@ security definer
 stable
 set search_path = ''
 as $$
+#variable_conflict use_column
 begin
   if not (
     private.has_org_role(p_org, array['owner', 'admin', 'manager'])
