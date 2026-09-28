@@ -82,8 +82,8 @@ returns table (lead_id uuid, assigned_agent_id uuid)
 language plpgsql
 security definer
 set search_path = ''
-#variable_conflict use_column
 as $$
+#variable_conflict use_column
 declare
   v_mode text;
   v_from_agent_id uuid;
