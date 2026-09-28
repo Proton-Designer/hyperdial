@@ -389,6 +389,36 @@ Deno.test(
 );
 
 Deno.test(
+  'MISSION-5 B2 SHOULD follow-up: the SAME manager double-clicking gets a self-referential message, not their own name',
+  async () => {
+    const supabase = makeFakeSupabase({
+      dial_sessions: [
+        EMPTY,
+        OK({ id: 's-target', state: 'on_call', conference_id: 'conf-1', agent_leg_id: null }),
+      ],
+      // The caller (mgr-1) is already the one coaching this target -- same shape as the
+      // OTHER-manager pre-check test above, just with the winning manager_id matching the caller.
+      coachingSelect: [OK({ manager_id: 'mgr-1' })],
+    });
+    const { client, calls } = makeFakeTelnyxClient();
+    const result = await runStartCoachingAction(
+      supabase,
+      client,
+      'app-1',
+      'conn-1',
+      'org-1',
+      'mgr-1',
+      'owner',
+      { targetUserId: 'agent-1', mode: 'listen' }
+    );
+    assertEquals(result.status, 409);
+    assertEquals(result.body.code, 'ALREADY_COACHED');
+    assertEquals(result.body.error, 'You are already coaching this call.');
+    assertEquals(calls.length, 0); // never even dialed
+  }
+);
+
+Deno.test(
   'MISSION-5 TASK-M5-B2 (EC-8): a race at the insert (target-index 23505) still names the winner, not a generic MANAGER_BUSY',
   async () => {
     const supabase = makeFakeSupabase({

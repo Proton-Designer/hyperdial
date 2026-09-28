@@ -131,10 +131,16 @@ async function resolveManagerName(supabase: SupabaseClient, managerId: string): 
  *  `coaching_sessions_one_active_per_target` is the real guarantee (this pre-check only closes
  *  the common case with a clean, specific message before ever dialing the manager's phone; the
  *  unique index is what the insert's own 23505 handler below falls back to for the TOCTOU race
- *  two managers clicking at once). */
+ *  two managers clicking at once).
+ *
+ *  MISSION-5 B2 SHOULD follow-up: `callerManagerId` special-cases the caller being the SAME
+ *  manager already coaching this target (a double-click/double-tab) -- still blocks the
+ *  duplicate, just with a message that doesn't confusingly name the caller themselves as if they
+ *  were someone else. */
 async function alreadyCoachedError(
   supabase: SupabaseClient,
-  targetSessionId: string
+  targetSessionId: string,
+  callerManagerId: string
 ): Promise<ActionResult | null> {
   const { data: existing } = await supabase
     .from('coaching_sessions')
@@ -143,6 +149,12 @@ async function alreadyCoachedError(
     .in('status', ['starting', 'active'])
     .maybeSingle();
   if (!existing) return null;
+  if (existing.manager_id === callerManagerId) {
+    return {
+      status: 409,
+      body: { error: 'You are already coaching this call.', code: 'ALREADY_COACHED' },
+    };
+  }
   const managerName = await resolveManagerName(supabase, existing.manager_id as string);
   return {
     status: 409,
@@ -203,7 +215,7 @@ export async function runStartCoachingAction(
   // MISSION-5 TASK-M5-B2 (EC-8): a clean, specific message before ever dialing the manager's
   // phone for a target someone else is already coaching. See alreadyCoachedError's own header
   // for why the unique index (not this check) is the real guarantee.
-  const alreadyCoached = await alreadyCoachedError(supabase, targetSession.id);
+  const alreadyCoached = await alreadyCoachedError(supabase, targetSession.id, managerId);
   if (alreadyCoached) return alreadyCoached;
 
   // Fail fast for whisper mode: no agent leg on record means processTelnyxCoachingEvent would

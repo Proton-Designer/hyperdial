@@ -81,16 +81,12 @@ Deno.serve(async (req) => {
     });
     if (!result.ok && result.reason === 'live_call_in_progress') {
       if (result.deferred) {
-        if (isRemoteAction) {
-          await logOrgAction(supabase, {
-            orgId,
-            actorUserId: user.id,
-            action: 'session.remote_end',
-            targetType: 'dial_session',
-            targetId: sessionId,
-            details: { agentId: session.agent_id, deferred: true },
-          });
-        }
+        // MISSION-5 B2 SHOULD follow-up: no logOrgAction here -- this is only a REQUEST (no state
+        // change yet, dial_sessions.remote_stop_requested_at/_by is all that's written). The
+        // session doesn't actually end until submit_disposition applies it (dialer-session-
+        // disposition/index.ts's own `remoteStopApplied` branch), which is the one place this
+        // logically single action gets logged -- logging both here and there produced two
+        // `session.remote_end` rows in org_audit_log for one manager click.
         return jsonResponse(202, {
           status: 'deferred',
           message: 'This session will end once the current call finishes.',
