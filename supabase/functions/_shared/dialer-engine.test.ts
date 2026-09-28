@@ -504,6 +504,145 @@ Deno.test(
 );
 
 // ---------------------------------------------------------------------------
+// MISSION-5 TASK-M5-N1 review fix-forward (audit/M5-N1/review-eng1.md, BLOCKER 2):
+// reconnectAgentLeg additionally accepts 'paused' + pause_reason 'call_taken_over_by_manager'
+// (the agent's "Rejoin dialing" action after a supervisor took their call over) -- purely
+// additive, every other state's behavior is unchanged (regression-tested below).
+// ---------------------------------------------------------------------------
+
+Deno.test(
+  "dialer-engine: reconnectAgentLeg accepts a taken-over 'paused' session -- dials a fresh agent leg into a FRESH conference, and reaches 'dialing' (not stuck, not wrongly wrap_up) once it answers",
+  async () => {
+    const db = new FakeDb();
+    const server = new FakeTelnyxServer();
+    const restoreFetch = stubTelnyxFetch(server);
+    const supabase = createFakeSupabase(db);
+    const { orgId, agentId, campaignId } = seedFixtures(db);
+    try {
+      const { sessionId } = await startSession(supabase, {
+        orgId,
+        campaignId,
+        agentId,
+        lines: 3,
+        amdMode: 'off',
+      });
+      const agentLeg1 = [...db.table('call_legs').values()].find((l) => l.kind === 'agent')!;
+      await processTelnyxDialerEvent(
+        supabase,
+        agentEvent(
+          orgId,
+          sessionId,
+          agentLeg1.id as string,
+          agentLeg1.call_control_id as string,
+          'call.answered'
+        )
+      );
+      const contactLegs = [...db.table('call_legs').values()].filter((l) => l.kind === 'contact');
+      const winnerLeg = contactLegs[0];
+      await processTelnyxDialerEvent(
+        supabase,
+        contactEvent(
+          orgId,
+          sessionId,
+          winnerLeg.id as string,
+          winnerLeg.call_control_id as string,
+          'call.answered'
+        )
+      );
+      const sessionOnCall = db.table('dial_sessions').get(sessionId)!;
+      assertEquals(sessionOnCall.state, 'on_call');
+      const originalConferenceId = sessionOnCall.conference_id;
+      assertExists(originalConferenceId);
+
+      // --- Simulate a takeover's own resulting DB state (coaching-core.ts's runTakeoverAction,
+      //     not re-invoked here -- this file tests dialer-engine.ts in isolation, same as every
+      //     other test above reaching a pre-condition via direct mutation, e.g. line ~617/2910).
+      //     The winner contact leg is deliberately left AS-IS (kind='contact', still 'claimed',
+      //     undispositioned) -- a real takeover never touches it, only the agent leg. ---
+      Object.assign(sessionOnCall, {
+        state: 'paused',
+        pause_reason: 'call_taken_over_by_manager',
+        taken_over_by_manager_id: 'mgr-1',
+        agent_leg_id: null,
+        active_leg_id: null,
+        conference_id: null,
+        paused_agent_lost_from: null,
+      });
+      db.table('call_legs').get(agentLeg1.id as string)!.state = 'ended';
+
+      const result = await reconnectAgentLeg(supabase, orgId, sessionId);
+      assertEquals(result, { ok: true });
+
+      const agentLeg2 = [...db.table('call_legs').values()].find(
+        (l) => l.kind === 'agent' && l.id !== agentLeg1.id
+      )!;
+      assertExists(agentLeg2, 'a fresh agent leg should have been dialed for the rejoin');
+      assertEquals(agentLeg2.state, 'initiated');
+      assertEquals(db.table('dial_sessions').get(sessionId)!.agent_leg_id, agentLeg2.id);
+      // Still paused until the new leg actually answers.
+      assertEquals(db.table('dial_sessions').get(sessionId)!.state, 'paused');
+
+      await processTelnyxDialerEvent(
+        supabase,
+        agentEvent(
+          orgId,
+          sessionId,
+          agentLeg2.id as string,
+          agentLeg2.call_control_id as string,
+          'call.answered'
+        )
+      );
+
+      // The bug this fix-forward closes: without it, this either never left 'paused' at all
+      // (the old `fromStates` ternary expected 'ready_pending', which never matched) or landed
+      // in 'wrap_up' for a leg the rejoining agent can no longer disposition. Correct outcome:
+      // straight through to 'dialing', refilling fresh contacts -- a clean restart, not a
+      // rejoin of the (no longer theirs) taken-over call.
+      assertEquals(
+        db.sessionTransitions.some((t) => t.from === 'paused' && t.to === 'ready'),
+        true
+      );
+      const sessionAfterRejoin = db.table('dial_sessions').get(sessionId)!;
+      assertEquals(sessionAfterRejoin.state, 'dialing');
+      assertEquals(sessionAfterRejoin.active_leg_id, null);
+      // A FRESH conference, not a reuse of the abandoned one (ensureAgentConference's own
+      // null-conference-id fallback -- conference_id was cleared above, exactly as a real
+      // takeover leaves it).
+      assertExists(sessionAfterRejoin.conference_id);
+      assertEquals(sessionAfterRejoin.conference_id === originalConferenceId, false);
+    } finally {
+      restoreFetch();
+    }
+  }
+);
+
+Deno.test(
+  "dialer-engine: reconnectAgentLeg regression -- an ordinary manual 'paused' session (not taken over) is still refused exactly as before",
+  async () => {
+    const db = new FakeDb();
+    const server = new FakeTelnyxServer();
+    const restoreFetch = stubTelnyxFetch(server);
+    const supabase = createFakeSupabase(db);
+    const { orgId, agentId, campaignId } = seedFixtures(db);
+    try {
+      const { sessionId } = await startSession(supabase, {
+        orgId,
+        campaignId,
+        agentId,
+        lines: 1,
+        amdMode: 'off',
+      });
+      db.table('dial_sessions').get(sessionId)!.state = 'paused';
+      db.table('dial_sessions').get(sessionId)!.pause_reason = 'Paused by manager';
+      const result = await reconnectAgentLeg(supabase, orgId, sessionId);
+      assertEquals(result, { ok: false, reason: 'not_paused_agent_lost' });
+    } finally {
+      restoreFetch();
+    }
+  }
+);
+
+// ---------------------------------------------------------------------------
 // Review fix regression tests (stage 03 review, audit/L1/review-notes.md)
 // ---------------------------------------------------------------------------
 

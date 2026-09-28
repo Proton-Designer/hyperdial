@@ -133,6 +133,27 @@ async function agentLegRow(
   return { callControlId: row.call_control_id, state: row.state };
 }
 
+/** MISSION-5 TASK-M5-N1 review fix-forward (SHOULD): true once ANY manager has taken over the
+ *  call this dial session is (or was) on -- `coaching_sessions_one_active_per_target` guarantees
+ *  at most one such row can ever exist. `dialer-session-disposition/index.ts` uses this to
+ *  exclude the ORIGINAL agent from dispositioning a leg they no longer have any part in once a
+ *  takeover happened, mirroring (but distinct from) that same file's manager-branch lookup, which
+ *  additionally scopes to `manager_id = caller` -- this one deliberately does not, since the
+ *  question here is just "did a takeover happen at all," not "did THIS caller do it." */
+export async function isSessionTakenOver(
+  supabase: SupabaseClient,
+  targetSessionId: string
+): Promise<boolean> {
+  const { data } = await supabase
+    .from('coaching_sessions')
+    .select('id')
+    .eq('target_session_id', targetSessionId)
+    .not('taken_over_at', 'is', null)
+    .limit(1)
+    .maybeSingle();
+  return Boolean(data);
+}
+
 /** MISSION-5 TASK-M5-B2: "Already being coached by X" needs a human name, not a bare uuid.
  *  Deliberately profiles-only (no auth.users email fallback, unlike team_daily_stats' own
  *  coalesce chain) -- this is a same-org manager-to-manager message, not a roster display, and
@@ -573,13 +594,22 @@ export async function runTakeoverAction(
   // ordering matters. `['on_call', 'paused_agent_lost']` covers both "the normal case" and "the
   // agent's own leg hung up at almost the same moment and the generic cascade already landed the
   // session in paused_agent_lost" -- either way this overwrites it with the clean takeover state.
-  await supabase.rpc('transition_leg', {
+  //
+  // BOTH results are checked (eng1 review, BLOCKER 1): either CAS can miss independently of the
+  // other -- e.g. the prospect hangs up and the session is already `wrap_up` by the time
+  // `transition_session` runs (that CAS misses, `transition_leg` can still match), or the agent's
+  // own leg already ended via the generic cascade (`transition_leg`'s CAS misses against the
+  // OLD `agentLeg.state` read above, while `transition_session`'s CAS still matches since
+  // `paused_agent_lost` is one of its own expected states). A silent miss here previously still
+  // fired the Telnyx commands and returned 200 -- exactly the bug `agent_leg_conference_created`'s
+  // own `persisted` check (dialer-engine.ts) already exists to avoid elsewhere in this codebase.
+  const { data: legTransitioned } = await supabase.rpc('transition_leg', {
     p_call_control_id: agentLeg.callControlId,
     p_expected_states: [agentLeg.state],
     p_new_state: 'ended',
     p_fields: { hangup_cause: 'supervisor_takeover', ended_at: new Date().toISOString() },
   });
-  await supabase.rpc('transition_session', {
+  const { data: sessionTransitioned } = await supabase.rpc('transition_session', {
     p_session: targetSession.id,
     p_expected_states: ['on_call', 'paused_agent_lost'],
     p_new_state: 'paused',
@@ -592,6 +622,21 @@ export async function runTakeoverAction(
       paused_agent_lost_from: null,
     },
   });
+
+  if (!legTransitioned || !sessionTransitioned) {
+    // Never issue a single Telnyx command against a DB state that didn't actually land --
+    // release the coaching claim (clear taken_over_at/mode back to what they were) so the row
+    // stays a normal, still-`active` coaching attempt: closeable by the reaper if it's since gone
+    // stale, or retriable by the manager if the target is genuinely still reachable.
+    await supabase
+      .from('coaching_sessions')
+      .update({ taken_over_at: null, mode: row.mode })
+      .eq('id', coachingId);
+    return {
+      status: 409,
+      body: { error: 'This member is no longer on a call.', code: 'TARGET_NOT_ON_CALL' },
+    };
+  }
 
   // Telnyx commands last, now that the DB already reflects the final state regardless of how
   // any of these three turn out -- all three are best-effort from here (a taken-over call whose

@@ -572,10 +572,14 @@ export async function dialAgentLeg(
 }
 
 /**
- * The Reconnect button (TASK-L1 spec item 5): only valid from 'paused_agent_lost'. Dials a
- * FRESH agent leg (the old one is 'ended') into the SAME conference -- processAgentLegEvent's
- * answered branch does the actual join once it answers, and decides on_call-vs-dialing there
- * based on whether a contact leg is still `claimed`.
+ * The Reconnect button (TASK-L1 spec item 5): valid from 'paused_agent_lost', OR (MISSION-5
+ * TASK-M5-N1 review fix-forward, BLOCKER 2) from 'paused' with `pause_reason ===
+ * 'call_taken_over_by_manager'` -- the agent's "Rejoin dialing" action after a supervisor took
+ * their call over. Both dial a FRESH agent leg (the old one is 'ended', or in the takeover case
+ * was already detached with `agent_leg_id` cleared to null) into the SAME conference-creation
+ * path -- processAgentLegEvent's answered branch does the actual join once it answers, and
+ * decides on_call-vs-dialing there based on whether a contact leg is still `claimed`. Purely
+ * additive: every OTHER state still hits the `not_paused_agent_lost` refusal exactly as before.
  */
 export async function reconnectAgentLeg(
   supabase: SupabaseClient,
@@ -584,7 +588,9 @@ export async function reconnectAgentLeg(
 ): Promise<{ ok: boolean; reason?: string }> {
   const session = await loadSession(supabase, sessionId);
   if (!session || session.org_id !== orgId) return { ok: false, reason: 'not_found' };
-  if (session.state !== 'paused_agent_lost') {
+  const isTakenOverPaused =
+    session.state === 'paused' && session.pause_reason === 'call_taken_over_by_manager';
+  if (session.state !== 'paused_agent_lost' && !isTakenOverPaused) {
     return { ok: false, reason: 'not_paused_agent_lost' };
   }
   // Review fix (M2, partial): `transition_session`'s CAS is on `state`, which stays
@@ -1832,16 +1838,27 @@ async function handleAgentLegAnswered(
     return;
   }
 
+  // MISSION-5 TASK-M5-N1 review fix-forward (BLOCKER 2): a THIRD possible entry state, on top of
+  // the pre-existing paused_agent_lost/ready_pending pair -- 'paused' with pause_reason
+  // 'call_taken_over_by_manager' (reconnectAgentLeg's own new branch). Captured once, from the
+  // ORIGINAL session object (before this cascade changes anything), since pause_reason is only
+  // readable while the session still IS 'paused'.
+  const isTakeoverRecovery =
+    session.state === 'paused' && session.pause_reason === 'call_taken_over_by_manager';
+
   // Cascade session state. paused_agent_lost -> ready is Reconnect's own path; ready_pending
-  // -> ready is Go Ready's. Either way 'ready' is genuinely observable (a poller/UI can catch
-  // it), then this immediately decides what comes next: rejoin an ongoing call (a contact leg
-  // is still `claimed` -- the agent dropped mid-call and is reconnecting), return to wrap_up
-  // (an undispositioned connected leg is still waiting -- M4: this can be true even if the
-  // pre-loss state wasn't literally 'wrap_up' yet, if the customer's own hangup only
-  // completed AFTER the agent already dropped), return to a remembered manual `paused`, or
-  // resume/start rolling dialing (the ordinary case).
-  const fromStates: SessionState[] =
-    session.state === 'paused_agent_lost' ? ['paused_agent_lost'] : ['ready_pending'];
+  // -> ready is Go Ready's; a taken-over 'paused' -> ready is this fix-forward's own new path.
+  // Either way 'ready' is genuinely observable (a poller/UI can catch it), then this immediately
+  // decides what comes next: rejoin an ongoing call (a contact leg is still `claimed` -- the
+  // agent dropped mid-call and is reconnecting), return to wrap_up (an undispositioned connected
+  // leg is still waiting -- M4: this can be true even if the pre-loss state wasn't literally
+  // 'wrap_up' yet, if the customer's own hangup only completed AFTER the agent already dropped),
+  // return to a remembered manual `paused`, or resume/start rolling dialing (the ordinary case).
+  const fromStates: SessionState[] = isTakeoverRecovery
+    ? ['paused']
+    : session.state === 'paused_agent_lost'
+      ? ['paused_agent_lost']
+      : ['ready_pending'];
   const { data: reachedReady } = await supabase.rpc('transition_session', {
     p_session: session.id,
     p_expected_states: fromStates,
@@ -1849,9 +1866,9 @@ async function handleAgentLegAnswered(
     p_fields: {},
   });
   if (!reachedReady) {
-    // Already past ready_pending/paused_agent_lost (e.g. a duplicate/redelivered
-    // call.answered after the cascade below already ran once) -- the conference join above
-    // still ran (harmless if already joined), nothing else to do.
+    // Already past ready_pending/paused_agent_lost/taken-over-paused (e.g. a duplicate/
+    // redelivered call.answered after the cascade below already ran once) -- the conference
+    // join above still ran (harmless if already joined), nothing else to do.
     dialerLog('agent_leg_answered_already_progressed', { sessionId: session.id });
     return;
   }
@@ -1869,24 +1886,34 @@ async function handleAgentLegAnswered(
     return;
   }
 
-  const { data: undispositionedLeg } = await supabase
-    .from('call_legs')
-    .select('id')
-    .eq('session_id', session.id)
-    .eq('kind', 'contact')
-    .eq('outcome', 'connected')
-    .is('dispositioned_at', null)
-    .limit(1)
-    .maybeSingle();
-  if (undispositionedLeg) {
-    await supabase.rpc('transition_session', {
-      p_session: session.id,
-      p_expected_states: ['ready'],
-      p_new_state: 'wrap_up',
-      p_fields: { paused_agent_lost_from: null },
-    });
-    dialerLog('agent_leg_returned_to_wrap_up', { sessionId: session.id });
-    return;
+  // Skipped for a taken-over recovery: the session's own state-machine invariants mean the ONLY
+  // connected+undispositioned contact leg this query could find here is the very leg that was
+  // just taken over (a session can only reach `on_call` again once any earlier leg is already
+  // dispositioned) -- and that leg is no longer this agent's to wrap up (dialer-session-
+  // disposition's own manager-branch review fix-forward excludes the original agent from
+  // dispositioning it once a takeover has happened). Falling into `wrap_up` here would strand the
+  // rejoining agent on a call they can no longer see/hear or submit a disposition for, with no
+  // way out of that state -- go straight to the ordinary dialing default instead.
+  if (!isTakeoverRecovery) {
+    const { data: undispositionedLeg } = await supabase
+      .from('call_legs')
+      .select('id')
+      .eq('session_id', session.id)
+      .eq('kind', 'contact')
+      .eq('outcome', 'connected')
+      .is('dispositioned_at', null)
+      .limit(1)
+      .maybeSingle();
+    if (undispositionedLeg) {
+      await supabase.rpc('transition_session', {
+        p_session: session.id,
+        p_expected_states: ['ready'],
+        p_new_state: 'wrap_up',
+        p_fields: { paused_agent_lost_from: null },
+      });
+      dialerLog('agent_leg_returned_to_wrap_up', { sessionId: session.id });
+      return;
+    }
   }
 
   if (reloaded?.paused_agent_lost_from === 'paused') {

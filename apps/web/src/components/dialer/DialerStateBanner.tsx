@@ -205,10 +205,10 @@ export function DialerStateBanner({
             ? `Your call was taken over by ${takenOverByManagerName}`
             : 'Your call was taken over by a supervisor'
         }
-        detail="They're continuing the conversation with the prospect. Resume when you're ready for your next batch."
+        detail="They're continuing the conversation with the prospect. Rejoin dialing when you're ready for your next batch."
         action={
-          <Button variant="primary" onClick={onResume} disabled={resuming}>
-            {resuming ? 'Resuming…' : 'Resume'}
+          <Button variant="primary" onClick={onReconnect} disabled={reconnecting}>
+            {reconnecting ? 'Rejoining…' : 'Rejoin dialing'}
           </Button>
         }
       />

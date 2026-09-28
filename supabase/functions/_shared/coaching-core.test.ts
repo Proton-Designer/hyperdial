@@ -6,6 +6,7 @@ import {
   runSwitchCoachingModeAction,
   runTakeoverAction,
   endActiveCoachingSessionsForManager,
+  isSessionTakenOver,
 } from './coaching-core.ts';
 
 // ---------------------------------------------------------------------------
@@ -89,11 +90,13 @@ function makeFakeSupabase(cfg: {
   // -- a row back means "won the claim", `null` data means "lost the race" (already taken over).
   takeoverClaimResult?: Result;
   // MISSION-5 TASK-M5-N1: transition_leg/transition_session results, in CALL ORDER
-  // (runTakeoverAction always calls transition_leg first, then transition_session).
-  rpcResults?: Result[];
+  // (runTakeoverAction always calls transition_leg first, then transition_session). Both RPCs
+  // return a plain boolean (CAS-matched-a-row), not a row -- hence the narrower generic here vs.
+  // every other `Result[]` field above, which model a `.select()...maybeSingle()` row shape.
+  rpcResults?: Result<boolean>[];
 }) {
   const counters: Record<string, number> = {};
-  const next = (key: string, arr?: Result[]): Result => {
+  const next = <T>(key: string, arr?: Result<T>[]): Result<T> => {
     const i = counters[key] ?? 0;
     counters[key] = i + 1;
     if (!arr || !arr[i]) throw new Error(`fake supabase: no configured result #${i} for ${key}`);
@@ -1016,6 +1019,104 @@ Deno.test(
     assertEquals(result.status, 409);
     assertEquals(result.body.code, 'ALREADY_TAKEN_OVER');
     assertEquals(calls.length, 0);
+  }
+);
+
+// ---------------------------------------------------------------------------
+// eng1 review (audit/M5-N1/review-eng1.md), BLOCKER 1: both transition RPC results are checked --
+// on either CAS miss, no Telnyx command may fire and the coaching claim must be released.
+// ---------------------------------------------------------------------------
+
+Deno.test(
+  'runTakeoverAction: transition_leg CAS misses (agent leg already ended by a concurrent path) -- no Telnyx call, claim released',
+  async () => {
+    const supabase = makeFakeSupabase({
+      coachingSelect: [OK(baseTakeoverRow())],
+      org_call_takeover_settings: [OK({ enabled: true })],
+      dial_sessions: [OK(baseTakeoverTargetSession())],
+      call_legs: [OK({ call_control_id: 'call-agent-1', state: 'answered' })],
+      rpcResults: [OK(false), OK(true)],
+    });
+    const { client, calls } = makeFakeTelnyxClient();
+    const result = await runTakeoverAction(supabase, client, 'org-1', 'mgr-1', 'owner', {
+      coachingId: 'coaching-1',
+    });
+
+    assertEquals(result.status, 409);
+    assertEquals(result.body.code, 'TARGET_NOT_ON_CALL');
+    // Neither leaveConference, hangup, nor updateConferenceSupervisorRole may fire once either
+    // CAS has missed -- the DB never actually reflects a takeover, so no Telnyx command is safe.
+    assertEquals(calls.length, 0);
+
+    const writes = (supabase as { _writes: { table: string; patch: Record<string, unknown> }[] })
+      ._writes;
+    const release = writes.find(
+      (w) => w.table === 'coaching_sessions' && w.patch.taken_over_at === null
+    );
+    assertExists(release);
+    assertEquals(release!.patch.mode, 'whisper');
+
+    // No audit row for a takeover that never actually happened.
+    assertEquals(
+      writes.find((w) => w.table === 'org_audit_log:insert'),
+      undefined
+    );
+  }
+);
+
+Deno.test(
+  'runTakeoverAction: transition_session CAS misses (target already moved to wrap_up by a concurrent path) -- no Telnyx call, claim released',
+  async () => {
+    const supabase = makeFakeSupabase({
+      coachingSelect: [OK(baseTakeoverRow())],
+      org_call_takeover_settings: [OK({ enabled: true })],
+      dial_sessions: [OK(baseTakeoverTargetSession())],
+      call_legs: [OK({ call_control_id: 'call-agent-1', state: 'answered' })],
+      rpcResults: [OK(true), OK(false)],
+    });
+    const { client, calls } = makeFakeTelnyxClient();
+    const result = await runTakeoverAction(supabase, client, 'org-1', 'mgr-1', 'owner', {
+      coachingId: 'coaching-1',
+    });
+
+    assertEquals(result.status, 409);
+    assertEquals(result.body.code, 'TARGET_NOT_ON_CALL');
+    assertEquals(calls.length, 0);
+
+    const writes = (supabase as { _writes: { table: string; patch: Record<string, unknown> }[] })
+      ._writes;
+    const release = writes.find(
+      (w) => w.table === 'coaching_sessions' && w.patch.taken_over_at === null
+    );
+    assertExists(release);
+    assertEquals(
+      writes.find((w) => w.table === 'org_audit_log:insert'),
+      undefined
+    );
+  }
+);
+
+// ---------------------------------------------------------------------------
+// eng1 review, SHOULD: isSessionTakenOver (dialer-session-disposition's agent-exclusion check).
+// ---------------------------------------------------------------------------
+
+Deno.test(
+  'isSessionTakenOver: true when a row for this target session has taken_over_at set',
+  async () => {
+    const supabase = makeFakeSupabase({
+      coachingSelect: [OK({ id: 'coaching-1' })],
+    });
+    assertEquals(await isSessionTakenOver(supabase, 's-target'), true);
+  }
+);
+
+Deno.test(
+  'isSessionTakenOver: false when no row matches (never coached, or coached but never taken over)',
+  async () => {
+    const supabase = makeFakeSupabase({
+      coachingSelect: [EMPTY],
+    });
+    assertEquals(await isSessionTakenOver(supabase, 's-target'), false);
   }
 );
 

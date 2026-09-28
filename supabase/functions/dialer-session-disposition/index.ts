@@ -4,6 +4,7 @@ import { requireTelnyxOrgRole } from '../_shared/telnyx-org-context.ts';
 import { refillSession } from '../_shared/dialer-engine.ts';
 import { readJsonBody } from '../_shared/http-json.ts';
 import { logOrgAction } from '../_shared/audit.ts';
+import { isSessionTakenOver } from '../_shared/coaching-core.ts';
 
 /**
  * Submits a wrap-up disposition for a call leg (TASK-P3-E1, design §5). The mandatory wrap-up
@@ -109,8 +110,21 @@ Deno.serve(async (req) => {
     if (!session || session.org_id !== orgId) {
       return jsonResponse(404, { error: 'Dial session not found for this leg' });
     }
-    if (role === 'agent' && session.agent_id !== user.id) {
-      return jsonResponse(403, { error: 'Not your session' });
+    if (role === 'agent') {
+      if (session.agent_id !== user.id) {
+        return jsonResponse(403, { error: 'Not your session' });
+      }
+      // MISSION-5 TASK-M5-N1 review fix-forward (SHOULD): once a supervisor has taken this call
+      // over, the original agent is no longer on it at all -- excluded from dispositioning it
+      // too. Without this, whichever of the agent/supervisor submits first silently wins a race
+      // neither party is told about (submit_disposition's own idempotency guard prevents a
+      // double-write, but not a wrong-guess-wins outcome).
+      if (await isSessionTakenOver(supabase, session.id)) {
+        return jsonResponse(403, {
+          error: 'This call was taken over by a supervisor -- they submit its disposition.',
+          code: 'TAKEN_OVER',
+        });
+      }
     }
     if (role === 'manager') {
       // MISSION-5 TASK-M5-N1: a manager may disposition this leg ONLY if they personally took
