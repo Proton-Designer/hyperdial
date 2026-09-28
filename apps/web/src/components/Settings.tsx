@@ -35,6 +35,8 @@ import { useOrg } from '@/contexts/OrgContext';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { NumberHealthPanel } from '@/components/settings/NumberHealthPanel';
 import { SystemHealthPanel } from '@/components/settings/SystemHealthPanel';
+import { CollapsibleSection } from '@/components/settings/CollapsibleSection';
+import { PurchaseNumbersModal } from '@/components/settings/PurchaseNumbersModal';
 import { PageHeader } from '@/components/app/PageHeader';
 import { EmptyState } from '@/components/app/EmptyState';
 import { Button } from '@/components/ui/button';
@@ -48,8 +50,6 @@ import {
 } from '@/components/ui/table';
 import { cn } from '@/components/ui/utils';
 import {
-  searchPhoneNumbers,
-  purchasePhoneNumber,
   getMyProfile,
   updateMyProfile,
   listOrgMembers,
@@ -4369,18 +4369,18 @@ function NumberPoolCard() {
   };
 
   return (
-    <div className="mb-8">
-      <h2 className="text-section-title text-text-primary mb-4">Phone Numbers</h2>
-
+    <>
       {error && (
         <div className="mb-4 p-4 rounded-app-md bg-danger/10 border border-danger/30 text-danger text-sm">
           {error}
         </div>
       )}
 
-      {/* CID-2's two org-level defaults. */}
-      <div className="bg-surface-1 rounded-app-lg p-6 border border-border-subtle mb-6 flex flex-wrap gap-6 items-end">
-        <div>
+      {/* CID-2's two org-level defaults. TASK-U2: equal widths/labels/helper-text lines and a
+       *  column stack at phone width -- previously only the first field had a helper line, so the
+       *  two columns were visibly different heights. */}
+      <div className="bg-surface-1 rounded-app-lg p-6 border border-border-subtle mb-6 flex flex-col sm:flex-row gap-6">
+        <div className="flex-1 sm:max-w-[240px]">
           <label className="block text-meta text-text-secondary mb-1">Default daily cap</label>
           <input
             type="number"
@@ -4394,11 +4394,11 @@ function NumberPoolCard() {
                 default_daily_cap: Math.max(1, parseInt(e.target.value, 10) || 1),
               })
             }
-            className="w-32 bg-surface-2 border border-white/10 rounded-app-md px-3 py-2 text-white focus:outline-none focus:border-accent-to"
+            className="w-full bg-surface-2 border border-white/10 rounded-app-md px-3 py-2 text-white focus:outline-none focus:border-accent-to"
           />
           <p className="text-meta text-text-muted mt-1">New numbers start with this cap.</p>
         </div>
-        <div>
+        <div className="flex-1 sm:max-w-[240px]">
           <label className="block text-meta text-text-secondary mb-1">Rest days after cap</label>
           <input
             type="number"
@@ -4412,8 +4412,11 @@ function NumberPoolCard() {
                 rest_days: Math.max(0, parseInt(e.target.value, 10) || 0),
               })
             }
-            className="w-32 bg-surface-2 border border-white/10 rounded-app-md px-3 py-2 text-white focus:outline-none focus:border-accent-to"
+            className="w-full bg-surface-2 border border-white/10 rounded-app-md px-3 py-2 text-white focus:outline-none focus:border-accent-to"
           />
+          <p className="text-meta text-text-muted mt-1">
+            How long a number rests once it hits its cap.
+          </p>
         </div>
       </div>
 
@@ -4502,7 +4505,7 @@ function NumberPoolCard() {
           </table>
         </div>
       )}
-    </div>
+    </>
   );
 }
 
@@ -5012,9 +5015,7 @@ function SpendSettingsCard() {
     status?.available && status.availableCreditUsd < status.lowBalanceAlertUsd ? true : false;
 
   return (
-    <div className="mb-8">
-      <h2 className="text-section-title text-text-primary mb-4">Spend &amp; Billing</h2>
-
+    <>
       {error && (
         <div className="mb-4 p-4 rounded-app-md bg-danger/10 border border-danger/30 text-danger text-sm">
           {error}
@@ -5133,7 +5134,7 @@ function SpendSettingsCard() {
           setBillingRefreshKey((k) => k + 1);
         }}
       />
-    </div>
+    </>
   );
 }
 
@@ -5168,9 +5169,7 @@ function InboundSettingsCard() {
   };
 
   return (
-    <div className="mb-8">
-      <h2 className="text-section-title text-text-primary mb-4">Inbound Calls</h2>
-
+    <>
       {error && (
         <div className="mb-4 p-4 rounded-app-md bg-danger/10 border border-danger/30 text-danger text-sm">
           {error}
@@ -5217,23 +5216,14 @@ function InboundSettingsCard() {
           </p>
         </div>
       </div>
-    </div>
+    </>
   );
 }
 
 export function Settings() {
-  const { refetch: refetchPhoneNumbers } = usePhoneNumbers();
   const { role, loading: orgLoading } = useOrg();
   const [activeTab, setActiveTab] = useState<SettingsTab>('profile');
-
-  const [searchAreaCode, setSearchAreaCode] = useState('');
-  const [searchResults, setSearchResults] = useState<
-    { phone_number: string; monthly_cost?: string }[]
-  >([]);
-  const [searchLoading, setSearchLoading] = useState(false);
-  const [searchAttempted, setSearchAttempted] = useState(false);
-  const [purchaseLoading, setPurchaseLoading] = useState<string | null>(null);
-  const [phoneError, setPhoneError] = useState<string | null>(null);
+  const [purchaseModalOpen, setPurchaseModalOpen] = useState(false);
 
   const [telnyxStatus, setTelnyxStatus] = useState<TelnyxConnectionStatus | null>(null);
   const [telnyxStatusLoading, setTelnyxStatusLoading] = useState(true);
@@ -5347,36 +5337,6 @@ export function Settings() {
       setActiveTab('profile');
     }
   }, [isAgent, isManagerRole, activeTab]);
-
-  const handleSearchNumbers = async () => {
-    setSearchLoading(true);
-    setPhoneError(null);
-    setSearchResults([]);
-    setSearchAttempted(false);
-    try {
-      const numbers = await searchPhoneNumbers(searchAreaCode);
-      setSearchResults(numbers);
-    } catch (e) {
-      setPhoneError(String(e));
-    } finally {
-      setSearchLoading(false);
-      setSearchAttempted(true);
-    }
-  };
-
-  const handlePurchaseNumber = async (phoneNumber: string) => {
-    setPurchaseLoading(phoneNumber);
-    setPhoneError(null);
-    try {
-      await purchasePhoneNumber(phoneNumber);
-      await refetchPhoneNumbers();
-      setSearchResults((prev) => prev.filter((n) => n.phone_number !== phoneNumber));
-    } catch (e) {
-      setPhoneError(String(e));
-    } finally {
-      setPurchaseLoading(null);
-    }
-  };
 
   const breakpoint = useBreakpoint();
   const isDesktop = breakpoint === 'desktop';
@@ -5558,100 +5518,59 @@ export function Settings() {
                     </div>
                   )}
 
-                  {phoneError && (
-                    <div className="mb-6 p-4 rounded-app-md bg-danger/10 border border-danger/30 text-danger text-sm">
-                      {phoneError}
-                    </div>
-                  )}
-
-                  <NumberPoolCard />
-
-                  <NumberHealthPanel />
-
-                  {isTelnyxConnected && <SpendSettingsCard />}
-
-                  {isTelnyxConnected && <InboundSettingsCard />}
-
-                  {!isTelnyxConnected ? (
-                    <div className="bg-gradient-to-r from-accent-from/10 to-accent-to/10 rounded-app-lg p-8 border border-accent-from/20 text-center">
-                      <p className="text-text-secondary">
-                        Connect your org's Telnyx account above to search and purchase numbers.
-                      </p>
-                    </div>
-                  ) : (
-                    <div className="bg-gradient-to-r from-accent-from/10 to-accent-to/10 rounded-app-lg p-8 border border-accent-from/20">
-                      <h3 className="text-section-title text-text-primary mb-4">
-                        Purchase Numbers
-                      </h3>
-                      <p className="text-text-secondary mb-4">
-                        Search by area code (e.g. 415, 920) or leave blank to browse US numbers.
-                      </p>
-                      <div className="flex gap-2 mb-4">
-                        <input
-                          type="text"
-                          placeholder="Area code (e.g. 415) or leave blank"
-                          value={searchAreaCode}
-                          onChange={(e) =>
-                            setSearchAreaCode(e.target.value.replace(/\D/g, '').slice(0, 3))
-                          }
-                          className="flex-1 bg-surface-2 border border-white/10 rounded-app-md px-4 py-3 text-white placeholder-text-muted focus:outline-none focus:border-accent-to"
-                        />
+                  <CollapsibleSection
+                    title="Phone numbers"
+                    subtitle="The caller-ID numbers your dialer rotates through. Assign a number to one
+                      agent or leave it in the shared team pool -- either way, a number automatically
+                      rests for a few days once it hits its daily dial cap, to protect deliverability."
+                    defaultOpen
+                    actions={
+                      isTelnyxConnected ? (
                         <button
-                          onClick={handleSearchNumbers}
-                          disabled={searchLoading}
-                          className="px-6 py-3 bg-gradient-to-r from-accent-from to-accent-to rounded-app-md text-white font-semibold disabled:opacity-50 flex items-center gap-2"
+                          type="button"
+                          onClick={() => setPurchaseModalOpen(true)}
+                          className="px-4 py-2 bg-gradient-to-r from-accent-from to-accent-to rounded-app-md text-white text-sm font-semibold flex items-center gap-1.5"
                         >
-                          {searchLoading ? (
-                            <Loader2 className="w-5 h-5 animate-spin" />
-                          ) : (
-                            <Search className="w-5 h-5" />
-                          )}
-                          Search
+                          <Search className="w-4 h-4" />
+                          Purchase numbers
                         </button>
+                      ) : undefined
+                    }
+                  >
+                    <NumberPoolCard />
+                    <NumberHealthPanel />
+                    {!isTelnyxConnected && (
+                      <div className="bg-gradient-to-r from-accent-from/10 to-accent-to/10 rounded-app-lg p-8 border border-accent-from/20 text-center">
+                        <p className="text-text-secondary">
+                          Connect your org's Telnyx account above to search and purchase numbers.
+                        </p>
                       </div>
-                      {searchLoading && (
-                        <div className="py-4 text-center text-text-secondary">
-                          Searching Telnyx marketplace…
-                        </div>
-                      )}
-                      {searchAttempted && !searchLoading && searchResults.length === 0 && (
-                        <div className="py-4 text-center text-text-secondary text-sm">
-                          No numbers found for this area. Try a different area code or leave blank
-                          for US numbers.
-                        </div>
-                      )}
-                      {searchResults.length > 0 && (
-                        <div className="space-y-2 max-h-48 overflow-y-auto">
-                          {searchResults.map((n) => (
-                            <div
-                              key={n.phone_number}
-                              className="flex items-center justify-between p-3 bg-surface-2/60 rounded-lg"
-                            >
-                              <span className="text-white font-medium">{n.phone_number}</span>
-                              <span className="text-text-secondary text-sm">
-                                {n.monthly_cost ? `$${n.monthly_cost}/mo` : ''}
-                              </span>
-                              <button
-                                onClick={() => handlePurchaseNumber(n.phone_number)}
-                                disabled={purchaseLoading === n.phone_number}
-                                className="px-4 py-2 bg-success/20 hover:bg-success/30 border border-success/30 rounded-lg text-success text-sm font-medium disabled:opacity-50 flex items-center gap-1"
-                              >
-                                {purchaseLoading === n.phone_number ? (
-                                  <Loader2 className="w-4 h-4 animate-spin" />
-                                ) : null}
-                                Purchase
-                              </button>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
+                    )}
+                  </CollapsibleSection>
+
+                  <PurchaseNumbersModal
+                    open={purchaseModalOpen}
+                    onClose={() => setPurchaseModalOpen(false)}
+                  />
+
+                  {isTelnyxConnected && (
+                    <CollapsibleSection title="Spend & billing">
+                      <SpendSettingsCard />
+                    </CollapsibleSection>
                   )}
 
-                  <RecordingSettingsCard />
-                  <ExternalTransferSettingsCard />
-                  <VoicemailDropCard />
-                  <AutoResumeSettingsCard />
+                  {isTelnyxConnected && (
+                    <CollapsibleSection title="Inbound calls">
+                      <InboundSettingsCard />
+                    </CollapsibleSection>
+                  )}
+
+                  <CollapsibleSection title="Call handling">
+                    <RecordingSettingsCard />
+                    <ExternalTransferSettingsCard />
+                    <VoicemailDropCard />
+                    <AutoResumeSettingsCard />
+                  </CollapsibleSection>
                 </motion.div>
               )}
 
