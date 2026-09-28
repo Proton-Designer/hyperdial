@@ -304,6 +304,11 @@ begin
   select enabled into v_checks_enabled
   from public.org_quality_check_settings where org_id = new.org_id;
   if not coalesce(v_checks_enabled, false) then
+    -- Checks are off org-wide: the loop below never runs again for this leg, so any flags
+    -- left over from a run while checks WERE on would otherwise sit stale forever. Clear them
+    -- so a later re-disposition (checks back on) re-evaluates clean rather than inheriting an
+    -- old snapshot.
+    delete from public.disposition_quality_flags where call_leg_id = new.id;
     return new;
   end if;
 
@@ -316,6 +321,23 @@ begin
   if v_agent_id is null then
     return new;
   end if;
+
+  -- A flag whose rule_type is no longer configured (enabled) on the CURRENT disposition is
+  -- stale -- the loop below only ever touches rule_types configured here, so a re-disposition
+  -- to a target with a different (or empty) rule set would otherwise leave the old flag
+  -- attached forever to a call whose current disposition no longer describes it. Scoped to
+  -- "not currently configured" (rather than an unconditional delete-all) so a rule_type that
+  -- IS still configured -- same disposition re-evaluated, or a different disposition that
+  -- happens to share that rule_type -- is left alone here and refreshed in place by the loop's
+  -- own `on conflict` upsert below, which is what actually preserves a supervisor's prior
+  -- status/reviewed_by/reviewed_at across a routine re-evaluation.
+  delete from public.disposition_quality_flags
+  where call_leg_id = new.id
+    and rule_type not in (
+      select rule_type from public.disposition_quality_rules
+      where org_id = new.org_id and disposition_id = new.disposition_id
+        and enabled and rule_type in ('min_talk_seconds', 'required_field')
+    );
 
   for v_rule in
     select * from public.disposition_quality_rules
@@ -386,6 +408,17 @@ begin
     end if;
   end loop;
 
+  return new;
+exception when others then
+  -- "A failed rule never blocks or changes the disposition" (task spec) must hold even when a
+  -- rule's own config is malformed -- this trigger fires inside submit_disposition's own
+  -- transaction, so an unhandled error here would roll back the disposition write itself (plus
+  -- DNC propagation, the GHL job enqueue, the session wrap_up->dialing transition). A plpgsql
+  -- EXCEPTION block gets its own implicit savepoint, so this only rolls back this function's own
+  -- writes (an earlier loop iteration's flag insert/delete on THIS call) -- never the outer
+  -- UPDATE on call_legs. A lost flag on a genuinely broken rule config self-heals on the next
+  -- real re-disposition once the config is fixed.
+  raise warning 'evaluate_disposition_quality_rules failed for leg %: %', new.id, sqlerrm;
   return new;
 end;
 $$;
