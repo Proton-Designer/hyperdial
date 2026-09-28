@@ -595,7 +595,12 @@ begin
       when bool_or(resolved.resolved_agent_id is not null) then 'agent'
       else 'unmatched'
     end as target_type,
-    coalesce(max(resolved.target_pod_id), max(resolved.resolved_agent_id)) as target_id,
+    -- Lead's own dry-run caught this (42883): postgres has no max()/min() aggregate for uuid (no
+    -- default sort-aggregate opclass registered for it, unlike text/int) -- every value of
+    -- target_pod_id (or resolved_agent_id) is IDENTICAL within one group_key already (that's the
+    -- whole point of grouping on it), so array_agg(...)[1] picks the same single value any max()
+    -- would have, without needing a uuid aggregate that doesn't exist.
+    coalesce((array_agg(resolved.target_pod_id))[1], (array_agg(resolved.resolved_agent_id))[1]) as target_id,
     case
       when bool_or(resolved.target_pod_id is not null) then coalesce(max(op.name), 'Unnamed pod')
       when bool_or(resolved.resolved_agent_id is not null) then
