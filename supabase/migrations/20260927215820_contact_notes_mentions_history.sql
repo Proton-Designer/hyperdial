@@ -126,7 +126,8 @@ alter table public.contact_notes enable row level security;
 
 create policy "contact-visible org members can view notes"
   on public.contact_notes for select
-  using (private.contact_read_access(org_id, contact_id));
+  -- eng2 review SHOULD: a moderated (soft-deleted) note must not be readable by a direct table query either.
+  using (deleted_at is null and private.contact_read_access(org_id, contact_id));
 
 -- No insert/update/delete policy for any client role -- add_contact_note/edit_contact_note/
 -- delete_contact_note below (all SECURITY DEFINER) are the only writers.
