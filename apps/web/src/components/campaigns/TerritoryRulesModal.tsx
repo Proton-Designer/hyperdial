@@ -418,28 +418,30 @@ export function TerritoryRulesModal({
                 Also reassign leads that already have an agent
               </label>
             )}
-            {/* TASK-M5-T3: an exact count (count_territory_reassign_impact), for any distribution
-             *  mode -- mirrors apply_territory_rules' own two-layer scope gate, so this is the
-             *  honest minimum of what will actually move, not an approximation. Fails open: if the
-             *  count call errors, reassignImpact stays null and this line just doesn't render. */}
-            {reassign && reassignImpact !== null && reassignImpact > 0 && (
-              <div className="rounded-app-md bg-warning-soft border border-warning/30 text-warning text-body p-3">
-                {reassignImpact} lead{reassignImpact === 1 ? '' : 's'} currently assigned to other
-                agents will move.
-              </div>
-            )}
-            {/* TASK-M5-T2 (EC-2, edge-cases-v2.md): apply_territory_rules(p_reassign=true)
-             *  re-touches already-assigned leads, including ones round-robin fairly distributed
-             *  (N4) -- preview_territory_rules doesn't break out "already assigned" per target,
-             *  so this is a plain mode-level warning, not a specific count. Kept alongside the
-             *  count above -- they say different things: one is "this many leads will move", the
-             *  other is "round-robin's own fair distribution specifically will be disturbed". */}
-            {reassign && distributionMode === 'round_robin' && (
-              <div className="rounded-app-md bg-warning-soft border border-warning/30 text-warning text-body p-3">
-                This campaign uses round-robin distribution. Reassigning will also move leads that
-                were already fairly distributed by round-robin.
-              </div>
-            )}
+            {/* TASK-M5-T3 review NIT (eng2): the exact count (count_territory_reassign_impact)
+             *  and T2's plain round-robin mode warning used to render as two separate lines that
+             *  said overlapping things. Merged into one -- when the exact count is known, it's
+             *  the single source of truth (round-robin gets a trailing clause, not a whole extra
+             *  paragraph); the old mode-level-only wording is now just the FAILS-OPEN fallback
+             *  for when the count call hasn't resolved yet or errored (reassignImpact stays
+             *  null), same fails-open convention as EC-5/D2. */}
+            {reassign &&
+              (reassignImpact !== null
+                ? reassignImpact > 0 && (
+                    <div className="rounded-app-md bg-warning-soft border border-warning/30 text-warning text-body p-3">
+                      {reassignImpact} lead{reassignImpact === 1 ? '' : 's'} currently assigned to
+                      other agents will move
+                      {distributionMode === 'round_robin'
+                        ? ', including leads round-robin distributed.'
+                        : '.'}
+                    </div>
+                  )
+                : distributionMode === 'round_robin' && (
+                    <div className="rounded-app-md bg-warning-soft border border-warning/30 text-warning text-body p-3">
+                      This campaign uses round-robin distribution. Reassigning will also move leads
+                      that were already fairly distributed by round-robin.
+                    </div>
+                  ))}
             <div className="flex items-center gap-2">
               <Button
                 type="button"
