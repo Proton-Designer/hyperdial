@@ -11,40 +11,12 @@
  * whose session is their own. Anything else (wrong org, no recording yet, unknown leg) is a
  * plain 404 -- never a 403 that would confirm a leg id exists in another org.
  */
-import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2';
+import { createClient } from 'npm:@supabase/supabase-js@2';
 import { corsHeaders, corsPreflightResponse } from '../_shared/cors.ts';
 import { requireTelnyxOrgRole } from '../_shared/telnyx-org-context.ts';
 import { readJsonBody } from '../_shared/http-json.ts';
 import { canAccessRecording } from '../_shared/recording-core.ts';
-
-/** MISSION-5 TASK-M5-B5: mirrors `private.is_agent_in_callers_pod_scope`'s own SQL semantics in
- *  application code, same "manager pod-scoping done in JS, not SQL" pattern org-members/org-
- *  audit-log's own GET handlers already established (A5) -- this Edge Function uses a service-
- *  role client, so RLS never applies and this check has to happen here regardless. */
-async function isAgentInManagerPodScope(
-  supabase: SupabaseClient,
-  orgId: string,
-  managerId: string,
-  agentId: string
-): Promise<boolean> {
-  const { data: agentRow } = await supabase
-    .from('org_members')
-    .select('pod_id')
-    .eq('org_id', orgId)
-    .eq('user_id', agentId)
-    .eq('status', 'active')
-    .maybeSingle();
-  if (!agentRow?.pod_id) return false;
-
-  const { data: scopeRow } = await supabase
-    .from('org_manager_pods')
-    .select('pod_id')
-    .eq('org_id', orgId)
-    .eq('manager_user_id', managerId)
-    .eq('pod_id', agentRow.pod_id)
-    .maybeSingle();
-  return !!scopeRow;
-}
+import { isManagerScopedToAgent } from '../_shared/pod-scope.ts';
 
 // 10 minutes, matching the task's own spec and Telnyx's own recording_urls TTL (so the app
 // link's own signed URL feels consistent with the source, even though they're unrelated URLs).
@@ -103,7 +75,7 @@ Deno.serve(async (req: Request) => {
   const sessionAgentId = session?.agent_id ?? null;
   const isAgentInCallerPodScope =
     role === 'manager' && sessionAgentId
-      ? await isAgentInManagerPodScope(supabase, orgId, user.id, sessionAgentId)
+      ? await isManagerScopedToAgent(supabase, orgId, user.id, sessionAgentId)
       : undefined;
 
   const allowed = canAccessRecording({

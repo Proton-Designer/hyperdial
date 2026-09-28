@@ -21,9 +21,11 @@ interface MemberRow {
 }
 
 /** True iff `managerId` (assumed already confirmed to hold role='manager' by the caller -- this
- *  function does not re-check that) may act on `agentId`'s session: the agent has a pod, and that
- *  pod is one of the manager's own rows in `org_manager_pods`. False for an agent with no pod at
- *  all (a manager's scope is pod-based; an unassigned agent is nobody's manager's business). */
+ *  function does not re-check that) may act on `agentId`'s session: the agent is an ACTIVE member
+ *  with a pod, and that pod is one of the manager's own rows in `org_manager_pods`. False for an
+ *  agent with no pod at all (a manager's scope is pod-based; an unassigned agent is nobody's
+ *  manager's business) or a non-active agent row (matches `recording-url/index.ts`'s own copy of
+ *  this check, which this function now replaces -- see MISSION-5 B5 follow-up). */
 export async function isManagerScopedToAgent(
   supabase: SupabaseClient,
   orgId: string,
@@ -35,6 +37,7 @@ export async function isManagerScopedToAgent(
     .select('pod_id')
     .eq('org_id', orgId)
     .eq('user_id', agentId)
+    .eq('status', 'active')
     .maybeSingle();
   const podId = (agentRow as { pod_id: string | null } | null)?.pod_id;
   if (!podId) return false;
