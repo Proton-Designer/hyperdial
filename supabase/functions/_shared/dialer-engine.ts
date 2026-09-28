@@ -232,6 +232,13 @@ interface DialSessionRow {
    *  only while `state === 'paused'`, cleared on resume/manual-pause so a stale value from a
    *  past pause can never be misread once the session has moved on. */
   pause_reason: string | null;
+  /** MISSION-5 TASK-M5-N1 review fix-forward #2 (lead's 2 extra points, re-verified by eng1):
+   *  the dedicated, never-client-settable column set only by runTakeoverAction's own
+   *  transition_session call -- now the detection signal for takeover-recovery, replacing a
+   *  string-equality check on `pause_reason` (which an ordinary agent-typed free-text pause
+   *  reason could spoof, and which loadSession never even selected in the first place). Cleared
+   *  back to null once a takeover-recovery session actually leaves 'paused' for good. */
+  taken_over_by_manager_id: string | null;
 }
 
 interface CampaignRow {
@@ -282,7 +289,7 @@ interface CallLegRow {
 }
 
 const SESSION_COLUMNS =
-  'id, org_id, campaign_id, agent_id, state, lines, amd_mode, agent_leg_id, active_leg_id, conference_id, paused_agent_lost_from, pause_reason';
+  'id, org_id, campaign_id, agent_id, state, lines, amd_mode, agent_leg_id, active_leg_id, conference_id, paused_agent_lost_from, pause_reason, taken_over_by_manager_id';
 const LEG_COLUMNS =
   'id, org_id, session_id, campaign_id, contact_id, lead_id, kind, call_control_id, state, answered_at, claimed_at, bridged_at, voicemail_drop_path, from_number_id';
 
@@ -573,13 +580,21 @@ export async function dialAgentLeg(
 
 /**
  * The Reconnect button (TASK-L1 spec item 5): valid from 'paused_agent_lost', OR (MISSION-5
- * TASK-M5-N1 review fix-forward, BLOCKER 2) from 'paused' with `pause_reason ===
- * 'call_taken_over_by_manager'` -- the agent's "Rejoin dialing" action after a supervisor took
- * their call over. Both dial a FRESH agent leg (the old one is 'ended', or in the takeover case
- * was already detached with `agent_leg_id` cleared to null) into the SAME conference-creation
- * path -- processAgentLegEvent's answered branch does the actual join once it answers, and
- * decides on_call-vs-dialing there based on whether a contact leg is still `claimed`. Purely
- * additive: every OTHER state still hits the `not_paused_agent_lost` refusal exactly as before.
+ * TASK-M5-N1 review fix-forward, BLOCKER 2) from 'paused' with `taken_over_by_manager_id` set --
+ * the agent's "Rejoin dialing" action after a supervisor took their call over. Both dial a FRESH
+ * agent leg (the old one is 'ended', or in the takeover case was already detached with
+ * `agent_leg_id` cleared to null) into the SAME conference-creation path --
+ * processAgentLegEvent's answered branch does the actual join once it answers, and decides
+ * on_call-vs-dialing there based on whether a contact leg is still `claimed`. Purely additive:
+ * every OTHER state still hits the `not_paused_agent_lost` refusal exactly as before.
+ *
+ * N1 fix-forward #2 (lead's point 2): detection was originally a string-equality check on
+ * `pause_reason` -- an agent could type that exact reserved string into the free-text `reason`
+ * field of an ordinary manual pause (`dialer-session-pause`, intentionally not enum-checked) and
+ * produce an identical-looking row. The pre-existing M2 guard below (checking the REAL agent leg's
+ * own current state) already stopped that spoof from actually double-dialing, but the detection
+ * itself is now keyed on the dedicated, never-client-settable `taken_over_by_manager_id` column
+ * instead, closing the spoofing vector at the source.
  */
 export async function reconnectAgentLeg(
   supabase: SupabaseClient,
@@ -588,8 +603,7 @@ export async function reconnectAgentLeg(
 ): Promise<{ ok: boolean; reason?: string }> {
   const session = await loadSession(supabase, sessionId);
   if (!session || session.org_id !== orgId) return { ok: false, reason: 'not_found' };
-  const isTakenOverPaused =
-    session.state === 'paused' && session.pause_reason === 'call_taken_over_by_manager';
+  const isTakenOverPaused = session.state === 'paused' && session.taken_over_by_manager_id != null;
   if (session.state !== 'paused_agent_lost' && !isTakenOverPaused) {
     return { ok: false, reason: 'not_paused_agent_lost' };
   }
@@ -1839,12 +1853,12 @@ async function handleAgentLegAnswered(
   }
 
   // MISSION-5 TASK-M5-N1 review fix-forward (BLOCKER 2): a THIRD possible entry state, on top of
-  // the pre-existing paused_agent_lost/ready_pending pair -- 'paused' with pause_reason
-  // 'call_taken_over_by_manager' (reconnectAgentLeg's own new branch). Captured once, from the
-  // ORIGINAL session object (before this cascade changes anything), since pause_reason is only
-  // readable while the session still IS 'paused'.
-  const isTakeoverRecovery =
-    session.state === 'paused' && session.pause_reason === 'call_taken_over_by_manager';
+  // the pre-existing paused_agent_lost/ready_pending pair -- 'paused' with
+  // `taken_over_by_manager_id` set (reconnectAgentLeg's own new branch). Captured once, from the
+  // ORIGINAL session object (before this cascade changes anything). N1 fix-forward #2 (lead's
+  // point 2): keyed on the dedicated `taken_over_by_manager_id` column, not a `pause_reason`
+  // string match -- see reconnectAgentLeg's own header for why.
+  const isTakeoverRecovery = session.state === 'paused' && session.taken_over_by_manager_id != null;
 
   // Cascade session state. paused_agent_lost -> ready is Reconnect's own path; ready_pending
   // -> ready is Go Ready's; a taken-over 'paused' -> ready is this fix-forward's own new path.
@@ -1880,7 +1894,15 @@ async function handleAgentLegAnswered(
       p_session: session.id,
       p_expected_states: ['ready'],
       p_new_state: 'on_call',
-      p_fields: { paused_agent_lost_from: null },
+      // N1 fix-forward #2 (lead's point 1): clear both takeover-recovery breadcrumbs explicitly
+      // -- transition_session leaves an omitted key completely unchanged, so without this a
+      // session that went through a takeover-and-Rejoin would carry `pause_reason`/
+      // `taken_over_by_manager_id` forward into `on_call` and every state reached after it.
+      p_fields: {
+        paused_agent_lost_from: null,
+        pause_reason: null,
+        taken_over_by_manager_id: null,
+      },
     });
     dialerLog('agent_leg_rejoined_live_call', { sessionId: session.id });
     return;
@@ -1917,11 +1939,32 @@ async function handleAgentLegAnswered(
   }
 
   if (reloaded?.paused_agent_lost_from === 'paused') {
+    // N1 fix-forward #2 (lead's point 1, reverify-eng1.md): this restore-to-paused branch must
+    // explicitly clear a STALE takeover breadcrumb for ANY session reaching it, not only ones
+    // still mid-recovery -- this is the exact branch eng1's re-verify found reachable with NO
+    // malicious input at all (takeover -> successful Rejoin -> agent's leg drops again for an
+    // unrelated reason while still 'paused'-flavored -> restores here with the stale marker
+    // still attached to an otherwise completely ordinary paused session).
+    //
+    // Gated on `reloaded.taken_over_by_manager_id`, NOT unconditional: `pause_reason` on this
+    // same column also carries an entirely legitimate value here in the ordinary case -- a
+    // manually-paused agent's own free-text reason (dialer-session-pause/pauseSession), which
+    // `handleAgentLegLost`'s own paused_agent_lost transition never touches and which this
+    // restore is specifically here to bring back. Clearing it unconditionally would silently
+    // erase that real reason on every ordinary manual-pause-then-dropped-leg reconnect --
+    // trading one stale-data bug for another. Only a takeover ever sets
+    // `taken_over_by_manager_id` (runTakeoverAction, alongside the reserved `pause_reason`
+    // string) and only a takeover's own recovery cascade can leave it stale here, so checking
+    // that column is what distinguishes "this pause_reason is a leftover takeover marker" from
+    // "this pause_reason is the agent's real reason for being paused."
+    const wasStaleTakeover = reloaded?.taken_over_by_manager_id != null;
     await supabase.rpc('transition_session', {
       p_session: session.id,
       p_expected_states: ['ready'],
       p_new_state: 'paused',
-      p_fields: { paused_agent_lost_from: null },
+      p_fields: wasStaleTakeover
+        ? { paused_agent_lost_from: null, pause_reason: null, taken_over_by_manager_id: null }
+        : { paused_agent_lost_from: null },
     });
     dialerLog('agent_leg_returned_to_paused', { sessionId: session.id });
     return;
@@ -1931,7 +1974,9 @@ async function handleAgentLegAnswered(
     p_session: session.id,
     p_expected_states: ['ready'],
     p_new_state: 'dialing',
-    p_fields: { paused_agent_lost_from: null },
+    // N1 fix-forward #2 (lead's point 1): same clearing as the on_call/paused branches above --
+    // the ordinary "dialing" default must not carry a stale takeover breadcrumb forward either.
+    p_fields: { paused_agent_lost_from: null, pause_reason: null, taken_over_by_manager_id: null },
   });
   if (reachedDialing) {
     dialerLog('agent_leg_dialing_started', { sessionId: session.id });

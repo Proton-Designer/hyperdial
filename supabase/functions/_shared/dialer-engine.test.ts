@@ -610,6 +610,11 @@ Deno.test(
       // takeover leaves it).
       assertExists(sessionAfterRejoin.conference_id);
       assertEquals(sessionAfterRejoin.conference_id === originalConferenceId, false);
+      // N1 fix-forward #2 (the lead's point 1, reverify-eng1.md): "takeover, rejoin, then
+      // dialing leaves both columns null" -- otherwise the stale marker would survive into
+      // every later state of this session (dialing/wrap_up/a later manual pause).
+      assertEquals(sessionAfterRejoin.pause_reason, null);
+      assertEquals(sessionAfterRejoin.taken_over_by_manager_id, null);
     } finally {
       restoreFetch();
     }
@@ -636,6 +641,120 @@ Deno.test(
       db.table('dial_sessions').get(sessionId)!.pause_reason = 'Paused by manager';
       const result = await reconnectAgentLeg(supabase, orgId, sessionId);
       assertEquals(result, { ok: false, reason: 'not_paused_agent_lost' });
+    } finally {
+      restoreFetch();
+    }
+  }
+);
+
+Deno.test(
+  "dialer-engine: reconnectAgentLeg regression -- a free-text-spoofed pause_reason ('call_taken_over_by_manager' typed as a manual pause reason) is still refused (N1 fix-forward #2, lead's point 2 -- detection is keyed on taken_over_by_manager_id, never the pause_reason string)",
+  async () => {
+    const db = new FakeDb();
+    const server = new FakeTelnyxServer();
+    const restoreFetch = stubTelnyxFetch(server);
+    const supabase = createFakeSupabase(db);
+    const { orgId, agentId, campaignId } = seedFixtures(db);
+    try {
+      const { sessionId } = await startSession(supabase, {
+        orgId,
+        campaignId,
+        agentId,
+        lines: 1,
+        amdMode: 'off',
+      });
+      db.table('dial_sessions').get(sessionId)!.state = 'paused';
+      db.table('dial_sessions').get(sessionId)!.pause_reason = 'call_taken_over_by_manager';
+      // taken_over_by_manager_id deliberately left unset -- this is what a real spoof looks
+      // like: only the free-text column matches, the dedicated never-client-settable one does not.
+      const result = await reconnectAgentLeg(supabase, orgId, sessionId);
+      assertEquals(result, { ok: false, reason: 'not_paused_agent_lost' });
+    } finally {
+      restoreFetch();
+    }
+  }
+);
+
+Deno.test(
+  'dialer-engine: reconnectAgentLeg regression -- a genuine manual pause reason survives a lost-leg-then-reconnect-then-restore cycle (N1 fix-forward #2 must not wipe legitimate pause_reason)',
+  async () => {
+    const db = new FakeDb();
+    const server = new FakeTelnyxServer();
+    const restoreFetch = stubTelnyxFetch(server);
+    const supabase = createFakeSupabase(db);
+    const { orgId, agentId, campaignId } = seedFixtures(db);
+    try {
+      const { sessionId } = await startSession(supabase, {
+        orgId,
+        campaignId,
+        agentId,
+        lines: 1,
+        amdMode: 'off',
+      });
+      const agentLeg1 = [...db.table('call_legs').values()].find((l) => l.kind === 'agent')!;
+      await processTelnyxDialerEvent(
+        supabase,
+        agentEvent(
+          orgId,
+          sessionId,
+          agentLeg1.id as string,
+          agentLeg1.call_control_id as string,
+          'call.answered'
+        )
+      );
+      assertEquals(db.table('dial_sessions').get(sessionId)!.state, 'dialing');
+
+      const paused = await pauseSession(supabase, orgId, sessionId, 'Lunch break');
+      assertEquals(paused, true);
+      assertEquals(db.table('dial_sessions').get(sessionId)!.pause_reason, 'Lunch break');
+
+      // The agent's own leg drops for an unrelated reason WHILE manually paused (a network
+      // blip, not a takeover) -- same AGENT_ACTIVE_SESSION_STATES path handleAgentLegLost
+      // already covers for 'paused', just never previously exercised with a real pause_reason
+      // set on the row.
+      await processTelnyxDialerEvent(
+        supabase,
+        agentEvent(
+          orgId,
+          sessionId,
+          agentLeg1.id as string,
+          agentLeg1.call_control_id as string,
+          'call.hangup',
+          { hangup_cause: 'normal_clearing' }
+        )
+      );
+      const sessionAfterLost = db.table('dial_sessions').get(sessionId)!;
+      assertEquals(sessionAfterLost.state, 'paused_agent_lost');
+      assertEquals(sessionAfterLost.paused_agent_lost_from, 'paused');
+      assertEquals(
+        sessionAfterLost.pause_reason,
+        'Lunch break',
+        'handleAgentLegLost never touches pause_reason'
+      );
+
+      const reconnectResult = await reconnectAgentLeg(supabase, orgId, sessionId);
+      assertEquals(reconnectResult.ok, true);
+      const agentLeg2 = [...db.table('call_legs').values()].find(
+        (l) => l.kind === 'agent' && l.id !== agentLeg1.id
+      )!;
+      await processTelnyxDialerEvent(
+        supabase,
+        agentEvent(
+          orgId,
+          sessionId,
+          agentLeg2.id as string,
+          agentLeg2.call_control_id as string,
+          'call.answered'
+        )
+      );
+
+      const sessionRestored = db.table('dial_sessions').get(sessionId)!;
+      assertEquals(sessionRestored.state, 'paused');
+      // The bug this regression guards against: the restore-to-paused branch's own clearing
+      // fix must be GATED on taken_over_by_manager_id, not unconditional -- an unconditional
+      // clear would have wiped this completely legitimate, non-takeover manual pause reason.
+      assertEquals(sessionRestored.pause_reason, 'Lunch break');
+      assertEquals(sessionRestored.taken_over_by_manager_id ?? null, null);
     } finally {
       restoreFetch();
     }

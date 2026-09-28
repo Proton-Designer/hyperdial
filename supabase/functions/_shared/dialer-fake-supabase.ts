@@ -192,6 +192,10 @@ const TRANSITION_SESSION_FIELDS = [
   'ended_at',
   'paused_agent_lost_from',
   'pause_reason',
+  // MISSION-5 TASK-M5-N1 (20260927212609_call_takeover.sql, still unapplied): the same
+  // allowlist-drift class this constant's own header warns about -- added here alongside the
+  // fix-forward #2 dialer-engine.ts callers that now clear it.
+  'taken_over_by_manager_id',
 ];
 
 /** Same masking-bug class as TRANSITION_SESSION_FIELDS above (M4) -- transition_leg's fake used

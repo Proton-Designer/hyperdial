@@ -90,9 +90,22 @@ create trigger org_call_takeover_settings_audit
 --    own supervisor_role enum has no "takeover", the supervisor's real conference role after a
 --    takeover is just `barge`; `taken_over_at` is what actually distinguishes "coaching" from
 --    "took over" for anything that needs to tell them apart (UI, audit, analytics).
+--
+--    N1 fix-forward #2 (the lead's own BLOCKER, found after eng1's re-verify): `taken_over_at`
+--    alone is SESSION-scoped, not LEG-scoped -- once a takeover happens, `isSessionTakenOver`
+--    (coaching-core.ts) and the manager-branch lookup in dialer-session-disposition/index.ts both
+--    read it as "this session was EVER taken over", which wrongly blocks the agent (and wrongly
+--    lets the manager in) for every LATER leg of the same session too, after a successful Rejoin.
+--    `taken_over_leg_id` records WHICH contact leg (the one the agent was on at takeover time,
+--    `dial_sessions.active_leg_id` as read by runTakeoverAction before it clears it) was actually
+--    taken over -- both call sites now scope on this column, not just `target_session_id`. `on
+--    delete set null` (not cascade) for the same reason as `dial_sessions.taken_over_by_manager_id`
+--    below: this is a breadcrumb, the coaching_sessions row's own history shouldn't disappear if
+--    the call_legs row it points at is ever purged.
 -- =================================================================================================
 
 alter table public.coaching_sessions add column taken_over_at timestamptz;
+alter table public.coaching_sessions add column taken_over_leg_id uuid references public.call_legs(id) on delete set null;
 
 -- =================================================================================================
 -- 3. dial_sessions.taken_over_by_manager_id -- nullable audit breadcrumb (same nullable + `on

@@ -4,7 +4,7 @@ import { requireTelnyxOrgRole } from '../_shared/telnyx-org-context.ts';
 import { refillSession } from '../_shared/dialer-engine.ts';
 import { readJsonBody } from '../_shared/http-json.ts';
 import { logOrgAction } from '../_shared/audit.ts';
-import { isSessionTakenOver } from '../_shared/coaching-core.ts';
+import { isSessionTakenOver, isLegTakenOverByManager } from '../_shared/coaching-core.ts';
 
 /**
  * Submits a wrap-up disposition for a call leg (TASK-P3-E1, design §5). The mandatory wrap-up
@@ -114,12 +114,15 @@ Deno.serve(async (req) => {
       if (session.agent_id !== user.id) {
         return jsonResponse(403, { error: 'Not your session' });
       }
-      // MISSION-5 TASK-M5-N1 review fix-forward (SHOULD): once a supervisor has taken this call
-      // over, the original agent is no longer on it at all -- excluded from dispositioning it
-      // too. Without this, whichever of the agent/supervisor submits first silently wins a race
-      // neither party is told about (submit_disposition's own idempotency guard prevents a
-      // double-write, but not a wrong-guess-wins outcome).
-      if (await isSessionTakenOver(supabase, session.id)) {
+      // MISSION-5 TASK-M5-N1 review fix-forward (SHOULD), LEG-scoped as of fix-forward #2 (the
+      // lead's own BLOCKER): once a supervisor has taken THIS LEG over, the original agent is no
+      // longer on it at all -- excluded from dispositioning it too. Without this, whichever of
+      // the agent/supervisor submits first silently wins a race neither party is told about
+      // (submit_disposition's own idempotency guard prevents a double-write, but not a
+      // wrong-guess-wins outcome). Scoped to `legId`, not just `session.id` -- otherwise a
+      // takeover on one leg would wrongly block the agent from dispositioning every LATER leg of
+      // the same session too, once they've successfully Rejoined and gone back to dialing.
+      if (await isSessionTakenOver(supabase, session.id, legId)) {
         return jsonResponse(403, {
           error: 'This call was taken over by a supervisor -- they submit its disposition.',
           code: 'TAKEN_OVER',
@@ -129,18 +132,12 @@ Deno.serve(async (req) => {
     if (role === 'manager') {
       // MISSION-5 TASK-M5-N1: a manager may disposition this leg ONLY if they personally took
       // over the call it belongs to -- not a general pod-scope grant (see this file's own header
-      // comment). `.limit(1)` since a leg's session can have at most one `coaching_sessions` row
-      // ever take it over in practice (one active coach per target, EC-8), but this reads as "did
-      // ANY of my own rows for this session get taken over," not "the most recent one."
-      const { data: takeover } = await supabase
-        .from('coaching_sessions')
-        .select('id')
-        .eq('target_session_id', session.id)
-        .eq('manager_id', user.id)
-        .not('taken_over_at', 'is', null)
-        .limit(1)
-        .maybeSingle();
-      if (!takeover) {
+      // comment). LEG-scoped as of fix-forward #2 (the lead's own BLOCKER): `isLegTakenOverByManager`
+      // matches on `taken_over_leg_id`, not just `target_session_id` -- otherwise a manager who
+      // took over one call would wrongly be able to disposition every LATER leg of the same
+      // session too, after the agent's successful Rejoin. Extracted into coaching-core.ts (see
+      // its own header) so this exact check is exercised by deno tests, not just code review.
+      if (!(await isLegTakenOverByManager(supabase, session.id, legId, user.id))) {
         return jsonResponse(403, { error: 'Not your session' });
       }
     }

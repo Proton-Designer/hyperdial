@@ -133,21 +133,53 @@ async function agentLegRow(
   return { callControlId: row.call_control_id, state: row.state };
 }
 
-/** MISSION-5 TASK-M5-N1 review fix-forward (SHOULD): true once ANY manager has taken over the
- *  call this dial session is (or was) on -- `coaching_sessions_one_active_per_target` guarantees
- *  at most one such row can ever exist. `dialer-session-disposition/index.ts` uses this to
+/** MISSION-5 TASK-M5-N1 review fix-forward (SHOULD), LEG-scoped as of fix-forward #2 (the lead's
+ *  own BLOCKER): true once ANY manager has taken over THIS SPECIFIC contact leg --
+ *  `coaching_sessions_one_active_per_target` guarantees at most one row can ever hold a given
+ *  `taken_over_leg_id`, but a session can have many legs over its lifetime, and only the one
+ *  actually taken over should be excluded. `dialer-session-disposition/index.ts` uses this to
  *  exclude the ORIGINAL agent from dispositioning a leg they no longer have any part in once a
  *  takeover happened, mirroring (but distinct from) that same file's manager-branch lookup, which
  *  additionally scopes to `manager_id = caller` -- this one deliberately does not, since the
- *  question here is just "did a takeover happen at all," not "did THIS caller do it." */
+ *  question here is just "did a takeover happen on THIS leg," not "did THIS caller do it."
+ *
+ *  Originally session-scoped only (`target_session_id`, no leg filter) -- that let a takeover on
+ *  one leg wrongly block the agent (and wrongly admit the manager) on every LATER leg of the same
+ *  session too, once the agent successfully Rejoined and went back to dialing. */
 export async function isSessionTakenOver(
   supabase: SupabaseClient,
-  targetSessionId: string
+  targetSessionId: string,
+  legId: string
 ): Promise<boolean> {
   const { data } = await supabase
     .from('coaching_sessions')
     .select('id')
     .eq('target_session_id', targetSessionId)
+    .eq('taken_over_leg_id', legId)
+    .not('taken_over_at', 'is', null)
+    .limit(1)
+    .maybeSingle();
+  return Boolean(data);
+}
+
+/** MISSION-5 TASK-M5-N1 fix-forward #2: the manager-side mirror of `isSessionTakenOver` above --
+ *  true only if THIS manager personally took over THIS SPECIFIC leg (not any leg of the session,
+ *  and not a takeover by some OTHER manager). Extracted out of dialer-session-disposition/
+ *  index.ts's manager branch (which used to hand-roll this same query inline) so it's exercised
+ *  by this file's own deno tests instead of only by code review -- same "compose once, test
+ *  once" reasoning `isSessionTakenOver` itself already followed. */
+export async function isLegTakenOverByManager(
+  supabase: SupabaseClient,
+  targetSessionId: string,
+  legId: string,
+  managerId: string
+): Promise<boolean> {
+  const { data } = await supabase
+    .from('coaching_sessions')
+    .select('id')
+    .eq('target_session_id', targetSessionId)
+    .eq('manager_id', managerId)
+    .eq('taken_over_leg_id', legId)
     .not('taken_over_at', 'is', null)
     .limit(1)
     .maybeSingle();
@@ -551,9 +583,12 @@ export async function runTakeoverAction(
 
   // Re-read the target session FRESH (same "pin by the row's own target_session_id, don't
   // re-derive by agent_id" reasoning runSwitchCoachingModeAction's own comment already gives).
+  // N1 fix-forward #2: `active_leg_id` is now selected too -- it's the CONTACT leg the agent was
+  // actually on at takeover time (the one that gets dispositioned), and the claim below records
+  // it as `taken_over_leg_id` BEFORE the transition_session call clears it to null.
   const { data: targetSession } = await supabase
     .from('dial_sessions')
-    .select('id, state, conference_id, agent_leg_id')
+    .select('id, state, conference_id, agent_leg_id, active_leg_id')
     .eq('id', row.target_session_id)
     .maybeSingle();
   if (!targetSession || targetSession.state !== 'on_call' || !targetSession.conference_id) {
@@ -575,9 +610,17 @@ export async function runTakeoverAction(
   // can ever hold this row at all -- coaching_sessions_one_active_per_target) reduces to two
   // concurrent claims on this SAME row. Whichever request's conditional UPDATE actually matches a
   // row wins; the other gets null back and a clean rejection before ever touching Telnyx.
+  // N1 fix-forward #2: `taken_over_leg_id` is claimed in the SAME update as `taken_over_at` --
+  // this is the leg every later leg-scoped check (isSessionTakenOver, the manager-branch lookup
+  // in dialer-session-disposition/index.ts) keys on, so it must land atomically with the claim
+  // itself, not in a separate write that could theoretically be skipped/lost.
   const { data: claimed } = await supabase
     .from('coaching_sessions')
-    .update({ taken_over_at: new Date().toISOString(), mode: 'barge' })
+    .update({
+      taken_over_at: new Date().toISOString(),
+      mode: 'barge',
+      taken_over_leg_id: targetSession.active_leg_id as string | null,
+    })
     .eq('id', coachingId)
     .eq('status', 'active')
     .is('taken_over_at', null)
@@ -624,13 +667,29 @@ export async function runTakeoverAction(
   });
 
   if (!legTransitioned || !sessionTransitioned) {
+    // N1 fix-forward #2 (eng1 re-verify residual SHOULD): transition_leg can succeed while
+    // transition_session misses (the prospect hangs up and the session is already `wrap_up` by
+    // the time transition_session runs) -- that leaves the agent's real call_legs row falsely
+    // marked `state: 'ended', hangup_cause: 'supervisor_takeover'` even though no Telnyx command
+    // was ever actually issued to end it. Revert that CAS too, back to the exact pre-takeover
+    // state this function itself read at the top (`agentLeg.state`), so no false historical
+    // record survives a takeover that never actually completed.
+    if (legTransitioned && !sessionTransitioned) {
+      await supabase.rpc('transition_leg', {
+        p_call_control_id: agentLeg.callControlId,
+        p_expected_states: ['ended'],
+        p_new_state: agentLeg.state,
+        p_fields: { hangup_cause: null, ended_at: null },
+      });
+    }
     // Never issue a single Telnyx command against a DB state that didn't actually land --
-    // release the coaching claim (clear taken_over_at/mode back to what they were) so the row
-    // stays a normal, still-`active` coaching attempt: closeable by the reaper if it's since gone
-    // stale, or retriable by the manager if the target is genuinely still reachable.
+    // release the coaching claim (clear taken_over_at/mode/taken_over_leg_id back to what they
+    // were) so the row stays a normal, still-`active` coaching attempt: closeable by the reaper
+    // if it's since gone stale, or retriable by the manager if the target is genuinely still
+    // reachable.
     await supabase
       .from('coaching_sessions')
-      .update({ taken_over_at: null, mode: row.mode })
+      .update({ taken_over_at: null, mode: row.mode, taken_over_leg_id: null })
       .eq('id', coachingId);
     return {
       status: 409,

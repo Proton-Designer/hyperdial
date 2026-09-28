@@ -7,6 +7,7 @@ import {
   runTakeoverAction,
   endActiveCoachingSessionsForManager,
   isSessionTakenOver,
+  isLegTakenOverByManager,
 } from './coaching-core.ts';
 
 // ---------------------------------------------------------------------------
@@ -784,6 +785,10 @@ function baseTakeoverTargetSession(overrides: Record<string, unknown> = {}) {
     state: 'on_call',
     conference_id: 'conf-1',
     agent_leg_id: 'leg-agent',
+    // N1 fix-forward #2: the CONTACT leg the agent was actually on at takeover time -- this is
+    // what runTakeoverAction now records as `taken_over_leg_id` (the leg being dispositioned,
+    // not the agent's own leg).
+    active_leg_id: 'leg-contact-1',
     ...overrides,
   };
 }
@@ -847,6 +852,15 @@ Deno.test(
     assertEquals(auditWrite!.patch.actor_user_id, 'mgr-1');
     // Exactly ONE audit row per takeover.
     assertEquals(writes.filter((w) => w.table === 'org_audit_log:insert').length, 1);
+
+    // N1 fix-forward #2 (the lead's own BLOCKER): the claim records WHICH leg was taken over,
+    // not just that a takeover happened -- the leg-scoped source of truth for
+    // isSessionTakenOver/isLegTakenOverByManager.
+    const claim = writes.find(
+      (w) => w.table === 'coaching_sessions' && 'taken_over_leg_id' in w.patch
+    );
+    assertExists(claim);
+    assertEquals(claim!.patch.taken_over_leg_id, 'leg-contact-1');
   }
 );
 
@@ -1055,24 +1069,31 @@ Deno.test(
     );
     assertExists(release);
     assertEquals(release!.patch.mode, 'whisper');
+    assertEquals(release!.patch.taken_over_leg_id, null);
 
     // No audit row for a takeover that never actually happened.
     assertEquals(
       writes.find((w) => w.table === 'org_audit_log:insert'),
       undefined
     );
+
+    // transition_leg's own CAS never matched here -- nothing was ever transitioned, so there is
+    // nothing to revert. Exactly the 2 forward attempts, no third revert call.
+    const rpcCalls = (supabase as { _rpcCalls: { name: string }[] })._rpcCalls;
+    assertEquals(rpcCalls.length, 2);
   }
 );
 
 Deno.test(
-  'runTakeoverAction: transition_session CAS misses (target already moved to wrap_up by a concurrent path) -- no Telnyx call, claim released',
+  'runTakeoverAction: transition_session CAS misses (target already moved to wrap_up by a concurrent path) -- no Telnyx call, claim released, AND the leg-ended CAS is reverted (eng1 re-verify residual SHOULD)',
   async () => {
     const supabase = makeFakeSupabase({
       coachingSelect: [OK(baseTakeoverRow())],
       org_call_takeover_settings: [OK({ enabled: true })],
       dial_sessions: [OK(baseTakeoverTargetSession())],
       call_legs: [OK({ call_control_id: 'call-agent-1', state: 'answered' })],
-      rpcResults: [OK(true), OK(false)],
+      // transition_leg succeeds, transition_session misses, then the revert transition_leg call.
+      rpcResults: [OK(true), OK(false), OK(true)],
     });
     const { client, calls } = makeFakeTelnyxClient();
     const result = await runTakeoverAction(supabase, client, 'org-1', 'mgr-1', 'owner', {
@@ -1089,36 +1110,94 @@ Deno.test(
       (w) => w.table === 'coaching_sessions' && w.patch.taken_over_at === null
     );
     assertExists(release);
+    assertEquals(release!.patch.taken_over_leg_id, null);
     assertEquals(
       writes.find((w) => w.table === 'org_audit_log:insert'),
       undefined
     );
+
+    // eng1 re-verify (reverify-eng1.md), residual SHOULD: transition_leg's own already-committed
+    // write (state: 'ended', hangup_cause: 'supervisor_takeover') must be reverted back to the
+    // leg's real pre-takeover state -- otherwise the agent's call_legs row falsely records an
+    // "ended by supervisor takeover" that no Telnyx command ever actually carried out.
+    // deno-lint-ignore no-explicit-any
+    const rpcCalls = (supabase as { _rpcCalls: { name: string; args: any }[] })._rpcCalls;
+    assertEquals(rpcCalls.length, 3);
+    assertEquals(rpcCalls[2].name, 'transition_leg');
+    assertEquals(rpcCalls[2].args.p_call_control_id, 'call-agent-1');
+    assertEquals(rpcCalls[2].args.p_expected_states, ['ended']);
+    assertEquals(rpcCalls[2].args.p_new_state, 'answered');
+    assertEquals(rpcCalls[2].args.p_fields, { hangup_cause: null, ended_at: null });
   }
 );
 
 // ---------------------------------------------------------------------------
 // eng1 review, SHOULD: isSessionTakenOver (dialer-session-disposition's agent-exclusion check).
+// N1 fix-forward #2 (the lead's own BLOCKER): LEG-scoped, plus its manager-side sibling
+// isLegTakenOverByManager -- both now take a legId, not just a session id.
 // ---------------------------------------------------------------------------
 
-Deno.test(
-  'isSessionTakenOver: true when a row for this target session has taken_over_at set',
-  async () => {
-    const supabase = makeFakeSupabase({
-      coachingSelect: [OK({ id: 'coaching-1' })],
-    });
-    assertEquals(await isSessionTakenOver(supabase, 's-target'), true);
-  }
-);
+Deno.test('isSessionTakenOver: true when a row for THIS leg has taken_over_at set', async () => {
+  const supabase = makeFakeSupabase({
+    coachingSelect: [OK({ id: 'coaching-1' })],
+  });
+  assertEquals(await isSessionTakenOver(supabase, 's-target', 'leg-taken-over'), true);
+});
 
 Deno.test(
-  'isSessionTakenOver: false when no row matches (never coached, or coached but never taken over)',
+  'isSessionTakenOver: false when no row matches (never coached, coached but never taken over, or the leg-taken-over filter excludes it)',
   async () => {
     const supabase = makeFakeSupabase({
       coachingSelect: [EMPTY],
     });
-    assertEquals(await isSessionTakenOver(supabase, 's-target'), false);
+    assertEquals(await isSessionTakenOver(supabase, 's-target', 'leg-new'), false);
   }
 );
+
+Deno.test(
+  'isSessionTakenOver: scenario -- takeover + rejoin + a new leg answered -- the agent CAN disposition the new leg',
+  async () => {
+    // The new leg (dialed fresh after Rejoin) was never itself taken over -- only the ORIGINAL
+    // leg was, and that row's own taken_over_leg_id filter excludes it here (modeled directly:
+    // no row configured to match this leg's own query).
+    const supabase = makeFakeSupabase({
+      coachingSelect: [EMPTY],
+    });
+    assertEquals(await isSessionTakenOver(supabase, 's-target', 'leg-new-after-rejoin'), false);
+  }
+);
+
+Deno.test('isLegTakenOverByManager: true when THIS manager took over THIS leg', async () => {
+  const supabase = makeFakeSupabase({
+    coachingSelect: [OK({ id: 'coaching-1' })],
+  });
+  assertEquals(
+    await isLegTakenOverByManager(supabase, 's-target', 'leg-taken-over', 'mgr-1'),
+    true
+  );
+});
+
+Deno.test(
+  'isLegTakenOverByManager: scenario -- takeover + rejoin + a new leg answered -- the SAME manager CANNOT disposition the new leg',
+  async () => {
+    // Same reasoning as isSessionTakenOver's mirror test above: the new leg was never taken
+    // over by anyone, so the manager's own leg-scoped lookup for it finds no row either.
+    const supabase = makeFakeSupabase({
+      coachingSelect: [EMPTY],
+    });
+    assertEquals(
+      await isLegTakenOverByManager(supabase, 's-target', 'leg-new-after-rejoin', 'mgr-1'),
+      false
+    );
+  }
+);
+
+Deno.test('isLegTakenOverByManager: false when no row matches at all', async () => {
+  const supabase = makeFakeSupabase({
+    coachingSelect: [EMPTY],
+  });
+  assertEquals(await isLegTakenOverByManager(supabase, 's-target', 'leg-1', 'mgr-1'), false);
+});
 
 Deno.test('processTelnyxCoachingEvent: call.hangup ends the row (manager_hangup)', async () => {
   const supabase = makeFakeSupabase({
