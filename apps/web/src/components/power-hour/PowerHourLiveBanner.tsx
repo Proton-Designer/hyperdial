@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Zap } from 'lucide-react';
 import { listPowerHours, powerHourStatus, type PowerHour } from '@/lib/api';
 import { PowerHourBoard } from './PowerHourBoard';
+import { useVisibilityPacedPolling } from '@/hooks/useVisibilityPacedPolling';
 
 const POLL_MS = 20000;
 
@@ -22,20 +23,25 @@ const POLL_MS = 20000;
  */
 export function PowerHourLiveBanner() {
   const [live, setLive] = useState<PowerHour[]>([]);
+  // Invisible -- feeds only the poll backoff below, never rendered (this banner stays
+  // deliberately silent/passive on a real fetch failure, same as before TASK-M5-L1).
+  const [pollFailed, setPollFailed] = useState(false);
 
   const refresh = useCallback(() => {
     listPowerHours()
       .then((rows) => {
         setLive(rows.filter((p) => powerHourStatus(p) === 'live'));
+        setPollFailed(false);
       })
-      .catch(() => {});
+      .catch(() => setPollFailed(true));
   }, []);
 
   useEffect(() => {
     refresh();
-    const interval = setInterval(refresh, POLL_MS);
-    return () => clearInterval(interval);
   }, [refresh]);
+  // TASK-M5-L1 (EC-9): paused while the tab is hidden, refreshed immediately on becoming
+  // visible, backs off 20s->120s->240s on an error streak.
+  useVisibilityPacedPolling(refresh, POLL_MS, pollFailed);
 
   if (live.length === 0) return null;
 

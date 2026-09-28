@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { getPowerHourBoard, type PowerHour, type PowerHourBoardRow } from '@/lib/api';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useAuth } from '@/contexts/AuthContext';
+import { useVisibilityPacedPolling } from '@/hooks/useVisibilityPacedPolling';
 
 const POLL_MS = 20000;
 
@@ -39,10 +40,11 @@ export function PowerHourBoard({
 
   useEffect(() => {
     load();
-    if (!isLive) return;
-    const interval = setInterval(load, POLL_MS);
-    return () => clearInterval(interval);
-  }, [load, isLive]);
+  }, [load]);
+  // TASK-M5-L1 (EC-9): paused while the tab is hidden, refreshed immediately on becoming
+  // visible, backs off 20s->120s->240s on an error streak -- still only while isLive, same as
+  // before.
+  useVisibilityPacedPolling(load, POLL_MS, error !== null, isLive);
 
   if (error) return <p className="text-meta text-danger">{error}</p>;
   if (!rows) {

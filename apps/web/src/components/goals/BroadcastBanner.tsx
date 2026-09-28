@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { Megaphone, X } from 'lucide-react';
 import { getActiveBroadcasts, dismissBroadcast, type OrgBroadcast } from '@/lib/api';
+import { useVisibilityPacedPolling } from '@/hooks/useVisibilityPacedPolling';
 
 const POLL_MS = 60000;
 
@@ -11,18 +12,24 @@ const POLL_MS = 60000;
  *  reappears on the next poll, not a blocking error the agent has to deal with. */
 export function BroadcastBanner() {
   const [broadcasts, setBroadcasts] = useState<OrgBroadcast[]>([]);
+  // Invisible -- feeds only the poll backoff below; refresh() stays silent-on-failure otherwise.
+  const [pollFailed, setPollFailed] = useState(false);
 
   const refresh = useCallback(() => {
     getActiveBroadcasts()
-      .then(setBroadcasts)
-      .catch(() => {}); // silent -- a passive banner isn't worth surfacing a fetch error
+      .then((rows) => {
+        setBroadcasts(rows);
+        setPollFailed(false);
+      })
+      .catch(() => setPollFailed(true)); // silent -- a passive banner isn't worth surfacing a fetch error
   }, []);
 
   useEffect(() => {
     refresh();
-    const interval = setInterval(refresh, POLL_MS);
-    return () => clearInterval(interval);
   }, [refresh]);
+  // TASK-M5-L1 (EC-9): paused while the tab is hidden, refreshed immediately on becoming
+  // visible, backs off 60s->360s->720s on an error streak.
+  useVisibilityPacedPolling(refresh, POLL_MS, pollFailed);
 
   const handleDismiss = (id: string) => {
     setBroadcasts((prev) => prev.filter((b) => b.id !== id));

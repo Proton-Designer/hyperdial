@@ -16,6 +16,7 @@ import {
   type PowerHourMetric,
 } from '@/lib/api';
 import { PowerHourBoard } from './PowerHourBoard';
+import { useVisibilityPacedPolling } from '@/hooks/useVisibilityPacedPolling';
 
 const METRIC_OPTIONS: { value: PowerHourMetric; label: string }[] = [
   { value: 'conversations', label: 'Conversations' },
@@ -62,11 +63,16 @@ export function PowerHourPanel() {
   const [pods, setPods] = useState<OrgPod[]>([]);
   const [hours, setHours] = useState<PowerHour[]>([]);
   const [managerPodIds, setManagerPodIds] = useState<string[]>([]);
+  // Invisible -- feeds only the poll backoff below; loadHours stays silent-on-failure otherwise.
+  const [loadHoursFailed, setLoadHoursFailed] = useState(false);
 
   const loadHours = useCallback(() => {
     listPowerHours()
-      .then(setHours)
-      .catch(() => {});
+      .then((rows) => {
+        setHours(rows);
+        setLoadHoursFailed(false);
+      })
+      .catch(() => setLoadHoursFailed(true));
   }, []);
 
   useEffect(() => {
@@ -74,9 +80,10 @@ export function PowerHourPanel() {
       .then(setPods)
       .catch(() => {});
     loadHours();
-    const interval = setInterval(loadHours, POLL_MS);
-    return () => clearInterval(interval);
   }, [loadHours]);
+  // TASK-M5-L1 (EC-9): paused while the tab is hidden, refreshed immediately on becoming
+  // visible, backs off 20s->120s->240s on an error streak.
+  useVisibilityPacedPolling(loadHours, POLL_MS, loadHoursFailed);
 
   useEffect(() => {
     if (role === 'manager' && user?.id) {

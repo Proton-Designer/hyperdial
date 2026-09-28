@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   getAgentSelfStats,
   getMyGoalTargets,
@@ -7,6 +7,7 @@ import {
   type GoalTargets,
 } from '@/lib/api';
 import { GoalProgressBars, hasAnyGoalTarget, type GoalActuals } from './GoalProgressBars';
+import { useVisibilityPacedPolling } from '@/hooks/useVisibilityPacedPolling';
 
 const REFRESH_MS = 60000;
 
@@ -31,36 +32,45 @@ export function MyGoalHeader({
 }) {
   const [actual, setActual] = useState<GoalActuals | null>(null);
   const [targets, setTargets] = useState<GoalTargets | null>(null);
-
+  // Invisible -- feeds only the poll backoff below; load() stays silent-on-failure otherwise.
+  const [loadFailed, setLoadFailed] = useState(false);
+  const mountedRef = useRef(true);
   useEffect(() => {
-    let cancelled = false;
-    const load = async () => {
-      try {
-        const tz = await getOrgTimezone();
-        const { start, end } = getTodayRange(tz);
-        const [stats, goalTargets] = await Promise.all([
-          getAgentSelfStats(start, end),
-          getMyGoalTargets(),
-        ]);
-        if (cancelled) return;
-        setActual({
-          dials: stats?.dials ?? 0,
-          conversations: stats?.conversations ?? 0,
-          wins: stats?.wins ?? 0,
-          talkMinutes: Math.round((stats?.talk_time_seconds ?? 0) / 60),
-        });
-        setTargets(goalTargets);
-      } catch {
-        // silent -- a passive progress readout isn't worth an error state
-      }
-    };
-    load();
-    const interval = setInterval(load, REFRESH_MS);
+    mountedRef.current = true;
     return () => {
-      cancelled = true;
-      clearInterval(interval);
+      mountedRef.current = false;
     };
   }, []);
+
+  const load = useCallback(async () => {
+    try {
+      const tz = await getOrgTimezone();
+      const { start, end } = getTodayRange(tz);
+      const [stats, goalTargets] = await Promise.all([
+        getAgentSelfStats(start, end),
+        getMyGoalTargets(),
+      ]);
+      if (!mountedRef.current) return;
+      setActual({
+        dials: stats?.dials ?? 0,
+        conversations: stats?.conversations ?? 0,
+        wins: stats?.wins ?? 0,
+        talkMinutes: Math.round((stats?.talk_time_seconds ?? 0) / 60),
+      });
+      setTargets(goalTargets);
+      setLoadFailed(false);
+    } catch {
+      // silent -- a passive progress readout isn't worth an error state
+      if (mountedRef.current) setLoadFailed(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+  // TASK-M5-L1 (EC-9): paused while the tab is hidden, refreshed immediately on becoming
+  // visible, backs off 60s->360s->720s on an error streak.
+  useVisibilityPacedPolling(() => void load(), REFRESH_MS, loadFailed);
 
   if (!actual || !targets || !hasAnyGoalTarget(targets)) return null;
 

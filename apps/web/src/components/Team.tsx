@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { motion } from 'motion/react';
 import { Users, ArrowUpDown, Ear, Mic, Radio, Download, Pause, PhoneOff, Hand } from 'lucide-react';
 import { rowsToCsv, downloadCsv } from '@/lib/csv';
+import { useVisibilityPacedPolling } from '@/hooks/useVisibilityPacedPolling';
 import {
   getTeamDailyStats,
   getTeamLiveBoard,
@@ -805,22 +806,19 @@ export function Team() {
   // scoped to the daily-stats date range above, so it gets its own light poll rather than
   // reloading alongside loadDaily on every range change.
   const [qualityFlagCounts, setQualityFlagCounts] = useState<Record<string, number>>({});
-  useEffect(() => {
-    let alive = true;
-    const load = () => {
-      getQualityFlagOpenCounts()
-        .then((counts) => {
-          if (alive) setQualityFlagCounts(counts);
-        })
-        .catch(() => {});
-    };
-    load();
-    const id = setInterval(load, 30000);
-    return () => {
-      alive = false;
-      clearInterval(id);
-    };
+  const [qualityFlagPollFailed, setQualityFlagPollFailed] = useState(false);
+  const loadQualityFlagCounts = useCallback(() => {
+    getQualityFlagOpenCounts()
+      .then((counts) => {
+        setQualityFlagCounts(counts);
+        setQualityFlagPollFailed(false);
+      })
+      .catch(() => setQualityFlagPollFailed(true));
   }, []);
+  useEffect(() => {
+    loadQualityFlagCounts();
+  }, [loadQualityFlagCounts]);
+  useVisibilityPacedPolling(loadQualityFlagCounts, 30000, qualityFlagPollFailed);
   const [sortKey, setSortKey] = useState<SortKey>('dials');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   // MISSION-5 TASK-M5-A4: live board filters (client-side over the already-polled rows -- no
@@ -962,39 +960,43 @@ export function Team() {
     loadDaily();
   }, [loadDaily]);
 
-  // ADM-7: poll every 5s -- a single RPC round trip, cleaned up on unmount/tab switch (Team.tsx
-  // is only ever mounted while the Team tab is active, unlike Dialer's always-mounted client).
+  // ADM-7: poll every 5s while the tab is visible (TASK-M5-L1/EC-9: paused entirely while
+  // hidden, refreshed immediately on becoming visible, backs off 5s->30s->60s on a liveError
+  // streak) -- a single RPC round trip, cleaned up on unmount/tab switch (Team.tsx is only ever
+  // mounted while the Team tab is active, unlike Dialer's always-mounted client).
   const pollingRef = useRef(false);
+  const mountedRef = useRef(true);
   useEffect(() => {
-    let cancelled = false;
-    const poll = async () => {
-      if (pollingRef.current) return; // never overlap a slow poll with the next tick
-      pollingRef.current = true;
-      try {
-        const rows = await getTeamLiveBoard();
-        if (!cancelled) {
-          setLive(rows);
-          setLiveError(null);
-        }
-      } catch (e) {
-        if (!cancelled) setLiveError(e instanceof Error ? e.message : String(e));
-      } finally {
-        pollingRef.current = false;
-      }
-      try {
-        const signals = await getAgentScheduleLiveStatus();
-        if (!cancelled) setScheduleLiveStatus(signals);
-      } catch {
-        // best-effort informational badge -- next 5s tick tries again, never blocks the live board
-      }
-    };
-    void poll();
-    const interval = setInterval(poll, LIVE_POLL_MS);
+    mountedRef.current = true;
     return () => {
-      cancelled = true;
-      clearInterval(interval);
+      mountedRef.current = false;
     };
   }, []);
+  const pollLiveBoard = useCallback(async () => {
+    if (pollingRef.current) return; // never overlap a slow poll with the next tick
+    pollingRef.current = true;
+    try {
+      const rows = await getTeamLiveBoard();
+      if (mountedRef.current) {
+        setLive(rows);
+        setLiveError(null);
+      }
+    } catch (e) {
+      if (mountedRef.current) setLiveError(e instanceof Error ? e.message : String(e));
+    } finally {
+      pollingRef.current = false;
+    }
+    try {
+      const signals = await getAgentScheduleLiveStatus();
+      if (mountedRef.current) setScheduleLiveStatus(signals);
+    } catch {
+      // best-effort informational badge -- next tick tries again, never blocks the live board
+    }
+  }, []);
+  useEffect(() => {
+    void pollLiveBoard();
+  }, [pollLiveBoard]);
+  useVisibilityPacedPolling(() => void pollLiveBoard(), LIVE_POLL_MS, liveError !== null);
 
   /** ADM-8: exports exactly the sorted, currently-visible rows (not a fresh unsorted fetch) --
    *  what the export contains matches what the admin is looking at on screen. `conversations_

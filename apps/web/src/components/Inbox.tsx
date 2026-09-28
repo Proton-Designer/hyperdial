@@ -14,6 +14,7 @@ import {
   type OrgMember,
 } from '@/lib/api';
 import { setPendingManualDialNumber } from '@/lib/dialerLaunchIntent';
+import { useVisibilityPacedPolling } from '@/hooks/useVisibilityPacedPolling';
 import { PageHeader } from '@/components/app/PageHeader';
 import { EmptyState } from '@/components/app/EmptyState';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -75,9 +76,10 @@ export function Inbox({ onNavigateToDialer }: InboxProps) {
 
   useEffect(() => {
     refresh();
-    const interval = setInterval(refresh, POLL_MS);
-    return () => clearInterval(interval);
   }, [refresh]);
+  // TASK-M5-L1 (EC-9): paused while the tab is hidden, refreshed immediately on becoming
+  // visible, backs off 20s->120s->240s on an error streak.
+  useVisibilityPacedPolling(refresh, POLL_MS, error !== null);
 
   // Best-effort display names only -- a manager's own roster call is already pod-scoped
   // server-side, so a cross-pod item's target agent may not resolve to a name here; falls back
