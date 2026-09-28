@@ -16,7 +16,7 @@ answers:
   - "what did previous work get wrong"
 covers: "Non-obvious things learned from working in this repository"
 excludes: "Current defects (see mem.known-issues), the reasoning behind choices (see mem.decisions)"
-tokens_est: 3150
+tokens_est: 4449
 ---
 
 # Lessons
@@ -196,3 +196,58 @@ not `loading`" pattern elsewhere in this codebase (Sidebar/TopNavigation/MainApp
 gates, `.brain/memory/known-issues.md`) is a *different* fix for a *different* symptom (that one is
 about not re-hiding UI on every refetch); this one is about a one-time "has the real answer arrived
 yet" promotion, which needs the transition-based guard instead.
+
+---
+
+## Dry-run fixture traps, learned the hard way across Mission 5 (R-039/R-041/R-042)
+
+None of these are exotic — each one cost someone a confusing failure the first time, and costs
+nothing once you know to check for it up front.
+
+**A void RPC's result is never NULL, and a write's own read-back needs a separate statement.** A
+function with no `RETURNS` still returns *something* to `.rpc()` — asserting `is not null` on a
+void call's result is testing the wrong thing; cast to `::text` first if you need a real presence
+check. And a statement that writes a row can't read back its own write in the same statement — the
+write and the assertion belong in two separate statements (or two separate `DO` blocks) in the same
+transaction, not one.
+
+**Fixture pitfalls that only bite once you write past the happy path**: an `int` literal handed to
+a `smallint` parameter needs an explicit `::smallint` cast (Postgres won't narrow it for you); every
+temp table a fixture creates needs its own `grant all ... to authenticated` (temp tables don't
+inherit the schema's default grants); a direct `insert` bypassing the normal RPC path must fill in
+every NOT NULL column that would otherwise default to `auth.uid()` (the default only fires when the
+column is omitted, not when a fixture's insert is otherwise "complete" some other way); and any
+`plpgsql` function declared `RETURNS TABLE(<col> ...)` needs `#variable_conflict use_column` as the
+very first line after `as $$`, or a query inside it that references a column with the same name as
+an OUT parameter fails at runtime with "column reference is ambiguous" — a bug no unit test against
+a fake client will ever catch, because the fake doesn't run real SQL.
+
+**A row a validation trigger checks must be inserted already-valid, then changed — never inserted
+invalid.** `campaign_agents` requires an ACTIVE member and territory rules require an active
+target; a fixture that tries to insert the "before" state directly (e.g. an inactive member) just
+gets rejected by the trigger before the test scenario ever begins. Insert valid, then UPDATE to the
+state the test actually wants to exercise.
+
+**Disposition keys drift with the seed function, not with memory.** `private.
+seed_default_dispositions` is versioned (v2 renamed/added keys — `yes_build_profile`, `callback`,
+`not_interested`, and others; `'interested'` no longer exists as of v2). A fixture that hardcodes a
+disposition key from an earlier session's memory, rather than reading the CURRENT seed function,
+silently inserts a key that doesn't exist in that org's own `dispositions` table.
+
+**Give every fixture section its own phone-number prefix.** Multiple sections in the same dry-run
+sharing a phone-number range makes it easy to accidentally reuse another section's row (the actual
+cause of two separate dry-run bugs this run, both in the G6 inbox fixtures) — a wrong-row bug that
+often still "passes" for the wrong reason, or aborts an unrelated later section outright. A
+per-section prefix makes a stray literal impossible to confuse with a real fixture.
+
+**Read RLS-governed tables only after `reset role`.** A fixture that stays as the role it just used
+to set up state (often `postgres`/a superuser-equivalent) can read past RLS entirely and make a
+broken policy look correct. `reset role` before every read that's meant to prove what a real client
+would see.
+
+**Every trigger on a hot or webhook-driven write path needs its own exception guard** — `exception
+when others then raise warning ...; return new/null` — so a bug in the trigger's OWN logic can
+never block or roll back the real write it's attached to. This is the same "never block the write"
+shape behind three separate Mission-5 guards (E7/N4/G6, see `mem.decisions`), and it is a dry-run
+requirement as much as a production one: a fixture that forces one of these guards to fail must
+assert the base write still committed, not just that the guard behaved.

@@ -1459,8 +1459,9 @@ export function CampaignManageModal({
       />
 
       {/* Assign leads (TASK-T6 / ADM-4 slice assignment) */}
-      {assignModalOpen && (
+      {assignModalOpen && campaignId && (
         <AssignLeadsModal
+          campaignId={campaignId}
           members={orgMembers}
           onClose={() => setAssignModalOpen(false)}
           onAssign={handleAssignLeads}

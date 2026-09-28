@@ -20,10 +20,113 @@ answers:
   - "what should I pick up next"
 covers: "Work in progress and the near-term backlog"
 excludes: "Shipped decisions (see mem.decisions), defects in shipped behaviour (see mem.known-issues)"
-tokens_est: 2350
+tokens_est: 4914
 ---
 
 # Active Work
+
+## Mission 5 (2026-09-27 onward) — supersedes the Mission-4 section below for "what's current"
+
+Mission 5 (`.claude/overnight/run-20260923-2024/MISSION-5.md`) is team-management/
+team-flow features (audit log, roster/invites v2, offboarding, manager role +
+pods, team cockpit v2, supervisor controls/alerts/takeover, call review
+library, goals/broadcasts, distribution guards/territory rules/round-robin,
+disposition quality checks, power hour, agent schedules, campaign script
+versioning, contact notes/mentions/history, shared team inbox) on top of the
+already-launched Mission-4 base below. **DONE, shipped and mostly deployed**
+as of 2026-09-28 ~12:1x (see `.brain/domains/auth.md`/`campaigns.md`/
+`dialer.md`/`telephony.md`/`contacts.md`/`analytics.md` for mechanism — this
+section only tracks status):
+
+- A1 audit log — `20260927080000_org_audit_log.sql`
+- A2 invites v2 + roster — `20260927080001_org_invites_v2.sql`
+- A3 deactivate/remove/offboard — `20260927080002_org_member_offboarding.sql`
+  (+ eng2-review fix-forward `20260927150719_org_member_emails_active_only.sql`)
+- B1 agent state log + pause reasons — `20260927070002_agent_time_in_state.sql`
+- B3 distribution guards (callback fallback, bulk reassign, daily dial cap) —
+  `20260927144500_distribution_guards.sql`
+- A4 team cockpit v2 (org timezone, attendance/first-activity) —
+  `20260927144900_org_timezone_and_stats_fixes.sql` (+ follow-ups
+  `20260927193905_agent_first_activity.sql`,
+  `20260927194330_agent_first_activity_manager_scope.sql`)
+- B2 supervisor controls (barge, remote pause/end/hangup, raise hand) —
+  `20260927151747_supervisor_controls.sql`
+- A5 manager role + pods (server-enforced scope) —
+  `20260927160550_manager_role_and_pods.sql`
+- A6 goals + team broadcast — `20260927164816_goals_and_broadcasts.sql`
+  (+ fix-forward `20260927210722_active_org_broadcasts_created_by.sql`)
+- B5 call review library (flags/comments/scorecards) —
+  `20260927171355_call_review_library.sql` (+ SHOULD fix-forward
+  `20260927193405_recording_flags_flagged_by_trigger.sql`)
+- B4 supervisor alerts + notification preferences —
+  `20260927171444_supervisor_alerts_and_pod_scoping.sql` (+ SHOULD fix-forward
+  `20260927194306_supervisor_alert_and_notification_pref_audit.sql`)
+- TM-B2 agent onboarding checklist (deferred backlog item, derived-only, no
+  new tracking table) — `20260927194608_agent_onboarding_checklist.sql`
+- F3 agent working-hours schedules + "not scheduled" warnings —
+  `20260927211327_agent_schedules.sql`
+- N1 supervisor call takeover (barge → take over) —
+  `20260927212609_call_takeover.sql`
+- G3 campaign script/objection-sheet version history + restore —
+  `20260927213243_campaign_script_versions.sql`
+- G5 contact collaboration (team notes thread, @mentions, change history) —
+  `20260927215820_contact_notes_mentions_history.sql`
+- C4 territory rules (route leads by state/area code to an agent or pod) —
+  `20260927224036_territory_rules.sql`
+- P1 manager read-only contact access (pod-scoped) —
+  `20260927230401_manager_contact_read_access.sql`
+- E7 disposition quality checks (flag, never block) —
+  `20260927231644_disposition_quality_checks.sql`
+- G6 shared team callback inbox for missed inbound calls, with claim —
+  `20260927233652_shared_inbox.sql`
+- N4 round-robin lead distribution mode per campaign —
+  `20260928111616_round_robin_distribution.sql` (TOCTOU steal-race BLOCKER
+  found in eng2 review, fixed same day in the same migration file before
+  deploy)
+- E2 power hour / call blitz with a live sprint board —
+  `20260928114928_power_hours.sql`
+- Q1 small follow-ups bundle (UI nits + one SQL comment; explicitly scoped to
+  need no new migration)
+- D1 (this task) — Mission-5 `.brain` knowledge-base sweep + the EC-5
+  reassign-warning UI (no migration, UI-only)
+
+**Not done — the open follow-ups, carried forward:**
+
+- **Trigger-failure visibility** (E7/N4/G6's "never block the write" guards
+  swallow a failure as a bare WARNING nobody sees) — **in progress as
+  TASK-M5-O1** (eng1): `20260928121424_trigger_failure_visibility.sql` +
+  `SystemHealthPanel.tsx` exist in the working tree but are **not yet
+  committed or deployed** as of this writing. If O1 has landed by the time
+  this is read, remove this bullet.
+- **EC-13**: the power-hour/leaderboard metric counts raw dials/connects per
+  agent with no normalization for how many lines an agent is actually
+  dialing on — an agent on more lines can out-rank a genuinely more
+  effective agent on fewer. Fix size M, not started.
+- **Shared inbox stale-claim cron** — G6's stale-claim reopen
+  (`reopen_stale_inbox_claims`) runs only on-read (lazily, when someone next
+  loads the inbox), by design; a quiet org with nobody opening the inbox can
+  leave a stale claim stuck indefinitely. No cron sweep exists. Fix size S,
+  not started.
+- **Realtime S1** — still the Mission-4 entry below (Supabase Realtime for
+  the Dialer/Team live board, replacing polling): unchanged, still not
+  started, now also relevant to G6's inbox and E2's power-hour board, both of
+  which poll rather than subscribe.
+- **EC-5, the last-writer-wins reassign UX** — `assign_campaign_leads` mode
+  `'all'` (and range/percentage/tag) can silently re-own an already-assigned
+  lead batch on every call; **this task (D1 Part B) adds a client-side
+  warning** ("N of these leads are currently assigned to other agents and
+  will be reassigned") before confirming, but does **not** change the
+  underlying RPC — two managers can still race each other with no
+  server-side arbitration, they now just each see a warning first. A future
+  task wanting real conflict prevention (e.g. an optimistic-lock/version
+  check in the RPC itself) would need a backend change this task
+  deliberately didn't make.
+- **PowerHourLiveBanner showing only the first live power hour, and its
+  compact board never showing a participant their own rank outside the top
+  3** — both already fixed: the former as an eng1 self-found E2 gap folded
+  into TASK-M5-O1 Part A (commit `64b09a9`), the latter as eng2's own E2
+  review SHOULD sent to eng1 as the same fix-forward. Listed here only so a
+  future reader doesn't reopen either as new.
 
 ## Mission 4 (2026-09-26 onward) — supersedes the Stage-1 section below for "what's current"
 

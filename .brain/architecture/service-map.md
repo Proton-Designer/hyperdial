@@ -21,7 +21,8 @@ answers:
   - "which function is the biggest risk to change"
 covers: "Every Edge Function: purpose, auth posture, dependencies, and risk"
 excludes: "Public URLs and deploy commands (see docs/reference/edge-functions.md), dial-loop internals (see domain.dialer)"
-tokens_est: 2400
+tokens_est: 3785
+source_hash: 652cd588377090e28807a9621a1fecb1b12764d35f503859880c8428e4a02aec
 ---
 
 # Service Map

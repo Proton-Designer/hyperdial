@@ -2,10 +2,10 @@
   "meta": {
     "artifact": "knowledge-map",
     "version": "1.0",
-    "generated_at": "2026-09-24T17:00:00.643Z",
+    "generated_at": "2026-09-28T17:30:33.238Z",
     "target": "/Users/aymanmohammed/Desktop/Softdial",
     "git": {
-      "commit": "991c827",
+      "commit": "64b09a9",
       "branch": "feat/stage-1",
       "dirty": true
     },
@@ -65,7 +65,7 @@
         "type": "architecture",
         "status": "canonical",
         "owner": "maintainer",
-        "tokens_est": 1555,
+        "tokens_est": 3785,
         "covers": "Every Edge Function: purpose, auth posture, dependencies, and risk",
         "excludes": "Public URLs and deploy commands (see docs/reference/edge-functions.md), dial-loop internals (see domain.dialer)",
         "answers": [
@@ -139,15 +139,20 @@
         "type": "domain",
         "status": "canonical",
         "owner": "maintainer",
-        "tokens_est": 2340,
-        "covers": "The Dashboard metrics, the Analytics screen, the call_leg_analytics/dial_session_hours views behind them, the weekly-summary job, and the in-app notification bell.",
+        "tokens_est": 6553,
+        "covers": "The Dashboard metrics, the Analytics screen, the call_leg_analytics/dial_session_hours views behind them, the weekly-summary job, the in-app notification bell, org timezone settings, and the Team page's Attendance/Fairness/My-stats additions (MISSION-5 TASK-M5-A4).",
         "excludes": "The dial loop and call_legs state machine that produces the source data — see .brain/domains/dialer.md. Dispositions themselves — see .brain/domains/dispositions.md.",
         "answers": [
           "is the Analytics screen real data or a mock",
-          "where do the Dashboard's Calls Today / Connect Rate / Talk Time numbers come from",
+          "where do the Dashboard's Calls Today / Connect Rate / Talk Time / Conversations-per-hr numbers come from",
           "how is live conversations per agent-hour computed",
+          "what counts as a conversation",
+          "why was Talk Time always 0m",
           "how is the weekly summary notification created and when",
-          "how are in-app notifications listed, counted and marked read"
+          "how are in-app notifications listed, counted and marked read",
+          "where does the manager Team page's live board / per-intern daily table get its data",
+          "how does an org set its own timezone, and what uses it",
+          "where does the Team page's Attendance tab / Fairness metric / My stats self-view get its data"
         ],
         "populated": true
       },
@@ -159,8 +164,8 @@
         "type": "domain",
         "status": "canonical",
         "owner": "maintainer",
-        "tokens_est": 3880,
-        "covers": "Supabase auth, session handling, the two-layer Edge Function authorization model, service-role usage, org tenancy, and the per-table RLS inventory.",
+        "tokens_est": 13159,
+        "covers": "Supabase auth, session handling, the two-layer Edge Function authorization model, service-role usage, org tenancy, the per-table RLS inventory, member offboarding (disable/remove/restore), the manager role's server-enforced pod scope, daily goals + team broadcasts, and the call review library's access model.",
         "excludes": "Telnyx webhook signature mechanics (domain.telephony); dial-loop ownership checks (domain.dialer).",
         "answers": [
           "how is a user authenticated when calling an Edge Function",
@@ -170,7 +175,15 @@
           "where does SUPABASE_SERVICE_ROLE_KEY bypass RLS",
           "what user metadata is collected at signup",
           "how does org/tenant scoping work now",
-          "what are the RLS helper functions and why do they exist"
+          "what are the RLS helper functions and why do they exist",
+          "what happens when a team member is disabled or removed",
+          "what can a manager role do, and how is their pod scope enforced",
+          "what is the difference between org_members.pod_id and org_manager_pods",
+          "how are daily goals set and resolved (org vs pod vs agent level)",
+          "how do team broadcasts work, who can post one, and how does an agent dismiss it",
+          "who can see/flag/comment on/score a call recording, and how is a manager's pod scope enforced there",
+          "why does telnyx-org-context.ts have its own separate OrgRole type instead of importing _shared/auth.ts's",
+          "who gets notified about a supervisor alert, and can a person opt out of one"
         ],
         "populated": true
       },
@@ -182,7 +195,7 @@
         "type": "domain",
         "status": "canonical",
         "owner": "maintainer",
-        "tokens_est": 3424,
+        "tokens_est": 4740,
         "covers": "The campaigns and campaign_leads tables, the campaigns_with_stats view, the campaign CRUD surface in the web client, and the handoff from a campaign to a parallel dial session.",
         "excludes": "Contact records and CSV import mechanics (.brain/domains/contacts.md) and everything after the session row is inserted — batching, AMD, call_logs (.brain/domains/dialer.md).",
         "answers": [
@@ -203,7 +216,7 @@
         "type": "domain",
         "status": "canonical",
         "owner": "maintainer",
-        "tokens_est": 3290,
+        "tokens_est": 5430,
         "covers": "The contacts table, two-step CSV import, strict E.164 phone normalisation, area-code timezone derivation, per-org de-duplication, real contact editing, org-wide DNC, and the category/contact_status labels.",
         "excludes": "Per-call state (call_status, call_count, last_called_at) written by the dial loop — see domain.dialer. Campaign membership — see domain.campaigns.",
         "answers": [
@@ -226,7 +239,7 @@
         "type": "domain",
         "status": "canonical",
         "owner": "maintainer",
-        "tokens_est": 3269,
+        "tokens_est": 3645,
         "covers": "GHL (GoHighLevel) connect/disconnect, the org_integrations token store, the crm_sync_jobs push outbox (worker included), and the pull-import (contacts by tag/search) path.",
         "excludes": "The disposition/wrap-up UI that will call enqueue_crm_job -- not yet built (see Not covered here).",
         "answers": [
@@ -236,7 +249,7 @@
           "what payload shape does enqueue_crm_job expect for a disposition job",
           "how does Import from GHL dedupe, and what happens if you run it twice",
           "why does tag-based import page every contact instead of filtering server-side",
-          "how is a retried sync job kept from double-posting a note"
+          "how is a retried sync job kept from double-posting a note; what makes a GHL-tagged contact do-not-call or paused"
         ],
         "populated": true
       },
@@ -248,7 +261,7 @@
         "type": "domain",
         "status": "canonical",
         "owner": "maintainer",
-        "tokens_est": 5856,
+        "tokens_est": 21528,
         "covers": "The org-scoped dial engine (TASK-P2-E2): rolling-refill queueing over campaign_leads, single-winner claim resolution, AMD triage, conference bridging, wrap_up, and the webhook that drives it.",
         "excludes": "Telnyx API wrappers, number purchase/search and WebRTC credentials (domain.telephony); campaign and lead list construction (domain.campaigns); the agent's own WebRTC leg (E3, not built yet); dispositions (Phase 3, not built yet).",
         "answers": [
@@ -268,7 +281,7 @@
         "type": "domain",
         "status": "canonical",
         "owner": "maintainer",
-        "tokens_est": 2144,
+        "tokens_est": 2170,
         "covers": "The per-org disposition list, the submit_disposition RPC and its lead/DNC/GHL-outbox effects, and the Settings editor.",
         "excludes": "The mandatory wrap-up FORM UI (components/dialer/**, eng2/E4's territory, not built as of this doc) → domain.dialer. The GHL push worker's own step-by-step mechanics (upsert/note/tag/task/dnd, retry/backoff) → domain.crm. Recording/transcription (not built) → domain.dialer's Not covered.",
         "answers": [
@@ -287,7 +300,7 @@
         "type": "domain",
         "status": "canonical",
         "owner": "maintainer",
-        "tokens_est": 4711,
+        "tokens_est": 5847,
         "covers": "Telnyx account wiring (API key, the two connection IDs, webhook auth), phone-number search/purchase/listing, and the agent's WebRTC browser leg.",
         "excludes": "The parallel dial loop itself — batching, AMD, call_logs state machine, Redis session state — see .brain/domains/dialer.md.",
         "answers": [
@@ -298,7 +311,8 @@
           "how is the Telnyx webhook signature verified, and when does it fail open",
           "how does a user buy a phone number and where is it stored",
           "how does the agent's leg join the conference",
-          "what legacy Telnyx env var names are still honoured"
+          "what legacy Telnyx env var names are still honoured",
+          "where does the monthly spend cap / low-balance alert get its numbers from"
         ],
         "populated": true
       },
@@ -418,7 +432,7 @@
         "type": "memory",
         "status": "canonical",
         "owner": "maintainer",
-        "tokens_est": 1917,
+        "tokens_est": 4914,
         "covers": "Work in progress and the near-term backlog",
         "excludes": "Shipped decisions (see mem.decisions), defects in shipped behaviour (see mem.known-issues)",
         "answers": [
@@ -427,7 +441,7 @@
           "what is the current backlog",
           "what should I pick up next"
         ],
-        "populated": true
+        "populated": false
       },
       {
         "id": "mem.decisions",
@@ -437,7 +451,7 @@
         "type": "memory",
         "status": "canonical",
         "owner": "maintainer",
-        "tokens_est": 6425,
+        "tokens_est": 40396,
         "covers": "Decisions made, alternatives considered, what superseded what",
         "excludes": "Work in progress (see mem.active-work), currently-broken behaviour (see mem.known-issues)",
         "answers": [
@@ -458,7 +472,7 @@
         "type": "memory",
         "status": "canonical",
         "owner": "maintainer",
-        "tokens_est": 6769,
+        "tokens_est": 29785,
         "covers": "Known defects, traps, and behaviour that looks intentional but is not",
         "excludes": "Planned work (see mem.active-work), deliberate design choices (see mem.decisions)",
         "answers": [
@@ -478,7 +492,7 @@
         "type": "memory",
         "status": "canonical",
         "owner": "maintainer",
-        "tokens_est": 2719,
+        "tokens_est": 4449,
         "covers": "Non-obvious things learned from working in this repository",
         "excludes": "Current defects (see mem.known-issues), the reasoning behind choices (see mem.decisions)",
         "answers": [
@@ -580,7 +594,7 @@
         "type": "tooling",
         "status": "canonical",
         "owner": "maintainer",
-        "tokens_est": 1204,
+        "tokens_est": 2197,
         "covers": "Every external service this system depends on, how it is configured, and how it fails",
         "excludes": "Commands (see tool.registry), Telnyx call semantics (see domain.telephony), variable-by-variable detail (see docs/reference/environment-variables.md)",
         "answers": [
@@ -902,6 +916,21 @@
         "kind": "sources"
       },
       {
+        "from": "arch.service-map",
+        "to": "mem.known-issues",
+        "kind": "links"
+      },
+      {
+        "from": "arch.service-map",
+        "to": "tool.integrations",
+        "kind": "links"
+      },
+      {
+        "from": "arch.service-map",
+        "to": "domain.analytics",
+        "kind": "links"
+      },
+      {
         "from": "arch.system-overview",
         "to": "arch.dependency-graph",
         "kind": "related"
@@ -1018,6 +1047,16 @@
       },
       {
         "from": "domain.analytics",
+        "to": "supabase/migrations/20260925020000_call_legs_duration_conversations.sql",
+        "kind": "sources"
+      },
+      {
+        "from": "domain.analytics",
+        "to": "supabase/migrations/20260926080300_dialer_analytics_v2.sql",
+        "kind": "sources"
+      },
+      {
+        "from": "domain.analytics",
         "to": "supabase/functions/dashboard-stats/index.ts",
         "kind": "sources"
       },
@@ -1038,12 +1077,32 @@
       },
       {
         "from": "domain.analytics",
+        "to": "supabase/functions/_shared/analytics-core.ts",
+        "kind": "sources"
+      },
+      {
+        "from": "domain.analytics",
         "to": "apps/web/src/components/Dashboard.tsx",
         "kind": "sources"
       },
       {
         "from": "domain.analytics",
         "to": "apps/web/src/components/Analytics.tsx",
+        "kind": "sources"
+      },
+      {
+        "from": "domain.analytics",
+        "to": "apps/web/src/components/Team.tsx",
+        "kind": "sources"
+      },
+      {
+        "from": "domain.analytics",
+        "to": "supabase/migrations/20260925080100_team_view.sql",
+        "kind": "sources"
+      },
+      {
+        "from": "domain.analytics",
+        "to": "supabase/migrations/20260927144900_org_timezone_and_stats_fixes.sql",
         "kind": "sources"
       },
       {
@@ -1098,12 +1157,82 @@
       },
       {
         "from": "domain.auth",
+        "to": "supabase/functions/_shared/audit.ts",
+        "kind": "sources"
+      },
+      {
+        "from": "domain.auth",
+        "to": "supabase/functions/org-audit-log/index.ts",
+        "kind": "sources"
+      },
+      {
+        "from": "domain.auth",
         "to": "supabase/config.toml",
         "kind": "sources"
       },
       {
         "from": "domain.auth",
         "to": "supabase/migrations/*.sql",
+        "kind": "sources"
+      },
+      {
+        "from": "domain.auth",
+        "to": "supabase/migrations/20260927080000_org_audit_log.sql",
+        "kind": "sources"
+      },
+      {
+        "from": "domain.auth",
+        "to": "supabase/migrations/20260927080002_org_member_offboarding.sql",
+        "kind": "sources"
+      },
+      {
+        "from": "domain.auth",
+        "to": "supabase/migrations/20260927160550_manager_role_and_pods.sql",
+        "kind": "sources"
+      },
+      {
+        "from": "domain.auth",
+        "to": "supabase/migrations/20260927164816_goals_and_broadcasts.sql",
+        "kind": "sources"
+      },
+      {
+        "from": "domain.auth",
+        "to": "supabase/migrations/20260927171355_call_review_library.sql",
+        "kind": "sources"
+      },
+      {
+        "from": "domain.auth",
+        "to": "supabase/migrations/20260927171444_supervisor_alerts_and_pod_scoping.sql",
+        "kind": "sources"
+      },
+      {
+        "from": "domain.auth",
+        "to": "supabase/functions/_shared/pod-scope.ts",
+        "kind": "sources"
+      },
+      {
+        "from": "domain.auth",
+        "to": "supabase/functions/recording-url/index.ts",
+        "kind": "sources"
+      },
+      {
+        "from": "domain.auth",
+        "to": "supabase/functions/_shared/recording-core.ts",
+        "kind": "sources"
+      },
+      {
+        "from": "domain.auth",
+        "to": "supabase/functions/_shared/telnyx-org-context.ts",
+        "kind": "sources"
+      },
+      {
+        "from": "domain.auth",
+        "to": "supabase/functions/org-members/index.ts",
+        "kind": "sources"
+      },
+      {
+        "from": "domain.auth",
+        "to": "supabase/functions/_shared/dialer-engine.ts",
         "kind": "sources"
       },
       {
@@ -1118,17 +1247,22 @@
       },
       {
         "from": "domain.auth",
+        "to": "apps/web/src/components/Settings.tsx",
+        "kind": "sources"
+      },
+      {
+        "from": "domain.auth",
         "to": "mem.known-issues",
         "kind": "links"
       },
       {
         "from": "domain.auth",
-        "to": "domain.telephony",
+        "to": "domain.dialer",
         "kind": "links"
       },
       {
         "from": "domain.auth",
-        "to": "domain.dialer",
+        "to": "domain.telephony",
         "kind": "links"
       },
       {
@@ -1183,7 +1317,22 @@
       },
       {
         "from": "domain.campaigns",
+        "to": "supabase/migrations/20260926070003_lead_assignment_control.sql",
+        "kind": "sources"
+      },
+      {
+        "from": "domain.campaigns",
+        "to": "supabase/migrations/20260926070005_high_lines_drop_guard.sql",
+        "kind": "sources"
+      },
+      {
+        "from": "domain.campaigns",
         "to": "supabase/functions/dialer-session-start/index.ts",
+        "kind": "sources"
+      },
+      {
+        "from": "domain.campaigns",
+        "to": "supabase/functions/campaign-lines-guard-check/index.ts",
         "kind": "sources"
       },
       {
@@ -1363,6 +1512,11 @@
       },
       {
         "from": "domain.crm",
+        "to": "supabase/migrations/20260925080000_ghl_blocked_tags.sql",
+        "kind": "sources"
+      },
+      {
+        "from": "domain.crm",
         "to": "supabase/migrations/20260924001600_contacts_ghl_contact_id.sql",
         "kind": "sources"
       },
@@ -1443,12 +1597,77 @@
       },
       {
         "from": "domain.dialer",
+        "to": "supabase/functions/_shared/coaching-core.ts",
+        "kind": "sources"
+      },
+      {
+        "from": "domain.dialer",
+        "to": "supabase/functions/_shared/transfer-core.ts",
+        "kind": "sources"
+      },
+      {
+        "from": "domain.dialer",
         "to": "supabase/functions/dialer-session-*/**",
         "kind": "sources"
       },
       {
         "from": "domain.dialer",
+        "to": "supabase/functions/dialer-coaching/**",
+        "kind": "sources"
+      },
+      {
+        "from": "domain.dialer",
+        "to": "supabase/functions/dialer-transfer/**",
+        "kind": "sources"
+      },
+      {
+        "from": "domain.dialer",
+        "to": "supabase/functions/dialer-sweeper/**",
+        "kind": "sources"
+      },
+      {
+        "from": "domain.dialer",
+        "to": "supabase/functions/reliability-alert-check/**",
+        "kind": "sources"
+      },
+      {
+        "from": "domain.dialer",
         "to": "supabase/functions/telnyx-webhook/**",
+        "kind": "sources"
+      },
+      {
+        "from": "domain.dialer",
+        "to": "supabase/migrations/20260926070000_live_coaching.sql",
+        "kind": "sources"
+      },
+      {
+        "from": "domain.dialer",
+        "to": "supabase/migrations/20260926070003_lead_assignment_control.sql",
+        "kind": "sources"
+      },
+      {
+        "from": "domain.dialer",
+        "to": "supabase/migrations/20260926070005_high_lines_drop_guard.sql",
+        "kind": "sources"
+      },
+      {
+        "from": "domain.dialer",
+        "to": "supabase/migrations/20260926080400_reliability_alerts.sql",
+        "kind": "sources"
+      },
+      {
+        "from": "domain.dialer",
+        "to": "supabase/migrations/20260927151747_supervisor_controls.sql",
+        "kind": "sources"
+      },
+      {
+        "from": "domain.dialer",
+        "to": "supabase/migrations/20260927171444_supervisor_alerts_and_pod_scoping.sql",
+        "kind": "sources"
+      },
+      {
+        "from": "domain.dialer",
+        "to": "supabase/functions/_shared/pod-scope.ts",
         "kind": "sources"
       },
       {
@@ -1488,6 +1707,11 @@
       },
       {
         "from": "domain.dialer",
+        "to": "supabase/migrations/20260925020000_call_legs_duration_conversations.sql",
+        "kind": "sources"
+      },
+      {
+        "from": "domain.dialer",
         "to": "scripts/dev/dialer-sim.ts",
         "kind": "sources"
       },
@@ -1498,7 +1722,27 @@
       },
       {
         "from": "domain.dialer",
+        "to": "domain.analytics",
+        "kind": "links"
+      },
+      {
+        "from": "domain.dialer",
+        "to": "domain.contacts",
+        "kind": "links"
+      },
+      {
+        "from": "domain.dialer",
+        "to": "mem.decisions",
+        "kind": "links"
+      },
+      {
+        "from": "domain.dialer",
         "to": "mem.known-issues",
+        "kind": "links"
+      },
+      {
+        "from": "domain.dialer",
+        "to": "tool.integrations",
         "kind": "links"
       },
       {
@@ -1609,6 +1853,26 @@
       {
         "from": "domain.telephony",
         "to": "apps/web/src/contexts/PhoneNumbersContext.tsx",
+        "kind": "sources"
+      },
+      {
+        "from": "domain.telephony",
+        "to": "supabase/functions/_shared/spend-gate.ts",
+        "kind": "sources"
+      },
+      {
+        "from": "domain.telephony",
+        "to": "supabase/migrations/20260925080200_spend_cap_balance_alert.sql",
+        "kind": "sources"
+      },
+      {
+        "from": "domain.telephony",
+        "to": "supabase/functions/number-health-check/index.ts",
+        "kind": "sources"
+      },
+      {
+        "from": "domain.telephony",
+        "to": "supabase/migrations/20260926080600_number_health.sql",
         "kind": "sources"
       },
       {
@@ -1758,6 +2022,36 @@
       },
       {
         "from": "mem.active-work",
+        "to": "domain.dialer",
+        "kind": "related"
+      },
+      {
+        "from": "mem.active-work",
+        "to": "domain.telephony",
+        "kind": "related"
+      },
+      {
+        "from": "mem.active-work",
+        "to": "domain.analytics",
+        "kind": "related"
+      },
+      {
+        "from": "mem.active-work",
+        "to": "domain.auth",
+        "kind": "links"
+      },
+      {
+        "from": "mem.active-work",
+        "to": "domain.dialer",
+        "kind": "links"
+      },
+      {
+        "from": "mem.active-work",
+        "to": "mem.known-issues",
+        "kind": "links"
+      },
+      {
+        "from": "mem.active-work",
         "to": "ctx.product",
         "kind": "links"
       },
@@ -1770,6 +2064,21 @@
         "from": "mem.decisions",
         "to": "mem.known-issues",
         "kind": "related"
+      },
+      {
+        "from": "mem.decisions",
+        "to": "domain.analytics",
+        "kind": "links"
+      },
+      {
+        "from": "mem.decisions",
+        "to": "domain.contacts",
+        "kind": "links"
+      },
+      {
+        "from": "mem.decisions",
+        "to": "mem.known-issues",
+        "kind": "links"
       },
       {
         "from": "mem.known-issues",
@@ -1807,6 +2116,16 @@
         "kind": "links"
       },
       {
+        "from": "mem.known-issues",
+        "to": "domain.contacts",
+        "kind": "links"
+      },
+      {
+        "from": "mem.known-issues",
+        "to": "arch.service-map",
+        "kind": "links"
+      },
+      {
         "from": "mem.lessons",
         "to": "mem.known-issues",
         "kind": "related"
@@ -1815,6 +2134,11 @@
         "from": "mem.lessons",
         "to": "mem.decisions",
         "kind": "related"
+      },
+      {
+        "from": "mem.lessons",
+        "to": "mem.known-issues",
+        "kind": "links"
       },
       {
         "from": "tool.integrations",
@@ -1840,6 +2164,56 @@
         "from": "tool.integrations",
         "to": "apps/web/src/lib/**",
         "kind": "sources"
+      },
+      {
+        "from": "tool.integrations",
+        "to": "supabase/functions/ghl-*/index.ts",
+        "kind": "sources"
+      },
+      {
+        "from": "tool.integrations",
+        "to": "supabase/functions/dialer-sweeper/index.ts",
+        "kind": "sources"
+      },
+      {
+        "from": "tool.integrations",
+        "to": "supabase/functions/ghl-sync-worker/index.ts",
+        "kind": "sources"
+      },
+      {
+        "from": "tool.integrations",
+        "to": "supabase/functions/spend-alert-check/index.ts",
+        "kind": "sources"
+      },
+      {
+        "from": "tool.integrations",
+        "to": "supabase/functions/recording-retention/index.ts",
+        "kind": "sources"
+      },
+      {
+        "from": "tool.integrations",
+        "to": "supabase/functions/ghl-pull-worker/index.ts",
+        "kind": "sources"
+      },
+      {
+        "from": "tool.integrations",
+        "to": "supabase/functions/reliability-alert-check/index.ts",
+        "kind": "sources"
+      },
+      {
+        "from": "tool.integrations",
+        "to": "supabase/functions/campaign-lines-guard-check/index.ts",
+        "kind": "sources"
+      },
+      {
+        "from": "tool.integrations",
+        "to": "supabase/functions/number-health-check/index.ts",
+        "kind": "sources"
+      },
+      {
+        "from": "tool.integrations",
+        "to": "arch.service-map",
+        "kind": "links"
       },
       {
         "from": "tool.integrations",
@@ -1920,14 +2294,21 @@
       {
         "question": "how are campaigns and campaign_leads scoped per user",
         "id": "domain.campaigns",
-        "tokens_est": 3424,
+        "tokens_est": 4740,
+        "kind": "document",
+        "anchor": null
+      },
+      {
+        "question": "how are daily goals set and resolved (org vs pod vs agent level)",
+        "id": "domain.auth",
+        "tokens_est": 13159,
         "kind": "document",
         "anchor": null
       },
       {
         "question": "how are in-app notifications listed, counted and marked read",
         "id": "domain.analytics",
-        "tokens_est": 2340,
+        "tokens_est": 6553,
         "kind": "document",
         "anchor": null
       },
@@ -1990,7 +2371,7 @@
       {
         "question": "how do I test the dial engine without a real Telnyx account",
         "id": "domain.dialer",
-        "tokens_est": 5856,
+        "tokens_est": 21528,
         "kind": "document",
         "anchor": null
       },
@@ -2016,44 +2397,58 @@
         "anchor": null
       },
       {
+        "question": "how do team broadcasts work, who can post one, and how does an agent dismiss it",
+        "id": "domain.auth",
+        "tokens_est": 13159,
+        "kind": "document",
+        "anchor": null
+      },
+      {
         "question": "how does Import from GHL dedupe, and what happens if you run it twice",
         "id": "domain.crm",
-        "tokens_est": 3269,
+        "tokens_est": 3645,
         "kind": "document",
         "anchor": null
       },
       {
         "question": "how does a disposition affect a lead",
         "id": "domain.dispositions",
-        "tokens_est": 2144,
+        "tokens_est": 2170,
         "kind": "document",
         "anchor": null
       },
       {
         "question": "how does a disposition reach GHL",
         "id": "domain.dispositions",
-        "tokens_est": 2144,
+        "tokens_est": 2170,
         "kind": "document",
         "anchor": null
       },
       {
         "question": "how does a disposition reach GHL, and what runs the worker that pushes it",
         "id": "domain.crm",
-        "tokens_est": 3269,
+        "tokens_est": 3645,
         "kind": "document",
         "anchor": null
       },
       {
         "question": "how does a user buy a phone number and where is it stored",
         "id": "domain.telephony",
-        "tokens_est": 4711,
+        "tokens_est": 5847,
         "kind": "document",
         "anchor": null
       },
       {
         "question": "how does an org connect its GHL sub-account",
         "id": "domain.crm",
-        "tokens_est": 3269,
+        "tokens_est": 3645,
+        "kind": "document",
+        "anchor": null
+      },
+      {
+        "question": "how does an org set its own timezone, and what uses it",
+        "id": "domain.analytics",
+        "tokens_est": 6553,
         "kind": "document",
         "anchor": null
       },
@@ -2067,7 +2462,7 @@
       {
         "question": "how does org/tenant scoping work now",
         "id": "domain.auth",
-        "tokens_est": 3880,
+        "tokens_est": 13159,
         "kind": "document",
         "anchor": null
       },
@@ -2081,21 +2476,21 @@
       {
         "question": "how does the agent's leg join the conference",
         "id": "domain.telephony",
-        "tokens_est": 4711,
+        "tokens_est": 5847,
         "kind": "document",
         "anchor": null
       },
       {
         "question": "how does the dialer pick which answered call the agent talks to, and what counts as human",
         "id": "domain.dialer",
-        "tokens_est": 5856,
+        "tokens_est": 21528,
         "kind": "document",
         "anchor": null
       },
       {
         "question": "how does the rolling-refill dial loop work, and what keeps two legs from both winning",
         "id": "domain.dialer",
-        "tokens_est": 5856,
+        "tokens_est": 21528,
         "kind": "document",
         "anchor": null
       },
@@ -2116,49 +2511,49 @@
       {
         "question": "how is a WebRTC token minted for the agent's browser",
         "id": "domain.telephony",
-        "tokens_est": 4711,
+        "tokens_est": 5847,
         "kind": "document",
         "anchor": null
       },
       {
         "question": "how is a phone number validated and where does its timezone come from",
         "id": "domain.contacts",
-        "tokens_est": 3290,
+        "tokens_est": 5430,
         "kind": "document",
         "anchor": null
       },
       {
-        "question": "how is a retried sync job kept from double-posting a note",
+        "question": "how is a retried sync job kept from double-posting a note; what makes a GHL-tagged contact do-not-call or paused",
         "id": "domain.crm",
-        "tokens_est": 3269,
+        "tokens_est": 3645,
         "kind": "document",
         "anchor": null
       },
       {
         "question": "how is a user authenticated when calling an Edge Function",
         "id": "domain.auth",
-        "tokens_est": 3880,
+        "tokens_est": 13159,
         "kind": "document",
         "anchor": null
       },
       {
         "question": "how is live conversations per agent-hour computed",
         "id": "domain.analytics",
-        "tokens_est": 2340,
+        "tokens_est": 6553,
         "kind": "document",
         "anchor": null
       },
       {
         "question": "how is the Telnyx webhook signature verified, and when does it fail open",
         "id": "domain.telephony",
-        "tokens_est": 4711,
+        "tokens_est": 5847,
         "kind": "document",
         "anchor": null
       },
       {
         "question": "how is the weekly summary notification created and when",
         "id": "domain.analytics",
-        "tokens_est": 2340,
+        "tokens_est": 6553,
         "kind": "document",
         "anchor": null
       },
@@ -2186,21 +2581,21 @@
       {
         "question": "is CampaignWithStats a live query or a cached column",
         "id": "domain.campaigns",
-        "tokens_est": 3424,
+        "tokens_est": 4740,
         "kind": "document",
         "anchor": null
       },
       {
         "question": "is the Analytics screen real data or a mock",
         "id": "domain.analytics",
-        "tokens_est": 2340,
+        "tokens_est": 6553,
         "kind": "document",
         "anchor": null
       },
       {
         "question": "is the analytics screen real",
         "id": "mem.known-issues",
-        "tokens_est": 6769,
+        "tokens_est": 29785,
         "kind": "document",
         "anchor": null
       },
@@ -2221,7 +2616,7 @@
       {
         "question": "was Y considered",
         "id": "mem.decisions",
-        "tokens_est": 6425,
+        "tokens_est": 40396,
         "kind": "document",
         "anchor": null
       },
@@ -2242,21 +2637,21 @@
       {
         "question": "what are the RLS helper functions and why do they exist",
         "id": "domain.auth",
-        "tokens_est": 3880,
+        "tokens_est": 13159,
         "kind": "document",
         "anchor": null
       },
       {
         "question": "what are the allowed values of category and contact_status",
         "id": "domain.contacts",
-        "tokens_est": 3290,
+        "tokens_est": 5430,
         "kind": "document",
         "anchor": null
       },
       {
         "question": "what are the canonical contact fields and which one is required",
         "id": "domain.contacts",
-        "tokens_est": 3290,
+        "tokens_est": 5430,
         "kind": "document",
         "anchor": null
       },
@@ -2277,14 +2672,14 @@
       {
         "question": "what are the known issues",
         "id": "mem.known-issues",
-        "tokens_est": 6769,
+        "tokens_est": 29785,
         "kind": "document",
         "anchor": null
       },
       {
         "question": "what are the legal campaign status values and who changes them",
         "id": "domain.campaigns",
-        "tokens_est": 3424,
+        "tokens_est": 4740,
         "kind": "document",
         "anchor": null
       },
@@ -2310,6 +2705,13 @@
         "anchor": null
       },
       {
+        "question": "what can a manager role do, and how is their pod scope enforced",
+        "id": "domain.auth",
+        "tokens_est": 13159,
+        "kind": "document",
+        "anchor": null
+      },
+      {
         "question": "what commands are safe to run",
         "id": "gov.tool-output-policy",
         "tokens_est": 1059,
@@ -2324,6 +2726,13 @@
         "anchor": null
       },
       {
+        "question": "what counts as a conversation",
+        "id": "domain.analytics",
+        "tokens_est": 6553,
+        "kind": "document",
+        "anchor": null
+      },
+      {
         "question": "what depends on what",
         "id": "arch.dependency-graph",
         "tokens_est": 1626,
@@ -2333,7 +2742,7 @@
       {
         "question": "what did previous work get wrong",
         "id": "mem.lessons",
-        "tokens_est": 2719,
+        "tokens_est": 4449,
         "kind": "document",
         "anchor": null
       },
@@ -2382,7 +2791,7 @@
       {
         "question": "what does dialer-session-start actually receive from a campaign",
         "id": "domain.campaigns",
-        "tokens_est": 3424,
+        "tokens_est": 4740,
         "kind": "document",
         "anchor": null
       },
@@ -2403,7 +2812,7 @@
       {
         "question": "what endpoints exist",
         "id": "arch.service-map",
-        "tokens_est": 1555,
+        "tokens_est": 3785,
         "kind": "document",
         "anchor": null
       },
@@ -2417,7 +2826,7 @@
       {
         "question": "what exactly counts as a duplicate on import",
         "id": "domain.contacts",
-        "tokens_est": 3290,
+        "tokens_est": 5430,
         "kind": "document",
         "anchor": null
       },
@@ -2431,7 +2840,7 @@
       {
         "question": "what external services does this use",
         "id": "tool.integrations",
-        "tokens_est": 1204,
+        "tokens_est": 2197,
         "kind": "document",
         "anchor": null
       },
@@ -2452,14 +2861,14 @@
       {
         "question": "what happened to the Redis-based engine / dialer_sessions / call_logs",
         "id": "domain.dialer",
-        "tokens_est": 5856,
+        "tokens_est": 21528,
         "kind": "document",
         "anchor": null
       },
       {
         "question": "what happens if Redis goes down",
         "id": "tool.integrations",
-        "tokens_est": 1204,
+        "tokens_est": 2197,
         "kind": "document",
         "anchor": null
       },
@@ -2471,37 +2880,44 @@
         "anchor": null
       },
       {
+        "question": "what happens when a team member is disabled or removed",
+        "id": "domain.auth",
+        "tokens_est": 13159,
+        "kind": "document",
+        "anchor": null
+      },
+      {
         "question": "what happens when part of an import fails",
         "id": "domain.contacts",
-        "tokens_est": 3290,
+        "tokens_est": 5430,
         "kind": "document",
         "anchor": null
       },
       {
         "question": "what have we learned the hard way",
         "id": "mem.lessons",
-        "tokens_est": 2719,
+        "tokens_est": 4449,
         "kind": "document",
         "anchor": null
       },
       {
         "question": "what is being worked on",
         "id": "mem.active-work",
-        "tokens_est": 1917,
+        "tokens_est": 4914,
         "kind": "document",
         "anchor": null
       },
       {
         "question": "what is broken",
         "id": "mem.known-issues",
-        "tokens_est": 6769,
+        "tokens_est": 29785,
         "kind": "document",
         "anchor": null
       },
       {
         "question": "what is in flight",
         "id": "mem.active-work",
-        "tokens_est": 1917,
+        "tokens_est": 4914,
         "kind": "document",
         "anchor": null
       },
@@ -2522,7 +2938,7 @@
       {
         "question": "what is surprising about this codebase",
         "id": "mem.lessons",
-        "tokens_est": 2719,
+        "tokens_est": 4449,
         "kind": "document",
         "anchor": null
       },
@@ -2550,28 +2966,35 @@
       {
         "question": "what is the current backlog",
         "id": "mem.active-work",
-        "tokens_est": 1917,
+        "tokens_est": 4914,
+        "kind": "document",
+        "anchor": null
+      },
+      {
+        "question": "what is the difference between org_members.pod_id and org_manager_pods",
+        "id": "domain.auth",
+        "tokens_est": 13159,
         "kind": "document",
         "anchor": null
       },
       {
         "question": "what legacy Telnyx env var names are still honoured",
         "id": "domain.telephony",
-        "tokens_est": 4711,
+        "tokens_est": 5847,
         "kind": "document",
         "anchor": null
       },
       {
         "question": "what mistakes should I avoid here",
         "id": "mem.lessons",
-        "tokens_est": 2719,
+        "tokens_est": 4449,
         "kind": "document",
         "anchor": null
       },
       {
         "question": "what payload shape does enqueue_crm_job expect for a disposition job",
         "id": "domain.crm",
-        "tokens_est": 3269,
+        "tokens_est": 3645,
         "kind": "document",
         "anchor": null
       },
@@ -2585,21 +3008,21 @@
       {
         "question": "what should I not trust",
         "id": "mem.known-issues",
-        "tokens_est": 6769,
+        "tokens_est": 29785,
         "kind": "document",
         "anchor": null
       },
       {
         "question": "what should I pick up next",
         "id": "mem.active-work",
-        "tokens_est": 1917,
+        "tokens_est": 4914,
         "kind": "document",
         "anchor": null
       },
       {
         "question": "what third-party accounts do I need",
         "id": "tool.integrations",
-        "tokens_est": 1204,
+        "tokens_est": 2197,
         "kind": "document",
         "anchor": null
       },
@@ -2613,7 +3036,7 @@
       {
         "question": "what user metadata is collected at signup",
         "id": "domain.auth",
-        "tokens_est": 3880,
+        "tokens_est": 13159,
         "kind": "document",
         "anchor": null
       },
@@ -2662,14 +3085,14 @@
       {
         "question": "where do I add a new endpoint",
         "id": "arch.service-map",
-        "tokens_est": 1555,
+        "tokens_est": 3785,
         "kind": "document",
         "anchor": null
       },
       {
         "question": "where do I configure Telnyx",
         "id": "tool.integrations",
-        "tokens_est": 1204,
+        "tokens_est": 2197,
         "kind": "document",
         "anchor": null
       },
@@ -2683,21 +3106,21 @@
       {
         "question": "where do dispositions get seeded for a new org",
         "id": "domain.dispositions",
-        "tokens_est": 2144,
+        "tokens_est": 2170,
         "kind": "document",
         "anchor": null
       },
       {
-        "question": "where do the Dashboard's Calls Today / Connect Rate / Talk Time numbers come from",
+        "question": "where do the Dashboard's Calls Today / Connect Rate / Talk Time / Conversations-per-hr numbers come from",
         "id": "domain.analytics",
-        "tokens_est": 2340,
+        "tokens_est": 6553,
         "kind": "document",
         "anchor": null
       },
       {
         "question": "where does SUPABASE_SERVICE_ROLE_KEY bypass RLS",
         "id": "domain.auth",
-        "tokens_est": 3880,
+        "tokens_est": 13159,
         "kind": "document",
         "anchor": null
       },
@@ -2719,6 +3142,27 @@
         "question": "where does knowledge live",
         "id": "meta.brain-readme",
         "tokens_est": 2029,
+        "kind": "document",
+        "anchor": null
+      },
+      {
+        "question": "where does the Team page's Attendance tab / Fairness metric / My stats self-view get its data",
+        "id": "domain.analytics",
+        "tokens_est": 6553,
+        "kind": "document",
+        "anchor": null
+      },
+      {
+        "question": "where does the manager Team page's live board / per-intern daily table get its data",
+        "id": "domain.analytics",
+        "tokens_est": 6553,
+        "kind": "document",
+        "anchor": null
+      },
+      {
+        "question": "where does the monthly spend cap / low-balance alert get its numbers from",
+        "id": "domain.telephony",
+        "tokens_est": 5847,
         "kind": "document",
         "anchor": null
       },
@@ -2746,14 +3190,14 @@
       {
         "question": "where is the GHL Private Integration Token stored",
         "id": "domain.crm",
-        "tokens_est": 3269,
+        "tokens_est": 3645,
         "kind": "document",
         "anchor": null
       },
       {
         "question": "where is the Telnyx API reference",
         "id": "tool.integrations",
-        "tokens_est": 1204,
+        "tokens_est": 2197,
         "kind": "document",
         "anchor": null
       },
@@ -2767,14 +3211,14 @@
       {
         "question": "which Edge Functions are actually unauthenticated",
         "id": "domain.auth",
-        "tokens_est": 3880,
+        "tokens_est": 13159,
         "kind": "document",
         "anchor": null
       },
       {
         "question": "which Telnyx connection ID goes in which env var",
         "id": "domain.telephony",
-        "tokens_est": 4711,
+        "tokens_est": 5847,
         "kind": "document",
         "anchor": null
       },
@@ -2795,42 +3239,49 @@
       {
         "question": "which function handles X",
         "id": "arch.service-map",
-        "tokens_est": 1555,
+        "tokens_est": 3785,
         "kind": "document",
         "anchor": null
       },
       {
         "question": "which function is the biggest risk to change",
         "id": "arch.service-map",
-        "tokens_est": 1555,
+        "tokens_est": 3785,
         "kind": "document",
         "anchor": null
       },
       {
         "question": "which functions are authenticated",
         "id": "arch.service-map",
-        "tokens_est": 1555,
+        "tokens_est": 3785,
         "kind": "document",
         "anchor": null
       },
       {
         "question": "which tables have RLS and what do the policies allow",
         "id": "domain.auth",
-        "tokens_est": 3880,
+        "tokens_est": 13159,
         "kind": "document",
         "anchor": null
       },
       {
         "question": "who can edit a contact, and who can only mark it DNC",
         "id": "domain.contacts",
-        "tokens_est": 3290,
+        "tokens_est": 5430,
         "kind": "document",
         "anchor": null
       },
       {
         "question": "who can edit the disposition list",
         "id": "domain.dispositions",
-        "tokens_est": 2144,
+        "tokens_est": 2170,
+        "kind": "document",
+        "anchor": null
+      },
+      {
+        "question": "who can see/flag/comment on/score a call recording, and how is a manager's pod scope enforced there",
+        "id": "domain.auth",
+        "tokens_est": 13159,
         "kind": "document",
         "anchor": null
       },
@@ -2838,6 +3289,13 @@
         "question": "who do I ask about the dialer",
         "id": "gov.ownership",
         "tokens_est": 761,
+        "kind": "document",
+        "anchor": null
+      },
+      {
+        "question": "who gets notified about a supervisor alert, and can a person opt out of one",
+        "id": "domain.auth",
+        "tokens_est": 13159,
         "kind": "document",
         "anchor": null
       },
@@ -2865,84 +3323,91 @@
       {
         "question": "why are CSV parse and import two separate requests",
         "id": "domain.contacts",
-        "tokens_est": 3290,
+        "tokens_est": 5430,
         "kind": "document",
         "anchor": null
       },
       {
         "question": "why did a dial session stall, or stay in wrap_up, or a webhook replay break it",
         "id": "domain.dialer",
-        "tokens_est": 5856,
+        "tokens_est": 21528,
         "kind": "document",
         "anchor": null
       },
       {
         "question": "why do queued / completed / passthrough counts never move",
         "id": "domain.campaigns",
-        "tokens_est": 3424,
+        "tokens_est": 4740,
         "kind": "document",
         "anchor": null
       },
       {
         "question": "why do we do it this way",
         "id": "mem.decisions",
-        "tokens_est": 6425,
+        "tokens_est": 40396,
         "kind": "document",
         "anchor": null
       },
       {
         "question": "why does Start Parallel Dial fail with 'No dialable contacts in campaign'",
         "id": "domain.campaigns",
-        "tokens_est": 3424,
+        "tokens_est": 4740,
         "kind": "document",
         "anchor": null
       },
       {
         "question": "why does dialing fail with TELNYX_CONNECTION_REJECTED / INVALID_TELNYX_CONNECTION",
         "id": "domain.telephony",
-        "tokens_est": 4711,
+        "tokens_est": 5847,
         "kind": "document",
         "anchor": null
       },
       {
         "question": "why does tag-based import page every contact instead of filtering server-side",
         "id": "domain.crm",
-        "tokens_est": 3269,
+        "tokens_est": 3645,
+        "kind": "document",
+        "anchor": null
+      },
+      {
+        "question": "why does telnyx-org-context.ts have its own separate OrgRole type instead of importing _shared/auth.ts's",
+        "id": "domain.auth",
+        "tokens_est": 13159,
         "kind": "document",
         "anchor": null
       },
       {
         "question": "why does the 'Contacted' filter never match anything",
         "id": "domain.contacts",
-        "tokens_est": 3290,
+        "tokens_est": 5430,
         "kind": "document",
         "anchor": null
       },
       {
         "question": "why is components/ui not formatted",
         "id": "mem.decisions",
-        "tokens_est": 6425,
+        "tokens_est": 40396,
         "kind": "document",
         "anchor": null
       },
       {
         "question": "why is telnyx-webhook deployed with --no-verify-jwt",
         "id": "domain.telephony",
-        "tokens_est": 4711,
+        "tokens_est": 5847,
         "kind": "document",
         "anchor": null
       },
       {
         "question": "why is the webhook unauthenticated",
         "id": "mem.decisions",
-        "tokens_est": 6425,
+        "tokens_est": 40396,
         "kind": "document",
         "anchor": null
       },
       {
         "question": "why is there a Redis and a Postgres",
         "id": "mem.decisions",
-        "tokens_est": 6425,
+        "tokens_est": 40396,
         "kind": "document",
         "anchor": null
       },
@@ -2956,21 +3421,28 @@
       {
         "question": "why is this behaving strangely",
         "id": "mem.known-issues",
-        "tokens_est": 6769,
+        "tokens_est": 29785,
         "kind": "document",
         "anchor": null
       },
       {
         "question": "why is verify_jwt false on almost every function",
         "id": "domain.auth",
-        "tokens_est": 3880,
+        "tokens_est": 13159,
+        "kind": "document",
+        "anchor": null
+      },
+      {
+        "question": "why was Talk Time always 0m",
+        "id": "domain.analytics",
+        "tokens_est": 6553,
         "kind": "document",
         "anchor": null
       },
       {
         "question": "why was X chosen",
         "id": "mem.decisions",
-        "tokens_est": 6425,
+        "tokens_est": 40396,
         "kind": "document",
         "anchor": null
       }

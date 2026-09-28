@@ -1,10 +1,11 @@
 import { useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { type OrgMember, type AssignLeadsFilter } from '@/lib/api';
+import { type OrgMember, type AssignLeadsFilter, countLeadsAssignedToOthers } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { useFocusTrap } from '@/hooks/useFocusTrap';
 
 interface AssignLeadsModalProps {
+  campaignId: string;
   members: OrgMember[];
   onClose: () => void;
   onAssign: (agentId: string | null, filter: AssignLeadsFilter) => Promise<void>;
@@ -19,7 +20,12 @@ function memberName(m: OrgMember): string {
  *  the "Assigned Agents" checkbox list above; this is the per-lead/slice half. Re-running with a
  *  different agent/filter reassigns/repartitions -- each call is independent, so "one or more
  *  interns" for a slice means running this once per intern with a non-overlapping filter. */
-export function AssignLeadsModal({ members, onClose, onAssign }: AssignLeadsModalProps) {
+export function AssignLeadsModal({
+  campaignId,
+  members,
+  onClose,
+  onAssign,
+}: AssignLeadsModalProps) {
   const modalRef = useRef<HTMLDivElement>(null);
   useFocusTrap(modalRef, true);
 
@@ -32,6 +38,12 @@ export function AssignLeadsModal({ members, onClose, onAssign }: AssignLeadsModa
   const [submitting, setSubmitting] = useState(false);
   const [unassigning, setUnassigning] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [checkingReassign, setCheckingReassign] = useState(false);
+  /** EC-5: once set, "Assign" shows a confirm step instead of submitting immediately. Cleared by
+   *  every input change below so a stale count is never confirmed against a different selection. */
+  const [reassignWarningCount, setReassignWarningCount] = useState<number | null>(null);
+
+  const clearReassignWarning = () => setReassignWarningCount(null);
 
   const buildFilter = (): AssignLeadsFilter | null => {
     if (mode === 'all') return { mode: 'all' };
@@ -59,14 +71,7 @@ export function AssignLeadsModal({ members, onClose, onAssign }: AssignLeadsModa
     return { mode: 'tag', tag: tag.trim() };
   };
 
-  const handleSubmit = async (unassign: boolean) => {
-    setError(null);
-    if (!unassign && !agentId) {
-      setError('Pick a teammate to assign to.');
-      return;
-    }
-    const filter = buildFilter();
-    if (!filter) return;
+  const doSubmit = async (unassign: boolean, filter: AssignLeadsFilter) => {
     setSubmitting(true);
     setUnassigning(unassign);
     try {
@@ -78,6 +83,46 @@ export function AssignLeadsModal({ members, onClose, onAssign }: AssignLeadsModa
       setSubmitting(false);
       setUnassigning(false);
     }
+  };
+
+  const handleUnassign = () => {
+    setError(null);
+    const filter = buildFilter();
+    if (!filter) return;
+    void doSubmit(true, filter);
+  };
+
+  /** EC-5 (edge-cases-v2.md): `assign_campaign_leads` treats an already-assigned queued lead in
+   *  scope as a valid candidate just like an unassigned one -- silently re-owning it. First click
+   *  previews the impact and, if it would reassign anyone else's leads, stops and shows the
+   *  count instead of submitting; the confirm click (reassignWarningCount already set) submits. */
+  const handleAssignClick = async () => {
+    setError(null);
+    if (!agentId) {
+      setError('Pick a teammate to assign to.');
+      return;
+    }
+    const filter = buildFilter();
+    if (!filter) return;
+
+    if (reassignWarningCount !== null) {
+      void doSubmit(false, filter);
+      return;
+    }
+
+    setCheckingReassign(true);
+    try {
+      const count = await countLeadsAssignedToOthers(campaignId, filter, agentId);
+      if (count > 0) {
+        setReassignWarningCount(count);
+        return;
+      }
+    } catch {
+      // Best-effort preview only -- never block the real assign on a failed count query.
+    } finally {
+      setCheckingReassign(false);
+    }
+    void doSubmit(false, filter);
   };
 
   return createPortal(
@@ -107,7 +152,10 @@ export function AssignLeadsModal({ members, onClose, onAssign }: AssignLeadsModa
             <p className="text-meta text-text-secondary mb-1.5">Assign to</p>
             <select
               value={agentId}
-              onChange={(e) => setAgentId(e.target.value)}
+              onChange={(e) => {
+                setAgentId(e.target.value);
+                clearReassignWarning();
+              }}
               className="w-full rounded-app-md bg-surface-2 border border-border-subtle px-3 py-2 text-text-primary focus:outline-none focus:border-accent-to"
             >
               <option value="">Choose a teammate…</option>
@@ -130,7 +178,10 @@ export function AssignLeadsModal({ members, onClose, onAssign }: AssignLeadsModa
                   type="button"
                   size="sm"
                   variant={mode === m ? 'fe-secondary' : 'fe-ghost'}
-                  onClick={() => setMode(m)}
+                  onClick={() => {
+                    setMode(m);
+                    clearReassignWarning();
+                  }}
                 >
                   {m === 'all'
                     ? 'All queued'
@@ -148,7 +199,10 @@ export function AssignLeadsModal({ members, onClose, onAssign }: AssignLeadsModa
                   type="number"
                   min={1}
                   value={rangeStart}
-                  onChange={(e) => setRangeStart(e.target.value)}
+                  onChange={(e) => {
+                    setRangeStart(e.target.value);
+                    clearReassignWarning();
+                  }}
                   className="w-20 rounded-app-md bg-surface-2 border border-border-subtle px-3 py-2 text-text-primary focus:outline-none focus:border-accent-to"
                   aria-label="Range start"
                 />
@@ -157,7 +211,10 @@ export function AssignLeadsModal({ members, onClose, onAssign }: AssignLeadsModa
                   type="number"
                   min={1}
                   value={rangeEnd}
-                  onChange={(e) => setRangeEnd(e.target.value)}
+                  onChange={(e) => {
+                    setRangeEnd(e.target.value);
+                    clearReassignWarning();
+                  }}
                   className="w-20 rounded-app-md bg-surface-2 border border-border-subtle px-3 py-2 text-text-primary focus:outline-none focus:border-accent-to"
                   aria-label="Range end"
                 />
@@ -171,7 +228,10 @@ export function AssignLeadsModal({ members, onClose, onAssign }: AssignLeadsModa
                   min={1}
                   max={100}
                   value={percentage}
-                  onChange={(e) => setPercentage(e.target.value)}
+                  onChange={(e) => {
+                    setPercentage(e.target.value);
+                    clearReassignWarning();
+                  }}
                   className="w-20 rounded-app-md bg-surface-2 border border-border-subtle px-3 py-2 text-text-primary focus:outline-none focus:border-accent-to"
                   aria-label="Percentage"
                 />
@@ -183,19 +243,23 @@ export function AssignLeadsModal({ members, onClose, onAssign }: AssignLeadsModa
                 type="text"
                 placeholder="e.g. hot"
                 value={tag}
-                onChange={(e) => setTag(e.target.value)}
+                onChange={(e) => {
+                  setTag(e.target.value);
+                  clearReassignWarning();
+                }}
                 className="w-full rounded-app-md bg-surface-2 border border-border-subtle px-3 py-2 text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent-to"
               />
             )}
           </div>
+          {reassignWarningCount !== null && reassignWarningCount > 0 && (
+            <div className="rounded-app-md bg-warning-soft border border-warning/30 text-warning text-body p-3">
+              {reassignWarningCount} of these leads {reassignWarningCount === 1 ? 'is' : 'are'}{' '}
+              currently assigned to other agents and will be reassigned.
+            </div>
+          )}
         </div>
         <div className="border-t border-border-subtle p-4 flex justify-between gap-2">
-          <Button
-            type="button"
-            variant="fe-ghost"
-            onClick={() => void handleSubmit(true)}
-            disabled={submitting}
-          >
+          <Button type="button" variant="fe-ghost" onClick={handleUnassign} disabled={submitting}>
             {unassigning ? 'Unassigning…' : 'Unassign this slice'}
           </Button>
           <div className="flex gap-2">
@@ -205,10 +269,16 @@ export function AssignLeadsModal({ members, onClose, onAssign }: AssignLeadsModa
             <Button
               type="button"
               variant="primary"
-              onClick={() => void handleSubmit(false)}
-              disabled={submitting}
+              onClick={() => void handleAssignClick()}
+              disabled={submitting || checkingReassign}
             >
-              {submitting && !unassigning ? 'Assigning…' : 'Assign'}
+              {checkingReassign
+                ? 'Checking…'
+                : submitting && !unassigning
+                  ? 'Assigning…'
+                  : reassignWarningCount !== null
+                    ? `Yes, reassign ${reassignWarningCount} lead${reassignWarningCount === 1 ? '' : 's'}`
+                    : 'Assign'}
             </Button>
           </div>
         </div>

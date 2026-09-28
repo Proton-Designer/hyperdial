@@ -26,7 +26,7 @@ answers:
 covers: "Runtime data movement: the dial loop, the realtime event stream, the store split, and the CSV import path"
 excludes: "Which module imports which (see arch.dependency-graph), per-domain rules (see .brain/domains/)"
 tokens_est: 1919
-source_hash: 51366bbf18bc58f9ad5dc05f7bf51ec11bbbe78788311a4703676433c9ae0ccd
+source_hash: 52a6d31998ab5f32b97d169adf5f9faa420b28127028e7d11025773ccec1bdd5
 ---
 
 # Data Flows

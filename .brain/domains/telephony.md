@@ -36,8 +36,8 @@ answers:
   - "where does the monthly spend cap / low-balance alert get its numbers from"
 covers: "Telnyx account wiring (API key, the two connection IDs, webhook auth), phone-number search/purchase/listing, and the agent's WebRTC browser leg."
 excludes: "The parallel dial loop itself — batching, AMD, call_logs state machine, Redis session state — see .brain/domains/dialer.md."
-tokens_est: 4950
-source_hash: 78daf13b97a103b3216ecf343d9601a80c65e084bb3bd44bc3d0546b54c528d0
+tokens_est: 5847
+source_hash: 0f194f48c73dd577da03c0953d550614f506982223bf56f3b14b87727dcea950
 ---
 
 # Telephony

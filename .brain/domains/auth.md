@@ -52,8 +52,8 @@ answers:
   - "who gets notified about a supervisor alert, and can a person opt out of one"
 covers: "Supabase auth, session handling, the two-layer Edge Function authorization model, service-role usage, org tenancy, the per-table RLS inventory, member offboarding (disable/remove/restore), the manager role's server-enforced pod scope, daily goals + team broadcasts, and the call review library's access model."
 excludes: "Telnyx webhook signature mechanics (domain.telephony); dial-loop ownership checks (domain.dialer)."
-tokens_est: 7550
-source_hash: b8d3fd311248f16889b10f531365423ec36488c32179946d09361fb21c5ce0c5
+tokens_est: 13159
+source_hash: 4d7703735bb4e96851ac8de24182d08cfdff2130305f3895edac643baf48c8b9
 ---
 
 # Auth & Access Control

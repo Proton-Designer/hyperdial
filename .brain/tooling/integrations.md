@@ -30,8 +30,8 @@ answers:
   - "where is the Telnyx API reference"
 covers: "Every external service this system depends on, how it is configured, and how it fails"
 excludes: "Commands (see tool.registry), Telnyx call semantics (see domain.telephony), variable-by-variable detail (see docs/reference/environment-variables.md)"
-tokens_est: 2100
-source_hash: d4b4e79a54ac884b9b9fe6639e702c06d5ceeabb839ad59782d3cb9385314d65
+tokens_est: 2197
+source_hash: 1373b8e10dc68e5e226841592c7136ee99f51aecbf237343ce0d89a98a0bc6ee
 ---
 
 # Integrations

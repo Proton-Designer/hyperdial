@@ -36,8 +36,8 @@ answers:
   - "how is a retried sync job kept from double-posting a note; what makes a GHL-tagged contact do-not-call or paused"
 covers: "GHL (GoHighLevel) connect/disconnect, the org_integrations token store, the crm_sync_jobs push outbox (worker included), and the pull-import (contacts by tag/search) path."
 excludes: "The disposition/wrap-up UI that will call enqueue_crm_job -- not yet built (see Not covered here)."
-tokens_est: 3269
-source_hash: 540085dae43bafb688ef37a220a540af5348d3551e81f4515b0971603e0960c1
+tokens_est: 3645
+source_hash: 141fc54175e78893f5924f8c666bd88e87c54d6f72c3958e4966e48762c5e7e6
 ---
 
 # CRM Sync (GHL)

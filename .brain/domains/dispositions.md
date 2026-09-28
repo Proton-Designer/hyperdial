@@ -22,8 +22,8 @@ answers:
   - "who can edit the disposition list"
 covers: "The per-org disposition list, the submit_disposition RPC and its lead/DNC/GHL-outbox effects, and the Settings editor."
 excludes: "The mandatory wrap-up FORM UI (components/dialer/**, eng2/E4's territory, not built as of this doc) → domain.dialer. The GHL push worker's own step-by-step mechanics (upsert/note/tag/task/dnd, retry/backoff) → domain.crm. Recording/transcription (not built) → domain.dialer's Not covered."
-tokens_est: 2144
-source_hash: f09bbe3ac2ad26156db6a3af17e4ce29492ec2f753bd70234d8978c74d15febe
+tokens_est: 2170
+source_hash: 9960e76e70c591bb95e69ebd3f9e8d65f23711842d458b747ee02991f656ae09
 ---
 
 # Dispositions

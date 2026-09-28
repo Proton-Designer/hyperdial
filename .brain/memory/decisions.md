@@ -18,7 +18,7 @@ answers:
   - "why is components/ui not formatted"
 covers: "Decisions made, alternatives considered, what superseded what"
 excludes: "Work in progress (see mem.active-work), currently-broken behaviour (see mem.known-issues)"
-tokens_est: 6425
+tokens_est: 40396
 ---
 
 # Decisions
@@ -1856,3 +1856,64 @@ update today, despite pre-seeded `AUDIT_ACTION_LABELS` entries for some that not
 fired). Extending the client-only `logAuditEvent`/`org-audit-log` POST route to carry a
 `targetId` for this one new case would have been a scope-creeping fix to a pre-existing gap this
 task didn't introduce and wasn't asked to close.
+
+## MISSION-5, six non-obvious decisions from across the mission (TASK-M5-D1 sweep)
+
+**Decision 1 -- leg-scoped takeover via `coaching_sessions.taken_over_leg_id`, not a session-scoped
+flag (TASK-M5-N1).** A supervisor's takeover applies to the ONE call-leg being coached, not to the
+target's whole dial session -- the target session keeps running underneath (still `dialing`/queued
+into its next contact) while the takeover leg is live. A session-level "taken over" boolean would
+have had to explain what happens to every OTHER leg on that session; scoping the flag to the leg
+itself needs no such story, and `reap_stale_coaching_sessions`'s own staleness check (which would
+otherwise treat a never-`on_call`-again taken-over row as stuck) is guarded off that same column
+rather than a second state.
+
+**Decision 2 -- territory rules match with AND semantics across state and area code, not OR
+(TASK-M5-C4).** A rule with both a state list and an area-code list narrows to leads matching BOTH,
+not either -- read directly from the task's own worked example and confirmed against
+`resolve_territory_assignments`'s matcher. OR would make a rule with two independent restriction
+lists behave like two separate broader rules, which defeats the point of specifying both.
+
+**Decision 3 -- round-robin distribution runs off a statement-level trigger plus a locked rotation
+cursor, not a row-level trigger or client-side round-robin (TASK-M5-N4).** `AFTER INSERT ... FOR
+EACH STATEMENT ... REFERENCING NEW TABLE` is the only shape that sees every entry path in one pass
+(CSV import, `addLeadsToCampaign`'s raw upsert, a manual per-row insert) without N separate trigger
+firings each re-locking the same cursor row. The cursor itself is `for update`-locked to serialize
+fair advancement across concurrent batches -- but that lock only protects the cursor's own
+advancement, not the rows the caller is about to write; a real TOCTOU steal race was found in
+review (the shared `round_robin_assign_leads` never re-checked `assigned_agent_id is null` at
+write time, so `rebalance_campaign_distribution`'s user-invoked, pre-existing-row path could steal
+a lead an agent had just been assigned by a concurrent call) and fixed same-day (`1c8fdaf`) by
+adding the guard to both the CTE and the UPDATE's own WHERE, not by trusting the trigger's own safe
+call path to imply the RPC's was too.
+
+**Decision 4 -- three separate "never block the write" trigger guards (E7/N4/G6), each wrapping its
+OWN body in `exception when others then raise warning ...; return new/null`, rather than one shared
+wrapper.** All three guards sit on a hot or webhook-driven write path (`call_legs` disposition
+writes, `campaign_leads` inserts, `inbound_calls` ending) where a guard's own failure must never
+roll back or block the real write it's attached to. A shared wrapper function can't itself be the
+trigger (Postgres trigger functions have a fixed signature/calling convention per table), so each
+guard repeats the same three-line pattern rather than factoring it out -- a real, intentional
+duplication, not an oversight. TASK-M5-O1 (in progress) is adding a `private.trigger_failures` log
+insert inside each guard's own exception branch, in its own nested `begin/exception`, specifically
+so a failed log write can never itself escalate and defeat the guard's whole purpose.
+
+**Decision 5 -- manager read-only contact access is keyed on `campaign_leads.assigned_agent_id`,
+not `campaign_agents` membership (TASK-M5-P1).** Managers aren't attached to campaigns at all --
+only agents are, via `campaign_agents` -- so the only way to express "a manager can see a contact
+if an agent in their pod is working it" is through the assignment row, not campaign membership.
+`private.manager_has_contact_access(p_org, p_contact_id)` checks `has_org_role(manager)` AND an
+EXISTS over `campaign_leads` joined to `is_agent_in_callers_pod_scope` on `assigned_agent_id`, wired
+into both the `contacts` SELECT policy and `private.contact_read_access` as a new OR-branch, every
+existing owner/admin/agent branch left byte-identical, read-only for managers (explicitly called
+out in the migration's own header as a lead decision, not to be re-litigated).
+
+**Decision 6 -- disposition quality checks (E7) trigger on `call_legs`, not on `dispositions`
+(TASK-M5-E7).** `dispositions` is the per-org CATALOG of disposition types (seeded once, rarely
+touched) -- a trigger there would fire on catalog edits, never on an actual agent disposing of a
+call. The real per-call event lives on `call_legs` (`disposition_id`/`notes`/`callback_at`/
+`dispositioned_at`, all written by `submit_disposition`), so a trigger on THAT table's UPDATE is the
+only shape that fires exactly once per real disposition and, as a side effect, "catches every write
+path" for free -- `submit_disposition` is the sole function that ever sets `dispositioned_at`, so
+one trigger there covers the ordinary agent path, a re-submit/retry, and N1's own supervisor-
+takeover disposition path, with no separate wiring needed for any of them.

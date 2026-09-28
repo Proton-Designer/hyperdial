@@ -18,7 +18,7 @@ answers:
   - "what should I not trust"
 covers: "Known defects, traps, and behaviour that looks intentional but is not"
 excludes: "Planned work (see mem.active-work), deliberate design choices (see mem.decisions)"
-tokens_est: 6769
+tokens_est: 29785
 ---
 
 # Known Issues
@@ -1306,6 +1306,45 @@ now()+delay_minutes offset") does not exist in either of its two callers
   once actually reading the current code instead of trusting the older doc. decisions.md's
   Decision 5 text itself was left as a historical record (it was correct AT THE TIME) rather than
   rewritten.
+
+---
+
+## 39. Mission-5 R3 re-audit (`audit/M5/edge-cases-v2.md`): 4 real, still-open gaps
+
+Found during eng1's R3 re-audit of all 20 original Mission-4/5 edge cases plus 4 new ones the
+Mission-5 features themselves introduced. 15 of the 20 original are confirmed HANDLED (not
+repeated here); these 4 are genuinely still open as of 2026-09-28 (see `.brain/memory/
+active-work.md`'s Mission-5 section for status/ownership of each):
+
+- **EC-9 (live-board polling, not Realtime)**: `team_live_board`/G6's inbox/E2's power-hour board
+  all poll on a timer rather than subscribing to Supabase Realtime — correct and by design (see
+  `mem.decisions`), but means every open tab re-queries on its own cadence rather than sharing one
+  push. Not a bug; tracked as Realtime S1 in `mem.active-work`.
+- **EC-13 (leaderboard/power-hour fairness by line count)**: both the Team leaderboard and E2's
+  power-hour board rank agents by raw dial/connect counts with no normalization for how many lines
+  an agent is dialing on — an agent on more lines can out-rank a genuinely more effective agent on
+  fewer. Fix size M, not started.
+- **EC-1 (WebRTC teardown on offboard)**: offboarding a member (TASK-M5-A3) does not proactively
+  tear down their WebRTC credential/registration — a disabled/removed member's browser tab, if
+  still open, can keep an already-established Telnyx registration alive until it naturally expires
+  or the tab is closed. `release_agent_queued_leads`/callback reassignment (A3) both correctly move
+  their LEADS; nothing moves their live WebRTC session. Fix size S-M, not started.
+- **EC-8 (mid-coach transfer re-validation)**: `coaching_sessions_one_active_per_target` (B2)
+  correctly enforces one coach per target CALL, but a warm/cold transfer that hands a call off to a
+  different agent mid-coach doesn't re-validate or re-scope the coaching session against the NEW
+  target — a coaching session started against agent A can end up silently watching agent B's leg
+  post-transfer with no re-check that the coaching manager's pod scope still covers B. Fix size S,
+  not started.
+
+**EC-5 (two managers reassigning the same leads is last-writer-wins, silently)** was also flagged
+UNKNOWN by the same re-audit, and is NOT listed as open here — TASK-M5-D1 Part B (same task as this
+sweep) adds a client-side warning ("N of these leads are currently assigned to other agents and
+will be reassigned") before confirming an assign action. The underlying mechanism is unchanged:
+`assign_campaign_leads` mode `'all'`'s own `candidates` CTE is deliberately NOT unassigned-only (an
+already-assigned lead in the caller's pod scope is a valid candidate), so two managers can still
+race with no server-side arbitration — they now each see a warning first, which is a UX mitigation,
+not a fix. See `mem.decisions` and `mem.active-work` if a future task wants real conflict
+prevention (an optimistic-lock/version check inside the RPC itself).
 
 ---
 
