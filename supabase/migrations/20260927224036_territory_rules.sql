@@ -429,7 +429,13 @@ create function private.resolve_territory_assignments(
   p_campaign_id uuid,
   p_reassign boolean
 )
-returns table (lead_id uuid, resolved_agent_id uuid, rule_id uuid)
+-- Review fix (eng2, audit/M5-C4/review-eng2.md SHOULD): `target_pod_id` is exposed here (already
+-- carried through `agent_target`, just not selected out) so `preview_territory_rules` can roll a
+-- pod-targeted rule's leads up into one "-> pod Y" line instead of fragmenting them into one row
+-- per pod member -- guaranteed null for an agent-targeted rule by org_territory_rules' own CHECK
+-- (target_type='agent' implies target_pod_id is null), so a plain `is not null` test is enough to
+-- tell the two cases apart downstream.
+returns table (lead_id uuid, resolved_agent_id uuid, target_pod_id uuid, rule_id uuid)
 language sql
 stable
 security definer
@@ -455,13 +461,19 @@ as $$
     select ls.lead_id, ls.position, r.id as rule_id, r.target_type, r.target_agent_id, r.target_pod_id
     from lead_state ls
     left join lateral (
+      -- Review fix (eng2, audit/M5-C4/review-eng2.md BLOCKER): a null field is "don't care", a
+      -- SET field is a real filter -- so a rule with BOTH match_state and match_area_code set
+      -- must match BOTH (AND/narrowing), not either one alone (the old OR let a
+      -- both-fields-set rule silently match on state alone, widening instead of narrowing --
+      -- e.g. match_state=TX + match_area_code=512 matched every TX lead, not just 512). The
+      -- final line is redundant with the table's own CHECK constraint (at least one of the two
+      -- is always set) but kept explicit so this WHERE clause is correct on its own terms.
       select r2.id, r2.target_type, r2.target_agent_id, r2.target_pod_id
       from public.org_territory_rules r2
       where r2.org_id = p_org
-        and (
-          (r2.match_state is not null and r2.match_state = ls.state)
-          or (r2.match_area_code is not null and r2.match_area_code = ls.area_code)
-        )
+        and (r2.match_state is null or r2.match_state = ls.state)
+        and (r2.match_area_code is null or r2.match_area_code = ls.area_code)
+        and (r2.match_state is not null or r2.match_area_code is not null)
       order by r2.priority asc, r2.created_at asc
       limit 1
     ) r on true
@@ -514,6 +526,11 @@ as $$
   select
     at.lead_id,
     coalesce(at.direct_agent_id, rp.agent_id) as resolved_agent_id,
+    -- Only meaningful (non-null) when the winning rule targeted a pod AND that pod actually
+    -- resolved to a real agent -- an empty/offboarded pod's leads fall through to
+    -- resolved_agent_id is null (the same "unmatched" bucket as no rule matching at all), and
+    -- must NOT show up as a "-> pod Y" preview line with nobody behind it.
+    case when rp.agent_id is not null then at.target_pod_id else null end as target_pod_id,
     at.rule_id
   from agent_target at
   left join resolved_pod rp on rp.lead_id = at.lead_id;
@@ -552,18 +569,44 @@ begin
     raise exception 'only an owner or admin can reassign already-assigned leads';
   end if;
 
+  -- Review fix (eng2, audit/M5-C4/review-eng2.md SHOULD): group by POD when the winning rule
+  -- targeted one (r.target_pod_id is not null, per resolve_territory_assignments' own guard --
+  -- only set when that pod actually resolved to a real agent), not by the individual agent that
+  -- happened to win this round's round-robin slot -- the task's own "N leads -> agent X, M ->
+  -- pod Y, K unmatched" wording is a policy-level rollup, not a preview of the round-robin split.
+  -- The grouping key is computed ONCE (`resolved` below) and grouped on alone -- grouping on
+  -- target_pod_id AND resolved_agent_id together would still fragment a pod's leads back into
+  -- one row per pod member, since each member has a different resolved_agent_id.
   return query
+  with resolved as (
+    select
+      case
+        when r.target_pod_id is not null then 'pod:' || r.target_pod_id::text
+        when r.resolved_agent_id is not null then 'agent:' || r.resolved_agent_id::text
+        else 'unmatched'
+      end as group_key,
+      r.target_pod_id,
+      r.resolved_agent_id
+    from private.resolve_territory_assignments(v_org_id, p_campaign_id, p_reassign) r
+  )
   select
-    case when r.resolved_agent_id is null then 'unmatched' else 'agent' end as target_type,
-    r.resolved_agent_id as target_id,
     case
-      when r.resolved_agent_id is null then 'Unmatched (normal distribution)'
-      else coalesce(nullif(btrim(coalesce(p.first_name, '') || ' ' || coalesce(p.last_name, '')), ''), 'Unnamed teammate')
+      when bool_or(resolved.target_pod_id is not null) then 'pod'
+      when bool_or(resolved.resolved_agent_id is not null) then 'agent'
+      else 'unmatched'
+    end as target_type,
+    coalesce(max(resolved.target_pod_id), max(resolved.resolved_agent_id)) as target_id,
+    case
+      when bool_or(resolved.target_pod_id is not null) then coalesce(max(op.name), 'Unnamed pod')
+      when bool_or(resolved.resolved_agent_id is not null) then
+        coalesce(nullif(btrim(coalesce(max(p.first_name), '') || ' ' || coalesce(max(p.last_name), '')), ''), 'Unnamed teammate')
+      else 'Unmatched (normal distribution)'
     end as target_name,
     count(*)::int as lead_count
-  from private.resolve_territory_assignments(v_org_id, p_campaign_id, p_reassign) r
-  left join public.profiles p on p.user_id = r.resolved_agent_id
-  group by r.resolved_agent_id, p.first_name, p.last_name
+  from resolved
+  left join public.profiles p on resolved.target_pod_id is null and p.user_id = resolved.resolved_agent_id
+  left join public.org_pods op on op.id = resolved.target_pod_id
+  group by resolved.group_key
   order by lead_count desc;
 end;
 $$;
@@ -669,6 +712,7 @@ declare
   v_from_agent_id uuid;
   v_is_owner_admin boolean;
   v_lead_ids uuid[];
+  v_bad_lead_id text;
 begin
   select org_id into v_org_id from public.campaigns where id = p_campaign_id;
   if v_org_id is null then
@@ -713,6 +757,20 @@ begin
   end if;
 
   if v_mode = 'lead_ids' then
+    -- Review fix (eng2, audit/M5-C4/review-eng2.md NIT): validate the shape BEFORE casting, so a
+    -- malformed element raises this function's own clean exception instead of an unhandled
+    -- Postgres "invalid input syntax for type uuid" -- unreachable from apply_territory_rules'
+    -- own resolver (always real uuids), but this mode has no caller-identity restriction of its
+    -- own and is grant-executed to authenticated, so a direct supabase.rpc() call with a bad
+    -- array is a real, reachable path, not a hypothetical one.
+    select elem into v_bad_lead_id
+    from jsonb_array_elements_text(p_filter -> 'lead_ids') as elem
+    where elem !~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+    limit 1;
+    if v_bad_lead_id is not null then
+      raise exception 'p_filter.lead_ids contains a malformed id: %', v_bad_lead_id;
+    end if;
+
     select array_agg((elem)::uuid) into v_lead_ids
     from jsonb_array_elements_text(p_filter -> 'lead_ids') as elem;
     if v_lead_ids is null or array_length(v_lead_ids, 1) is null then

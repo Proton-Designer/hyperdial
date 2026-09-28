@@ -2924,8 +2924,12 @@ export async function reorderTerritoryRules(ruleIds: string[]): Promise<void> {
   if (error) throw new Error(error.message);
 }
 
+/** 'pod' (review fix, audit/M5-C4/review-eng2.md SHOULD): a pod-targeted rule's leads roll up
+ *  into ONE "-> pod Y" row (target_id is the pod id) instead of fragmenting into one row per pod
+ *  member -- preview_territory_rules' own SQL only sets this when the pod actually resolved to a
+ *  real agent; an empty/offboarded pod's leads are 'unmatched', same as no rule matching at all. */
 export interface TerritoryPreviewRow {
-  target_type: 'agent' | 'unmatched';
+  target_type: 'agent' | 'pod' | 'unmatched';
   target_id: string | null;
   target_name: string;
   lead_count: number;
