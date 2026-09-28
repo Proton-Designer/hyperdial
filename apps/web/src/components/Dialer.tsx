@@ -16,6 +16,7 @@ import { ManualDialPanel } from './dialer/ManualDialPanel';
 import { HotkeyHelpOverlay } from './dialer/HotkeyHelpOverlay';
 import { MyGoalHeader } from '@/components/goals/MyGoalHeader';
 import { BroadcastBanner } from '@/components/goals/BroadcastBanner';
+import { PowerHourLiveBanner } from '@/components/power-hour/PowerHourLiveBanner';
 import { isTypingTarget } from '@/lib/keyboard';
 import {
   getActiveDialerSession,
@@ -960,6 +961,9 @@ function DialerBody({
           <MyGoalHeader />
         </div>
         <BroadcastBanner />
+        {/* MISSION-5 TASK-M5-E2: compact live power-hour board, same self-contained/renders-
+            nothing-when-idle shape as the two above. */}
+        <PowerHourLiveBanner />
         {pendingInboundCall && (
           <IncomingCallBanner
             fromE164={pendingInboundCall.fromE164}

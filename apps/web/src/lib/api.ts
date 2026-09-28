@@ -5255,3 +5255,147 @@ export async function setSharedInboxSettings(settings: SharedInboxSettings): Pro
   });
   if (error) throw new Error(error.message);
 }
+
+// --- MISSION-5 TASK-M5-E2: power hour / call blitz with a live sprint board. ---
+
+export type PowerHourScope = 'org' | 'pod';
+export type PowerHourMetric = 'conversations' | 'connects' | 'appointments';
+
+export interface PowerHour {
+  id: string;
+  orgId: string;
+  name: string;
+  createdBy: string | null;
+  startsAt: string;
+  endsAt: string;
+  scope: PowerHourScope;
+  podId: string | null;
+  metric: PowerHourMetric;
+  target: number | null;
+  cancelledAt: string | null;
+  createdAt: string;
+}
+
+export type PowerHourStatus = 'upcoming' | 'live' | 'ended' | 'cancelled';
+
+/** Status is derived client-side from starts_at/ends_at/cancelled_at vs "now" -- see
+ *  audit/M5-E2/notes.md's own "Status" section for why this isn't a stored/generated column. */
+export function powerHourStatus(p: PowerHour, now: Date = new Date()): PowerHourStatus {
+  if (p.cancelledAt) return 'cancelled';
+  const t = now.getTime();
+  if (t < new Date(p.startsAt).getTime()) return 'upcoming';
+  if (t < new Date(p.endsAt).getTime()) return 'live';
+  return 'ended';
+}
+
+function mapPowerHourRow(r: {
+  id: string;
+  org_id: string;
+  name: string;
+  created_by: string | null;
+  starts_at: string;
+  ends_at: string;
+  scope: PowerHourScope;
+  pod_id: string | null;
+  metric: PowerHourMetric;
+  target: number | null;
+  cancelled_at: string | null;
+  created_at: string;
+}): PowerHour {
+  return {
+    id: r.id,
+    orgId: r.org_id,
+    name: r.name,
+    createdBy: r.created_by,
+    startsAt: r.starts_at,
+    endsAt: r.ends_at,
+    scope: r.scope,
+    podId: r.pod_id,
+    metric: r.metric,
+    target: r.target,
+    cancelledAt: r.cancelled_at,
+    createdAt: r.created_at,
+  };
+}
+
+/** RLS-scoped read (`power_hours`' own SELECT policy -- see the migration's header): any org
+ *  member sees org-wide rows; a pod-scoped row is visible to that pod's own members or a manager
+ *  covering it. No resolver RPC needed (unlike active_org_broadcasts) since the table's own
+ *  policy is already this permissive by design -- participants must be able to discover a
+ *  pod-scoped power hour they're IN. */
+export async function listPowerHours(): Promise<PowerHour[]> {
+  const { data, error } = await supabase
+    .from('power_hours')
+    .select('*')
+    .order('starts_at', { ascending: false })
+    .limit(20);
+  if (error) throw new Error(error.message);
+  return (data ?? []).map(mapPowerHourRow);
+}
+
+export async function createPowerHour(input: {
+  name: string;
+  startsAt: Date;
+  endsAt: Date;
+  scope: PowerHourScope;
+  podId?: string;
+  metric: PowerHourMetric;
+  target?: number;
+}): Promise<string> {
+  const orgId = await getActiveOrgId();
+  const { data, error } = await supabase.rpc('create_power_hour', {
+    p_org: orgId,
+    p_name: input.name,
+    p_starts_at: input.startsAt.toISOString(),
+    p_ends_at: input.endsAt.toISOString(),
+    p_scope: input.scope,
+    p_pod_id: input.scope === 'pod' ? (input.podId ?? null) : null,
+    p_metric: input.metric,
+    p_target: input.target ?? null,
+  });
+  if (error) throw new Error(error.message);
+  return data as string;
+}
+
+export async function cancelPowerHour(id: string): Promise<void> {
+  const orgId = await getActiveOrgId();
+  const { error } = await supabase.rpc('cancel_power_hour', { p_org: orgId, p_id: id });
+  if (error) throw new Error(error.message);
+}
+
+export interface PowerHourBoardRow {
+  agentId: string;
+  name: string;
+  metricCount: number;
+  dials: number;
+  talkMinutes: number;
+  dialingHours: number;
+  metricPerHour: number | null;
+  boardRank: number;
+}
+
+export async function getPowerHourBoard(id: string): Promise<PowerHourBoardRow[]> {
+  const { data, error } = await supabase.rpc('power_hour_board', { p_id: id });
+  if (error) throw new Error(error.message);
+  return (
+    (data ?? []) as Array<{
+      agent_id: string;
+      name: string;
+      metric_count: number;
+      dials: number;
+      talk_minutes: number;
+      dialing_hours: number;
+      metric_per_hour: number | null;
+      board_rank: number;
+    }>
+  ).map((r) => ({
+    agentId: r.agent_id,
+    name: r.name,
+    metricCount: r.metric_count,
+    dials: r.dials,
+    talkMinutes: r.talk_minutes,
+    dialingHours: r.dialing_hours,
+    metricPerHour: r.metric_per_hour,
+    boardRank: r.board_rank,
+  }));
+}

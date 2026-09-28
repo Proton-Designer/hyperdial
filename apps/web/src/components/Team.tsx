@@ -38,6 +38,7 @@ import { Button } from '@/components/ui/button';
 import { useFocusTrap } from '@/hooks/useFocusTrap';
 import { TeamGoalsAndBroadcastPanel } from '@/components/goals/TeamGoalsAndBroadcastPanel';
 import { TeamGoalAttainment } from '@/components/goals/TeamGoalAttainment';
+import { PowerHourPanel } from '@/components/power-hour/PowerHourPanel';
 import { OnboardingChecklistPanel } from '@/components/onboarding/OnboardingChecklistPanel';
 import { AgentSchedulesPanel } from '@/components/schedules/AgentSchedulesPanel';
 
@@ -1138,6 +1139,9 @@ export function Team() {
         <AttendanceTab orgTz={orgTz} />
       ) : (
         <>
+          {/* MISSION-5 TASK-M5-E2: power hour / call blitz, same server-enforced-scope shape. */}
+          <PowerHourPanel />
+
           {/* MISSION-5 TASK-M5-A6: goals + broadcasts. Server-enforced pod scoping (no client-side
               role/pod-scope filtering here -- see the panel's own header comment). */}
           <TeamGoalsAndBroadcastPanel />
