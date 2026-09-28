@@ -55,7 +55,7 @@ own RLS policies** — "When you make a single change to a table with 100
 subscribed users, Realtime performs 100 authorization checks — one per user"
 (supabase.com/docs/guides/realtime/postgres-changes). There is no
 `security definer`-style bypass: Realtime evaluates the subscribing client's
-*actual* row-level SELECT policy on the underlying table, at the moment of
+_actual_ row-level SELECT policy on the underlying table, at the moment of
 authorization, using that client's own JWT/claims — exactly the mechanism RLS
 already uses for a direct `select`, and completely separate from whatever an
 RPC's plpgsql body decides to filter.
@@ -79,7 +79,7 @@ today a manager's Realtime subscription to `dial_sessions` or
 `agent_state_events` would silently receive **zero events, for every agent,
 including their own pod** — not a pod-scope leak, the opposite failure: total
 blackout for the one role this board most needs to serve, since `team_live_
-board`'s RPC is the *only* thing today that lets a manager see pod-scoped
+board`'s RPC is the _only_ thing today that lets a manager see pod-scoped
 session data, and Realtime does not route through it.
 
 `coaching_sessions` is the one table in this set already fixed for this,
@@ -93,9 +93,9 @@ create policy "owner or admin see all coaching_sessions, a manager sees their ow
 ```
 
 That's a `manager_id = auth.uid()` self-scope, not a pod-scope — coincidentally
-correct for coaching (a manager only ever sees sessions *they* started) but
-not the pattern the live board needs (a manager needs to see *agents in their
-pod*, not rows *they themselves* wrote).
+correct for coaching (a manager only ever sees sessions _they_ started) but
+not the pattern the live board needs (a manager needs to see _agents in their
+pod_, not rows _they themselves_ wrote).
 
 **So moving `dial_sessions`/`agent_state_events` to Realtime is not just "turn
 on replication" — it requires a new pod-scoped manager SELECT policy on each
@@ -169,7 +169,7 @@ distinct `.update()` call sites touching this table). A single agent running
 5 lines mid-batch can produce several `dial_sessions` writes per second, each
 one fanning out to every subscribed manager (§4). This is the dialer engine's
 own write path (`.brain`'s own hard rule: "changes are never local, four
-functions depend on it") — Realtime adds *read* fan-out on top of an
+functions depend on it") — Realtime adds _read_ fan-out on top of an
 already-hot write path; it changes nothing about the writes themselves, but
 turning up subscriber count directly multiplies authorization-check load on
 that same hot path.
@@ -189,7 +189,7 @@ row with a real state but a blank/stale contact name for one round trip. Two
 honest options, not a chosen fix: (a) treat the event purely as an
 **invalidation signal** ("something changed, re-fetch `team_live_board` now"
 — keeps the RPC as the one source of joined shape, Realtime only replaces the
-5s *timer* with an event-driven trigger — this is the low-risk option and
+5s _timer_ with an event-driven trigger — this is the low-risk option and
 should be the actual v1 scope, not "subscribe to raw rows and render them"),
 or (b) have the client denormalize using its own already-fetched
 members/campaigns/pods maps and accept the one-event lag on brand-new joins
@@ -199,7 +199,7 @@ denormalization logic.
 
 **Socket drop / fallback.** Task requirement: L1's poll must stay as the
 fallback, not be deleted. `useVisibilityPacedPolling` already has the right
-shape for this — the Realtime subscription becomes the *fast path*, and the
+shape for this — the Realtime subscription becomes the _fast path_, and the
 existing paced poll keeps running at a **slower** base interval (e.g. 30-60s
 instead of 5s) purely as a correctness backstop for a dropped/reconnecting
 socket, rather than being removed. Supabase's client fires a
@@ -222,7 +222,7 @@ wire into "fall back to fast polling until resubscribed" is the channel's own
   publication for the raise-hand/takeover UI (no new RLS needed, already pod-
   correct).
 - **L (large, not recommended yet):** `agent_state_events` on Realtime as a
-  genuine transition *feed* (not just current-state polling) for a future
+  genuine transition _feed_ (not just current-state polling) for a future
   activity-log/timeline UI; would need its own manager RLS policy mirroring
   §2's `dial_sessions` one. Nothing in the current board's requirements needs
   this — listed for completeness, not proposed for this pass.
@@ -231,7 +231,7 @@ wire into "fall back to fast polling until resubscribed" is the channel's own
 
 Whether to spend the review/deploy cost on the manager RLS policy change in
 §2 at all, given the org is currently 30-50 agents (well under every quota in
-§4) and L1 (already deployed) already caps a *hidden* tab's poll cost to
+§4) and L1 (already deployed) already caps a _hidden_ tab's poll cost to
 near-zero. The concrete tradeoff: **S alone** (owner/admin-only Realtime,
 zero new RLS) ships the latency win for the roles that already have full
 table access and costs one migration + one small `Team.tsx` change; **M**
