@@ -133,7 +133,7 @@ begin
     coalesce(a.talk_time_seconds, 0)::int,
     round(coalesce(h.dialing_hours, 0)::numeric, 2),
     round(coalesce(h.line_hours, 0)::numeric, 2),
-    case when coalesce(h.line_hours, 0) >= 0.1
+    case when coalesce(h.dialing_hours, 0) >= 0.1 and coalesce(h.line_hours, 0) > 0 -- E13 review SHOULD: same sample floor as conversations_per_hr
       then round((coalesce(a.conversations, 0)::numeric / h.line_hours) * 100) / 100
       else null
     end
