@@ -62,13 +62,22 @@ security definer
 stable
 set search_path = ''
 as $$
+  -- Lead's own live dry-run catch (BLOCKER): only an ACTIVE campaign_agents row can count
+  -- against scope. is_agent_in_callers_pod_scope unconditionally returns false for a
+  -- disabled/offboarded member (its own `m.status = 'active'` join condition), which used to make
+  -- ANY manager fail this check the moment a disabled agent was still on the campaign's roster --
+  -- including the manager whose own pod that agent used to belong to. A disabled member can never
+  -- receive a lead anyway (round_robin_assign_leads' own eligible CTE already excludes them), so
+  -- they must not count as "an agent outside scope" either.
   select
     private.has_org_role(p_org, array['owner', 'admin'])
     or (
       private.has_org_role(p_org, array['manager'])
       and not exists (
         select 1 from public.campaign_agents ca
+        join public.org_members m on m.org_id = ca.org_id and m.user_id = ca.user_id
         where ca.campaign_id = p_campaign
+          and m.status = 'active'
           and not private.is_agent_in_callers_pod_scope(p_org, ca.user_id)
       )
     );
@@ -386,6 +395,10 @@ begin
     join public.campaigns c on c.id = nr.campaign_id
     where c.distribution_mode = 'round_robin'
   loop
+    -- NIT (lead's dry-run): reset per campaign -- this is logged per campaign below, and the
+    -- declare block's initializer only runs once for the whole trigger firing, not per iteration.
+    v_territory_assigned := 0;
+
     select array_agg(nr.id) into v_batch_ids
     from new_rows nr
     where nr.campaign_id = v_campaign.id and nr.status = 'queued' and nr.assigned_agent_id is null;
