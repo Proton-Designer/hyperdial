@@ -2851,70 +2851,28 @@ export async function assignCampaignLeads(
   return (data as number) ?? 0;
 }
 
-/** TASK-M5-D1 (EC-5): a client-side preview of `assignCampaignLeads`'s own blast radius, for the
- *  "N of these leads are currently assigned to other agents and will be reassigned" warning.
- *  Mirrors `assign_campaign_leads`'s own `ranked`/`candidates` CTEs (queued leads, ranked by
- *  `position`, filtered by mode) closely enough for a warning count -- not a byte-exact
- *  reimplementation, and deliberately NOT a new RPC/migration (this stays a plain read via the
- *  existing owner/admin/manager campaign_leads SELECT policy, same as `listCampaignLeads`'s own
- *  two-query style). `range`/`percentage`'s only sees a lead's rank relative to OTHER queued
- *  leads, exactly like the RPC. */
+/** TASK-M5-D2 (follow-up on D1/EC-5): a preview of `assignCampaignLeads`'s own blast radius, for
+ *  the "N of these leads are currently assigned to other agents and will be reassigned" warning.
+ *  D1's original version counted client-side over a plain `.select()` -- PostgREST's default
+ *  1000-row cap meant a bigger campaign undercounted AND got wrong range/percentage ranks, and
+ *  tag mode sent every contact id in one `.in()` (URL length). Now calls `count_reassign_impact`,
+ *  which shares the EXACT candidate-set logic `assign_campaign_leads` itself uses (a private
+ *  helper both call), so the two can never drift. Name/signature kept identical so
+ *  AssignLeadsModal doesn't change; still fails open (the caller's own try/catch falls through to
+ *  submitting without a warning on any error -- this function itself just throws normally, same
+ *  as every other RPC wrapper here). */
 export async function countLeadsAssignedToOthers(
   campaignId: string,
   filter: AssignLeadsFilter,
   targetAgentId: string | null
 ): Promise<number> {
-  const { data, error } = await supabase
-    .from('campaign_leads')
-    .select('id, position, contact_id, assigned_agent_id')
-    .eq('campaign_id', campaignId)
-    .eq('status', 'queued')
-    .order('position', { ascending: true });
-  if (error) throw new Error(error.message);
-  const rows = (data ?? []) as {
-    id: string;
-    position: number;
-    contact_id: string;
-    assigned_agent_id: string | null;
-  }[];
-  if (rows.length === 0) return 0;
-
-  let tagMatchedIds: Set<string> | null = null;
-  if (filter.mode === 'tag') {
-    const contactIds = [...new Set(rows.map((r) => r.contact_id))];
-    const { data: contactsData, error: contactsError } = await supabase
-      .from('contacts')
-      .select('id, ghl_tags')
-      .in('id', contactIds);
-    if (contactsError) throw new Error(contactsError.message);
-    tagMatchedIds = new Set(
-      ((contactsData ?? []) as { id: string; ghl_tags: string[] | null }[])
-        .filter((c) => (c.ghl_tags ?? []).includes(filter.tag))
-        .map((c) => c.id)
-    );
-  }
-
-  const total = rows.length;
-  const candidates = rows.filter((row, index) => {
-    const rank = index + 1; // matches the RPC's own row_number() over (order by position)
-    switch (filter.mode) {
-      case 'all':
-        return true;
-      case 'range':
-        return rank >= filter.start && rank <= filter.end;
-      case 'percentage':
-        return rank <= Math.ceil((total * filter.percentage) / 100);
-      case 'tag':
-        return tagMatchedIds!.has(row.contact_id);
-      default:
-        // by_current_agent/lead_ids: AssignLeadsModal never sends these, no preview needed.
-        return false;
-    }
+  const { data, error } = await supabase.rpc('count_reassign_impact', {
+    p_campaign_id: campaignId,
+    p_agent_id: targetAgentId,
+    p_filter: filter,
   });
-
-  return candidates.filter(
-    (row) => row.assigned_agent_id !== null && row.assigned_agent_id !== targetAgentId
-  ).length;
+  if (error) throw new Error(error.message);
+  return (data as number) ?? 0;
 }
 
 // --- MISSION-5 TASK-M5-C4: territory rules (route leads by state/area code to an agent or pod) ---
