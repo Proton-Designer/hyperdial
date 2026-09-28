@@ -786,6 +786,12 @@ export interface TeamDailyStatsRow {
   callbacks_set: number;
   talk_time_seconds: number;
   dialing_hours: number;
+  /** MISSION-5 TASK-M5-E13: sum over this agent's dial_sessions of `lines * clipped_session_hours`
+   *  -- dial_sessions.lines is fixed for a session's whole life (verified, see
+   *  audit/M5-E13/notes.md), so this is an exact sum, not an approximation. */
+  line_hours: number;
+  /** Null when line_hours < 0.1 for this agent in range -- same floor as conversations_per_hr. */
+  conversations_per_line_hour: number | null;
 }
 
 /** `start`/`end` are the caller's own resolved window (Team.tsx computes Today/Yesterday in

@@ -414,6 +414,8 @@ type SortKey =
       | 'callbacks_set'
       | 'talk_time_seconds'
       | 'dialing_hours'
+      | 'line_hours'
+      | 'conversations_per_line_hour'
     >
   | 'conversations_per_100_dials';
 
@@ -425,10 +427,12 @@ const COLUMNS: { key: SortKey; label: string }[] = [
   { key: 'conversations', label: 'Conversations' },
   { key: 'conversations_per_hr', label: 'Conv/hr' },
   { key: 'conversations_per_100_dials', label: 'Fairness' },
+  { key: 'conversations_per_line_hour', label: 'Per line-hr' },
   { key: 'wins', label: 'Wins' },
   { key: 'callbacks_set', label: 'Callbacks' },
   { key: 'talk_time_seconds', label: 'Talk time' },
   { key: 'dialing_hours', label: 'Dialing hrs' },
+  { key: 'line_hours', label: 'Line-hrs' },
 ];
 
 /** MISSION-5 TASK-M5-A4: "Fairness" -- conversations per 100 dials, the task's own explicitly
@@ -440,6 +444,11 @@ function fairnessScore(row: { dials: number; conversations: number }): number | 
   if (row.dials <= 0) return null;
   return Math.round((row.conversations / row.dials) * 1000) / 10;
 }
+
+/** MISSION-5 TASK-M5-E13 (EC-13): the "connects-per-line-hour" alternative Fairness's own comment
+ *  above flags as needing a new weighted column -- team_daily_stats now returns it directly
+ *  (line_hours/conversations_per_line_hour), so unlike fairnessScore() this isn't computed
+ *  client-side. */
 
 function formatTalkTime(totalSeconds: number): string {
   const hours = Math.floor(totalSeconds / 3600);
@@ -1099,6 +1108,7 @@ export function Team() {
     const connects = sum((r) => r.connects);
     const conversations = sum((r) => r.conversations);
     const dialingHours = sum((r) => r.dialing_hours);
+    const lineHours = sum((r) => r.line_hours);
     return {
       dials,
       connects,
@@ -1107,10 +1117,13 @@ export function Team() {
       conversationsPerHr:
         dialingHours >= 0.1 ? Math.round((conversations / dialingHours) * 100) / 100 : null,
       fairness: fairnessScore({ dials, conversations }),
+      conversationsPerLineHour:
+        lineHours >= 0.1 ? Math.round((conversations / lineHours) * 100) / 100 : null,
       wins: sum((r) => r.wins),
       callbacksSet: sum((r) => r.callbacks_set),
       talkTimeSeconds: sum((r) => r.talk_time_seconds),
       dialingHours: Math.round(dialingHours * 10) / 10,
+      lineHours: Math.round(lineHours * 10) / 10,
     };
   }, [daily]);
 
@@ -1414,6 +1427,14 @@ export function Team() {
                           >
                             {fairnessScore(row) !== null ? `${fairnessScore(row)}%` : '—'}
                           </td>
+                          <td
+                            className="p-3 text-text-secondary"
+                            title="Conversations per line-hour (lines x dialing hours) -- corrects Fairness for agents dialing more simultaneous lines out-producing on raw counts alone."
+                          >
+                            {row.conversations_per_line_hour !== null
+                              ? row.conversations_per_line_hour.toFixed(2)
+                              : '—'}
+                          </td>
                           <td className="p-3 text-text-secondary">{row.wins}</td>
                           <td className="p-3 text-text-secondary">{row.callbacks_set}</td>
                           <td className="p-3 text-text-secondary">
@@ -1422,6 +1443,7 @@ export function Team() {
                           <td className="p-3 text-text-secondary">
                             {row.dialing_hours.toFixed(1)}
                           </td>
+                          <td className="p-3 text-text-secondary">{row.line_hours.toFixed(1)}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -1441,10 +1463,16 @@ export function Team() {
                           <td className="p-3">
                             {totals.fairness !== null ? `${totals.fairness}%` : '—'}
                           </td>
+                          <td className="p-3">
+                            {totals.conversationsPerLineHour !== null
+                              ? totals.conversationsPerLineHour.toFixed(2)
+                              : '—'}
+                          </td>
                           <td className="p-3">{totals.wins}</td>
                           <td className="p-3">{totals.callbacksSet}</td>
                           <td className="p-3">{formatTalkTime(totals.talkTimeSeconds)}</td>
                           <td className="p-3">{totals.dialingHours.toFixed(1)}</td>
+                          <td className="p-3">{totals.lineHours.toFixed(1)}</td>
                         </tr>
                       </tfoot>
                     )}
@@ -1491,6 +1519,14 @@ export function Team() {
                           </span>
                         </div>
                         <div>
+                          Per line-hr:{' '}
+                          <span className="text-text-primary">
+                            {row.conversations_per_line_hour !== null
+                              ? row.conversations_per_line_hour.toFixed(2)
+                              : '—'}
+                          </span>
+                        </div>
+                        <div>
                           Wins: <span className="text-text-primary">{row.wins}</span>
                         </div>
                         <div>
@@ -1505,6 +1541,10 @@ export function Team() {
                         <div>
                           Dialing hrs:{' '}
                           <span className="text-text-primary">{row.dialing_hours.toFixed(1)}</span>
+                        </div>
+                        <div>
+                          Line-hrs:{' '}
+                          <span className="text-text-primary">{row.line_hours.toFixed(1)}</span>
                         </div>
                       </div>
                     </div>
@@ -1542,6 +1582,14 @@ export function Team() {
                           </span>
                         </div>
                         <div>
+                          Per line-hr:{' '}
+                          <span className="text-text-primary">
+                            {totals.conversationsPerLineHour !== null
+                              ? totals.conversationsPerLineHour.toFixed(2)
+                              : '—'}
+                          </span>
+                        </div>
+                        <div>
                           Wins: <span className="text-text-primary">{totals.wins}</span>
                         </div>
                         <div>
@@ -1559,6 +1607,10 @@ export function Team() {
                           <span className="text-text-primary">
                             {totals.dialingHours.toFixed(1)}
                           </span>
+                        </div>
+                        <div>
+                          Line-hrs:{' '}
+                          <span className="text-text-primary">{totals.lineHours.toFixed(1)}</span>
                         </div>
                       </div>
                     </div>
