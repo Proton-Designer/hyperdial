@@ -96,6 +96,12 @@ import {
   createDisposition,
   updateDisposition,
   deleteDisposition,
+  getOrgQualityChecksEnabled,
+  setOrgQualityChecksEnabled,
+  listDispositionQualityRules,
+  setDispositionQualityRule,
+  type QualityRuleType,
+  type DispositionQualityRule,
   listDncNumbers,
   addDncNumber,
   removeDncNumber,
@@ -2559,6 +2565,64 @@ function DispositionsTab() {
   const [ghlStages, setGhlStages] = useState<GhlPipelineStageOption[] | null>(null);
   const [loadingStages, setLoadingStages] = useState(false);
 
+  // TASK-M5-E7: disposition quality checks. Org-wide master switch + per-disposition rule
+  // toggles -- a completely separate concern from the fields above (key/label/GHL/lead effect),
+  // loaded alongside them but tracked in its own state so a rule save never touches a
+  // disposition's own row.
+  const [qualityEnabled, setQualityEnabled] = useState(false);
+  const [qualityTogglingOrg, setQualityTogglingOrg] = useState(false);
+  const [qualityRules, setQualityRules] = useState<DispositionQualityRule[]>([]);
+  const [expandedQualityId, setExpandedQualityId] = useState<string | null>(null);
+  const [qualitySavingKey, setQualitySavingKey] = useState<string | null>(null);
+
+  const loadQuality = useCallback(() => {
+    Promise.all([getOrgQualityChecksEnabled(), listDispositionQualityRules()])
+      .then(([enabled, rules]) => {
+        setQualityEnabled(enabled);
+        setQualityRules(rules);
+      })
+      .catch((e) => setError(String(e)));
+  }, []);
+
+  useEffect(() => {
+    if (isAdmin) loadQuality();
+  }, [isAdmin, loadQuality]);
+
+  const toggleOrgQualityChecks = async () => {
+    setQualityTogglingOrg(true);
+    setError(null);
+    try {
+      await setOrgQualityChecksEnabled(!qualityEnabled);
+      setQualityEnabled(!qualityEnabled);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setQualityTogglingOrg(false);
+    }
+  };
+
+  const getQualityRule = (dispositionId: string, ruleType: QualityRuleType) =>
+    qualityRules.find((r) => r.disposition_id === dispositionId && r.rule_type === ruleType) ??
+    null;
+
+  const saveQualityRule = async (
+    dispositionId: string,
+    ruleType: QualityRuleType,
+    enabled: boolean,
+    config: Record<string, unknown>
+  ) => {
+    setQualitySavingKey(`${dispositionId}:${ruleType}`);
+    setError(null);
+    try {
+      await setDispositionQualityRule(dispositionId, ruleType, enabled, config);
+      loadQuality();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setQualitySavingKey(null);
+    }
+  };
+
   const handleLoadGhlStages = async () => {
     setLoadingStages(true);
     setError(null);
@@ -2731,6 +2795,27 @@ function DispositionsTab() {
         <Skeleton className="h-[320px] w-full max-w-2xl rounded-app-lg" />
       ) : (
         <div className="bg-surface-1 rounded-app-lg p-6 border border-border-subtle max-w-2xl">
+          <div className="flex items-center justify-between gap-3 mb-4 pb-4 border-b border-border-subtle">
+            <div>
+              <div className="text-sm font-medium text-white">Disposition quality checks</div>
+              <div className="text-xs text-text-secondary mt-0.5">
+                A failed rule never blocks or changes a disposition -- it flags the call for review.
+                OFF by default; configure per-disposition rules with the "Quality" button below once
+                enabled.
+              </div>
+            </div>
+            <button
+              onClick={toggleOrgQualityChecks}
+              disabled={qualityTogglingOrg}
+              className={`px-3 py-1.5 rounded-full text-xs border flex-shrink-0 disabled:opacity-50 ${
+                qualityEnabled
+                  ? 'bg-success/10 text-success border-success/20'
+                  : 'bg-white/5 text-text-secondary border-white/10'
+              }`}
+            >
+              {qualityEnabled ? 'Enabled' : 'Disabled'}
+            </button>
+          </div>
           <div className="space-y-2 mb-4">
             {dispositions.map((d, index) => (
               <div key={d.id} className="py-3 border-b border-border-subtle last:border-0">
@@ -2859,6 +2944,21 @@ function DispositionsTab() {
                         {d.active ? 'Active' : 'Inactive'}
                       </button>
                       <button
+                        onClick={() =>
+                          setExpandedQualityId(expandedQualityId === d.id ? null : d.id)
+                        }
+                        className={`px-2.5 py-1 rounded-full text-xs border ${
+                          getQualityRule(d.id, 'min_talk_seconds')?.enabled ||
+                          getQualityRule(d.id, 'required_field')?.enabled ||
+                          getQualityRule(d.id, 'rate_outlier')?.enabled
+                            ? 'bg-warning/10 text-warning border-warning/20'
+                            : 'bg-white/5 text-text-secondary border-white/10'
+                        }`}
+                        title="Quality checks (flag, never block)"
+                      >
+                        Quality
+                      </button>
+                      <button
                         onClick={() => startEdit(d)}
                         className="p-1.5 text-text-secondary hover:text-white"
                         title="Edit"
@@ -2875,6 +2975,16 @@ function DispositionsTab() {
                       </button>
                     </div>
                   </div>
+                )}
+                {expandedQualityId === d.id && (
+                  <QualityRulesEditor
+                    disposition={d}
+                    minTalkRule={getQualityRule(d.id, 'min_talk_seconds')}
+                    requiredFieldRule={getQualityRule(d.id, 'required_field')}
+                    rateOutlierRule={getQualityRule(d.id, 'rate_outlier')}
+                    savingKey={qualitySavingKey}
+                    onSave={saveQualityRule}
+                  />
                 )}
               </div>
             ))}
@@ -2987,6 +3097,154 @@ function DispositionsTab() {
         </div>
       )}
     </motion.div>
+  );
+}
+
+/** TASK-M5-E7: the per-disposition quality-rules editor, expanded inline under one disposition
+ *  row in DispositionsTab. Three independent rule types, each its own enabled toggle + config --
+ *  a disposition can have all three, some, or none. Saves go straight through
+ *  setDispositionQualityRule (one RPC call per rule type), never a batched multi-rule save --
+ *  matches the RPC's own one-rule-at-a-time upsert shape. */
+function QualityRulesEditor({
+  disposition,
+  minTalkRule,
+  requiredFieldRule,
+  rateOutlierRule,
+  savingKey,
+  onSave,
+}: {
+  disposition: Disposition;
+  minTalkRule: DispositionQualityRule | null;
+  requiredFieldRule: DispositionQualityRule | null;
+  rateOutlierRule: DispositionQualityRule | null;
+  savingKey: string | null;
+  onSave: (
+    dispositionId: string,
+    ruleType: QualityRuleType,
+    enabled: boolean,
+    config: Record<string, unknown>
+  ) => void;
+}) {
+  const [minSeconds, setMinSeconds] = useState(
+    String((minTalkRule?.config.min_seconds as number | undefined) ?? 30)
+  );
+  const [requiresNotes, setRequiresNotes] = useState(
+    ((requiredFieldRule?.config.fields as string[] | undefined) ?? []).includes('notes')
+  );
+  const [requiresCallbackAt, setRequiresCallbackAt] = useState(
+    ((requiredFieldRule?.config.fields as string[] | undefined) ?? []).includes('callback_at')
+  );
+  const [multiplier, setMultiplier] = useState(
+    String((rateOutlierRule?.config.multiplier as number | undefined) ?? 2)
+  );
+
+  const minTalkKey = `${disposition.id}:min_talk_seconds`;
+  const requiredFieldKey = `${disposition.id}:required_field`;
+  const rateOutlierKey = `${disposition.id}:rate_outlier`;
+
+  return (
+    <div className="mt-3 ml-1 pl-3 border-l-2 border-warning/30 space-y-4">
+      <div className="flex items-center gap-2">
+        <input
+          type="checkbox"
+          checked={minTalkRule?.enabled ?? false}
+          disabled={savingKey === minTalkKey}
+          onChange={(e) =>
+            onSave(disposition.id, 'min_talk_seconds', e.target.checked, {
+              min_seconds: parseInt(minSeconds, 10) || 30,
+            })
+          }
+        />
+        <span className="text-sm text-text-secondary">Requires at least</span>
+        <input
+          type="number"
+          min={1}
+          max={36000}
+          value={minSeconds}
+          onChange={(e) => setMinSeconds(e.target.value)}
+          onBlur={() =>
+            minTalkRule?.enabled &&
+            onSave(disposition.id, 'min_talk_seconds', true, {
+              min_seconds: parseInt(minSeconds, 10) || 30,
+            })
+          }
+          className="w-16 bg-surface-2 border border-white/10 rounded px-2 py-1 text-sm text-white"
+        />
+        <span className="text-sm text-text-secondary">seconds of bridged talk time</span>
+      </div>
+
+      <div className="space-y-1.5">
+        <div className="text-sm text-text-secondary">
+          Requires before this disposition counts as complete:
+        </div>
+        <label className="flex items-center gap-2 text-sm text-text-secondary">
+          <input
+            type="checkbox"
+            checked={requiresNotes}
+            disabled={savingKey === requiredFieldKey}
+            onChange={(e) => {
+              setRequiresNotes(e.target.checked);
+              const fields = [
+                ...(e.target.checked ? ['notes'] : []),
+                ...(requiresCallbackAt ? ['callback_at'] : []),
+              ];
+              onSave(disposition.id, 'required_field', fields.length > 0, { fields });
+            }}
+          />
+          A note
+        </label>
+        <label className="flex items-center gap-2 text-sm text-text-secondary">
+          <input
+            type="checkbox"
+            checked={requiresCallbackAt}
+            disabled={savingKey === requiredFieldKey}
+            onChange={(e) => {
+              setRequiresCallbackAt(e.target.checked);
+              const fields = [
+                ...(requiresNotes ? ['notes'] : []),
+                ...(e.target.checked ? ['callback_at'] : []),
+              ];
+              onSave(disposition.id, 'required_field', fields.length > 0, { fields });
+            }}
+          />
+          A callback/appointment time
+        </label>
+      </div>
+
+      <div className="flex items-center gap-2">
+        <input
+          type="checkbox"
+          checked={rateOutlierRule?.enabled ?? false}
+          disabled={savingKey === rateOutlierKey}
+          onChange={(e) =>
+            onSave(disposition.id, 'rate_outlier', e.target.checked, {
+              multiplier: parseFloat(multiplier) || 2,
+              min_sample: 5,
+            })
+          }
+        />
+        <span className="text-sm text-text-secondary">
+          Flag an agent whose share of this disposition is more than
+        </span>
+        <input
+          type="number"
+          min={1.1}
+          max={100}
+          step={0.1}
+          value={multiplier}
+          onChange={(e) => setMultiplier(e.target.value)}
+          onBlur={() =>
+            rateOutlierRule?.enabled &&
+            onSave(disposition.id, 'rate_outlier', true, {
+              multiplier: parseFloat(multiplier) || 2,
+              min_sample: 5,
+            })
+          }
+          className="w-16 bg-surface-2 border border-white/10 rounded px-2 py-1 text-sm text-white"
+        />
+        <span className="text-sm text-text-secondary">x the team's (Team page, live)</span>
+      </div>
+    </div>
   );
 }
 

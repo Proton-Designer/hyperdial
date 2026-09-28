@@ -3980,6 +3980,175 @@ export async function deleteDisposition(id: string): Promise<void> {
   if (error) throw new Error(error.message);
 }
 
+// --- MISSION-5 TASK-M5-E7: disposition quality checks (flag, never block) -- backend is
+// `20260927231644_disposition_quality_checks.sql`. Org-wide master switch + per-disposition rule
+// toggles, evaluated by a DB trigger on call_legs; a manager's own view is pod-scoped exactly like
+// the B5 call review library (recording_flags/comments) it reuses can_view_call_leg from. ---
+
+/** The org-wide master switch (`org_quality_check_settings`), OFF by default. A plain RLS-gated
+ *  table read/write (owner/admin only), same pattern as org_spend_settings -- no RPC needed. */
+export async function getOrgQualityChecksEnabled(): Promise<boolean> {
+  const orgId = await getActiveOrgId();
+  const { data, error } = await supabase
+    .from('org_quality_check_settings')
+    .select('enabled')
+    .eq('org_id', orgId)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return data?.enabled ?? false;
+}
+
+export async function setOrgQualityChecksEnabled(enabled: boolean): Promise<void> {
+  const orgId = await getActiveOrgId();
+  const { error } = await supabase
+    .from('org_quality_check_settings')
+    .update({ enabled, updated_at: new Date().toISOString() })
+    .eq('org_id', orgId);
+  if (error) throw new Error(error.message);
+}
+
+export type QualityRuleType = 'min_talk_seconds' | 'required_field' | 'rate_outlier';
+
+export interface DispositionQualityRule {
+  id: string;
+  disposition_id: string;
+  rule_type: QualityRuleType;
+  enabled: boolean;
+  config: Record<string, unknown>;
+}
+
+/** A plain RLS-gated read (org members) -- disposition_quality_rules has no client write policy
+ *  at all, so this is select-only; every write goes through setDispositionQualityRule below. */
+export async function listDispositionQualityRules(): Promise<DispositionQualityRule[]> {
+  const orgId = await getActiveOrgId();
+  const { data, error } = await supabase
+    .from('disposition_quality_rules')
+    .select('id, disposition_id, rule_type, enabled, config')
+    .eq('org_id', orgId);
+  if (error) throw new Error(error.message);
+  return (data ?? []) as DispositionQualityRule[];
+}
+
+/** Upsert (one row per org+disposition+rule_type) -- owner/admin only (RPC-enforced), validates
+ *  config shape per rule_type server-side. `config` shape by rule_type:
+ *  - min_talk_seconds: { min_seconds: number }
+ *  - required_field:   { fields: ('notes' | 'callback_at')[] }
+ *  - rate_outlier:      { multiplier: number, min_sample?: number } */
+export async function setDispositionQualityRule(
+  dispositionId: string,
+  ruleType: QualityRuleType,
+  enabled: boolean,
+  config: Record<string, unknown>
+): Promise<string> {
+  const orgId = await getActiveOrgId();
+  const { data, error } = await supabase.rpc('set_disposition_quality_rule', {
+    p_org: orgId,
+    p_disposition_id: dispositionId,
+    p_rule_type: ruleType,
+    p_enabled: enabled,
+    p_config: config,
+  });
+  if (error) throw new Error(error.message);
+  return data as string;
+}
+
+export type QualityFlagStatus = 'open' | 'reviewed_ok' | 'coached';
+
+export interface DispositionQualityFlag {
+  id: string;
+  call_leg_id: string;
+  agent_id: string;
+  agent_name: string;
+  campaign_id: string | null;
+  campaign_name: string | null;
+  rule_type: QualityRuleType;
+  disposition_key: string;
+  detail: Record<string, unknown>;
+  status: QualityFlagStatus;
+  dispositioned_by: string | null;
+  dispositioned_by_name: string | null;
+  reviewed_by: string | null;
+  reviewed_by_name: string | null;
+  reviewed_at: string | null;
+  ended_at: string | null;
+  created_at: string;
+}
+
+export interface DispositionQualityFlagFilters {
+  /** Owner/admin/manager only -- scope-checked server-side, same convention as
+   *  RecordingSearchFilters.agentId. */
+  agentId?: string;
+  status?: QualityFlagStatus;
+  callLegId?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export async function listDispositionQualityFlags(
+  filters: DispositionQualityFlagFilters = {}
+): Promise<DispositionQualityFlag[]> {
+  const orgId = await getActiveOrgId();
+  const { data, error } = await supabase.rpc('list_disposition_quality_flags', {
+    p_org: orgId,
+    p_agent_id: filters.agentId ?? null,
+    p_status: filters.status ?? null,
+    p_call_leg_id: filters.callLegId ?? null,
+    p_limit: filters.limit ?? 50,
+    p_offset: filters.offset ?? 0,
+  });
+  if (error) throw new Error(error.message);
+  return (data ?? []) as DispositionQualityFlag[];
+}
+
+/** Owner/admin/manager (pod-scoped to the flag's own agent) -- logs an audit row server-side. */
+export async function setQualityFlagStatus(
+  flagId: string,
+  status: QualityFlagStatus
+): Promise<void> {
+  const orgId = await getActiveOrgId();
+  const { error } = await supabase.rpc('set_quality_flag_status', {
+    p_org: orgId,
+    p_flag_id: flagId,
+    p_status: status,
+  });
+  if (error) throw new Error(error.message);
+}
+
+/** One row per agent with at least one OPEN flag -- the cockpit/Team-page badge count. Agents
+ *  with zero open flags are simply absent, not a zero row. */
+export async function getQualityFlagOpenCounts(): Promise<Record<string, number>> {
+  const orgId = await getActiveOrgId();
+  const { data, error } = await supabase.rpc('get_quality_flag_open_counts', { p_org: orgId });
+  if (error) throw new Error(error.message);
+  const counts: Record<string, number> = {};
+  for (const row of (data ?? []) as { agent_id: string; open_count: number }[]) {
+    counts[row.agent_id] = row.open_count;
+  }
+  return counts;
+}
+
+export interface DispositionRateOutlier {
+  disposition_id: string;
+  disposition_key: string;
+  disposition_label: string;
+  agent_id: string;
+  agent_name: string;
+  agent_count: number;
+  agent_total: number;
+  agent_share: number;
+  team_share: number;
+  threshold_multiplier: number;
+}
+
+/** Rule (c), evaluated live -- never stored as a flag (see the migration's own header for why).
+ *  Owner/admin/manager only; a manager's rows are pod-scoped server-side. */
+export async function getDispositionRateOutliers(): Promise<DispositionRateOutlier[]> {
+  const orgId = await getActiveOrgId();
+  const { data, error } = await supabase.rpc('get_disposition_rate_outliers', { p_org: orgId });
+  if (error) throw new Error(error.message);
+  return (data ?? []) as DispositionRateOutlier[];
+}
+
 export interface SubmitDispositionInput {
   legId: string;
   dispositionKey: string;

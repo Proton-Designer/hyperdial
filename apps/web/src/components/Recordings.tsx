@@ -12,12 +12,16 @@ import {
   getCallScorecard,
   setCallScorecard,
   getMyScorecardTrend,
+  listDispositionQualityFlags,
+  setQualityFlagStatus,
   type RecordingSearchRow,
   type RecordingFlag,
   type RecordingComment,
   type ScorecardRubric,
   type CallScorecardView,
   type ScorecardTrendPoint,
+  type DispositionQualityFlag,
+  type QualityFlagStatus,
 } from '@/lib/api';
 import { PageHeader } from '@/components/app/PageHeader';
 import { EmptyState } from '@/components/app/EmptyState';
@@ -374,6 +378,13 @@ function RecordingDetailPanel({
   const [flagReason, setFlagReason] = useState('');
   const [flagBusy, setFlagBusy] = useState(false);
 
+  // TASK-M5-E7: automated disposition quality flags -- a DIFFERENT concept from the manual
+  // `flag`/`flagReason` state above (recording_flags, anyone-can-flag-a-call). These come from
+  // disposition_quality_rules (min talk time / required field), evaluated server-side, and are
+  // reviewed (not un-flagged) via setQualityFlagStatus.
+  const [qualityFlags, setQualityFlags] = useState<DispositionQualityFlag[] | 'loading'>('loading');
+  const [qualityFlagBusyId, setQualityFlagBusyId] = useState<string | null>(null);
+
   const [comments, setComments] = useState<RecordingComment[] | null>(null);
   const [commentText, setCommentText] = useState('');
   const [commentSecond, setCommentSecond] = useState('');
@@ -398,6 +409,11 @@ function RecordingDetailPanel({
     getRecordingFlag(row.call_leg_id)
       .then(setFlag)
       .catch(() => setFlag(null));
+
+    setQualityFlags('loading');
+    listDispositionQualityFlags({ callLegId: row.call_leg_id })
+      .then(setQualityFlags)
+      .catch(() => setQualityFlags([]));
 
     setComments(null);
     listRecordingComments(row.call_leg_id)
@@ -441,6 +457,17 @@ function RecordingDetailPanel({
       onFlagChanged();
     } finally {
       setFlagBusy(false);
+    }
+  };
+
+  const handleSetQualityFlagStatus = async (flagId: string, status: QualityFlagStatus) => {
+    setQualityFlagBusyId(flagId);
+    try {
+      await setQualityFlagStatus(flagId, status);
+      const fresh = await listDispositionQualityFlags({ callLegId: row.call_leg_id });
+      setQualityFlags(fresh);
+    } finally {
+      setQualityFlagBusyId(null);
     }
   };
 
@@ -535,6 +562,51 @@ function RecordingDetailPanel({
           </div>
         )}
       </div>
+
+      {(qualityFlags === 'loading' || qualityFlags.length > 0) && (
+        <div className="space-y-2">
+          <h4 className="text-meta font-medium text-text-secondary uppercase tracking-wide">
+            Quality flags
+          </h4>
+          {qualityFlags === 'loading' && <Skeleton className="h-8 w-full rounded-app-sm" />}
+          {qualityFlags !== 'loading' &&
+            qualityFlags.map((qf) => (
+              <div
+                key={qf.id}
+                className="rounded-app-sm border border-warning/20 bg-warning/5 p-2 text-sm"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-text-primary">
+                    {qf.rule_type === 'min_talk_seconds'
+                      ? `Short call (${qf.detail.talk_seconds}s, needs ${qf.detail.min_required_seconds}s)`
+                      : `Missing ${(qf.detail.missing_fields as string[]).join(', ')}`}
+                  </span>
+                  <span className="text-meta text-text-secondary capitalize">{qf.status}</span>
+                </div>
+                {canScore && qf.status === 'open' && (
+                  <div className="flex gap-2 mt-2">
+                    <Button
+                      size="sm"
+                      variant="fe-ghost"
+                      disabled={qualityFlagBusyId === qf.id}
+                      onClick={() => handleSetQualityFlagStatus(qf.id, 'reviewed_ok')}
+                    >
+                      Mark OK
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="fe-secondary"
+                      disabled={qualityFlagBusyId === qf.id}
+                      onClick={() => handleSetQualityFlagStatus(qf.id, 'coached')}
+                    >
+                      Coached
+                    </Button>
+                  </div>
+                )}
+              </div>
+            ))}
+        </div>
+      )}
 
       <div className="space-y-2">
         <h4 className="text-meta font-medium text-text-secondary uppercase tracking-wide">

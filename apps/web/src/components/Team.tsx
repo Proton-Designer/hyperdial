@@ -19,6 +19,7 @@ import {
   stopDialerSession,
   hangupLiveCall,
   LiveCallInProgressError,
+  getQualityFlagOpenCounts,
   type TeamDailyStatsRow,
   type TeamLiveBoardRow,
   type TeamLiveStatus,
@@ -790,6 +791,26 @@ export function Team() {
   // Deferred backlog item TASK-M5-F3: best-effort, informational only -- a failure here never
   // surfaces as liveError (it would incorrectly read as "the whole live board is broken").
   const [scheduleLiveStatus, setScheduleLiveStatus] = useState<AgentScheduleLiveStatusRow[]>([]);
+  // TASK-M5-E7: open disposition-quality-flag count per agent -- a live "today" signal, not
+  // scoped to the daily-stats date range above, so it gets its own light poll rather than
+  // reloading alongside loadDaily on every range change.
+  const [qualityFlagCounts, setQualityFlagCounts] = useState<Record<string, number>>({});
+  useEffect(() => {
+    let alive = true;
+    const load = () => {
+      getQualityFlagOpenCounts()
+        .then((counts) => {
+          if (alive) setQualityFlagCounts(counts);
+        })
+        .catch(() => {});
+    };
+    load();
+    const id = setInterval(load, 30000);
+    return () => {
+      alive = false;
+      clearInterval(id);
+    };
+  }, []);
   const [sortKey, setSortKey] = useState<SortKey>('dials');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   // MISSION-5 TASK-M5-A4: live board filters (client-side over the already-polled rows -- no
@@ -1364,6 +1385,14 @@ export function Team() {
                             <div className="flex items-center gap-1.5">
                               {row.name}
                               <RoleChip role={row.role} />
+                              {qualityFlagCounts[row.agent_id] > 0 && (
+                                <span
+                                  className="px-1.5 py-0.5 rounded-full text-xs bg-warning/10 text-warning border border-warning/20"
+                                  title="Open disposition quality flags -- review in Recordings"
+                                >
+                                  {qualityFlagCounts[row.agent_id]}
+                                </span>
+                              )}
                             </div>
                           </td>
                           <td className="p-3 text-text-secondary">{row.dials}</td>
