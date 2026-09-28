@@ -329,6 +329,8 @@ begin
     select cl.id, row_number() over (order by cl.position, cl.id) - 1 as seq
     from public.campaign_leads cl
     where cl.id = any(p_lead_ids) and cl.campaign_id = p_campaign_id
+      -- N4 review BLOCKER (eng2): re-check at write time; the caller's list may be stale.
+      and cl.assigned_agent_id is null
   ),
   assignment as (
     select l.id as lead_id, e.user_id as agent_id, l.seq
@@ -341,6 +343,8 @@ begin
     set assigned_agent_id = a.agent_id, updated_at = now()
     from assignment a
     where cl.id = a.lead_id
+      -- Re-evaluated on the newest row version if a concurrent manual assign got there first.
+      and cl.assigned_agent_id is null
     returning a.agent_id, a.seq
   )
   select count(*), (array_agg(agent_id order by seq desc))[1]
