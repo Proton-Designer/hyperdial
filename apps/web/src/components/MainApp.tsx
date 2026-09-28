@@ -8,6 +8,7 @@ import { Campaigns } from './Campaigns';
 import { Analytics } from './Analytics';
 import { Team } from './Team';
 import { Recordings } from './Recordings';
+import { Inbox } from './Inbox';
 import { Settings } from './Settings';
 import { BottomTabBar } from './app/BottomTabBar';
 import { PageTransition } from './app/PageTransition';
@@ -22,6 +23,7 @@ export type TabType =
   | 'analytics'
   | 'team'
   | 'recordings'
+  | 'inbox'
   | 'settings';
 
 export interface ParallelDialLaunchContext {
@@ -36,7 +38,16 @@ export interface ParallelDialLaunchContext {
 // MISSION-5 TASK-M5-B5: Recordings added for every role, including agent -- `recordings_search`'s
 // own scoping already restricts an agent to their own calls, so there is no separate "own calls
 // only" client view to build; the same page just renders narrower for them.
-const AGENT_ALLOWED_TABS: readonly TabType[] = ['dashboard', 'dialer', 'contacts', 'recordings'];
+// MISSION-5 TASK-M5-G6: same for Inbox -- an agent always sees their own missed calls regardless
+// of the shared_inbox_enabled setting (requirement #2), enforced by `private.can_view_inbox_item`
+// itself, not by hiding the tab.
+const AGENT_ALLOWED_TABS: readonly TabType[] = [
+  'dashboard',
+  'dialer',
+  'contacts',
+  'recordings',
+  'inbox',
+];
 
 // MISSION-5 TASK-M5-A5: a manager gets Analytics (reports) and Team, plus Settings (internally
 // restricted to just the Activity/audit-log sub-tab and their own profile -- see Settings.tsx's
@@ -52,6 +63,7 @@ const MANAGER_ALLOWED_TABS: readonly TabType[] = [
   'analytics',
   'team',
   'recordings',
+  'inbox',
   'settings',
 ];
 
@@ -68,6 +80,7 @@ const TAB_PATHS: Record<TabType, string> = {
   analytics: '/analytics',
   team: '/team',
   recordings: '/recordings',
+  inbox: '/inbox',
   settings: '/settings',
 };
 const PATH_TABS: Partial<Record<string, TabType>> = Object.fromEntries(
@@ -299,6 +312,11 @@ export function MainApp() {
           {activeTab === 'recordings' && (
             <PageTransition>
               <Recordings />
+            </PageTransition>
+          )}
+          {activeTab === 'inbox' && (
+            <PageTransition>
+              <Inbox onNavigateToDialer={() => setActiveTab('dialer')} />
             </PageTransition>
           )}
           {activeTab === 'settings' && (

@@ -103,6 +103,10 @@ HyperDial places and receives real phone calls through Telnyx. This domain cover
    `call_legs` row -- see decisions.md's TASK-I1 entry, decision 1), transitioned via `public.transition_inbound_call`'s CAS, idempotent under Telnyx's at-least-once webhook
    redelivery. `useTelnyxCall.ts`'s WebRTC client now connects whenever the Dialer tab owns the agent line, not only during an active session (decision 7) -- otherwise an
    "online" intern's browser would never actually be reachable.
+9. **A missed/voicemail inbound call also surfaces in the team's shared inbox (TASK-M5-G6).** A trigger on `inbound_calls` (`state -> 'ended'` with `outcome in ('missed',
+   'voicemail')`) upserts `inbox_items`, de-duped per `(org_id, from_e164)` while open/claimed; claim/unclaim/done/dismiss RPCs (`public.claim_inbox_item` etc., all
+   org-membership-checked before any write) and visibility (`private.can_view_inbox_item`) live in `20260927233652_shared_inbox.sql` -- see `audit/M5-G6/notes.md` in the
+   overnight run folder for the edge-case decisions (offboarded target/claimer, withheld caller ID, answered-on-retry).
 
 ## Integration points
 

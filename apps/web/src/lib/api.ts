@@ -5104,3 +5104,154 @@ export async function restoreCampaignScriptVersion(versionId: string): Promise<v
   });
   if (error) throw new Error(error.message);
 }
+
+// --- MISSION-5 TASK-M5-G6: shared team callback inbox for missed inbound calls, with claim. ---
+
+export type InboxItemStatus = 'open' | 'claimed' | 'done' | 'dismissed';
+
+export interface InboxItem {
+  id: string;
+  orgId: string;
+  fromE164: string;
+  contactId: string | null;
+  toNumberId: string | null;
+  targetAgentId: string | null;
+  status: InboxItemStatus;
+  claimedBy: string | null;
+  claimedAt: string | null;
+  doneAt: string | null;
+  dismissedAt: string | null;
+  note: string | null;
+  repeatCount: number;
+  receivedAt: string;
+  lastReceivedAt: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SharedInboxSettings {
+  sharedInboxEnabled: boolean;
+  claimStaleMinutes: number;
+}
+
+function mapInboxItemRow(r: {
+  id: string;
+  org_id: string;
+  from_e164: string;
+  contact_id: string | null;
+  to_number_id: string | null;
+  target_agent_id: string | null;
+  status: InboxItemStatus;
+  claimed_by: string | null;
+  claimed_at: string | null;
+  done_at: string | null;
+  dismissed_at: string | null;
+  note: string | null;
+  repeat_count: number;
+  received_at: string;
+  last_received_at: string;
+  created_at: string;
+  updated_at: string;
+}): InboxItem {
+  return {
+    id: r.id,
+    orgId: r.org_id,
+    fromE164: r.from_e164,
+    contactId: r.contact_id,
+    toNumberId: r.to_number_id,
+    targetAgentId: r.target_agent_id,
+    status: r.status,
+    claimedBy: r.claimed_by,
+    claimedAt: r.claimed_at,
+    doneAt: r.done_at,
+    dismissedAt: r.dismissed_at,
+    note: r.note,
+    repeatCount: r.repeat_count,
+    receivedAt: r.received_at,
+    lastReceivedAt: r.last_received_at,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+  };
+}
+
+/** Calls the stale-claim sweep once, then reads back whatever this caller's own RLS
+ *  (`private.can_view_inbox_item`) scopes them to -- owner/admin all, manager pod-scoped,
+ *  agent their own targets plus org-wide open items when `shared_inbox_enabled` is on. */
+export async function listInboxItems(): Promise<InboxItem[]> {
+  await reopenStaleInboxClaims();
+  const { data, error } = await supabase
+    .from('inbox_items')
+    .select('*')
+    .order('last_received_at', { ascending: false });
+  if (error) throw new Error(error.message);
+  return (data ?? []).map(mapInboxItemRow);
+}
+
+/** Reopens any claim past `claim_stale_minutes` for this org -- "reopened on read, no cron"
+ *  (requirement #3). Called by `listInboxItems` itself; exported separately for a manual refresh
+ *  action that wants the sweep without a full re-fetch. */
+export async function reopenStaleInboxClaims(): Promise<void> {
+  const orgId = await getActiveOrgId();
+  const { error } = await supabase.rpc('reopen_stale_inbox_claims', { p_org: orgId });
+  if (error) throw new Error(error.message);
+}
+
+/** Atomic claim -- loses the race cleanly: surfaces the RPC's own "Already claimed by X" /
+ *  "This item is already done" message via error.message rather than a generic failure. */
+export async function claimInboxItem(itemId: string): Promise<void> {
+  const orgId = await getActiveOrgId();
+  const { error } = await supabase.rpc('claim_inbox_item', { p_org: orgId, p_item_id: itemId });
+  if (error) throw new Error(error.message);
+}
+
+/** The claimer or a manager+ (requirement #3), enforced server-side. */
+export async function unclaimInboxItem(itemId: string): Promise<void> {
+  const orgId = await getActiveOrgId();
+  const { error } = await supabase.rpc('unclaim_inbox_item', { p_org: orgId, p_item_id: itemId });
+  if (error) throw new Error(error.message);
+}
+
+/** The claimer or a manager+, optional note. */
+export async function markInboxItemDone(itemId: string, note?: string): Promise<void> {
+  const orgId = await getActiveOrgId();
+  const { error } = await supabase.rpc('mark_inbox_item_done', {
+    p_org: orgId,
+    p_item_id: itemId,
+    p_note: note ?? null,
+  });
+  if (error) throw new Error(error.message);
+}
+
+/** Manager+ only -- excludes even the item's own target agent (requirement #3). */
+export async function dismissInboxItem(itemId: string): Promise<void> {
+  const orgId = await getActiveOrgId();
+  const { error } = await supabase.rpc('dismiss_inbox_item', { p_org: orgId, p_item_id: itemId });
+  if (error) throw new Error(error.message);
+}
+
+/** Any org member can read (RLS: "org members can view shared inbox settings"). */
+export async function getSharedInboxSettings(): Promise<SharedInboxSettings> {
+  const orgId = await getActiveOrgId();
+  const { data, error } = await supabase
+    .from('org_shared_inbox_settings')
+    .select('shared_inbox_enabled, claim_stale_minutes')
+    .eq('org_id', orgId)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return {
+    sharedInboxEnabled: data?.shared_inbox_enabled ?? false,
+    claimStaleMinutes: data?.claim_stale_minutes ?? 30,
+  };
+}
+
+/** Owner/admin only -- enforced inside `set_shared_inbox_settings` itself (not RLS), since it
+ *  also validates `claim_stale_minutes > 0`. */
+export async function setSharedInboxSettings(settings: SharedInboxSettings): Promise<void> {
+  const orgId = await getActiveOrgId();
+  const { error } = await supabase.rpc('set_shared_inbox_settings', {
+    p_org: orgId,
+    p_shared_inbox_enabled: settings.sharedInboxEnabled,
+    p_claim_stale_minutes: settings.claimStaleMinutes,
+  });
+  if (error) throw new Error(error.message);
+}

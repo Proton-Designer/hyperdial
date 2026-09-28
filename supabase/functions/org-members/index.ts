@@ -90,7 +90,12 @@ async function cascadeOffboard(
   supabase: SupabaseClient,
   orgId: string,
   targetUserId: string
-): Promise<{ sessionHalted: boolean; numbersReleased: number; coachingEnded: number }> {
+): Promise<{
+  sessionHalted: boolean;
+  numbersReleased: number;
+  coachingEnded: number;
+  inboxClaimsReopened: number;
+}> {
   let sessionHalted = false;
   try {
     const result = await haltIntakeForOffboarding(supabase, orgId, targetUserId);
@@ -128,7 +133,27 @@ async function cascadeOffboard(
     console.error('org-members cascadeOffboard: coaching end failed', String(err));
   }
 
-  return { sessionHalted, numbersReleased: releasedNumbers?.length ?? 0, coachingEnded };
+  // MISSION-5 TASK-M5-G6: "a claimer offboarded while holding claims (items return to open)" --
+  // best-effort, same shape as every other step in this cascade. The RPC itself is
+  // `revoke all ... from public, anon, authenticated` (SECURITY definer, no client grant) --
+  // reachable here only because this function's own `supabase` client is service-role.
+  let inboxClaimsReopened = 0;
+  try {
+    const { data } = await supabase.rpc('reopen_inbox_claims_for_offboarded_member', {
+      p_org: orgId,
+      p_user_id: targetUserId,
+    });
+    inboxClaimsReopened = (data as number | null) ?? 0;
+  } catch (err) {
+    console.error('org-members cascadeOffboard: inbox claim reopen failed', String(err));
+  }
+
+  return {
+    sessionHalted,
+    numbersReleased: releasedNumbers?.length ?? 0,
+    coachingEnded,
+    inboxClaimsReopened,
+  };
 }
 
 Deno.serve(async (req) => {

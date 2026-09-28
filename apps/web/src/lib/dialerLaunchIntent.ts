@@ -18,3 +18,20 @@ export function consumePendingStartCampaignId(): string | null {
   pendingCampaignId = null;
   return id;
 }
+
+/**
+ * TASK-M5-G6: same shape, for the Inbox's "Call back" action -- prefills and triggers
+ * ManualDialPanel's existing manual-dial path (Dialer.tsx's `onDial`, wired at line ~1075)
+ * instead of building a second dial-triggering path.
+ */
+let pendingManualDialNumber: string | null = null;
+
+export function setPendingManualDialNumber(e164: string): void {
+  pendingManualDialNumber = e164;
+}
+
+export function consumePendingManualDialNumber(): string | null {
+  const number = pendingManualDialNumber;
+  pendingManualDialNumber = null;
+  return number;
+}

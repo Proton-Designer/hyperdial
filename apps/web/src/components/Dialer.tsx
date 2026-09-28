@@ -34,7 +34,10 @@ import {
   type CampaignWithStats,
 } from '@/lib/api';
 import { playConnectChime } from '@/lib/dialerSoundCue';
-import { consumePendingStartCampaignId } from '@/lib/dialerLaunchIntent';
+import {
+  consumePendingStartCampaignId,
+  consumePendingManualDialNumber,
+} from '@/lib/dialerLaunchIntent';
 import { useSingleTabLock } from '@/lib/useSingleTabLock';
 import {
   WEBRTC_RETRY_BASE_MS,
@@ -159,6 +162,7 @@ function DialerBody({
     existingSessionId: string;
   } | null>(null);
   const pendingIntentConsumedRef = useRef(false);
+  const pendingManualDialConsumedRef = useRef(false);
 
   const effectiveSessionId = parallelSessionId ?? restoredParallelContext?.sessionId ?? null;
   const effectiveCampaignId = parallelCampaignId ?? restoredParallelContext?.campaignId ?? null;
@@ -910,6 +914,21 @@ function DialerBody({
     handleParallelResume,
     handleToggleRaiseHand,
   ]);
+
+  // TASK-M5-G6: the Inbox's "Call back" action leaves a same-tab pending number here (same
+  // module-level handoff shape as the campaign-start intent above) instead of threading a prop
+  // through MainApp.tsx. Consumed once selectedFromNumber is ready and only when the existing
+  // manual-dial path is actually the one in use (not mid parallel-dial session) -- reuses
+  // ManualDialPanel's own onDial handler rather than a second dial-triggering path.
+  useEffect(() => {
+    if (!selectedFromNumber) return;
+    if (isParallelMode && !parallelSession.error) return;
+    if (pendingManualDialConsumedRef.current) return;
+    pendingManualDialConsumedRef.current = true;
+    const pendingNumber = consumePendingManualDialNumber();
+    if (!pendingNumber) return;
+    void handleDial(pendingNumber);
+  }, [selectedFromNumber, isParallelMode, parallelSession.error, handleDial]);
 
   return (
     <div className="flex h-full">

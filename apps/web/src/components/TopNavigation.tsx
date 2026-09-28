@@ -28,6 +28,7 @@ const TAB_LABELS: Record<TabType, string> = {
   analytics: 'Analytics',
   team: 'Team',
   recordings: 'Recordings',
+  inbox: 'Inbox',
   settings: 'Settings',
 };
 

@@ -7,6 +7,7 @@ import {
   BarChart3,
   UsersRound,
   Headphones,
+  Inbox as InboxIcon,
   Settings,
   ChevronsLeft,
   ChevronsRight,
@@ -15,6 +16,7 @@ import {
 import { TabType } from './MainApp';
 import { LogoMark } from '@/components/brand/Logo';
 import { useOrg } from '@/contexts/OrgContext';
+import { useInboxOpenCount } from '@/hooks/useInboxOpenCount';
 
 interface SidebarProps {
   activeTab: TabType;
@@ -48,6 +50,9 @@ const tabs: NavTab[] = [
   // MISSION-5 TASK-M5-B5: no minRole -- every role gets Recordings, `recordings_search`'s own
   // scoping already narrows an agent to their own calls server-side.
   { id: 'recordings', icon: Headphones, label: 'Recordings' },
+  // MISSION-5 TASK-M5-G6: no minRole -- an agent always sees their own missed calls
+  // (`private.can_view_inbox_item`), same "server narrows, tab stays visible" shape as Recordings.
+  { id: 'inbox', icon: InboxIcon, label: 'Inbox' },
 ];
 
 export function Sidebar({
@@ -58,6 +63,7 @@ export function Sidebar({
   topOffset,
 }: SidebarProps) {
   const { role } = useOrg();
+  const inboxOpenCount = useInboxOpenCount();
   // Fail CLOSED: an owner/admin-only tab is visible only once role is CONFIRMED owner/admin, not
   // merely "not confirmed agent" -- role null (loading, or right after an invite accept that
   // hasn't refetched yet) must not show manager tabs. NOT also gated on OrgContext's `loading`
@@ -100,7 +106,15 @@ export function Sidebar({
           />
         )}
         <Icon className={`w-[18px] h-[18px] flex-shrink-0 ${isActive ? 'text-accent-to' : ''}`} />
-        {!collapsed && <span className="truncate">{label}</span>}
+        {!collapsed && <span className="truncate flex-1 text-left">{label}</span>}
+        {!collapsed && tab.id === 'inbox' && inboxOpenCount > 0 && (
+          <span className="flex-shrink-0 rounded-full bg-danger px-1.5 py-0.5 text-[10px] font-medium leading-none text-white">
+            {inboxOpenCount > 99 ? '99+' : inboxOpenCount}
+          </span>
+        )}
+        {collapsed && tab.id === 'inbox' && inboxOpenCount > 0 && (
+          <span className="absolute top-1 right-1.5 h-1.5 w-1.5 rounded-full bg-danger" />
+        )}
         {collapsed && (
           <div className="pointer-events-none absolute left-full ml-2 whitespace-nowrap rounded-app-sm border border-border-strong bg-surface-1 px-2.5 py-1.5 text-xs text-text-primary opacity-0 shadow-app-md transition-opacity group-hover:opacity-100 z-50">
             {label}
