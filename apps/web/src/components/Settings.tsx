@@ -8,7 +8,6 @@ import {
   Phone,
   Users as UsersIcon,
   Zap,
-  Shield,
   Search,
   Loader2,
   Trash2,
@@ -20,7 +19,6 @@ import {
   Pencil,
   X,
   PhoneOff,
-  Construction,
   ChevronUp,
   ChevronDown,
   Trophy,
@@ -183,8 +181,7 @@ type SettingsTab =
   | 'dispositions'
   | 'dnc'
   | 'distribution'
-  | 'activity'
-  | 'security';
+  | 'activity';
 
 function ProfileTab() {
   const { user } = useAuth();
@@ -374,6 +371,10 @@ function TeamTab() {
   // MISSION-5 TASK-M5-A3: 'removed' members are hidden by default -- this toggle is the only way
   // an owner/admin reaches the Restore button within the 72h window.
   const [showRemoved, setShowRemoved] = useState(false);
+  // TASK-U1 (user request): the Agents group is collapsed by default -- an agent roster can grow
+  // a lot, and owner/admin/manager (who ARE in the always-visible top group) is who most needs to
+  // scan quickly without scrolling past a long agent list first.
+  const [agentsExpanded, setAgentsExpanded] = useState(false);
   const [offboardTarget, setOffboardTarget] = useState<{
     member: OrgMember;
     mode: 'disable' | 'remove';
@@ -568,12 +569,276 @@ function TeamTab() {
     pending: pendingInvites.length,
   };
 
+  // TASK-U1 (user request): owners/admins/managers stay in one always-visible top group (a
+  // manager is grouped WITH admins here, labelled by their own role via ROLE_LABEL, not treated
+  // as an "agent" for this split); everyone else (role === 'agent') goes in the collapsible
+  // group below. Both groups are derived from `members`, the SAME array/filtering the page
+  // already uses (respects `showRemoved`; a disabled agent is still in `members` and still
+  // counts here, same as the Disabled badge/seatCounts above already show them).
+  const nonAgentMembers = members.filter((m) => m.role !== 'agent');
+  const agentMembers = members.filter((m) => m.role === 'agent');
+
   function expiryLabel(expiresAt: string): string {
     const ms = new Date(expiresAt).getTime() - Date.now();
     if (ms <= 0) return 'Expired';
     const days = Math.ceil(ms / 86400000);
     return days === 1 ? '1 day left' : `${days} days left`;
   }
+
+  // TASK-U1: shared row/card renderers -- used for BOTH the always-visible top group
+  // (owner/admin/manager) and the collapsible Agents group below, so every existing per-member
+  // action (role change, pod assignment, disable/enable, remove/restore) works identically in
+  // either group without duplicating this markup a third time.
+  const renderDesktopMemberRow = (m: OrgMember) => {
+    const name = [m.first_name, m.last_name].filter(Boolean).join(' ') || m.email || 'Unnamed';
+    const isSelf = m.user_id === user?.id;
+    const isOwner = m.role === 'owner';
+    const busy = busyUserId === m.user_id;
+    return (
+      <TableRow key={m.user_id} className="border-border-subtle">
+        <TableCell>
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-8 h-8 rounded-full bg-gradient-to-br from-accent-from to-accent-to flex items-center justify-center text-white text-xs font-semibold flex-shrink-0">
+              {name.slice(0, 2).toUpperCase()}
+            </div>
+            <div className="min-w-0">
+              <div className="text-text-primary font-medium truncate">
+                {name} {isSelf && <span className="text-text-secondary text-xs">(you)</span>}
+              </div>
+              <div className="text-meta text-text-secondary truncate">{m.email}</div>
+            </div>
+          </div>
+        </TableCell>
+        <TableCell>
+          <span
+            className={cn(
+              'px-2.5 py-1 rounded-full text-xs border',
+              m.status === 'removed'
+                ? 'bg-danger/10 text-danger border-danger/20'
+                : m.status === 'disabled'
+                  ? 'bg-white/5 text-text-secondary border-white/10'
+                  : 'bg-success/10 text-success border-success/20'
+            )}
+          >
+            {m.status === 'removed' ? 'Removed' : m.status === 'disabled' ? 'Disabled' : 'Active'}
+          </span>
+          {m.status === 'removed' && m.restorable_until && (
+            <div className="text-meta text-text-secondary mt-1">
+              {restorableLabel(m.restorable_until)}
+            </div>
+          )}
+        </TableCell>
+        <TableCell>
+          {canManage && !isOwner && m.status !== 'removed' ? (
+            <select
+              value={m.role}
+              disabled={busy}
+              onChange={(e) =>
+                runAction(m.user_id, () =>
+                  changeMemberRole(m.user_id, e.target.value as 'admin' | 'agent' | 'manager')
+                )
+              }
+              className="bg-surface-2 border border-border-subtle rounded-app-sm px-3 py-1.5 text-text-primary text-sm focus:outline-none focus:border-accent-to"
+            >
+              <option value="admin">Admin</option>
+              <option value="manager">Manager</option>
+              <option value="agent">Agent</option>
+            </select>
+          ) : (
+            <span className="text-sm text-text-secondary">{ROLE_LABEL[m.role]}</span>
+          )}
+        </TableCell>
+        <TableCell>
+          {canManage && !isOwner && m.status !== 'removed' ? (
+            <div className="space-y-2">
+              <select
+                value={m.pod_id ?? ''}
+                disabled={busy || pods.length === 0}
+                onChange={(e) =>
+                  runAction(m.user_id, () => setMemberPod(m.user_id, e.target.value || null))
+                }
+                className="bg-surface-2 border border-border-subtle rounded-app-sm px-2 py-1 text-text-primary text-xs focus:outline-none focus:border-accent-to"
+              >
+                <option value="">No pod</option>
+                {pods.map((pod) => (
+                  <option key={pod.id} value={pod.id}>
+                    {pod.name}
+                  </option>
+                ))}
+              </select>
+              {m.role === 'manager' && pods.length > 0 && (
+                <div className="flex flex-col gap-1">
+                  <span className="text-meta text-text-secondary">Supervises:</span>
+                  {pods.map((pod) => (
+                    <label
+                      key={pod.id}
+                      className="flex items-center gap-1.5 text-meta text-text-secondary"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={(managerPodIds[m.user_id] ?? []).includes(pod.id)}
+                        onChange={() => handleToggleManagerPod(m.user_id, pod.id)}
+                      />
+                      {pod.name}
+                    </label>
+                  ))}
+                </div>
+              )}
+            </div>
+          ) : (
+            <span className="text-sm text-text-secondary">
+              {pods.find((p) => p.id === m.pod_id)?.name ?? '—'}
+            </span>
+          )}
+        </TableCell>
+        <TableCell>
+          {canManage && !isOwner && (
+            <div className="flex items-center justify-end gap-1">
+              {m.status === 'removed' ? (
+                <button
+                  disabled={busy}
+                  onClick={() => handleRestore(m)}
+                  title="Restore"
+                  className="p-2 rounded-app-sm hover:bg-white/5 text-text-secondary hover:text-text-primary transition-colors disabled:opacity-50"
+                >
+                  <UserCheck className="w-4 h-4" />
+                </button>
+              ) : (
+                <>
+                  <button
+                    disabled={busy}
+                    onClick={() =>
+                      m.status === 'disabled'
+                        ? runAction(m.user_id, () => enableMember(m.user_id))
+                        : setOffboardTarget({ member: m, mode: 'disable' })
+                    }
+                    title={m.status === 'disabled' ? 'Enable' : 'Disable'}
+                    className="p-2 rounded-app-sm hover:bg-white/5 text-text-secondary hover:text-text-primary transition-colors disabled:opacity-50"
+                  >
+                    {m.status === 'disabled' ? (
+                      <UserCheck className="w-4 h-4" />
+                    ) : (
+                      <UserX className="w-4 h-4" />
+                    )}
+                  </button>
+                  <button
+                    disabled={busy}
+                    onClick={() => setOffboardTarget({ member: m, mode: 'remove' })}
+                    title="Remove"
+                    className="p-2 rounded-app-sm hover:bg-danger/10 text-text-secondary hover:text-danger transition-colors disabled:opacity-50"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </>
+              )}
+            </div>
+          )}
+        </TableCell>
+      </TableRow>
+    );
+  };
+
+  const renderMobileMemberCard = (m: OrgMember) => {
+    const name = [m.first_name, m.last_name].filter(Boolean).join(' ') || m.email || 'Unnamed';
+    const isSelf = m.user_id === user?.id;
+    const isOwner = m.role === 'owner';
+    const busy = busyUserId === m.user_id;
+    return (
+      <div
+        key={m.user_id}
+        className="flex items-center justify-between p-4 bg-surface-1 rounded-app-md border border-border-subtle"
+      >
+        <div className="flex items-center gap-4 min-w-0">
+          <div className="w-10 h-10 rounded-full bg-gradient-to-br from-accent-from to-accent-to flex items-center justify-center text-white text-sm font-semibold flex-shrink-0">
+            {name.slice(0, 2).toUpperCase()}
+          </div>
+          <div className="min-w-0">
+            <div className="text-text-primary font-medium truncate">
+              {name} {isSelf && <span className="text-text-secondary text-xs">(you)</span>}
+            </div>
+            <div className="text-sm text-text-secondary truncate">{m.email}</div>
+          </div>
+        </div>
+        <div className="flex items-center gap-3 flex-shrink-0">
+          <div className="flex flex-col items-end">
+            <span
+              className={cn(
+                'px-2.5 py-1 rounded-full text-xs border',
+                m.status === 'removed'
+                  ? 'bg-danger/10 text-danger border-danger/20'
+                  : m.status === 'disabled'
+                    ? 'bg-white/5 text-text-secondary border-white/10'
+                    : 'bg-success/10 text-success border-success/20'
+              )}
+            >
+              {m.status === 'removed' ? 'Removed' : m.status === 'disabled' ? 'Disabled' : 'Active'}
+            </span>
+            {m.status === 'removed' && m.restorable_until && (
+              <div className="text-meta text-text-secondary mt-1">
+                {restorableLabel(m.restorable_until)}
+              </div>
+            )}
+          </div>
+
+          {canManage && !isOwner ? (
+            m.status === 'removed' ? (
+              <button
+                disabled={busy}
+                onClick={() => handleRestore(m)}
+                title="Restore"
+                className="p-2 rounded-app-sm hover:bg-white/5 text-text-secondary hover:text-text-primary transition-colors disabled:opacity-50"
+              >
+                <UserCheck className="w-4 h-4" />
+              </button>
+            ) : (
+              <>
+                <select
+                  value={m.role}
+                  disabled={busy}
+                  onChange={(e) =>
+                    runAction(m.user_id, () =>
+                      changeMemberRole(m.user_id, e.target.value as 'admin' | 'agent' | 'manager')
+                    )
+                  }
+                  className="bg-surface-2 border border-border-subtle rounded-app-sm px-3 py-1.5 text-text-primary text-sm focus:outline-none focus:border-accent-to"
+                >
+                  <option value="admin">Admin</option>
+                  <option value="manager">Manager</option>
+                  <option value="agent">Agent</option>
+                </select>
+                <button
+                  disabled={busy}
+                  onClick={() =>
+                    m.status === 'disabled'
+                      ? runAction(m.user_id, () => enableMember(m.user_id))
+                      : setOffboardTarget({ member: m, mode: 'disable' })
+                  }
+                  title={m.status === 'disabled' ? 'Enable' : 'Disable'}
+                  className="p-2 rounded-app-sm hover:bg-white/5 text-text-secondary hover:text-text-primary transition-colors disabled:opacity-50"
+                >
+                  {m.status === 'disabled' ? (
+                    <UserCheck className="w-4 h-4" />
+                  ) : (
+                    <UserX className="w-4 h-4" />
+                  )}
+                </button>
+                <button
+                  disabled={busy}
+                  onClick={() => setOffboardTarget({ member: m, mode: 'remove' })}
+                  title="Remove"
+                  className="p-2 rounded-app-sm hover:bg-danger/10 text-text-secondary hover:text-danger transition-colors disabled:opacity-50"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              </>
+            )
+          ) : (
+            <span className="text-sm text-text-secondary px-2">{ROLE_LABEL[m.role]}</span>
+          )}
+        </div>
+      </div>
+    );
+  };
 
   return (
     <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
@@ -668,6 +933,107 @@ function TeamTab() {
           </form>
         </div>
       )}
+
+      {/* TASK-U1 (user request): "Team members" moved up to right below Pods. Owners/admins/
+          managers stay in one always-visible top group (a manager sits WITH admins here, labelled
+          by their own role via ROLE_LABEL -- not treated as an "agent" for this split); everyone
+          else (role === 'agent') collapses into its own "Agents (N)" group, collapsed by default
+          since that list can grow a lot. Every existing per-member action still works identically
+          in either group -- renderDesktopMemberRow/renderMobileMemberCard are the SAME functions
+          for both. */}
+      <div className="mb-6">
+        <h3 className="text-section-title text-text-primary mb-4">Team members</h3>
+
+        {(error || actionError) && (
+          <div className="mb-4 p-4 rounded-app-md bg-danger/10 border border-danger/30 text-danger text-sm">
+            {error || actionError}
+          </div>
+        )}
+
+        {canManage && (
+          <label className="mb-3 flex items-center gap-2 text-meta text-text-secondary">
+            <input
+              type="checkbox"
+              checked={showRemoved}
+              onChange={(e) => setShowRemoved(e.target.checked)}
+              className="rounded border-border-subtle"
+            />
+            Show removed members (restorable for 72h)
+          </label>
+        )}
+
+        {loading ? (
+          isDesktop ? (
+            <TableSkeleton rows={4} columns={4} />
+          ) : (
+            <ListSkeleton rows={4} />
+          )
+        ) : (
+          <>
+            {isDesktop ? (
+              <div className="rounded-app-lg border border-border-subtle bg-surface-1 overflow-hidden">
+                <Table>
+                  <TableHeader>
+                    <TableRow className="border-border-subtle hover:bg-transparent">
+                      <TableHead className="text-text-secondary">Name</TableHead>
+                      <TableHead className="text-text-secondary">Status</TableHead>
+                      <TableHead className="text-text-secondary">Role</TableHead>
+                      <TableHead className="text-text-secondary">Pod</TableHead>
+                      <TableHead className="text-right text-text-secondary">Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>{nonAgentMembers.map(renderDesktopMemberRow)}</TableBody>
+                </Table>
+              </div>
+            ) : (
+              <div className="space-y-3">{nonAgentMembers.map(renderMobileMemberCard)}</div>
+            )}
+
+            {agentMembers.length > 0 && (
+              <div className="mt-4">
+                <button
+                  type="button"
+                  aria-expanded={agentsExpanded}
+                  onClick={() => setAgentsExpanded((v) => !v)}
+                  className="flex items-center gap-2 text-body font-medium text-text-primary hover:text-white"
+                >
+                  {agentsExpanded ? (
+                    <ChevronUp className="w-4 h-4" />
+                  ) : (
+                    <ChevronDown className="w-4 h-4" />
+                  )}
+                  Agents ({agentMembers.length})
+                </button>
+                {agentsExpanded &&
+                  (isDesktop ? (
+                    <div className="mt-2 rounded-app-lg border border-border-subtle bg-surface-1 overflow-hidden">
+                      <Table>
+                        <TableHeader>
+                          <TableRow className="border-border-subtle hover:bg-transparent">
+                            <TableHead className="text-text-secondary">Name</TableHead>
+                            <TableHead className="text-text-secondary">Status</TableHead>
+                            <TableHead className="text-text-secondary">Role</TableHead>
+                            <TableHead className="text-text-secondary">Pod</TableHead>
+                            <TableHead className="text-right text-text-secondary">
+                              Actions
+                            </TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>{agentMembers.map(renderDesktopMemberRow)}</TableBody>
+                      </Table>
+                    </div>
+                  ) : (
+                    <div className="mt-2 space-y-3">{agentMembers.map(renderMobileMemberCard)}</div>
+                  ))}
+              </div>
+            )}
+          </>
+        )}
+
+        {canManage && members.length > 0 && (
+          <GhlMemberMappingSection members={members} onSaved={load} />
+        )}
+      </div>
 
       {canManage && (
         <>
@@ -847,323 +1213,6 @@ function TeamTab() {
             </Table>
           </div>
         </div>
-      )}
-
-      {(error || actionError) && (
-        <div className="mb-6 p-4 rounded-app-md bg-danger/10 border border-danger/30 text-danger text-sm">
-          {error || actionError}
-        </div>
-      )}
-
-      {canManage && (
-        <label className="mb-3 flex items-center gap-2 text-meta text-text-secondary">
-          <input
-            type="checkbox"
-            checked={showRemoved}
-            onChange={(e) => setShowRemoved(e.target.checked)}
-            className="rounded border-border-subtle"
-          />
-          Show removed members (restorable for 72h)
-        </label>
-      )}
-
-      {loading ? (
-        isDesktop ? (
-          <TableSkeleton rows={4} columns={4} />
-        ) : (
-          <ListSkeleton rows={4} />
-        )
-      ) : isDesktop ? (
-        <div className="rounded-app-lg border border-border-subtle bg-surface-1 overflow-hidden">
-          <Table>
-            <TableHeader>
-              <TableRow className="border-border-subtle hover:bg-transparent">
-                <TableHead className="text-text-secondary">Name</TableHead>
-                <TableHead className="text-text-secondary">Status</TableHead>
-                <TableHead className="text-text-secondary">Role</TableHead>
-                <TableHead className="text-text-secondary">Pod</TableHead>
-                <TableHead className="text-right text-text-secondary">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {members.map((m) => {
-                const name =
-                  [m.first_name, m.last_name].filter(Boolean).join(' ') || m.email || 'Unnamed';
-                const isSelf = m.user_id === user?.id;
-                const isOwner = m.role === 'owner';
-                const busy = busyUserId === m.user_id;
-                return (
-                  <TableRow key={m.user_id} className="border-border-subtle">
-                    <TableCell>
-                      <div className="flex items-center gap-3 min-w-0">
-                        <div className="w-8 h-8 rounded-full bg-gradient-to-br from-accent-from to-accent-to flex items-center justify-center text-white text-xs font-semibold flex-shrink-0">
-                          {name.slice(0, 2).toUpperCase()}
-                        </div>
-                        <div className="min-w-0">
-                          <div className="text-text-primary font-medium truncate">
-                            {name}{' '}
-                            {isSelf && <span className="text-text-secondary text-xs">(you)</span>}
-                          </div>
-                          <div className="text-meta text-text-secondary truncate">{m.email}</div>
-                        </div>
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <span
-                        className={cn(
-                          'px-2.5 py-1 rounded-full text-xs border',
-                          m.status === 'removed'
-                            ? 'bg-danger/10 text-danger border-danger/20'
-                            : m.status === 'disabled'
-                              ? 'bg-white/5 text-text-secondary border-white/10'
-                              : 'bg-success/10 text-success border-success/20'
-                        )}
-                      >
-                        {m.status === 'removed'
-                          ? 'Removed'
-                          : m.status === 'disabled'
-                            ? 'Disabled'
-                            : 'Active'}
-                      </span>
-                      {m.status === 'removed' && m.restorable_until && (
-                        <div className="text-meta text-text-secondary mt-1">
-                          {restorableLabel(m.restorable_until)}
-                        </div>
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      {canManage && !isOwner && m.status !== 'removed' ? (
-                        <select
-                          value={m.role}
-                          disabled={busy}
-                          onChange={(e) =>
-                            runAction(m.user_id, () =>
-                              changeMemberRole(
-                                m.user_id,
-                                e.target.value as 'admin' | 'agent' | 'manager'
-                              )
-                            )
-                          }
-                          className="bg-surface-2 border border-border-subtle rounded-app-sm px-3 py-1.5 text-text-primary text-sm focus:outline-none focus:border-accent-to"
-                        >
-                          <option value="admin">Admin</option>
-                          <option value="manager">Manager</option>
-                          <option value="agent">Agent</option>
-                        </select>
-                      ) : (
-                        <span className="text-sm text-text-secondary">{ROLE_LABEL[m.role]}</span>
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      {canManage && !isOwner && m.status !== 'removed' ? (
-                        <div className="space-y-2">
-                          <select
-                            value={m.pod_id ?? ''}
-                            disabled={busy || pods.length === 0}
-                            onChange={(e) =>
-                              runAction(m.user_id, () =>
-                                setMemberPod(m.user_id, e.target.value || null)
-                              )
-                            }
-                            className="bg-surface-2 border border-border-subtle rounded-app-sm px-2 py-1 text-text-primary text-xs focus:outline-none focus:border-accent-to"
-                          >
-                            <option value="">No pod</option>
-                            {pods.map((pod) => (
-                              <option key={pod.id} value={pod.id}>
-                                {pod.name}
-                              </option>
-                            ))}
-                          </select>
-                          {m.role === 'manager' && pods.length > 0 && (
-                            <div className="flex flex-col gap-1">
-                              <span className="text-meta text-text-secondary">Supervises:</span>
-                              {pods.map((pod) => (
-                                <label
-                                  key={pod.id}
-                                  className="flex items-center gap-1.5 text-meta text-text-secondary"
-                                >
-                                  <input
-                                    type="checkbox"
-                                    checked={(managerPodIds[m.user_id] ?? []).includes(pod.id)}
-                                    onChange={() => handleToggleManagerPod(m.user_id, pod.id)}
-                                  />
-                                  {pod.name}
-                                </label>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      ) : (
-                        <span className="text-sm text-text-secondary">
-                          {pods.find((p) => p.id === m.pod_id)?.name ?? '—'}
-                        </span>
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      {canManage && !isOwner && (
-                        <div className="flex items-center justify-end gap-1">
-                          {m.status === 'removed' ? (
-                            <button
-                              disabled={busy}
-                              onClick={() => handleRestore(m)}
-                              title="Restore"
-                              className="p-2 rounded-app-sm hover:bg-white/5 text-text-secondary hover:text-text-primary transition-colors disabled:opacity-50"
-                            >
-                              <UserCheck className="w-4 h-4" />
-                            </button>
-                          ) : (
-                            <>
-                              <button
-                                disabled={busy}
-                                onClick={() =>
-                                  m.status === 'disabled'
-                                    ? runAction(m.user_id, () => enableMember(m.user_id))
-                                    : setOffboardTarget({ member: m, mode: 'disable' })
-                                }
-                                title={m.status === 'disabled' ? 'Enable' : 'Disable'}
-                                className="p-2 rounded-app-sm hover:bg-white/5 text-text-secondary hover:text-text-primary transition-colors disabled:opacity-50"
-                              >
-                                {m.status === 'disabled' ? (
-                                  <UserCheck className="w-4 h-4" />
-                                ) : (
-                                  <UserX className="w-4 h-4" />
-                                )}
-                              </button>
-                              <button
-                                disabled={busy}
-                                onClick={() => setOffboardTarget({ member: m, mode: 'remove' })}
-                                title="Remove"
-                                className="p-2 rounded-app-sm hover:bg-danger/10 text-text-secondary hover:text-danger transition-colors disabled:opacity-50"
-                              >
-                                <Trash2 className="w-4 h-4" />
-                              </button>
-                            </>
-                          )}
-                        </div>
-                      )}
-                    </TableCell>
-                  </TableRow>
-                );
-              })}
-            </TableBody>
-          </Table>
-        </div>
-      ) : (
-        <div className="space-y-3">
-          {members.map((m) => {
-            const name =
-              [m.first_name, m.last_name].filter(Boolean).join(' ') || m.email || 'Unnamed';
-            const isSelf = m.user_id === user?.id;
-            const isOwner = m.role === 'owner';
-            const busy = busyUserId === m.user_id;
-            return (
-              <div
-                key={m.user_id}
-                className="flex items-center justify-between p-4 bg-surface-1 rounded-app-md border border-border-subtle"
-              >
-                <div className="flex items-center gap-4 min-w-0">
-                  <div className="w-10 h-10 rounded-full bg-gradient-to-br from-accent-from to-accent-to flex items-center justify-center text-white text-sm font-semibold flex-shrink-0">
-                    {name.slice(0, 2).toUpperCase()}
-                  </div>
-                  <div className="min-w-0">
-                    <div className="text-text-primary font-medium truncate">
-                      {name} {isSelf && <span className="text-text-secondary text-xs">(you)</span>}
-                    </div>
-                    <div className="text-sm text-text-secondary truncate">{m.email}</div>
-                  </div>
-                </div>
-                <div className="flex items-center gap-3 flex-shrink-0">
-                  <div className="flex flex-col items-end">
-                    <span
-                      className={cn(
-                        'px-2.5 py-1 rounded-full text-xs border',
-                        m.status === 'removed'
-                          ? 'bg-danger/10 text-danger border-danger/20'
-                          : m.status === 'disabled'
-                            ? 'bg-white/5 text-text-secondary border-white/10'
-                            : 'bg-success/10 text-success border-success/20'
-                      )}
-                    >
-                      {m.status === 'removed'
-                        ? 'Removed'
-                        : m.status === 'disabled'
-                          ? 'Disabled'
-                          : 'Active'}
-                    </span>
-                    {m.status === 'removed' && m.restorable_until && (
-                      <div className="text-meta text-text-secondary mt-1">
-                        {restorableLabel(m.restorable_until)}
-                      </div>
-                    )}
-                  </div>
-
-                  {canManage && !isOwner ? (
-                    m.status === 'removed' ? (
-                      <button
-                        disabled={busy}
-                        onClick={() => handleRestore(m)}
-                        title="Restore"
-                        className="p-2 rounded-app-sm hover:bg-white/5 text-text-secondary hover:text-text-primary transition-colors disabled:opacity-50"
-                      >
-                        <UserCheck className="w-4 h-4" />
-                      </button>
-                    ) : (
-                      <>
-                        <select
-                          value={m.role}
-                          disabled={busy}
-                          onChange={(e) =>
-                            runAction(m.user_id, () =>
-                              changeMemberRole(
-                                m.user_id,
-                                e.target.value as 'admin' | 'agent' | 'manager'
-                              )
-                            )
-                          }
-                          className="bg-surface-2 border border-border-subtle rounded-app-sm px-3 py-1.5 text-text-primary text-sm focus:outline-none focus:border-accent-to"
-                        >
-                          <option value="admin">Admin</option>
-                          <option value="manager">Manager</option>
-                          <option value="agent">Agent</option>
-                        </select>
-                        <button
-                          disabled={busy}
-                          onClick={() =>
-                            m.status === 'disabled'
-                              ? runAction(m.user_id, () => enableMember(m.user_id))
-                              : setOffboardTarget({ member: m, mode: 'disable' })
-                          }
-                          title={m.status === 'disabled' ? 'Enable' : 'Disable'}
-                          className="p-2 rounded-app-sm hover:bg-white/5 text-text-secondary hover:text-text-primary transition-colors disabled:opacity-50"
-                        >
-                          {m.status === 'disabled' ? (
-                            <UserCheck className="w-4 h-4" />
-                          ) : (
-                            <UserX className="w-4 h-4" />
-                          )}
-                        </button>
-                        <button
-                          disabled={busy}
-                          onClick={() => setOffboardTarget({ member: m, mode: 'remove' })}
-                          title="Remove"
-                          className="p-2 rounded-app-sm hover:bg-danger/10 text-text-secondary hover:text-danger transition-colors disabled:opacity-50"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </>
-                    )
-                  ) : (
-                    <span className="text-sm text-text-secondary px-2">{ROLE_LABEL[m.role]}</span>
-                  )}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      {canManage && members.length > 0 && (
-        <GhlMemberMappingSection members={members} onSaved={load} />
       )}
 
       <OffboardWizardModal
@@ -5242,12 +5291,13 @@ export function Settings() {
   // user_phone_numbers RLS all independently reject an agent regardless of what this array
   // contains (see this task's invariant).
   const isAgent = role === 'agent';
-  // MISSION-5 TASK-M5-A5: a manager gets ONLY Activity (their own audit-log scope) and Security
-  // (their own profile) -- not Telephony/Team/Integrations/Dispositions/DNC/Distribution, all of
-  // which are billing/numbers/org-settings-adjacent and explicitly NOT a manager's capability
-  // ("cannot buy numbers, change billing/spend, change roles, or edit org settings"). Pod
-  // management/role picker live in the 'team' tab, which stays owner/admin-only for exactly this
-  // reason -- a manager never restructures pods or roles.
+  // MISSION-5 TASK-M5-A5 (Security tab removed, TASK-U1): a manager gets ONLY Activity (their own
+  // audit-log scope) -- plus Profile, always available to everyone -- not Telephony/Team/
+  // Integrations/Dispositions/DNC/Distribution, all of which are billing/numbers/org-settings-
+  // adjacent and explicitly NOT a manager's capability ("cannot buy numbers, change billing/
+  // spend, change roles, or edit org settings"). Pod management/role picker live in the 'team'
+  // tab, which stays owner/admin-only for exactly this reason -- a manager never restructures
+  // pods or roles.
   const isManagerRole = role === 'manager';
   const hideFromManager = isAgent || isManagerRole;
   const tabs = [
@@ -5270,7 +5320,6 @@ export function Settings() {
       ? [{ id: 'distribution' as SettingsTab, label: 'Distribution', icon: Share2 }]
       : []),
     ...(!isAgent ? [{ id: 'activity' as SettingsTab, label: 'Activity', icon: History }] : []),
-    { id: 'security' as SettingsTab, label: 'Security', icon: Shield },
   ];
 
   useEffect(() => {
@@ -5617,17 +5666,6 @@ export function Settings() {
               {activeTab === 'distribution' && !hideFromManager && <DistributionSettingsTab />}
 
               {activeTab === 'activity' && !isAgent && <ActivityTab />}
-
-              {activeTab === 'security' ? (
-                <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
-                  <PageHeader title="Security" />
-                  <EmptyState
-                    icon={Construction}
-                    title="Coming soon"
-                    body="This feature is under development."
-                  />
-                </motion.div>
-              ) : null}
             </>
           )}
         </div>
