@@ -26,12 +26,15 @@ export function useVisibilityPacedPolling(
   const pollRef = useRef(poll);
   pollRef.current = poll;
 
+  // Lead review NIT: `hasError` typically STAYS true across many consecutive failed polls, so
+  // gating the streak advance on an effect with `[hasError]` deps only ever fired once (on the
+  // false->true transition) and then froze at that one step forever, no matter how many more
+  // ticks kept failing. Fixed by reading a plain ref (updated every render, same pattern as
+  // `pollRef`) fresh inside `schedule()` itself -- the streak now advances once per SCHEDULING
+  // DECISION (i.e. once per actual tick), not once per boolean transition.
+  const hasErrorRef = useRef(hasError);
+  hasErrorRef.current = hasError;
   const errorStreakRef = useRef(0);
-  useEffect(() => {
-    errorStreakRef.current = hasError
-      ? Math.min(errorStreakRef.current + 1, BACKOFF_MULTIPLIERS.length - 1)
-      : 0;
-  }, [hasError]);
 
   useEffect(() => {
     if (!enabled) return;
@@ -39,6 +42,9 @@ export function useVisibilityPacedPolling(
 
     const schedule = () => {
       if (document.visibilityState === 'hidden') return;
+      errorStreakRef.current = hasErrorRef.current
+        ? Math.min(errorStreakRef.current + 1, BACKOFF_MULTIPLIERS.length - 1)
+        : 0;
       const delay = baseIntervalMs * BACKOFF_MULTIPLIERS[errorStreakRef.current];
       timer = setTimeout(tick, delay);
     };
