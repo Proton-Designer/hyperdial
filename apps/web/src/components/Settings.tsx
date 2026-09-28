@@ -1029,10 +1029,6 @@ function TeamTab() {
             )}
           </>
         )}
-
-        {canManage && members.length > 0 && (
-          <GhlMemberMappingSection members={members} onSaved={load} />
-        )}
       </div>
 
       {canManage && (
@@ -1213,6 +1209,15 @@ function TeamTab() {
             </Table>
           </div>
         </div>
+      )}
+
+      {/* TASK-U1 fix-forward (the lead's visual check): moved here, after invites/pending
+          invites, so the members module + supervisor alerts/call takeover the user asked for
+          right after it aren't interrupted by this GHL sync/mapping utility -- it's a per-member
+          extra, not part of active roster management, so it reads best as the last thing on the
+          page rather than wedged between two things the user explicitly wanted adjacent. */}
+      {canManage && members.length > 0 && (
+        <GhlMemberMappingSection members={members} onSaved={load} />
       )}
 
       <OffboardWizardModal
