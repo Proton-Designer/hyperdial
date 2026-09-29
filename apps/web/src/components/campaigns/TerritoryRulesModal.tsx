@@ -48,6 +48,15 @@ export function TerritoryRulesModal({
 }: TerritoryRulesModalProps) {
   const modalRef = useRef<HTMLDivElement>(null);
   useFocusTrap(modalRef, true);
+  // TASK-Q3F: useFocusTrap deliberately doesn't add an Escape handler (see its own doc comment),
+  // and this modal never had one -- same pattern as PurchaseNumbersModal.tsx.
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [onClose]);
   const { role } = useOrg();
   const isOwnerAdmin = role === 'owner' || role === 'admin';
 

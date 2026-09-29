@@ -382,8 +382,20 @@ function RecordingDetailPanel({
   // `flag`/`flagReason` state above (recording_flags, anyone-can-flag-a-call). These come from
   // disposition_quality_rules (min talk time / required field), evaluated server-side, and are
   // reviewed (not un-flagged) via setQualityFlagStatus.
-  const [qualityFlags, setQualityFlags] = useState<DispositionQualityFlag[] | 'loading'>('loading');
+  const [qualityFlags, setQualityFlags] = useState<DispositionQualityFlag[] | 'loading' | 'error'>(
+    'loading'
+  );
   const [qualityFlagBusyId, setQualityFlagBusyId] = useState<string | null>(null);
+
+  // TASK-Q3F: a real fetch failure used to be indistinguishable from "no quality flags" (both
+  // rendered as an empty list, so the whole section -- heading included -- just didn't show up).
+  // Kept as a standalone function so the Retry button below can re-run the exact same fetch.
+  const loadQualityFlags = () => {
+    setQualityFlags('loading');
+    listDispositionQualityFlags({ callLegId: row.call_leg_id })
+      .then(setQualityFlags)
+      .catch(() => setQualityFlags('error'));
+  };
 
   const [comments, setComments] = useState<RecordingComment[] | null>(null);
   const [commentText, setCommentText] = useState('');
@@ -410,10 +422,7 @@ function RecordingDetailPanel({
       .then(setFlag)
       .catch(() => setFlag(null));
 
-    setQualityFlags('loading');
-    listDispositionQualityFlags({ callLegId: row.call_leg_id })
-      .then(setQualityFlags)
-      .catch(() => setQualityFlags([]));
+    loadQualityFlags();
 
     setComments(null);
     listRecordingComments(row.call_leg_id)
@@ -563,13 +572,26 @@ function RecordingDetailPanel({
         )}
       </div>
 
-      {(qualityFlags === 'loading' || qualityFlags.length > 0) && (
+      {(qualityFlags === 'loading' || qualityFlags === 'error' || qualityFlags.length > 0) && (
         <div className="space-y-2">
           <h4 className="text-meta font-medium text-text-secondary uppercase tracking-wide">
             Quality flags
           </h4>
           {qualityFlags === 'loading' && <Skeleton className="h-8 w-full rounded-app-sm" />}
+          {qualityFlags === 'error' && (
+            <div className="flex items-center justify-between gap-2 rounded-app-sm border border-danger/30 bg-danger/10 p-2 text-sm text-danger">
+              <span>Couldn&apos;t load quality flags.</span>
+              <button
+                type="button"
+                onClick={loadQualityFlags}
+                className="underline hover:no-underline"
+              >
+                Retry
+              </button>
+            </div>
+          )}
           {qualityFlags !== 'loading' &&
+            qualityFlags !== 'error' &&
             qualityFlags.map((qf) => (
               <div
                 key={qf.id}

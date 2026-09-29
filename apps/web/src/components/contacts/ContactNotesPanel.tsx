@@ -82,6 +82,8 @@ export function ContactNotesPanel({
 
   useEffect(() => {
     load();
+    // TASK-Q3F: kept silent -- best-effort only, the @mention autocomplete just won't suggest
+    // names if this fails; notes still load/post/edit/delete fully without it.
     listOrgMembers()
       .then(setMembers)
       .catch(() => {});

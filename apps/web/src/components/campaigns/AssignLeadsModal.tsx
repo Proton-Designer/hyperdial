@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { type OrgMember, type AssignLeadsFilter, countLeadsAssignedToOthers } from '@/lib/api';
 import { Button } from '@/components/ui/button';
@@ -28,6 +28,15 @@ export function AssignLeadsModal({
 }: AssignLeadsModalProps) {
   const modalRef = useRef<HTMLDivElement>(null);
   useFocusTrap(modalRef, true);
+  // TASK-Q3F: useFocusTrap deliberately doesn't add an Escape handler (see its own doc comment),
+  // and this modal never had one -- same pattern as PurchaseNumbersModal.tsx.
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [onClose]);
 
   const [agentId, setAgentId] = useState('');
   const [mode, setMode] = useState<AssignLeadsFilter['mode']>('all');

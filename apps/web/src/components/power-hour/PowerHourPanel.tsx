@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { useAuth } from '@/contexts/AuthContext';
@@ -76,9 +77,12 @@ export function PowerHourPanel() {
   }, []);
 
   useEffect(() => {
+    // TASK-Q3F: surfaced -- a silent failure here left the create-form's pod dropdown empty with
+    // no indication why, and a manager defaults to scope='pod' (see `scope` state below), so
+    // creating a power hour depends on this having loaded.
     listOrgPods()
       .then(setPods)
-      .catch(() => {});
+      .catch(() => toast.error('Failed to load pods -- pod-scoped power hours are unavailable.'));
     loadHours();
   }, [loadHours]);
   // TASK-M5-L1 (EC-9): paused while the tab is hidden, refreshed immediately on becoming
@@ -87,9 +91,12 @@ export function PowerHourPanel() {
 
   useEffect(() => {
     if (role === 'manager' && user?.id) {
+      // TASK-Q3F: surfaced -- a silent failure here left managerPodIds at [], which makes
+      // canCancel() false for every pod (see below), silently hiding Cancel on power hours this
+      // manager genuinely owns.
       getManagerPods(user.id)
         .then(setManagerPodIds)
-        .catch(() => {});
+        .catch(() => toast.error('Failed to load your pod scope -- Cancel may be unavailable.'));
     }
   }, [role, user?.id]);
 

@@ -699,6 +699,7 @@ function TeamTab() {
                   disabled={busy}
                   onClick={() => handleRestore(m)}
                   title="Restore"
+                  aria-label="Restore"
                   className="p-2 rounded-app-sm hover:bg-white/5 text-text-secondary hover:text-text-primary transition-colors disabled:opacity-50"
                 >
                   <UserCheck className="w-4 h-4" />
@@ -713,6 +714,7 @@ function TeamTab() {
                         : setOffboardTarget({ member: m, mode: 'disable' })
                     }
                     title={m.status === 'disabled' ? 'Enable' : 'Disable'}
+                    aria-label={m.status === 'disabled' ? 'Enable' : 'Disable'}
                     className="p-2 rounded-app-sm hover:bg-white/5 text-text-secondary hover:text-text-primary transition-colors disabled:opacity-50"
                   >
                     {m.status === 'disabled' ? (
@@ -725,6 +727,7 @@ function TeamTab() {
                     disabled={busy}
                     onClick={() => setOffboardTarget({ member: m, mode: 'remove' })}
                     title="Remove"
+                    aria-label="Remove"
                     className="p-2 rounded-app-sm hover:bg-danger/10 text-text-secondary hover:text-danger transition-colors disabled:opacity-50"
                   >
                     <Trash2 className="w-4 h-4" />
@@ -786,6 +789,7 @@ function TeamTab() {
                 disabled={busy}
                 onClick={() => handleRestore(m)}
                 title="Restore"
+                aria-label="Restore"
                 className="p-2 rounded-app-sm hover:bg-white/5 text-text-secondary hover:text-text-primary transition-colors disabled:opacity-50"
               >
                 <UserCheck className="w-4 h-4" />
@@ -814,6 +818,7 @@ function TeamTab() {
                       : setOffboardTarget({ member: m, mode: 'disable' })
                   }
                   title={m.status === 'disabled' ? 'Enable' : 'Disable'}
+                  aria-label={m.status === 'disabled' ? 'Enable' : 'Disable'}
                   className="p-2 rounded-app-sm hover:bg-white/5 text-text-secondary hover:text-text-primary transition-colors disabled:opacity-50"
                 >
                   {m.status === 'disabled' ? (
@@ -826,6 +831,7 @@ function TeamTab() {
                   disabled={busy}
                   onClick={() => setOffboardTarget({ member: m, mode: 'remove' })}
                   title="Remove"
+                  aria-label="Remove"
                   className="p-2 rounded-app-sm hover:bg-danger/10 text-text-secondary hover:text-danger transition-colors disabled:opacity-50"
                 >
                   <Trash2 className="w-4 h-4" />

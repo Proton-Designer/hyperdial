@@ -97,7 +97,11 @@ export function Inbox({ onNavigateToDialer }: InboxProps) {
         setSharedInboxEnabled(s.sharedInboxEnabled);
         setClaimStaleMinutes(s.claimStaleMinutes);
       })
-      .catch(() => {});
+      // TASK-Q3F: a silent failure here left the card showing its INITIAL state values (off,
+      // 30 minutes), indistinguishable from the real saved settings -- an admin could then hit
+      // Save and overwrite the real settings with those defaults. Surfaced, since Save depends
+      // on this having actually loaded.
+      .catch(() => toast.error('Failed to load shared inbox settings -- reload before saving.'));
   }, [canEditSettings]);
 
   const nameFor = (userId: string | null): string | null => {

@@ -70,6 +70,7 @@ export function SystemHealthPanel() {
         {failures.length > 0 && (
           <button
             type="button"
+            aria-expanded={expanded}
             onClick={() => setExpanded((v) => !v)}
             className="text-sm px-3 py-1.5 rounded-app-md border border-border-subtle text-text-primary hover:bg-surface-2"
           >
