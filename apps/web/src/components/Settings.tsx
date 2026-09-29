@@ -3780,7 +3780,53 @@ const AUDIT_ACTION_LABELS: Record<string, string> = {
   'goal.delete': 'Removed a team goal',
   'broadcast.create': 'Posted a broadcast',
   'broadcast.delete': 'Removed a broadcast',
+  // TASK-Q2F (Q2 finding #1): every remaining `log_org_action`/`logOrgAction` call site in the
+  // repo, found by grepping every migration (direct calls + the `audit_log_settings_change_
+  // trigger` wrapper) and every Edge Function, plus `org-audit-log`'s own client-event allowlist
+  // -- not just the 7 the Q2 report happened to see.
+  'invite.accept': 'Accepted an invite',
+  'invite.resend': 'Resent an invite',
+  'invite.revoke': 'Revoked an invite',
+  'member.restore': 'Restored a member',
+  'member.reactivate_via_invite': 'Reactivated a member via invite',
+  'member.release_queued_leads': "Released a member's queued leads",
+  'member.set_pod': "Set a member's pod",
+  'member.set_manager_pods': "Set a manager's pod scope",
+  'session.call_takeover': 'Took over a live call',
+  'campaign.distribution_mode.update': "Changed a campaign's distribution mode",
+  'campaign.restore_script_version': 'Restored a campaign script version',
+  'campaign_leads.round_robin_assign': 'Round-robin assigned leads',
+  'campaign_leads.territory_auto_assign': 'Territory-assigned leads',
+  'territory_rule.create': 'Created a territory rule',
+  'territory_rule.update': 'Updated a territory rule',
+  'territory_rule.delete': 'Deleted a territory rule',
+  'territory_rule.reorder': 'Reordered territory rules',
+  'territory_rules.apply': 'Applied territory rules',
+  'inbox_item.claim': 'Claimed an inbox item',
+  'inbox_item.done': 'Marked an inbox item done',
+  'inbox_item.dismiss': 'Dismissed an inbox item',
+  'power_hour.create': 'Started a power hour',
+  'power_hour.cancel': 'Cancelled a power hour',
+  'quality_rule.set': 'Set a disposition quality rule',
+  'quality_flag.review': 'Reviewed a quality flag',
+  'scorecard.set': 'Scored a call review',
+  'schedule.set_day': 'Set a schedule day',
+  'schedule.set_timezone': 'Set a schedule timezone',
+  'settings.distribution.update': 'Updated distribution settings',
+  'settings.agent_dial_cap.update': "Set an agent's daily dial cap override",
+  'settings.call_takeover.update': 'Updated call takeover settings',
+  'settings.quality_checks.update': 'Updated quality check settings',
+  'settings.shared_inbox.update': 'Updated shared inbox settings',
+  'export.attendance_csv': 'Exported the attendance CSV',
 };
+
+/** TASK-Q2F (Q2 finding #1): any action key that reaches this page without a matching entry
+ *  above (a future action nobody added a label for yet) is humanized instead of shown raw --
+ *  `territory_rule.create` -> "territory rule create" -- never the literal dotted/underscored
+ *  string a user has no reason to parse. */
+function humanizeActionKey(action: string): string {
+  return action.replace(/[._]/g, ' ');
+}
 
 function ActivityTab() {
   const [members, setMembers] = useState<OrgMember[]>([]);
@@ -3975,7 +4021,7 @@ function ActivityTab() {
                       {memberLabel(e.actorUserId, e.actorName)}
                     </TableCell>
                     <TableCell className="text-text-secondary">
-                      {AUDIT_ACTION_LABELS[e.action] ?? e.action}
+                      {AUDIT_ACTION_LABELS[e.action] ?? humanizeActionKey(e.action)}
                     </TableCell>
                     <TableCell className="text-text-secondary">{e.targetType ?? '—'}</TableCell>
                   </TableRow>
