@@ -16,7 +16,13 @@ function formatValue(field: string, value: unknown): string {
   if (field === 'dnc') return value ? 'On' : 'Off';
   if (field === 'name' && value && typeof value === 'object') {
     const v = value as { first_name?: string; last_name?: string; business_name?: string };
-    return [v.first_name, v.last_name].filter(Boolean).join(' ') || v.business_name || '—';
+    // TASK-Q4F: this trigger batches first/last/business name into one "name" change (see the
+    // migration's own comment) specifically so a business-name-only edit still produces a row --
+    // dropping business_name here whenever a personal name is also set silently turned that row
+    // into a no-op-looking "X -> X" diff. Show both, so any of the three actually changing shows.
+    const personal = [v.first_name, v.last_name].filter(Boolean).join(' ');
+    if (personal && v.business_name) return `${personal} (${v.business_name})`;
+    return personal || v.business_name || '—';
   }
   if (Array.isArray(value)) return value.length ? value.join(', ') : '—';
   return String(value);

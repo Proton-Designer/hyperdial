@@ -5589,7 +5589,7 @@ export function Settings() {
                         onClick={() => isTelnyxConnected && setPurchaseModalOpen(true)}
                         disabled={!isTelnyxConnected}
                         title={isTelnyxConnected ? undefined : 'Connect Telnyx to purchase numbers'}
-                        className="px-4 py-2 bg-gradient-to-r from-accent-from to-accent-to rounded-app-md text-white text-sm font-semibold flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
+                        className="px-4 py-2 bg-gradient-to-r from-accent-from to-accent-to rounded-app-md text-white text-sm font-semibold flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         <Search className="w-4 h-4" />
                         Purchase numbers
