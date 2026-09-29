@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { MessageSquare, Send, Pencil, Trash2 } from 'lucide-react';
 import {
   addContactNote,
@@ -65,8 +65,10 @@ export function ContactNotesPanel({
 
   const [draft, setDraft] = useState('');
   const [mentionQuery, setMentionQuery] = useState<{ query: string; start: number } | null>(null);
+  const [mentionHighlight, setMentionHighlight] = useState(0);
   const [mentioned, setMentioned] = useState<Map<string, string>>(new Map());
   const [posting, setPosting] = useState(false);
+  const mentionListboxId = useId();
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState('');
@@ -109,6 +111,15 @@ export function ContactNotesPanel({
       .slice(0, 6);
   }, [mentionQuery, activeMembers]);
 
+  // New query text (including a fresh "@") should always re-start the highlight at the top.
+  useEffect(() => {
+    setMentionHighlight(0);
+  }, [mentionQuery]);
+
+  const mentionHighlightIndex = mentionSuggestions.length
+    ? Math.min(mentionHighlight, mentionSuggestions.length - 1)
+    : 0;
+
   const handleDraftChange = (value: string, caret: number) => {
     setDraft(value);
     const upToCaret = value.slice(0, caret);
@@ -125,6 +136,23 @@ export function ContactNotesPanel({
     setMentioned((prev) => new Map(prev).set(member.user_id, name));
     setMentionQuery(null);
     textareaRef.current?.focus();
+  };
+
+  const handleTextareaKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (!mentionQuery || mentionSuggestions.length === 0) return;
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setMentionHighlight((i) => (i + 1) % mentionSuggestions.length);
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setMentionHighlight((i) => (i - 1 + mentionSuggestions.length) % mentionSuggestions.length);
+    } else if (e.key === 'Enter' || e.key === 'Tab') {
+      e.preventDefault();
+      pickMention(mentionSuggestions[mentionHighlightIndex]);
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      setMentionQuery(null);
+    }
   };
 
   const submit = async () => {
@@ -267,13 +295,22 @@ export function ContactNotesPanel({
       </div>
       <div className="relative mt-2">
         {mentionQuery && mentionSuggestions.length > 0 && (
-          <div className="absolute z-10 bottom-full mb-1 left-0 w-56 rounded-lg border border-white/10 bg-surface-2 shadow-lg max-h-40 overflow-y-auto">
-            {mentionSuggestions.map((m) => (
+          <div
+            id={mentionListboxId}
+            role="listbox"
+            className="absolute z-10 bottom-full mb-1 left-0 w-56 rounded-lg border border-white/10 bg-surface-2 shadow-lg max-h-40 overflow-y-auto"
+          >
+            {mentionSuggestions.map((m, i) => (
               <button
                 key={m.user_id}
+                id={`${mentionListboxId}-option-${i}`}
+                role="option"
+                aria-selected={i === mentionHighlightIndex}
                 type="button"
                 onClick={() => pickMention(m)}
-                className="block w-full text-left px-3 py-1.5 text-xs text-white hover:bg-white/10"
+                className={`block w-full text-left px-3 py-1.5 text-xs text-white hover:bg-white/10 ${
+                  i === mentionHighlightIndex ? 'bg-white/10' : ''
+                }`}
               >
                 {mentionInsertText(m, activeMembers)}
               </button>
@@ -289,7 +326,15 @@ export function ContactNotesPanel({
           onChange={(e) =>
             handleDraftChange(e.target.value, e.target.selectionStart ?? e.target.value.length)
           }
+          onKeyDown={handleTextareaKeyDown}
           placeholder="Add a note... type @ to mention someone"
+          aria-expanded={!!mentionQuery && mentionSuggestions.length > 0}
+          aria-controls={mentionListboxId}
+          aria-activedescendant={
+            mentionQuery && mentionSuggestions.length > 0
+              ? `${mentionListboxId}-option-${mentionHighlightIndex}`
+              : undefined
+          }
         />
         <div className="flex justify-end mt-1">
           <button
