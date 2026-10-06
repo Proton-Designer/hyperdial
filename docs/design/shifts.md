@@ -237,6 +237,58 @@ Henry this), `enabled` owner/admin only.
   current dark theme tokens. Match existing screens (Team.tsx, schedules/*) for spacing/typography.
   Every surface ships loading / empty / error states and works at 390 px.
 
+## 4b. Clock in/out + end-of-shift survey (user request 2026-10-06, after the spec)
+
+Interns press **Start shift** when they begin and **End shift** when they finish. Henry sees whether they started on time
+against the time they picked, and every ended dialing shift carries a short survey.
+
+Rules (server-enforced):
+
+- Start is allowed from 15 min before `starts_at` until `ends_at`, only for the caller's own `scheduled` shift, once (idempotent:
+  a second start returns the existing clock-in). Server clock only. `clockInLateMinutes = max(0, clockedInAt - startsAt)` in
+  whole minutes; > `grace_minutes` adds the KPI flag `late_clock_in`. No clock-in by the time the shift is finalized adds
+  `no_clock_in` (not for shifts that are excused/cancelled).
+- End is allowed any time after Start (an early end is fine; it shows as early). For a **dialing** shift End REQUIRES the survey in the
+  same call; for follow_up/social shifts End takes no survey. A shift never ended is closed by the KPI finalize step at `ends_at`
+  (`clockedOutAt` stays null, `survey` stays null, flag `no_clock_out`).
+- Survey: `topObjection` one of `too_busy | enough_work | fees | dont_trust_apps | not_interested_app_jobs | other` + `objectionNote`
+  (required, 3..500 chars trimmed: "how they handled it"); `whatWorked` (required, 3..500: the opener, line or rebuttal that kept someone on
+  the phone); `slowedBy` one of `bad_numbers | dialer_issue | didnt_know_answer | script_off | nothing` + `slowedNote` (required unless
+  `nothing`, max 500); `listQuality` integer 1..5. Stored once per shift (`shift_surveys`, RLS like shift_kpis: own or manager in pod scope).
+- GHL: no new custom fields or tags (they'd need Kareem's setup). The clock-in time, lateness and the survey answers go into the
+  existing Shift completed / Shift missed **note** body.
+
+API:
+
+| Function                                                                                                                 | Method | Input                                                                                     | Output             |
+| ------------------------------------------------------------------------------------------------------------------------ | ------ | ----------------------------------------------------------------------------------------- | ------------------ |
+| `shift-clock`                                                                                                            | POST   | `{ shiftId, action: 'start' }` or `{ shiftId, action: 'end', survey?: ShiftSurveyInput }` | `{ shift: Shift }` |
+| Errors: `not_found` 404, `shift_not_scheduled` 409, `too_early` 409 `{opensAt}`, `shift_over` 409, `not_clocked_in` 409, |
+| `survey_required` 422, `bad_survey` 422 `{field}`, `already_ended` 409.                                                  |
+
+```ts
+type TopObjection =
+  'too_busy' | 'enough_work' | 'fees' | 'dont_trust_apps' | 'not_interested_app_jobs' | 'other';
+type SlowedBy = 'bad_numbers' | 'dialer_issue' | 'didnt_know_answer' | 'script_off' | 'nothing';
+interface ShiftSurveyInput {
+  topObjection: TopObjection;
+  objectionNote: string;
+  whatWorked: string;
+  slowedBy: SlowedBy;
+  slowedNote: string | null;
+  listQuality: 1 | 2 | 3 | 4 | 5;
+}
+interface ShiftSurvey extends ShiftSurveyInput {
+  submittedAt: string;
+}
+// Shift gains: clockedInAt: string|null; clockedOutAt: string|null; clockInLateMinutes: number|null; survey: ShiftSurvey|null
+// ShiftKpi gains: clockedInAt, clockedOutAt, clockInLateMinutes (same meaning); flags may include late_clock_in, no_clock_in, no_clock_out
+// admin overview gains: surveySummary: { responses: number, topObjections: Record<TopObjection, number>,
+//   slowedBy: Record<SlowedBy, number>, avgListQuality: number|null } for the viewed week (pod-scoped)
+```
+
+`liveShift` (shifts-week-get) carries the clock fields, so the dialer banner can show Start / End.
+
 ## 5. Not in this build
 
 Spec out-of-scope list, the optional event_webhook kind, the optional GHL→app webhook. GHL workflows are
