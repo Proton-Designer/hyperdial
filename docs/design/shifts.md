@@ -74,6 +74,13 @@ target week, default next week); requestedMinHours > 0 and below the org minimum
 `weekStart`/`date` are plain `YYYY-MM-DD`. `myShifts` holds every status (the client hides cancelled); roster = scheduled +
 completed shifts. hoursBefore/hoursAfter use the counted-hours rule above.
 
+**Additions from the live UI QA (lead, 15:4x; TASK-QF):** `WeekInfo.beforeLaunch: boolean` (the week's pick deadline is before
+`shift_settings.enabled_at`, the moment Shifts was first switched on; such weeks are neutral: no red under-minimum, no "not submitted",
+no coverage alarms, and the lock/close jobs never flag them). `ShiftRequest.weekMinimum: number` (the effective minimum for that
+request's week, after any override). `syncHealth.pendingCount: number` (all pending outbox rows of the org) and
+`syncHealth.ghlConnected: boolean`. admin overview `requests` = every pending request (oldest first) + requests decided in the last 14
+days (newest first), regardless of the week being viewed.
+
 Shared types (mirror exactly in `api.ts`):
 
 ```ts
