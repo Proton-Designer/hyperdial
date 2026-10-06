@@ -127,6 +127,13 @@ let adminEnabled = false;
 let seq = 0;
 /** Blocks last accepted by the stubbed shifts-submit-week, so the refetch after a submit shows them. */
 let submittedBlocks: ShiftBlockInput[] | null = null;
+/** Clock actions the stubbed shift-clock accepted, keyed by the shift's start so a refetch (new ids)
+ *  still shows them. */
+const clockOverrides = new Map<string, Partial<Shift>>();
+const T0 = Date.now();
+/** A fixed instant `min` minutes from when the harness loaded (iso() snaps to half hours). */
+const at = (min: number) => new Date(T0 + min * 60000).toISOString();
+const shiftRegistry = new Map<string, Shift>();
 function shift(
   weekStart: string,
   startsAt: string,
@@ -134,7 +141,7 @@ function shift(
   over: Partial<Shift> = {}
 ): Shift {
   const hours = (new Date(endsAt).getTime() - new Date(startsAt).getTime()) / 3600000;
-  return {
+  const made: Shift = {
     id: `sh-${++seq}`,
     userId: ME,
     weekStart,
@@ -148,7 +155,10 @@ function shift(
     ghlSyncStatus: 'synced',
     hasPendingRequest: false,
     ...over,
+    ...clockOverrides.get(startsAt),
   };
+  shiftRegistry.set(made.id, made);
+  return made;
 }
 const iso = (offsetMin: number) =>
   new Date(Math.floor(Date.now() / 1800000) * 1800000 + offsetMin * 60000).toISOString();
@@ -198,9 +208,38 @@ function buildWeek(scenario: string, weekStart: string): ShiftsWeekResponse {
   const roster: ShiftRosterEntry[] = [];
 
   if (isCurrent && scenario !== 'empty' && !beforeLaunch) {
-    const done = shift(weekStart, iso(-240), iso(-150), { status: 'completed', powerMinutes: 90 });
+    const done = shift(weekStart, iso(-240), iso(-150), {
+      status: 'completed',
+      powerMinutes: 90,
+      clockedInAt: iso(-236),
+      clockedOutAt: iso(-150),
+      clockInLateMinutes: 4,
+      survey: {
+        topObjection: 'fees',
+        objectionNote: 'Told them it is free and they only pay when they get paid.',
+        whatWorked: 'Opening with the job they applied for.',
+        slowedBy: 'nothing',
+        slowedNote: null,
+        listQuality: 4,
+        submittedAt: iso(-150),
+      },
+    });
     const flagged = shift(weekStart, iso(-150 - 360), iso(-150 - 240), { status: 'completed' });
-    const live = shift(weekStart, iso(-30), iso(90), { powerMinutes: 60 });
+    // The clock_* scenarios move the live shift around the Start / End window (times fixed at load).
+    const liveWindow: [string, string] =
+      scenario === 'clock_waiting'
+        ? [at(40), at(160)]
+        : scenario === 'clock_ready'
+          ? [at(10), at(130)]
+          : [at(-30), at(90)];
+    const onShift = scenario === 'clock_on' || scenario === 'clock_on_follow_up';
+    const live = shift(weekStart, liveWindow[0], liveWindow[1], {
+      powerMinutes: 60,
+      ...(scenario === 'clock_on_follow_up' ? { activity: 'follow_up' as const } : {}),
+      ...(onShift && !clockOverrides.has(liveWindow[0])
+        ? { clockedInAt: at(-26), clockInLateMinutes: 4 }
+        : {}),
+    });
     const later = shift(weekStart, iso(300), iso(420), {
       powerMinutes: 120,
       hasPendingRequest: true,
@@ -606,6 +645,60 @@ function useShiftsFixtureStubs(scenario: string) {
           },
         });
       }
+      if (u.pathname.endsWith('/shift-clock')) {
+        await new Promise((r) => setTimeout(r, 600));
+        const body = JSON.parse(String(init?.body ?? '{}')) as {
+          shiftId: string;
+          action: 'start' | 'end';
+          survey?: Record<string, unknown>;
+        };
+        const cur = shiftRegistry.get(body.shiftId);
+        if (!cur) return json(404, { error: 'not_found', message: 'Shift not found.' });
+        if (scenario === 'clock_error')
+          return json(500, { error: 'internal', message: 'Something went wrong. Try again.' });
+        if (scenario === 'clock_stale')
+          return json(409, { error: 'already_ended', message: 'This shift was already ended.' });
+        const now = Date.now();
+        const startMs = new Date(cur.startsAt).getTime();
+        if (body.action === 'start') {
+          if (cur.clockedInAt) return json(200, { shift: cur });
+          if (now < startMs - 15 * 60000)
+            return json(409, {
+              error: 'too_early',
+              message: 'Too early.',
+              opensAt: new Date(startMs - 15 * 60000).toISOString(),
+            });
+          if (now >= new Date(cur.endsAt).getTime())
+            return json(409, { error: 'shift_over', message: 'Shift is over.' });
+          const patch = {
+            clockedInAt: new Date(now).toISOString(),
+            clockedOutAt: null,
+            clockInLateMinutes: Math.max(0, Math.floor((now - startMs) / 60000)),
+            survey: null,
+          };
+          clockOverrides.set(cur.startsAt, { ...clockOverrides.get(cur.startsAt), ...patch });
+          return json(200, { shift: { ...cur, ...patch } });
+        }
+        if (!cur.clockedInAt)
+          return json(409, { error: 'not_clocked_in', message: 'Start the shift first.' });
+        if (cur.clockedOutAt)
+          return json(409, { error: 'already_ended', message: 'Already ended.' });
+        let survey: Shift['survey'] = null;
+        if (cur.activity === 'dialing') {
+          const sv = body.survey;
+          if (!sv) return json(422, { error: 'survey_required', message: 'Survey required.' });
+          for (const f of ['objectionNote', 'whatWorked'])
+            if (String(sv[f] ?? '').trim().length < 3)
+              return json(422, { error: 'bad_survey', message: 'Bad survey.', field: f });
+          survey = {
+            ...(sv as object),
+            submittedAt: new Date(now).toISOString(),
+          } as Shift['survey'];
+        }
+        const patch = { clockedOutAt: new Date(now).toISOString(), survey };
+        clockOverrides.set(cur.startsAt, { ...clockOverrides.get(cur.startsAt), ...patch });
+        return json(200, { shift: { ...cur, ...patch } });
+      }
       if (u.pathname.endsWith('/shift-requests-withdraw')) {
         const { requestId } = JSON.parse(String(init?.body ?? '{}'));
         if (scenario === 'withdraw_error')
@@ -650,6 +743,14 @@ const SCENARIOS = [
   'request_500',
   'update_overlap',
   'review_error',
+  'clock_waiting',
+  'clock_ready',
+  'clock_on',
+  'clock_on_follow_up',
+  'clock_error',
+  'clock_stale',
+  'survey_empty',
+  'clock_legacy',
 ];
 
 export function ShiftsHarness() {
@@ -692,21 +793,28 @@ export function ShiftsHarness() {
   );
 }
 
-/** `?dev_shifts=1&view=dialer&scenario=live|soon|outside|none`: the dialer's shift banner. */
+/** `?dev_shifts=1&view=dialer&scenario=live|soon|on|on_follow_up|ended|outside|none`: the dialer's
+ *  shift banner, with Start / End shift wired to the stubbed shift-clock. */
 function DialerBannerDemo({ scenario }: { scenario: string }) {
-  const now = Date.now();
-  const mk = (startMin: number, endMin: number): Shift =>
-    shift(
-      mondayOf(localYmd(new Date())),
-      new Date(now + startMin * 60000).toISOString(),
-      new Date(now + endMin * 60000).toISOString()
-    );
-  const myShifts = scenario === 'live' ? [mk(-30, 90)] : scenario === 'soon' ? [mk(10, 130)] : [];
+  const weekStart = mondayOf(localYmd(new Date()));
+  const [myShifts, setMyShifts] = useState<Shift[]>(() => {
+    const mk = (startMin: number, endMin: number, over: Partial<Shift> = {}): Shift =>
+      shift(weekStart, at(startMin), at(endMin), over);
+    if (scenario === 'live') return [mk(-30, 90)];
+    if (scenario === 'soon') return [mk(10, 130)];
+    if (scenario === 'on') return [mk(-30, 90, { clockedInAt: at(-26), clockInLateMinutes: 4 })];
+    if (scenario === 'on_follow_up')
+      return [mk(-30, 90, { activity: 'follow_up', clockedInAt: at(-30), clockInLateMinutes: 0 })];
+    if (scenario === 'ended')
+      return [mk(-30, 90, { clockedInAt: at(-26), clockInLateMinutes: 4, clockedOutAt: at(-2) })];
+    return [];
+  });
   return (
     <ShiftsContext.Provider
       value={{
         enabled: true,
         refresh: () => undefined,
+        patchShift: (s) => setMyShifts((l) => l.map((x) => (x.id === s.id ? { ...x, ...s } : x))),
         myShifts,
         timezone: TZ,
         isIntern: true,
@@ -715,7 +823,7 @@ function DialerBannerDemo({ scenario }: { scenario: string }) {
       <div className="mx-auto max-w-2xl p-4 pt-6">
         <ShiftDialerBanner sessionActive={scenario !== 'none'} />
         <p className="text-meta text-text-muted">
-          Scenario: {scenario} (live, soon, outside, none)
+          Scenario: {scenario} (live, soon, on, on_follow_up, ended, outside, none)
         </p>
       </div>
     </ShiftsContext.Provider>

@@ -12,6 +12,9 @@ import type {
   ShiftsWeekResponse,
 } from '@/lib/api';
 import { Pill, ShiftStatusPill } from './pills';
+import { clockHasContent, clockPhase } from './clockModel';
+import { ClockSummary, ShiftClock } from './ShiftClock';
+import { useNow } from './useNow';
 import { addDaysYmd } from './pickerModel';
 import {
   ACTIVITY_LABEL,
@@ -32,6 +35,10 @@ interface MyShiftsProps {
   onRequestChange: (shift: Shift, week: ShiftsWeekResponse) => void;
   onRequestWeek: (week: ShiftsWeekResponse, type: ShiftRequestType) => void;
   onPickNextWeek: () => void;
+  /** The server's shift after Start / End shift. */
+  onShiftUpdated: (shift: Shift) => void;
+  /** A clock action hit a stale shift: refetch. */
+  onStale: () => void;
 }
 
 export function MyShifts({
@@ -40,6 +47,8 @@ export function MyShifts({
   onRequestChange,
   onRequestWeek,
   onPickNextWeek,
+  onShiftUpdated,
+  onStale,
 }: MyShiftsProps) {
   const nextUnsubmitted = next !== null && !next.commitment?.submittedAt;
   return (
@@ -50,6 +59,8 @@ export function MyShifts({
         data={current}
         onRequestChange={onRequestChange}
         onRequestWeek={onRequestWeek}
+        onShiftUpdated={onShiftUpdated}
+        onStale={onStale}
       />
       {next && (
         <WeekSection
@@ -57,6 +68,8 @@ export function MyShifts({
           data={next}
           onRequestChange={onRequestChange}
           onRequestWeek={onRequestWeek}
+          onShiftUpdated={onShiftUpdated}
+          onStale={onStale}
         />
       )}
       {current.powerWeekHistory.length > 0 && <PowerWeekHistory data={current} />}
@@ -107,13 +120,18 @@ function WeekSection({
   data,
   onRequestChange,
   onRequestWeek,
+  onShiftUpdated,
+  onStale,
 }: {
   title: string;
   data: ShiftsWeekResponse;
   onRequestChange: (shift: Shift, week: ShiftsWeekResponse) => void;
   onRequestWeek: (week: ShiftsWeekResponse, type: ShiftRequestType) => void;
+  onShiftUpdated: (shift: Shift) => void;
+  onStale: () => void;
 }) {
   const { week, commitment } = data;
+  const now = useNow();
   const tz = week.timezone;
   const shifts = useMemo(
     () =>
@@ -224,7 +242,10 @@ function WeekSection({
                       tz={tz}
                       roster={data.roster}
                       kpi={kpiByShift.get(s.id)}
+                      now={now}
                       onRequestChange={() => onRequestChange(s, data)}
+                      onShiftUpdated={onShiftUpdated}
+                      onStale={onStale}
                     />
                   </li>
                 ))}
@@ -346,15 +367,24 @@ function ShiftCard({
   tz,
   roster,
   kpi,
+  now,
   onRequestChange,
+  onShiftUpdated,
+  onStale,
 }: {
   shift: Shift;
   tz: string;
   roster: ShiftRosterEntry[];
   kpi: ShiftKpi | undefined;
+  now: number;
   onRequestChange: () => void;
+  onShiftUpdated: (shift: Shift) => void;
+  onStale: () => void;
 }) {
-  const now = Date.now();
+  const phase = clockPhase(shift, now);
+  const clockActive =
+    (phase.kind === 'waiting' || phase.kind === 'ready' || phase.kind === 'on') &&
+    clockHasContent(phase, shift, now);
   const started = new Date(shift.startsAt).getTime() <= now;
   const ended = new Date(shift.endsAt).getTime() <= now;
   const live = started && !ended && shift.status === 'scheduled';
@@ -414,6 +444,19 @@ function ShiftCard({
           </Button>
         )}
       </div>
+      {clockActive ? (
+        <div className="mt-3 border-t border-border-subtle pt-3">
+          <ShiftClock
+            shift={shift}
+            tz={tz}
+            now={now}
+            onUpdated={onShiftUpdated}
+            onStale={onStale}
+          />
+        </div>
+      ) : (
+        <ClockSummary shift={shift} tz={tz} />
+      )}
       {kpi && <KpiStrip kpi={kpi} />}
     </div>
   );

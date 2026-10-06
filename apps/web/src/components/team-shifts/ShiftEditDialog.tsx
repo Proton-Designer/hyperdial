@@ -40,6 +40,7 @@ import {
   minToHhmm,
 } from '../shifts/pickerModel';
 import { ShiftStatusPill } from '../shifts/pills';
+import { ClockSummary } from '../shifts/ShiftClock';
 import {
   ACTIVITY_LABEL,
   fmtDateOnly,
@@ -263,6 +264,7 @@ function EditForm({
             )}
           </div>
         )}
+        {shift?.clockedInAt && <ClockSummary shift={shift} tz={tz} bare />}
         {!editable && (
           <Notice tone="warning">
             This shift is {shift!.status}, so it can no longer be changed.

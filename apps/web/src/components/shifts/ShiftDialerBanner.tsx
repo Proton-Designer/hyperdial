@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { CalendarClock, Radio } from 'lucide-react';
 import { useShiftsSnapshot } from '@/contexts/ShiftsContext';
 import { cn } from '@/components/ui/utils';
+import { clockPhase } from './clockModel';
+import { ShiftClock } from './ShiftClock';
 import { ACTIVITY_LABEL, fmtRange, fmtTime } from './shiftFormat';
 
 const LEAD_MS = 15 * 60 * 1000;
@@ -14,7 +16,7 @@ const TICK_MS = 30 * 1000;
  *  manager-facing live status on Team.tsx, not shown to the agent, so the two never appear to the
  *  same person on the same screen. This banner is the intern's own, about Shifts KPIs only. */
 export function ShiftDialerBanner({ sessionActive }: { sessionActive: boolean }) {
-  const { enabled, myShifts, timezone, isIntern } = useShiftsSnapshot();
+  const { enabled, myShifts, timezone, isIntern, patchShift, refresh } = useShiftsSnapshot();
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     if (!enabled) return;
@@ -49,27 +51,45 @@ export function ShiftDialerBanner({ sessionActive }: { sessionActive: boolean })
   if (current || upcoming) {
     const s = (current ?? upcoming)!;
     const kind = ACTIVITY_LABEL[s.activity].toLowerCase();
+    const range = fmtRange(s.startsAt, s.endsAt, timezone).replace('–', ' to ');
+    const phase = clockPhase(s, now);
+    // Once started (or ended) the clock line leads and the shift is the small print under it.
+    const clockLeads = phase.kind === 'on' || phase.kind === 'ended';
+    const clock = (
+      <ShiftClock shift={s} tz={timezone} now={now} onUpdated={patchShift} onStale={refresh} />
+    );
     return (
       <div
         role="status"
         className={cn(
-          'mx-auto mb-4 flex max-w-2xl items-center gap-3 rounded-app-lg border px-4 py-3',
+          'mx-auto mb-4 flex max-w-2xl flex-wrap items-center gap-x-3 gap-y-2 rounded-app-lg border px-4 py-3',
           current ? 'border-success/30 bg-success-soft' : 'border-border-subtle bg-surface-1'
         )}
       >
         <Radio className={cn('h-4 w-4 shrink-0', current ? 'text-success' : 'text-text-muted')} />
-        <p className="text-body text-text-primary">
-          {current ? (
-            <>
-              Your {kind} shift {fmtRange(s.startsAt, s.endsAt, timezone).replace('–', ' to ')} is
-              live.
-            </>
-          ) : (
-            <>
-              Your {kind} shift starts at {fmtTime(s.startsAt, timezone)}.
-            </>
-          )}
-        </p>
+        {clockLeads ? (
+          <div className="min-w-0 flex-1 space-y-0.5">
+            {clock}
+            <p className="text-meta text-text-muted">
+              {ACTIVITY_LABEL[s.activity]} shift {range}
+            </p>
+          </div>
+        ) : (
+          <>
+            <p className="min-w-0 flex-1 text-body text-text-primary">
+              {current ? (
+                <>
+                  Your {kind} shift {range} is live.
+                </>
+              ) : (
+                <>
+                  Your {kind} shift starts at {fmtTime(s.startsAt, timezone)}.
+                </>
+              )}
+            </p>
+            {clock}
+          </>
+        )}
       </div>
     );
   }

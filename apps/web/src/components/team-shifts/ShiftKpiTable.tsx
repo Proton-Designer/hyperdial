@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react';
-import { BarChart3, RefreshCw, Trophy, Zap } from 'lucide-react';
+import { Fragment, useMemo, useState } from 'react';
+import { BarChart3, ChevronRight, RefreshCw, Trophy, Zap } from 'lucide-react';
 import { toast } from 'sonner';
 import { EmptyState } from '@/components/app/EmptyState';
 import { Button } from '@/components/ui/button';
@@ -14,10 +14,13 @@ import {
 import { cn } from '@/components/ui/utils';
 import { computeShiftKpi, type AdminShiftsOverview, type ShiftKpi } from '@/lib/api';
 import { Pill } from '../shifts/pills';
+import { ClockSummary } from '../shifts/ShiftClock';
+import { SurveyAnswers, SurveySummaryCard } from './SurveyPanels';
 import {
   fmtDay,
   fmtHours,
   fmtRange,
+  fmtTime,
   fmtMinutes,
   flagLabel,
   displayName,
@@ -41,6 +44,13 @@ export function ShiftKpiTable({ overview, onRefreshed }: Props) {
   const [powerOnly, setPowerOnly] = useState(false);
   const [flaggedOnly, setFlaggedOnly] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
+  const toggle = (id: string) =>
+    setExpanded((cur) => {
+      const next = new Set(cur);
+      if (!next.delete(id)) next.add(id);
+      return next;
+    });
 
   const shiftById = useMemo(
     () => new Map(overview.shifts.map((s) => [s.id, s])),
@@ -189,6 +199,8 @@ export function ShiftKpiTable({ overview, onRefreshed }: Props) {
             </div>
           </section>
 
+          {overview.surveySummary && <SurveySummaryCard summary={overview.surveySummary} />}
+
           <section aria-label="Shift results" className="space-y-3">
             <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
               <h2 className="mr-auto text-section-title text-text-primary">Shift results</h2>
@@ -225,7 +237,7 @@ export function ShiftKpiTable({ overview, onRefreshed }: Props) {
               </p>
             ) : (
               <div className="overflow-x-auto rounded-app-lg border border-border-subtle bg-surface-1">
-                <table className="w-full min-w-[1100px] border-collapse text-body">
+                <table className="w-full min-w-[1250px] border-collapse text-body">
                   <thead>
                     <tr className="border-b border-border-subtle text-meta text-text-muted">
                       <Th left sticky>
@@ -233,6 +245,7 @@ export function ShiftKpiTable({ overview, onRefreshed }: Props) {
                       </Th>
                       <Th left>Date</Th>
                       <Th left>Time</Th>
+                      <Th left>Clock-in</Th>
                       <Th>Sched min</Th>
                       <Th>Active min</Th>
                       <Th>
@@ -253,57 +266,107 @@ export function ShiftKpiTable({ overview, onRefreshed }: Props) {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border-subtle">
-                    {rows.map(({ k, s }) => (
-                      <tr key={k.shiftId} className="hover:bg-white/[0.03]">
-                        <td className="sticky left-0 z-10 whitespace-nowrap bg-surface-1 px-3 py-2 font-medium text-text-primary">
-                          {displayName(s.userName)}
-                          {!k.final && (
-                            <Pill tone="accent" className="ml-2">
-                              Live
-                            </Pill>
-                          )}
-                        </td>
-                        <td className="whitespace-nowrap px-3 py-2 text-text-secondary">
-                          {fmtDay(s.startsAt, tz)}
-                        </td>
-                        <td className="whitespace-nowrap px-3 py-2 text-text-secondary">
-                          {fmtRange(s.startsAt, s.endsAt, tz)}
-                        </td>
-                        <Td>{k.scheduledMinutes}</Td>
-                        <Td>{k.activeDialMinutes}</Td>
-                        <Td>{k.powerActiveMinutes}</Td>
-                        <Td
-                          className={
-                            k.adherencePct < overview.settings.adherenceFlagPct
-                              ? 'text-warning'
-                              : undefined
-                          }
-                        >
-                          {k.adherencePct}%
-                        </Td>
-                        <Td>{k.lateStartMinutes > 0 ? fmtMinutes(k.lateStartMinutes) : '–'}</Td>
-                        <Td>{k.earlyEndMinutes > 0 ? fmtMinutes(k.earlyEndMinutes) : '–'}</Td>
-                        <Td>{fmtMinutes(k.longestIdleMinutes)}</Td>
-                        <Td>{k.dials}</Td>
-                        <Td>{k.connects}</Td>
-                        <Td>{k.conversations}</Td>
-                        <Td>{dash(k.dialsPerActiveHour)}</Td>
-                        <Td>{pct(k.connectRatePct)}</Td>
-                        <td className="px-3 py-2">
-                          <div className="flex flex-wrap gap-1">
-                            {k.flags.length === 0 ? (
-                              <span className="text-text-muted">–</span>
-                            ) : (
-                              k.flags.map((f) => (
-                                <Pill key={f} tone="warning">
-                                  {flagLabel(f)}
+                    {rows.map(({ k, s }) => {
+                      const isOpen = expanded.has(k.shiftId);
+                      const clockedAt = k.clockedInAt ?? s.clockedInAt ?? null;
+                      const late = k.clockInLateMinutes ?? s.clockInLateMinutes ?? 0;
+                      return (
+                        <Fragment key={k.shiftId}>
+                          <tr className="hover:bg-white/[0.03]">
+                            <td className="sticky left-0 z-10 whitespace-nowrap bg-surface-1 px-3 py-2 font-medium text-text-primary">
+                              <button
+                                type="button"
+                                onClick={() => toggle(k.shiftId)}
+                                aria-expanded={isOpen}
+                                aria-controls={`kpi-detail-${k.shiftId}`}
+                                aria-label={`${isOpen ? 'Hide' : 'Show'} survey answers for ${displayName(s.userName)}, ${fmtDay(s.startsAt, tz)}`}
+                                className="mr-1.5 inline-flex h-5 w-5 items-center justify-center rounded text-text-muted align-middle hover:bg-white/5 hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-to/60"
+                              >
+                                <ChevronRight
+                                  className={cn(
+                                    'h-4 w-4 transition-transform',
+                                    isOpen && 'rotate-90'
+                                  )}
+                                />
+                              </button>
+                              {displayName(s.userName)}
+                              {!k.final && (
+                                <Pill tone="accent" className="ml-2">
+                                  Live
                                 </Pill>
-                              ))
-                            )}
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
+                              )}
+                            </td>
+                            <td className="whitespace-nowrap px-3 py-2 text-text-secondary">
+                              {fmtDay(s.startsAt, tz)}
+                            </td>
+                            <td className="whitespace-nowrap px-3 py-2 text-text-secondary">
+                              {fmtRange(s.startsAt, s.endsAt, tz)}
+                            </td>
+                            <td className="whitespace-nowrap px-3 py-2 text-text-secondary">
+                              {clockedAt ? (
+                                <span className="inline-flex items-center gap-1.5">
+                                  {fmtTime(clockedAt, tz)}
+                                  {late > 0 && (
+                                    <Pill
+                                      tone={
+                                        k.flags.includes('late_clock_in') ? 'warning' : 'neutral'
+                                      }
+                                    >
+                                      {late} min late
+                                    </Pill>
+                                  )}
+                                </span>
+                              ) : (
+                                <span className="text-text-muted">–</span>
+                              )}
+                            </td>
+                            <Td>{k.scheduledMinutes}</Td>
+                            <Td>{k.activeDialMinutes}</Td>
+                            <Td>{k.powerActiveMinutes}</Td>
+                            <Td
+                              className={
+                                k.adherencePct < overview.settings.adherenceFlagPct
+                                  ? 'text-warning'
+                                  : undefined
+                              }
+                            >
+                              {k.adherencePct}%
+                            </Td>
+                            <Td>{k.lateStartMinutes > 0 ? fmtMinutes(k.lateStartMinutes) : '–'}</Td>
+                            <Td>{k.earlyEndMinutes > 0 ? fmtMinutes(k.earlyEndMinutes) : '–'}</Td>
+                            <Td>{fmtMinutes(k.longestIdleMinutes)}</Td>
+                            <Td>{k.dials}</Td>
+                            <Td>{k.connects}</Td>
+                            <Td>{k.conversations}</Td>
+                            <Td>{dash(k.dialsPerActiveHour)}</Td>
+                            <Td>{pct(k.connectRatePct)}</Td>
+                            <td className="px-3 py-2">
+                              <div className="flex flex-wrap gap-1">
+                                {k.flags.length === 0 ? (
+                                  <span className="text-text-muted">–</span>
+                                ) : (
+                                  k.flags.map((f) => (
+                                    <Pill key={f} tone="warning">
+                                      {flagLabel(f)}
+                                    </Pill>
+                                  ))
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                          {isOpen && (
+                            <tr id={`kpi-detail-${k.shiftId}`} className="bg-white/[0.02]">
+                              <td colSpan={17} className="px-4 py-3">
+                                <div className="sticky left-0 w-[min(56rem,calc(100vw-5rem))] space-y-3">
+                                  <ClockSummary shift={s} tz={tz} bare />
+                                  <SurveyAnswers shift={s} tz={tz} />
+                                </div>
+                              </td>
+                            </tr>
+                          )}
+                        </Fragment>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>

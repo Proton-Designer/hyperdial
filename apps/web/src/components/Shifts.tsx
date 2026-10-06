@@ -15,6 +15,7 @@ import {
   type ShiftRequestType,
   type ShiftsWeekResponse,
 } from '@/lib/api';
+import { useShiftsSnapshot } from '@/contexts/ShiftsContext';
 import { MyShifts } from './shifts/MyShifts';
 import { RequestsList } from './shifts/RequestsList';
 import { RequestChangeModal } from './shifts/RequestChangeModal';
@@ -48,6 +49,7 @@ export function Shifts() {
     week: ShiftsWeekResponse;
     type?: ShiftRequestType;
   } | null>(null);
+  const { patchShift } = useShiftsSnapshot();
   const mounted = useRef(true);
   useEffect(() => {
     mounted.current = true;
@@ -99,6 +101,22 @@ export function Shifts() {
       }
     },
     [load]
+  );
+
+  // Start / End shift: show the server's shift everywhere it appears (this screen + the banner).
+  const handleShiftUpdated = useCallback(
+    (updated: Shift) => {
+      const swap = (w: ShiftsWeekResponse | null) =>
+        w && {
+          ...w,
+          myShifts: w.myShifts.map((x) => (x.id === updated.id ? { ...x, ...updated } : x)),
+          liveShift: w.liveShift?.id === updated.id ? { ...w.liveShift, ...updated } : w.liveShift,
+        };
+      setCurrent(swap);
+      setNext(swap);
+      patchShift(updated);
+    },
+    [patchShift]
   );
 
   if (state === 'loading') return <ShiftsSkeleton />;
@@ -176,6 +194,8 @@ export function Shifts() {
             onRequestChange={(shift, week) => setModal({ shift, week })}
             onRequestWeek={(week, type) => setModal({ shift: null, week, type })}
             onPickNextWeek={() => setTab('pick')}
+            onShiftUpdated={handleShiftUpdated}
+            onStale={() => void load({ quiet: true })}
           />
         </TabsContent>
         {pickOpen && next && (

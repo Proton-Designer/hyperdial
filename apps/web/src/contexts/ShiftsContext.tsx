@@ -19,6 +19,8 @@ interface ShiftsContextValue {
   /** null while unknown (loading) -- treated as "off" by the nav so the tab never flashes in. */
   enabled: boolean | null;
   refresh: () => void;
+  /** Swap in a shift the server just returned (after Start / End shift) without a refetch. */
+  patchShift: (shift: Shift) => void;
   /** This week's shifts (every status) for the live-shift banner; empty until loaded. */
   myShifts: Shift[];
   /** The org's shift time zone (settings.timezone). */
@@ -31,6 +33,7 @@ interface ShiftsContextValue {
 export const ShiftsContext = createContext<ShiftsContextValue>({
   enabled: null,
   refresh: () => undefined,
+  patchShift: () => undefined,
   myShifts: [],
   timezone: 'America/Chicago',
   isIntern: false,
@@ -46,6 +49,10 @@ export function ShiftsProvider({ children }: { children: ReactNode }) {
   const [timezone, setTimezone] = useState('America/Chicago');
   const [nonce, setNonce] = useState(0);
   const refresh = useCallback(() => setNonce((n) => n + 1), []);
+  const patchShift = useCallback(
+    (s: Shift) => setMyShifts((list) => list.map((x) => (x.id === s.id ? { ...x, ...s } : x))),
+    []
+  );
 
   useEffect(() => {
     if (!role) return;
@@ -80,8 +87,8 @@ export function ShiftsProvider({ children }: { children: ReactNode }) {
   );
 
   const value = useMemo(
-    () => ({ enabled, refresh, myShifts, timezone, isIntern: role === 'agent' }),
-    [enabled, refresh, myShifts, timezone, role]
+    () => ({ enabled, refresh, patchShift, myShifts, timezone, isIntern: role === 'agent' }),
+    [enabled, refresh, patchShift, myShifts, timezone, role]
   );
   return <ShiftsContext.Provider value={value}>{children}</ShiftsContext.Provider>;
 }
@@ -96,7 +103,9 @@ export function useShiftsSnapshot(): {
   myShifts: Shift[];
   timezone: string;
   isIntern: boolean;
+  refresh: () => void;
+  patchShift: (shift: Shift) => void;
 } {
-  const { enabled, myShifts, timezone, isIntern } = useContext(ShiftsContext);
-  return { enabled: enabled === true, myShifts, timezone, isIntern };
+  const { enabled, myShifts, timezone, isIntern, refresh, patchShift } = useContext(ShiftsContext);
+  return { enabled: enabled === true, myShifts, timezone, isIntern, refresh, patchShift };
 }

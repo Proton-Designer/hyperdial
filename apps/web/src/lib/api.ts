@@ -5552,6 +5552,36 @@ export interface Shift {
   source: 'pick' | 'request' | 'admin';
   ghlSyncStatus: 'pending' | 'synced' | 'error';
   hasPendingRequest: boolean;
+  /** Clock fields (§4b); absent on older servers, null until the intern starts / ends. */
+  clockedInAt?: string | null;
+  clockedOutAt?: string | null;
+  clockInLateMinutes?: number | null;
+  survey?: ShiftSurvey | null;
+}
+
+export type TopObjection =
+  'too_busy' | 'enough_work' | 'fees' | 'dont_trust_apps' | 'not_interested_app_jobs' | 'other';
+export type SlowedBy =
+  'bad_numbers' | 'dialer_issue' | 'didnt_know_answer' | 'script_off' | 'nothing';
+
+export interface ShiftSurveyInput {
+  topObjection: TopObjection;
+  objectionNote: string;
+  whatWorked: string;
+  slowedBy: SlowedBy;
+  slowedNote: string | null;
+  listQuality: 1 | 2 | 3 | 4 | 5;
+}
+
+export interface ShiftSurvey extends ShiftSurveyInput {
+  submittedAt: string;
+}
+
+export interface ShiftSurveySummary {
+  responses: number;
+  topObjections: Record<TopObjection, number>;
+  slowedBy: Record<SlowedBy, number>;
+  avgListQuality: number | null;
 }
 
 export interface ShiftRosterEntry {
@@ -5599,6 +5629,9 @@ export interface ShiftKpi {
   connectRatePct: number | null;
   dispositions: Record<string, number>;
   flags: string[];
+  clockedInAt?: string | null;
+  clockedOutAt?: string | null;
+  clockInLateMinutes?: number | null;
 }
 
 export type ShiftRequestType = 'move' | 'drop' | 'add' | 'light_week';
@@ -5724,6 +5757,8 @@ export interface AdminShiftsOverview {
   requests: ShiftRequest[];
   kpis: ShiftKpi[];
   rollup: AdminShiftRollupRow[];
+  /** Survey answers for the viewed week, pod-scoped (absent on older servers). */
+  surveySummary?: ShiftSurveySummary;
   powerWeekCallouts: { userId: string; sentence: string }[];
   syncHealth: {
     errorCount: number;
@@ -5818,6 +5853,19 @@ export function withdrawShiftRequest(requestId: string): Promise<{ request: Shif
 /** Client calls never finalize: live numbers for one in-progress/own shift. */
 export function computeShiftKpi(shiftId: string): Promise<{ kpis: ShiftKpi[] }> {
   return callShiftsFunction('shift-kpi-compute', { body: { shiftId } });
+}
+
+/** Start / end the caller's own shift (§4b). Ending a dialing shift requires `survey`. The server
+ *  clock decides every time; errors: too_early {opensAt}, shift_over, not_clocked_in,
+ *  survey_required, bad_survey {field}, already_ended, shift_not_scheduled. */
+export function clockShift(
+  shiftId: string,
+  action: 'start' | 'end',
+  survey?: ShiftSurveyInput
+): Promise<{ shift: Shift }> {
+  return callShiftsFunction('shift-clock', {
+    body: action === 'end' && survey ? { shiftId, action, survey } : { shiftId, action },
+  });
 }
 
 export function getAdminShiftsOverview(week?: string): Promise<AdminShiftsOverview> {

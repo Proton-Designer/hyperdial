@@ -7,7 +7,11 @@ import type {
   Shift,
   ShiftActivity,
   ShiftRequest,
+  ShiftSurvey,
+  ShiftSurveySummary,
   ShiftWeekCommitment,
+  SlowedBy,
+  TopObjection,
 } from '@/lib/api';
 import {
   OPEN_HOURS,
@@ -325,6 +329,121 @@ function request(weekStart: string, who: number, over: Partial<ShiftRequest>): S
   };
 }
 
+const OBJ: TopObjection[] = [
+  'too_busy',
+  'fees',
+  'enough_work',
+  'dont_trust_apps',
+  'too_busy',
+  'other',
+  'not_interested_app_jobs',
+];
+const SLOW: SlowedBy[] = [
+  'bad_numbers',
+  'nothing',
+  'dialer_issue',
+  'script_off',
+  'bad_numbers',
+  'didnt_know_answer',
+];
+
+/** Clock-in / out + survey data on the finished dialing shifts (docs/design/shifts.md 4b). Mixed on
+ *  purpose: on time, early, a little late, late past the grace, never started, never ended.
+ *  `clock_legacy` = an older server without any of it; `survey_empty` = clocked but no surveys. */
+function withClock(
+  shifts: TeamShift[],
+  kpis: ShiftKpi[],
+  scenario: string
+): { shifts: TeamShift[]; kpis: ShiftKpi[]; summary: ShiftSurveySummary | undefined } {
+  if (scenario === 'clock_legacy') return { shifts, kpis, summary: undefined };
+  const kpiIds = new Map(kpis.map((k, i) => [k.shiftId, i]));
+  const surveys: ShiftSurvey[] = [];
+  const outShifts = shifts.map((s) => {
+    const i = kpiIds.get(s.id);
+    if (i === undefined) return s;
+    const start = new Date(s.startsAt).getTime();
+    const never = i % 7 === 5;
+    const lateMin = never ? 0 : i % 5 === 2 ? 12 : i % 3 === 0 ? 4 : 0;
+    const early = !never && lateMin === 0 && i % 2 === 0;
+    const inAt = new Date(start + (early ? -2 : lateMin) * 60000).toISOString();
+    const noOut = !never && i % 7 === 3;
+    const survey: ShiftSurvey | null =
+      never || noOut || scenario === 'survey_empty'
+        ? null
+        : {
+            topObjection: OBJ[i % OBJ.length],
+            objectionNote:
+              i % 3 === 0
+                ? 'Told them it is free to join and they only pay when they get paid. They stayed on for the next question.'
+                : 'Asked what would make it worth a look.',
+            whatWorked:
+              i % 2 === 0
+                ? 'Opening with the recent job they had applied for.'
+                : 'Keeping it short, then asking one question.',
+            slowedBy: SLOW[i % SLOW.length],
+            slowedNote:
+              SLOW[i % SLOW.length] === 'nothing'
+                ? null
+                : 'Four numbers in a row were disconnected.',
+            listQuality: ((i % 5) + 1) as ShiftSurvey['listQuality'],
+            submittedAt: s.endsAt,
+          };
+    if (survey) surveys.push(survey);
+    return {
+      ...s,
+      clockedInAt: never ? null : inAt,
+      clockedOutAt: never || noOut ? null : s.endsAt,
+      clockInLateMinutes: never ? null : lateMin,
+      survey,
+    };
+  });
+  const byId = new Map(outShifts.map((s) => [s.id, s]));
+  const outKpis = kpis.map((k) => {
+    const sh = byId.get(k.shiftId)!;
+    const flags = [...k.flags];
+    if (!sh.clockedInAt) flags.push('no_clock_in');
+    else if ((sh.clockInLateMinutes ?? 0) > getSetup().settings.graceMinutes)
+      flags.push('late_clock_in');
+    if (sh.clockedInAt && !sh.clockedOutAt) flags.push('no_clock_out');
+    return {
+      ...k,
+      flags,
+      clockedInAt: sh.clockedInAt ?? null,
+      clockedOutAt: sh.clockedOutAt ?? null,
+      clockInLateMinutes: sh.clockInLateMinutes ?? null,
+    };
+  });
+  const topObjections = Object.fromEntries(
+    (
+      [
+        'too_busy',
+        'enough_work',
+        'fees',
+        'dont_trust_apps',
+        'not_interested_app_jobs',
+        'other',
+      ] as TopObjection[]
+    ).map((o) => [o, surveys.filter((x) => x.topObjection === o).length])
+  ) as Record<TopObjection, number>;
+  const slowedBy = Object.fromEntries(
+    (
+      ['bad_numbers', 'dialer_issue', 'didnt_know_answer', 'script_off', 'nothing'] as SlowedBy[]
+    ).map((o) => [o, surveys.filter((x) => x.slowedBy === o).length])
+  ) as Record<SlowedBy, number>;
+  return {
+    shifts: outShifts,
+    kpis: outKpis,
+    summary: {
+      responses: surveys.length,
+      topObjections,
+      slowedBy,
+      avgListQuality: surveys.length
+        ? Math.round((surveys.reduce((n, x) => n + x.listQuality, 0) / surveys.length) * 10) / 10
+        : null,
+    },
+  };
+}
+
 export function buildAdminOverview(
   scenario: string,
   weekParam: string | null
@@ -369,6 +488,7 @@ export function buildAdminOverview(
     scenario === 'empty'
       ? []
       : shifts.filter((s) => s.status === 'completed' && s.activity === 'dialing').map(kpiFor);
+  const clocked = withClock(shifts, kpis, scenario);
   const rollup: AdminShiftRollupRow[] = MEMBERS.filter((m) => m.participates).map((m) => {
     const mine = shifts.filter((s) => s.userId === m.userId && s.status !== 'cancelled');
     const k = kpis.filter((x) => x.userId === m.userId);
@@ -403,11 +523,12 @@ export function buildAdminOverview(
     openHours: getSetup().openHours,
     powerWindows: getSetup().windows,
     members: MEMBERS,
-    shifts,
+    shifts: clocked.shifts,
     commitments,
     requests,
-    kpis,
+    kpis: clocked.kpis,
     rollup,
+    ...(clocked.summary ? { surveySummary: clocked.summary } : {}),
     powerWeekCallouts:
       weekStart < thisMonday && scenario !== 'empty'
         ? [

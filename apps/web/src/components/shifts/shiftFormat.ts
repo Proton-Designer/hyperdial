@@ -190,6 +190,9 @@ const FLAG_LABEL: Record<string, string> = {
   left_early: 'Left early',
   long_idle: 'Long idle',
   low_adherence: 'Low adherence',
+  late_clock_in: 'Late clock-in',
+  no_clock_in: 'No clock-in',
+  no_clock_out: 'No clock-out',
 };
 export function flagLabel(flag: string): string {
   return FLAG_LABEL[flag] ?? flag.replace(/_/g, ' ');
