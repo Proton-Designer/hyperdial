@@ -54,17 +54,30 @@ export type RowResult =
   | { id: number; outcome: 'done'; appointmentId?: string }
   | { id: number; outcome: 'retry'; error: string }
   | { id: number; outcome: 'error'; error: string }
-  | { id: number; outcome: 'release'; error?: string };
+  | { id: number; outcome: 'release'; error?: string; delaySeconds?: number };
 
 export class ShiftGhlError extends Error {
   constructor(
     message: string,
     readonly status: number,
-    readonly retryable: boolean
+    readonly retryable: boolean,
+    /** Seconds from a Retry-After header (429), when GHL sent one. */
+    readonly retryAfterSeconds?: number
   ) {
     super(message);
   }
+  /** 401/403: the org's token (or scope) is the problem, not this row. */
+  get orgLevel(): boolean {
+    return this.status === 401 || this.status === 403;
+  }
 }
+
+/** Seconds to hold rows after a 429 (Retry-After when sent, else a minute; never more than an hour). */
+export const RATE_LIMIT_DELAY_SECONDS = 60;
+/** Seconds to hold an org's rows after a 401/403 from GHL. */
+export const TOKEN_REJECTED_DELAY_SECONDS = 600;
+export const TOKEN_REJECTED_MESSAGE = 'GHL token rejected (401/403): reconnect GoHighLevel';
+export const GHL_TIMEOUT_MS = 20_000;
 
 // ---- HTTP ---------------------------------------------------------------------------------------
 
@@ -82,6 +95,8 @@ export interface HttpOptions {
   apiBase?: string;
   fetchFn?: typeof fetch;
   throttle?: () => Promise<void>;
+  /** Per-call timeout; an abort is a retryable network error. */
+  timeoutMs?: number;
 }
 
 export function createShiftGhlHttp(opts: HttpOptions): ShiftGhlHttp {
@@ -101,17 +116,27 @@ export function createShiftGhlHttp(opts: HttpOptions): ShiftGhlHttp {
             ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
           },
           body: body === undefined ? undefined : JSON.stringify(body),
+          signal: AbortSignal.timeout(opts.timeoutMs ?? GHL_TIMEOUT_MS),
         });
       } catch (e) {
-        throw new ShiftGhlError(`network error: ${String(e)}`, 0, true);
+        const name = (e as { name?: string })?.name;
+        throw new ShiftGhlError(
+          name === 'TimeoutError' || name === 'AbortError'
+            ? 'GHL request timed out'
+            : `network error: ${String(e)}`,
+          0,
+          true
+        );
       }
       const text = await res.text();
       if (!res.ok) {
         const retryable = res.status === 429 || res.status >= 500;
+        const ra = Number(res.headers.get('Retry-After'));
         throw new ShiftGhlError(
           `GHL ${method} ${path.split('?')[0]} -> ${res.status}: ${text.slice(0, 300)}`,
           res.status,
-          retryable
+          retryable,
+          res.status === 429 && Number.isFinite(ra) && ra > 0 ? ra : undefined
         );
       }
       try {
@@ -196,6 +221,21 @@ export interface SyncSettings {
   ownerUserId: string | null;
 }
 
+/** shifts.status -> GHL appointmentStatus (the shift row is the truth, never a stale outbox payload). */
+export function appointmentStatusFor(shiftStatus: string): string {
+  switch (shiftStatus) {
+    case 'completed':
+      return 'showed';
+    case 'missed':
+      return 'noshow';
+    case 'cancelled':
+    case 'excused':
+      return 'cancelled';
+    default:
+      return 'confirmed';
+  }
+}
+
 export function createAppointmentBody(
   s: ShiftForSync,
   ctx: { locationId: string; contactId: string; settings: SyncSettings }
@@ -208,7 +248,7 @@ export function createAppointmentBody(
     startTime: offsetIso(s.starts_at, settings.timezone),
     endTime: offsetIso(s.ends_at, settings.timezone),
     title: shiftTitle(s, settings.timezone),
-    appointmentStatus: 'confirmed',
+    appointmentStatus: appointmentStatusFor(s.status),
     ignoreDateRange: true,
     ignoreFreeSlotValidation: true,
     toNotify: true,
@@ -227,7 +267,7 @@ export function editAppointmentBody(
     startTime: offsetIso(s.starts_at, settings.timezone),
     endTime: offsetIso(s.ends_at, settings.timezone),
     title: shiftTitle(s, settings.timezone),
-    appointmentStatus: 'confirmed',
+    appointmentStatus: appointmentStatusFor(s.status),
     ignoreDateRange: true,
     ignoreFreeSlotValidation: true,
     toNotify: true,
@@ -236,8 +276,8 @@ export function editAppointmentBody(
 }
 
 /** Our field keys -> `customFields` items. GHL requires the definition id on every item; `NUMERICAL`
- *  definitions take a number, everything else a string. Null values are left out, so GHL keeps the
- *  old value. Returns the keys that have no definition in the location. */
+ *  definitions take a number, everything else a string. Null values are sent as "" so GHL clears
+ *  the field. Returns the keys that have no definition in the location. */
 export function buildCustomFields(
   fields: Record<string, unknown>,
   defs: FieldDef[]
@@ -249,16 +289,21 @@ export function buildCustomFields(
   const items: { id: string; field_value: string | number }[] = [];
   const missing: string[] = [];
   for (const [key, value] of Object.entries(fields)) {
-    if (value === null || value === undefined) continue;
+    if (value === undefined) continue;
     const def = byKey.get(key);
     if (!def) {
       missing.push(key);
       continue;
     }
+    // null clears the field (GHL "" ; NEEDS-LIVE-VERIFY for DATE/NUMERICAL definitions).
     items.push({
       id: def.id,
       field_value:
-        def.dataType === 'NUMERICAL' && typeof value === 'number' ? value : String(value),
+        value === null
+          ? ''
+          : def.dataType === 'NUMERICAL' && typeof value === 'number'
+            ? value
+            : String(value),
     });
   }
   return { items, missing };
@@ -287,7 +332,8 @@ export async function processOutbox(rows: OutboxRow[], deps: ProcessDeps): Promi
   const failedFields = new Set<string>(); // event groups whose contact_fields step failed
   const apptIds = new Map<string, string>(); // shift id -> appointment id created in this batch
   let defs: FieldDef[] | null = null;
-  let stopped = false;
+  // Set by a 429 (rate limit) or a 401/403 (token): the rest of the batch is released, delayed.
+  let stop: { delaySeconds: number; error?: string } | null = null;
 
   const finish = async (r: RowResult) => {
     results.push(r);
@@ -296,7 +342,16 @@ export async function processOutbox(rows: OutboxRow[], deps: ProcessDeps): Promi
 
   for (const row of ordered) {
     const user = row.user_id ?? `row-${row.id}`;
-    if (stopped || held.has(user)) {
+    if (stop) {
+      await finish({
+        id: row.id,
+        outcome: 'release',
+        delaySeconds: stop.delaySeconds,
+        ...(stop.error ? { error: stop.error } : {}),
+      });
+      continue;
+    }
+    if (held.has(user)) {
       await finish({ id: row.id, outcome: 'release' });
       continue;
     }
@@ -329,9 +384,20 @@ export async function processOutbox(rows: OutboxRow[], deps: ProcessDeps): Promi
       });
     } catch (e) {
       const err = e instanceof ShiftGhlError ? e : new ShiftGhlError(String(e), 0, true);
-      if (err.retryable) {
+      if (err.orgLevel) {
+        // The org's token is the problem: nothing of this org can be sent. Keep every row pending.
+        stop = { delaySeconds: TOKEN_REJECTED_DELAY_SECONDS, error: TOKEN_REJECTED_MESSAGE };
+        await finish({ id: row.id, outcome: 'release', ...stop });
+      } else if (err.retryable) {
         held.add(user);
-        if (err.status === 429) stopped = true;
+        if (err.status === 429) {
+          stop = {
+            delaySeconds: Math.min(
+              3600,
+              Math.max(RATE_LIMIT_DELAY_SECONDS, err.retryAfterSeconds ?? 0)
+            ),
+          };
+        }
         await finish({ id: row.id, outcome: 'retry', error: err.message });
       } else {
         if (row.kind === 'contact_fields') failedFields.add(group);
@@ -360,7 +426,10 @@ async function processRow(
       const shift = await deps.loadShift(row.shift_id);
       if (!shift) throw new ShiftGhlError('shift no longer exists', 0, false);
       const apptId = apptIds.get(shift.id) ?? shift.ghl_appointment_id;
-      const cancelled = row.kind === 'appointment_cancel' || shift.status === 'cancelled';
+      const cancelled =
+        row.kind === 'appointment_cancel' ||
+        shift.status === 'cancelled' ||
+        shift.status === 'excused';
       if (cancelled) {
         // Never created in GHL: nothing to cancel.
         if (!apptId) return undefined;
@@ -373,9 +442,10 @@ async function processRow(
         throw new ShiftGhlError('no GHL calendar is set in Shift settings', 0, false);
       }
       if (row.kind === 'appointment_status') {
-        const status = String(row.payload.status ?? '');
+        // Derived from the shift row (re-read above), never from the payload queued earlier.
+        const status = appointmentStatusFor(shift.status);
         if (status !== 'showed' && status !== 'noshow') {
-          throw new ShiftGhlError(`bad appointment status "${status}"`, 0, false);
+          throw new ShiftGhlError(`shift is ${shift.status}, not completed or missed`, 0, false);
         }
         if (!apptId) {
           throw new ShiftGhlError('shift has no GHL appointment to update', 0, false);

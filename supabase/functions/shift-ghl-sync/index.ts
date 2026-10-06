@@ -112,7 +112,7 @@ async function recordResult(supabase: SupabaseClient, r: RowResult): Promise<voi
     const { error } = await supabase.rpc('release_shift_outbox', {
       p_ids: [r.id],
       p_error: r.error ?? null,
-      p_delay_seconds: 0,
+      p_delay_seconds: r.delaySeconds ?? 0,
     });
     check('release_shift_outbox', error);
   }

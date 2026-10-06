@@ -193,26 +193,85 @@ Deno.test(
   }
 );
 
-Deno.test('appointment_cancel and appointment_status bodies', async () => {
-  const { http, calls } = fakeHttp();
-  const { d } = deps(http, {
-    loadShift: () => Promise.resolve({ ...SHIFT, ghl_appointment_id: 'appt9' }),
-  });
-  await processOutbox(
-    [
-      row({ kind: 'appointment_cancel', shift_id: 's1' }),
-      row({
-        kind: 'appointment_status',
-        shift_id: 's1',
-        payload: { status: 'noshow' },
-      }),
-    ],
-    d
-  );
-  assertEquals(calls[0].body, { appointmentStatus: 'cancelled' });
-  assertEquals(calls[0].method, 'PUT');
-  assertEquals(calls[1].body, { appointmentStatus: 'noshow' });
-});
+Deno.test(
+  'appointment_cancel body; appointment_status derives showed/noshow from the re-read shift',
+  async () => {
+    const cancel = fakeHttp();
+    await processOutbox(
+      [row({ kind: 'appointment_cancel', shift_id: 's1' })],
+      deps(cancel.http, {
+        loadShift: () => Promise.resolve({ ...SHIFT, ghl_appointment_id: 'appt9' }),
+      }).d
+    );
+    assertEquals(cancel.calls[0].method, 'PUT');
+    assertEquals(cancel.calls[0].body, { appointmentStatus: 'cancelled' });
+    for (const [status, expected] of [
+      ['completed', 'showed'],
+      ['missed', 'noshow'],
+    ] as const) {
+      const { http, calls } = fakeHttp();
+      await processOutbox(
+        // the stale payload says the opposite: the shift row wins
+        [
+          row({
+            kind: 'appointment_status',
+            shift_id: 's1',
+            payload: { status: expected === 'showed' ? 'noshow' : 'showed' },
+          }),
+        ],
+        deps(http, {
+          loadShift: () => Promise.resolve({ ...SHIFT, status, ghl_appointment_id: 'appt9' }),
+        }).d
+      );
+      assertEquals(calls[0].body, { appointmentStatus: expected });
+    }
+    // a still-scheduled shift is not showed/noshow: permanent error, no call
+    const { http, calls } = fakeHttp();
+    const { d, recorded } = deps(http, {
+      loadShift: () => Promise.resolve({ ...SHIFT, ghl_appointment_id: 'appt9' }),
+    });
+    await processOutbox(
+      [row({ kind: 'appointment_status', shift_id: 's1', payload: { status: 'showed' } })],
+      d
+    );
+    assertEquals(calls.length, 0);
+    assertEquals(recorded[0].outcome, 'error');
+  }
+);
+
+Deno.test(
+  'upsert after the shift was completed / missed keeps that status; excused sends a cancel',
+  async () => {
+    for (const [status, expected] of [
+      ['completed', 'showed'],
+      ['missed', 'noshow'],
+    ] as const) {
+      const edit = fakeHttp();
+      await processOutbox(
+        [row({ kind: 'appointment_upsert', shift_id: 's1' })],
+        deps(edit.http, {
+          loadShift: () => Promise.resolve({ ...SHIFT, status, ghl_appointment_id: 'a1' }),
+        }).d
+      );
+      assertEquals((edit.calls[0].body as Record<string, unknown>).appointmentStatus, expected);
+      const create = fakeHttp(() => ({ id: 'new' }));
+      await processOutbox(
+        [row({ kind: 'appointment_upsert', shift_id: 's1' })],
+        deps(create.http, { loadShift: () => Promise.resolve({ ...SHIFT, status }) }).d
+      );
+      assertEquals((create.calls[0].body as Record<string, unknown>).appointmentStatus, expected);
+    }
+    const ex = fakeHttp();
+    await processOutbox(
+      [row({ kind: 'appointment_upsert', shift_id: 's1' })],
+      deps(ex.http, {
+        loadShift: () => Promise.resolve({ ...SHIFT, status: 'excused', ghl_appointment_id: 'a1' }),
+      }).d
+    );
+    assertEquals(ex.calls.length, 1);
+    assertEquals(ex.calls[0].body, { appointmentStatus: 'cancelled' });
+  }
+);
 
 Deno.test('upsert then cancel in one batch reuses the id the POST just created', async () => {
   const { http, calls } = fakeHttp((c) => (c.method === 'POST' ? { id: 'new1' } : {}));
@@ -249,7 +308,7 @@ Deno.test('calendar unset -> permanent error on appointment rows only', async ()
 });
 
 Deno.test(
-  'contact_fields resolves keys to ids, numbers stay numbers, nulls are omitted',
+  'contact_fields resolves keys to ids, numbers stay numbers, null clears the field with ""',
   async () => {
     const { http, calls } = fakeHttp();
     const { d } = deps(http);
@@ -275,6 +334,7 @@ Deno.test(
       customFields: [
         { id: 'f1', field_value: 'Yes' },
         { id: 'f2', field_value: 2 },
+        { id: 'f3', field_value: '' },
       ],
     });
   }
@@ -485,5 +545,117 @@ Deno.test(
         field_value: 'No',
       },
     ]);
+  }
+);
+
+Deno.test(
+  'every GHL call carries a timeout signal; an abort/timeout is a retryable network error',
+  async () => {
+    let signal: AbortSignal | null | undefined;
+    const ok = createShiftGhlHttp({
+      token: 't',
+      fetchFn: ((_u: string, init: RequestInit) => {
+        signal = init.signal;
+        return Promise.resolve(new Response('{}'));
+      }) as typeof fetch,
+    });
+    await ok.request('GET', '/x', GHL_CONTACT_VERSION);
+    assert(signal instanceof AbortSignal);
+    for (const name of ['TimeoutError', 'AbortError']) {
+      const http = createShiftGhlHttp({
+        token: 't',
+        fetchFn: (() =>
+          Promise.reject(Object.assign(new Error('aborted'), { name }))) as typeof fetch,
+      });
+      try {
+        await http.request('GET', '/x', GHL_CONTACT_VERSION);
+        assert(false);
+      } catch (e) {
+        assert(e instanceof ShiftGhlError);
+        assertEquals(e.retryable, true);
+        assertEquals(e.message, 'GHL request timed out');
+      }
+    }
+  }
+);
+
+Deno.test(
+  '401/403 is an org-level pause: nothing burns to error, the rest of the batch is released 10 min with the reconnect message',
+  async () => {
+    for (const status of [401, 403]) {
+      const { http, calls } = fakeHttp(() => new ShiftGhlError(`GHL ${status}`, status, false));
+      const { d, recorded } = deps(http);
+      await processOutbox(
+        [
+          row({ payload: { body: 'a' } }),
+          row({ user_id: 'u2', payload: { body: 'b' } }),
+          row({ user_id: 'u3', payload: { body: 'c' } }),
+        ],
+        d
+      );
+      assertEquals(calls.length, 1);
+      assertEquals(
+        recorded.map((r) => r.outcome),
+        ['release', 'release', 'release']
+      );
+      for (const r of recorded) {
+        assertEquals(r, {
+          id: r.id,
+          outcome: 'release',
+          delaySeconds: 600,
+          error: 'GHL token rejected (401/403): reconnect GoHighLevel',
+        });
+      }
+    }
+    // the same status through the real http layer
+    const http = createShiftGhlHttp({
+      token: 't',
+      fetchFn: (() => Promise.resolve(new Response('no', { status: 401 }))) as typeof fetch,
+    });
+    try {
+      await http.request('GET', '/x', GHL_CONTACT_VERSION);
+      assert(false);
+    } catch (e) {
+      assert(e instanceof ShiftGhlError);
+      assertEquals([e.status, e.retryable, e.orgLevel], [401, false, true]);
+    }
+  }
+);
+
+Deno.test(
+  'after a 429 the released rows are delayed (60 s, or Retry-After, capped at an hour)',
+  async () => {
+    const mk = (retryAfter?: number) =>
+      fakeHttp(() => new ShiftGhlError('GHL 429', 429, true, retryAfter));
+    for (const [ra, expected] of [
+      [undefined, 60],
+      [5, 60],
+      [120, 120],
+      [99999, 3600],
+    ] as const) {
+      const { http } = mk(ra);
+      const { d, recorded } = deps(http);
+      await processOutbox(
+        [row({ payload: { body: 'a' } }), row({ user_id: 'u2', payload: { body: 'b' } })],
+        d
+      );
+      assertEquals(recorded[0].outcome, 'retry');
+      assertEquals(recorded[1], { id: recorded[1].id, outcome: 'release', delaySeconds: expected });
+    }
+    // Retry-After header is read by the http layer
+    const http = createShiftGhlHttp({
+      token: 't',
+      fetchFn: (() =>
+        Promise.resolve(
+          new Response('slow down', { status: 429, headers: { 'Retry-After': '90' } })
+        )) as typeof fetch,
+    });
+    try {
+      await http.request('GET', '/x', GHL_CONTACT_VERSION);
+      assert(false);
+    } catch (e) {
+      assert(e instanceof ShiftGhlError);
+      assertEquals(e.retryAfterSeconds, 90);
+    }
   }
 );
