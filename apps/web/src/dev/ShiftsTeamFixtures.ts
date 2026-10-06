@@ -456,7 +456,9 @@ export function applySetupUpdate(
 ): { status: number; body: Record<string, unknown> } {
   if (path.endsWith('/admin-open-hours-upsert')) {
     getSetup().openHours = (body.rows as SetupState['openHours']) ?? [];
-    return { status: 200, body: { openHours: getSetup().openHours } };
+    // Fixture: closing days leaves booked shifts outside the hours.
+    const affectedShiftCount = getSetup().openHours.length < 5 ? 3 : 0;
+    return { status: 200, body: { openHours: getSetup().openHours, affectedShiftCount } };
   }
   if (path.endsWith('/admin-power-windows-upsert')) {
     const w = body as unknown as SetupState['windows'][number];

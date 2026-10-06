@@ -5832,8 +5832,11 @@ export function upsertPowerWindow(
   return callShiftsFunction('admin-power-windows-upsert', { body: input });
 }
 
-/** Full replace: a weekday missing from `rows` becomes closed. */
-export function upsertOpenHours(rows: ShiftOpenHours[]): Promise<{ openHours: ShiftOpenHours[] }> {
+/** Full replace: a weekday missing from `rows` becomes closed. Existing shifts are not moved;
+ *  `affectedShiftCount` = scheduled future shifts (in the caller's scope) now outside the hours. */
+export function upsertOpenHours(
+  rows: ShiftOpenHours[]
+): Promise<{ openHours: ShiftOpenHours[]; affectedShiftCount: number }> {
   return callShiftsFunction('admin-open-hours-upsert', { body: { rows } });
 }
 

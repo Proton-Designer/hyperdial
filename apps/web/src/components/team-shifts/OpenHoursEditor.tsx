@@ -38,7 +38,8 @@ export function OpenHoursEditor({
   onSaved,
 }: {
   openHours: ShiftOpenHours[];
-  onSaved: () => void;
+  /** `affected`: scheduled future shifts now outside the saved hours (they are not moved). */
+  onSaved: (affected: number) => void;
 }) {
   const initial = useMemo(() => toDraft(openHours), [openHours]);
   const [draft, setDraft] = useState<Draft>(initial);
@@ -58,7 +59,7 @@ export function OpenHoursEditor({
     setSaving(true);
     setError(null);
     try {
-      await upsertOpenHours(
+      const res = await upsertOpenHours(
         WEEKDAYS.filter((w) => draft[w.n].open).map((w) => ({
           isoWeekday: w.n,
           openFrom: minToHhmm(draft[w.n].from),
@@ -66,7 +67,7 @@ export function OpenHoursEditor({
         }))
       );
       toast.success('Open hours saved');
-      onSaved();
+      onSaved(res.affectedShiftCount ?? 0);
     } catch (e) {
       setError(describeSetupError(e));
     } finally {

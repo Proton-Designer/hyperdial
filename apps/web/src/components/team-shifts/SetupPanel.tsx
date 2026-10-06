@@ -1,5 +1,7 @@
 import { useState } from 'react';
+import { TriangleAlert } from 'lucide-react';
 import { toast } from 'sonner';
+import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import {
   AlertDialog,
@@ -35,6 +37,7 @@ export function SetupPanel({
   onOpenIntegrations?: () => void;
 }) {
   const [confirmOff, setConfirmOff] = useState(false);
+  const [hoursAffected, setHoursAffected] = useState(0);
   const [busy, setBusy] = useState(false);
 
   const turnOff = async () => {
@@ -71,8 +74,30 @@ export function SetupPanel({
       <OpenHoursEditor
         key={JSON.stringify(overview.openHours)}
         openHours={overview.openHours}
-        onSaved={onChanged}
+        onSaved={(affected) => {
+          setHoursAffected(affected);
+          onChanged();
+        }}
       />
+      {hoursAffected > 0 && (
+        <div
+          role="status"
+          className="flex items-start gap-3 rounded-app-lg border border-warning/30 bg-warning-soft px-4 py-3"
+        >
+          <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
+          <p className="min-w-0 flex-1 text-body text-text-primary">
+            {hoursAffected} scheduled {hoursAffected === 1 ? 'shift now falls' : 'shifts now fall'}{' '}
+            outside the new open hours.
+            <span className="block text-meta text-text-secondary">
+              They stay booked and still count, but the Coverage view only shows open hours. Move or
+              cancel them from Coverage.
+            </span>
+          </p>
+          <Button variant="fe-ghost" size="sm" onClick={() => setHoursAffected(0)}>
+            Dismiss
+          </Button>
+        </div>
+      )}
       <PowerWindowsEditor windows={overview.powerWindows} onSaved={onChanged} />
       <SettingsForm
         key={JSON.stringify(overview.settings)}

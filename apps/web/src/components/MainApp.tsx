@@ -9,6 +9,7 @@ import { Analytics } from './Analytics';
 import { Team } from './Team';
 import { Recordings } from './Recordings';
 import { Inbox } from './Inbox';
+import { useAuth } from '@/contexts/AuthContext';
 import { Settings, type SettingsSection } from './Settings';
 import { Shifts } from './Shifts';
 import { TeamShifts } from './TeamShifts';
@@ -104,6 +105,7 @@ function tabFromPath(pathname: string): TabType {
 
 export function MainApp() {
   const { role, loading: orgLoading } = useOrg();
+  const { user: authUser } = useAuth();
   // Fail CLOSED, not just "hide from agents": gate on a CONFIRMED owner/admin role, not on
   // role === 'agent'. While role is still null (loading, or right after accepting an invite
   // before OrgContext has refetched) `isManager` is false, so an actual agent never gets a
@@ -345,6 +347,7 @@ export function MainApp() {
             <PageTransition>
               <TeamShifts
                 canEnable={role === 'owner' || role === 'admin'}
+                viewerId={authUser?.id}
                 onNavigateToSettings={(section) => {
                   setActiveTab('settings');
                   setSettingsSection(section);

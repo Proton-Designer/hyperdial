@@ -29,12 +29,14 @@ const TRIGGER_CLASS =
 interface TeamShiftsProps {
   /** Only owners and admins can switch Shifts on; managers are told to ask. */
   canEnable?: boolean;
+  /** The signed-in user: a manager cannot review their own request (owner/admin can). */
+  viewerId?: string;
   /** "Manage pods" in Setup: the existing pods assignment lives in Settings. */
   onNavigateToSettings?: (section?: SettingsSection) => void;
 }
 
 /** Team Shifts (manager-level): Coverage, Requests, Shift KPIs and Setup for one week at a time. */
-export function TeamShifts({ canEnable = false, onNavigateToSettings }: TeamShiftsProps) {
+export function TeamShifts({ canEnable = false, viewerId, onNavigateToSettings }: TeamShiftsProps) {
   const [state, setState] = useState<LoadState>('loading');
   const [error, setError] = useState<string | null>(null);
   const [overview, setOverview] = useState<AdminShiftsOverview | null>(null);
@@ -217,6 +219,7 @@ export function TeamShifts({ canEnable = false, onNavigateToSettings }: TeamShif
               requests={overview.requests}
               timezone={overview.week.timezone}
               minimumHours={overview.settings.minWeeklyHours}
+              ownRequestsLocked={!canEnable ? viewerId : undefined}
               onDecided={() => void load(week, true)}
             />
           </TabsContent>

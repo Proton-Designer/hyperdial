@@ -25,12 +25,20 @@ interface Props {
   timezone: string;
   /** The org's regular weekly minimum, for the under-minimum check. */
   minimumHours: number;
+  /** Requests by this user cannot be reviewed by the viewer (a manager's own requests). */
+  ownRequestsLocked?: string;
   /** A decision saved; the shell refetches the week. */
   onDecided: () => void;
 }
 
 /** Pending requests (any week, oldest first) with approve/deny, then this week's decided ones. */
-export function RequestQueue({ requests, timezone, minimumHours, onDecided }: Props) {
+export function RequestQueue({
+  requests,
+  timezone,
+  minimumHours,
+  ownRequestsLocked,
+  onDecided,
+}: Props) {
   // Requests removed optimistically while their decision is in flight.
   const [hidden, setHidden] = useState<Record<string, ShiftRequest['status']>>({});
   // Cards stay mounted while their decision is in flight (just visually hidden), so a failure can
@@ -87,6 +95,7 @@ export function RequestQueue({ requests, timezone, minimumHours, onDecided }: Pr
                   request={r}
                   timezone={timezone}
                   minimumHours={minimumHours}
+                  locked={ownRequestsLocked === r.userId}
                   onOptimistic={hide}
                   onRestore={restore}
                   onDecided={onDecided}
@@ -167,6 +176,7 @@ function RequestCard({
   request: r,
   timezone,
   minimumHours,
+  locked,
   onOptimistic,
   onRestore,
   onDecided,
@@ -174,6 +184,7 @@ function RequestCard({
   request: ShiftRequest;
   timezone: string;
   minimumHours: number;
+  locked?: boolean;
   onOptimistic: (id: string, status: ShiftRequest['status']) => void;
   onRestore: (id: string) => void;
   onDecided: () => void;
@@ -276,7 +287,11 @@ function RequestCard({
         </p>
       </div>
 
-      {open === null ? (
+      {locked ? (
+        <p className="mt-3 text-meta text-text-muted">
+          This is your own request. Another manager or an admin decides it.
+        </p>
+      ) : open === null ? (
         <div className="mt-3 flex flex-wrap gap-2">
           <Button variant="primary" size="sm" onClick={() => setOpen('approve')}>
             <Check /> Approve
