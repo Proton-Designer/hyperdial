@@ -88,6 +88,45 @@ const PLAN: [number, string, string, number, ShiftActivity?][] = [
   [5, '08:00', '11:00', 5, 'social'],
 ];
 
+/** Mutable copies so the Setup editors in the harness show their own saves after a refetch.
+ *  Built lazily: this file and ShiftsHarness import each other, so nothing from the harness may
+ *  be read at module load. */
+type SetupState = {
+  settings: typeof SETTINGS;
+  openHours: typeof OPEN_HOURS;
+  windows: typeof POWER_WINDOWS;
+};
+let setupState: SetupState | null = null;
+function getSetup(): SetupState {
+  setupState ??= {
+    settings: { ...SETTINGS },
+    openHours: OPEN_HOURS.map((o) => ({ ...o })),
+    windows: POWER_WINDOWS.map((w) => ({ ...w })),
+  };
+  return setupState;
+}
+
+const syncErrors = [
+  {
+    id: 101,
+    kind: 'contact_fields',
+    event: 'Week submitted',
+    userName: 'Ethan Diaz',
+    lastError: 'GHL custom fields missing: shift_next_shift_at',
+    attempts: 1,
+    createdAt: new Date().toISOString(),
+  },
+  {
+    id: 102,
+    kind: 'appointment_upsert',
+    event: 'Week submitted',
+    userName: 'Ava Chen',
+    lastError: 'intern has no GHL contact id',
+    attempts: 1,
+    createdAt: new Date().toISOString(),
+  },
+];
+
 let seq = 0;
 const stores = new Map<string, TeamShift[]>();
 
@@ -300,9 +339,9 @@ export function buildAdminOverview(
       isNextWeek: weekStart === addDays(thisMonday, 7),
       minHours: SETTINGS.minWeeklyHours,
     },
-    settings: SETTINGS,
-    openHours: OPEN_HOURS,
-    powerWindows: POWER_WINDOWS,
+    settings: getSetup().settings,
+    openHours: getSetup().openHours,
+    powerWindows: getSetup().windows,
     members: MEMBERS,
     shifts,
     commitments,
@@ -318,7 +357,11 @@ export function buildAdminOverview(
             },
           ]
         : [],
-    syncHealth: { errorCount: 0, lastError: null, rows: [] },
+    syncHealth: {
+      errorCount: syncErrors.length,
+      lastError: syncErrors[0]?.lastError ?? null,
+      rows: [...syncErrors],
+    },
   };
 }
 
@@ -374,4 +417,50 @@ export function applyAdminUpdate(
     return { shift: s };
   }
   return { error: { status: 404, body: { error: 'not_found', message: 'No such shift.' } } };
+}
+
+/** Setup-screen writes (open hours, windows, settings, members, GHL lookups) for the harness. */
+export function applySetupUpdate(
+  path: string,
+  body: Record<string, unknown>
+): { status: number; body: Record<string, unknown> } {
+  if (path.endsWith('/admin-open-hours-upsert')) {
+    getSetup().openHours = (body.rows as SetupState['openHours']) ?? [];
+    return { status: 200, body: { openHours: getSetup().openHours } };
+  }
+  if (path.endsWith('/admin-power-windows-upsert')) {
+    const w = body as unknown as SetupState['windows'][number];
+    const next = { ...w, id: w.id ?? `pw-${++seq}` };
+    const i = getSetup().windows.findIndex((x) => x.id === next.id);
+    if (i >= 0) getSetup().windows[i] = next;
+    else getSetup().windows.push(next);
+    return { status: 200, body: { powerWindow: next } };
+  }
+  if (path.endsWith('/admin-shift-settings-update')) {
+    getSetup().settings = { ...getSetup().settings, ...(body as object) } as SetupState['settings'];
+    return { status: 200, body: { settings: getSetup().settings } };
+  }
+  if (path.endsWith('/admin-profiles-upsert')) {
+    const m = MEMBERS.find((x) => x.userId === body.userId);
+    if (!m) return { status: 404, body: { error: 'not_found', message: 'No such member.' } };
+    if ('participates' in body) m.participates = body.participates as boolean;
+    if ('ghlContactId' in body) m.ghlContactId = (body.ghlContactId as string | null) ?? null;
+    return { status: 200, body: { member: m } };
+  }
+  if (path.endsWith('/admin-ghl-find-contact')) {
+    const email = String(body.email ?? '');
+    return {
+      status: 200,
+      body: {
+        contacts: email.startsWith('ethan')
+          ? [{ id: 'ghl-found-7', name: 'Ethan Diaz', email }]
+          : [],
+      },
+    };
+  }
+  if (path.endsWith('/admin-ghl-retry')) {
+    syncErrors.length = 0;
+    return { status: 200, body: { reset: 2 } };
+  }
+  return { status: 404, body: { error: 'not_found', message: 'Unknown setup endpoint.' } };
 }

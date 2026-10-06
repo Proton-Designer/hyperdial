@@ -12,6 +12,7 @@ import { IncomingCallBanner } from './dialer/IncomingCallBanner';
 import { CallForwardingCard } from './dialer/CallForwardingCard';
 import { WrapUpModal } from './dialer/WrapUpModal';
 import { StartSessionPanel } from './dialer/StartSessionPanel';
+import { ShiftDialerBanner } from './shifts/ShiftDialerBanner';
 import { ManualDialPanel } from './dialer/ManualDialPanel';
 import { HotkeyHelpOverlay } from './dialer/HotkeyHelpOverlay';
 import { MyGoalHeader } from '@/components/goals/MyGoalHeader';
@@ -961,6 +962,14 @@ function DialerBody({
           <MyGoalHeader />
         </div>
         <BroadcastBanner />
+        <ShiftDialerBanner
+          sessionActive={
+            isParallelMode &&
+            !isParallelLoading &&
+            !parallelSession.error &&
+            !!parallelSession.session
+          }
+        />
         {/* MISSION-5 TASK-M5-E2: compact live power-hour board, same self-contained/renders-
             nothing-when-idle shape as the two above. */}
         <PowerHourLiveBanner />

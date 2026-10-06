@@ -2,7 +2,9 @@ import { useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { Shifts } from '../components/Shifts';
 import { TeamShifts } from '../components/TeamShifts';
-import { applyAdminUpdate, buildAdminOverview } from './ShiftsTeamFixtures';
+import { ShiftDialerBanner } from '../components/shifts/ShiftDialerBanner';
+import { ShiftsContext } from '@/contexts/ShiftsContext';
+import { applyAdminUpdate, applySetupUpdate, buildAdminOverview } from './ShiftsTeamFixtures';
 import { Toaster } from '@/components/ui/sonner';
 import type {
   Shift,
@@ -476,10 +478,17 @@ function useShiftsFixtureStubs(scenario: string) {
       if (u.pathname.endsWith('/admin-shifts-overview')) {
         return json(200, buildAdminOverview(scenario, u.searchParams.get('week')));
       }
-      if (u.pathname.endsWith('/admin-shift-settings-update')) {
-        adminEnabled = true;
+      if (
+        /\/admin-(open-hours-upsert|power-windows-upsert|shift-settings-update|profiles-upsert|ghl-find-contact|ghl-retry)$/.test(
+          u.pathname
+        )
+      ) {
         await new Promise((r) => setTimeout(r, 500));
-        return json(200, { settings: { ...SETTINGS, enabled: true } });
+        const body = JSON.parse(String(init?.body ?? '{}'));
+        if (u.pathname.endsWith('/admin-shift-settings-update') && body.enabled === true)
+          adminEnabled = true;
+        const out = applySetupUpdate(u.pathname, body);
+        return json(out.status, out.body);
       }
       if (u.pathname.endsWith('/shift-kpi-compute')) {
         await new Promise((r) => setTimeout(r, 700));
@@ -665,8 +674,44 @@ export function ShiftsHarness() {
           </a>
         ))}
       </nav>
-      {team ? <TeamShifts canEnable /> : <Shifts />}
+      {params.get('view') === 'dialer' ? (
+        <DialerBannerDemo scenario={scenario} />
+      ) : team ? (
+        <TeamShifts canEnable />
+      ) : (
+        <Shifts />
+      )}
       <Toaster theme="dark" position="bottom-right" />
     </div>
+  );
+}
+
+/** `?dev_shifts=1&view=dialer&scenario=live|soon|outside|none`: the dialer's shift banner. */
+function DialerBannerDemo({ scenario }: { scenario: string }) {
+  const now = Date.now();
+  const mk = (startMin: number, endMin: number): Shift =>
+    shift(
+      mondayOf(localYmd(new Date())),
+      new Date(now + startMin * 60000).toISOString(),
+      new Date(now + endMin * 60000).toISOString()
+    );
+  const myShifts = scenario === 'live' ? [mk(-30, 90)] : scenario === 'soon' ? [mk(10, 130)] : [];
+  return (
+    <ShiftsContext.Provider
+      value={{
+        enabled: true,
+        refresh: () => undefined,
+        myShifts,
+        timezone: TZ,
+        isIntern: true,
+      }}
+    >
+      <div className="mx-auto max-w-2xl p-4 pt-6">
+        <ShiftDialerBanner sessionActive={scenario !== 'none'} />
+        <p className="text-meta text-text-muted">
+          Scenario: {scenario} (live, soon, outside, none)
+        </p>
+      </div>
+    </ShiftsContext.Provider>
   );
 }

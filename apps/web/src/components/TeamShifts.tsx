@@ -14,6 +14,7 @@ import {
 } from '@/lib/api';
 import { CoverageTab } from './team-shifts/CoverageTab';
 import { RequestQueue } from './team-shifts/RequestQueue';
+import { SetupPanel } from './team-shifts/SetupPanel';
 import { ShiftKpiTable } from './team-shifts/ShiftKpiTable';
 import { fmtWeekRange } from './shifts/shiftFormat';
 import { addDaysYmd } from './shifts/pickerModel';
@@ -22,15 +23,17 @@ type LoadState = 'loading' | 'ready' | 'disabled' | 'error';
 type TeamTab = 'coverage' | 'requests' | 'kpis' | 'setup';
 
 const TRIGGER_CLASS =
-  'h-10 flex-none rounded-none border-b-2 border-transparent bg-transparent px-3 text-body text-text-secondary data-[state=active]:border-accent-to data-[state=active]:bg-transparent data-[state=active]:text-text-primary data-[state=active]:shadow-none';
+  'h-10 flex-none rounded-none border-b-2 border-transparent bg-transparent px-2 text-body sm:px-3 text-text-secondary data-[state=active]:border-accent-to data-[state=active]:bg-transparent data-[state=active]:text-text-primary data-[state=active]:shadow-none';
 
 interface TeamShiftsProps {
   /** Only owners and admins can switch Shifts on; managers are told to ask. */
   canEnable?: boolean;
+  /** "Manage pods" in Setup: the existing pods assignment lives in Settings. */
+  onNavigateToSettings?: () => void;
 }
 
 /** Team Shifts (manager-level): Coverage, Requests, Shift KPIs and Setup for one week at a time. */
-export function TeamShifts({ canEnable = false }: TeamShiftsProps) {
+export function TeamShifts({ canEnable = false, onNavigateToSettings }: TeamShiftsProps) {
   const [state, setState] = useState<LoadState>('loading');
   const [error, setError] = useState<string | null>(null);
   const [overview, setOverview] = useState<AdminShiftsOverview | null>(null);
@@ -220,10 +223,11 @@ export function TeamShifts({ canEnable = false }: TeamShiftsProps) {
             <ShiftKpiTable overview={overview} onRefreshed={() => void load(week, true)} />
           </TabsContent>
           <TabsContent value="setup">
-            <EmptyState
-              icon={CalendarRange}
-              title="Setup is coming next"
-              body="Open hours, high leverage windows, settings and the intern list."
+            <SetupPanel
+              overview={overview}
+              canManage={canEnable}
+              onChanged={() => void load(week, true)}
+              onManagePods={onNavigateToSettings}
             />
           </TabsContent>
         </div>

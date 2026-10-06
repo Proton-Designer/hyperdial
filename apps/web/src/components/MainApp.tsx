@@ -341,7 +341,10 @@ export function MainApp() {
           )}
           {activeTab === 'team_shifts' && (
             <PageTransition>
-              <TeamShifts canEnable={role === 'owner' || role === 'admin'} />
+              <TeamShifts
+                canEnable={role === 'owner' || role === 'admin'}
+                onNavigateToSettings={() => setActiveTab('settings')}
+              />
             </PageTransition>
           )}
           {activeTab === 'settings' && (
