@@ -213,7 +213,10 @@ Deno.test(
         created_at: '2026-10-06T17:03:00Z',
       },
     ];
-    const h = syncHealth(rows, new Map([[U1, 'Sara Kim']]));
+    const h = syncHealth(rows, new Map([[U1, 'Sara Kim']]), {
+      pendingCount: 9,
+      ghlConnected: false,
+    });
     assertEquals(h.errorCount, 2);
     assertEquals(h.lastError, 'org has no connected GHL integration'); // newest first
     assertEquals(
@@ -222,7 +225,13 @@ Deno.test(
     );
     assertEquals(h.rows[0].userName, 'Sara Kim');
     assertEquals(h.rows[0].createdAt, '2026-10-06T17:01:00.000Z');
-    assertEquals(syncHealth([], new Map()), { errorCount: 0, lastError: null, rows: [] });
+    assertEquals(syncHealth([], new Map(), { pendingCount: 0, ghlConnected: true }), {
+      errorCount: 0,
+      pendingCount: 0,
+      ghlConnected: true,
+      lastError: null,
+      rows: [],
+    });
   }
 );
 

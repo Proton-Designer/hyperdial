@@ -24,6 +24,8 @@ export interface ShiftSettingsRow {
   power_week_pct: number;
   ghl_calendar_id: string | null;
   ghl_owner_user_id: string | null;
+  /** The first moment Shifts was switched on (null while it never was). */
+  enabled_at?: string | null;
 }
 
 export interface OpenHoursRow {
@@ -366,6 +368,8 @@ export interface RequestContext {
   reviewerName: string | null;
   fromShift: ShiftRow | null;
   hoursBefore: number;
+  /** The effective minimum of the request's week (override-aware). */
+  weekMinimum: number;
   pendingShiftIds?: ReadonlySet<string>;
 }
 
@@ -390,12 +394,16 @@ export function mapRequest(r: RequestRow, ctx: RequestContext) {
     createdAt: isoz(r.created_at),
     hoursBefore: round2(ctx.hoursBefore),
     hoursAfter: hoursAfterRequest(r, ctx.fromShift, ctx.hoursBefore),
+    weekMinimum: Number(ctx.weekMinimum),
   };
 }
 
 export function buildWeekInfo(
   weekStart: string,
-  settings: Pick<ShiftSettingsRow, 'timezone' | 'lock_weekday' | 'lock_time' | 'min_weekly_hours'>,
+  settings: Pick<
+    ShiftSettingsRow,
+    'timezone' | 'lock_weekday' | 'lock_time' | 'min_weekly_hours' | 'enabled_at'
+  >,
   commitment: Pick<CommitmentRow, 'min_hours_override'> | null,
   nowMs: number
 ) {
@@ -410,6 +418,8 @@ export function buildWeekInfo(
     isCurrentWeek: weekStart === thisWeek,
     isNextWeek: weekStart === addDaysYmd(thisWeek, 7),
     minHours: Number(commitment?.min_hours_override ?? settings.min_weekly_hours),
+    // the pick deadline fell before Shifts was first switched on: such a week is neutral (nobody could have picked)
+    beforeLaunch: settings.enabled_at ? deadline < Date.parse(settings.enabled_at) : false,
   };
 }
 

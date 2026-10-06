@@ -273,12 +273,19 @@ export interface OutboxHealthRow {
 }
 
 /** Rows that need attention: errored, or pending but carrying an error (an org not connected to GHL). */
-export function syncHealth(rows: OutboxHealthRow[], names: Map<string, string>) {
+export function syncHealth(
+  rows: OutboxHealthRow[],
+  names: Map<string, string>,
+  extra: { pendingCount: number; ghlConnected: boolean }
+) {
   const attention = rows
     .filter((r) => r.status === 'error' || (r.status === 'pending' && r.last_error))
     .sort((a, b) => b.id - a.id);
   return {
     errorCount: attention.length,
+    // every pending row of the org (rows behind an earlier delayed row of the same intern carry no error yet)
+    pendingCount: extra.pendingCount,
+    ghlConnected: extra.ghlConnected,
     lastError: attention[0]?.last_error ?? null,
     rows: attention.slice(0, 50).map((r) => ({
       id: r.id,

@@ -41,6 +41,8 @@ import {
 
 const NO_ONE = '00000000-0000-0000-0000-000000000000';
 const PENDING_LIMIT = 200;
+/** Decided requests stay visible this long, whichever week is being viewed. */
+const DECIDED_DAYS = 14;
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return corsPreflightResponse();
@@ -70,48 +72,69 @@ Deno.serve(async (req) => {
     const memberRows = (membersRes.data ?? []) as MemberRow[];
     const scope = memberRows.length ? memberRows.map((m) => m.user_id) : [NO_ONE];
 
-    const [openRes, windowsRes, shiftsRes, commitRes, pendingRes, decidedRes, outboxRes] =
-      await Promise.all([
-        sb.from('open_hours').select('*').eq('org_id', ctx.orgId).order('iso_weekday'),
-        sb.from('power_windows').select('*').eq('org_id', ctx.orgId).order('start_time'),
-        sb
-          .from('shifts')
-          .select('*')
-          .eq('org_id', ctx.orgId)
-          .eq('week_start', weekStart)
-          .in('user_id', scope)
-          .order('starts_at'),
-        sb
-          .from('week_commitments')
-          .select('*')
-          .eq('org_id', ctx.orgId)
-          .eq('week_start', weekStart)
-          .in('user_id', scope),
-        sb
-          .from('shift_change_requests')
-          .select('*')
-          .eq('org_id', ctx.orgId)
-          .eq('status', 'pending')
-          .in('user_id', scope)
-          .order('created_at', { ascending: true })
-          .limit(PENDING_LIMIT),
-        sb
-          .from('shift_change_requests')
-          .select('*')
-          .eq('org_id', ctx.orgId)
-          .eq('week_start', weekStart)
-          .neq('status', 'pending')
-          .in('user_id', scope)
-          .order('created_at', { ascending: true })
-          .limit(PENDING_LIMIT),
-        sb
-          .from('shift_ghl_outbox')
-          .select('id, kind, event, user_id, status, last_error, attempts, created_at')
-          .eq('org_id', ctx.orgId)
-          .or('status.eq.error,and(status.eq.pending,last_error.not.is.null)')
-          .order('id', { ascending: false })
-          .limit(200),
-      ]);
+    const decidedSince = new Date(nowMs - DECIDED_DAYS * 86400000).toISOString();
+    const [
+      openRes,
+      windowsRes,
+      shiftsRes,
+      commitRes,
+      pendingRes,
+      decidedRes,
+      outboxRes,
+      pendingCountRes,
+      integrationRes,
+    ] = await Promise.all([
+      sb.from('open_hours').select('*').eq('org_id', ctx.orgId).order('iso_weekday'),
+      sb.from('power_windows').select('*').eq('org_id', ctx.orgId).order('start_time'),
+      sb
+        .from('shifts')
+        .select('*')
+        .eq('org_id', ctx.orgId)
+        .eq('week_start', weekStart)
+        .in('user_id', scope)
+        .order('starts_at'),
+      sb
+        .from('week_commitments')
+        .select('*')
+        .eq('org_id', ctx.orgId)
+        .eq('week_start', weekStart)
+        .in('user_id', scope),
+      sb
+        .from('shift_change_requests')
+        .select('*')
+        .eq('org_id', ctx.orgId)
+        .eq('status', 'pending')
+        .in('user_id', scope)
+        .order('created_at', { ascending: true })
+        .limit(PENDING_LIMIT),
+      sb
+        .from('shift_change_requests')
+        .select('*')
+        .eq('org_id', ctx.orgId)
+        .neq('status', 'pending')
+        .gte('reviewed_at', decidedSince)
+        .in('user_id', scope)
+        .order('reviewed_at', { ascending: false })
+        .limit(PENDING_LIMIT),
+      sb
+        .from('shift_ghl_outbox')
+        .select('id, kind, event, user_id, status, last_error, attempts, created_at')
+        .eq('org_id', ctx.orgId)
+        .or('status.eq.error,and(status.eq.pending,last_error.not.is.null)')
+        .order('id', { ascending: false })
+        .limit(200),
+      sb
+        .from('shift_ghl_outbox')
+        .select('id', { count: 'exact', head: true })
+        .eq('org_id', ctx.orgId)
+        .eq('status', 'pending'),
+      sb
+        .from('org_integrations')
+        .select('status, location_id')
+        .eq('org_id', ctx.orgId)
+        .eq('provider', 'ghl')
+        .maybeSingle(),
+    ]);
     for (const r of [
       openRes,
       windowsRes,
@@ -120,6 +143,8 @@ Deno.serve(async (req) => {
       pendingRes,
       decidedRes,
       outboxRes,
+      pendingCountRes,
+      integrationRes,
     ]) {
       if (r.error) throw new Error(`admin-shifts-overview query: ${r.error.message}`);
     }
@@ -189,7 +214,12 @@ Deno.serve(async (req) => {
         kpis,
       }),
       powerWeekCallouts: weekClosed ? buildCallouts(commitments, kpis, shortNames) : [],
-      syncHealth: syncHealth(outbox, nameOf),
+      syncHealth: syncHealth(outbox, nameOf, {
+        pendingCount: pendingCountRes.count ?? 0,
+        ghlConnected: Boolean(
+          integrationRes.data?.status === 'connected' && integrationRes.data?.location_id
+        ),
+      }),
     });
   } catch (e) {
     console.error('admin-shifts-overview failed:', String(e));

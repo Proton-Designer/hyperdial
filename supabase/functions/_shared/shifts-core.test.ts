@@ -263,13 +263,15 @@ Deno.test('mapRequest: full DTO incl. fromShift, names and hours', () => {
     reviewerName: null,
     fromShift: shiftRow(),
     hoursBefore: 9.5,
+    weekMinimum: 7,
   });
+  assertEquals(m.weekMinimum, 7);
   assertEquals(m.userName, 'Sara Kim');
   assertEquals(m.hoursBefore, 9.5);
   assertEquals(m.hoursAfter, 6.5);
   assertEquals(m.fromShift?.id, 's1');
   assertEquals(m.reviewerName, null);
-  assertEquals(Object.keys(m).length, 19);
+  assertEquals(Object.keys(m).length, 20);
 });
 
 Deno.test('powerWeekSentence: "all" at 100%, rounded percent otherwise', () => {
@@ -447,4 +449,24 @@ Deno.test('parseCreateRequestBody: shape rules per type', () => {
     code: 'reason_too_short',
     detail: { minimum: 20, length: 0 },
   });
+});
+
+Deno.test('buildWeekInfo: beforeLaunch only when the pick deadline fell before enabled_at', () => {
+  const tue = Date.parse('2026-10-06T15:00:00Z');
+  const withEnabled = (enabled_at: string | null) => ({ ...settings, enabled_at });
+  // week of Oct 12: deadline Sun Oct 11 18:00 CDT (23:00Z)
+  assertEquals(
+    buildWeekInfo('2026-10-12', withEnabled('2026-10-06T17:12:00Z'), null, tue).beforeLaunch,
+    false
+  );
+  assertEquals(
+    buildWeekInfo('2026-10-12', withEnabled('2026-10-12T01:00:00Z'), null, tue).beforeLaunch,
+    true
+  );
+  // the current week (deadline Sun Oct 4) was before an Oct 6 launch
+  assertEquals(
+    buildWeekInfo('2026-10-05', withEnabled('2026-10-06T17:12:00Z'), null, tue).beforeLaunch,
+    true
+  );
+  assertEquals(buildWeekInfo('2026-10-05', withEnabled(null), null, tue).beforeLaunch, false);
 });

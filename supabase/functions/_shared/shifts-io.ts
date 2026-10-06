@@ -131,7 +131,7 @@ export async function hydrateRequests(ctx: ShiftsCtx, rows: RequestRow[]) {
   const userIds = [...new Set(rows.map((r) => r.user_id))];
   const weeks = [...new Set(rows.map((r) => r.week_start))];
 
-  const [fromRes, hoursRes, names, pendingRes] = await Promise.all([
+  const [fromRes, hoursRes, names, pendingRes, minRes, overrideRes] = await Promise.all([
     fromIds.length
       ? ctx.supabase.from('shifts').select('*').eq('org_id', ctx.orgId).in('id', fromIds)
       : Promise.resolve({ data: [] as ShiftRow[], error: null }),
@@ -153,8 +153,20 @@ export async function hydrateRequests(ctx: ShiftsCtx, rows: RequestRow[]) {
       .eq('org_id', ctx.orgId)
       .eq('status', 'pending')
       .in('user_id', userIds),
+    ctx.supabase
+      .from('shift_settings')
+      .select('min_weekly_hours')
+      .eq('org_id', ctx.orgId)
+      .maybeSingle(),
+    ctx.supabase
+      .from('week_commitments')
+      .select('user_id, week_start, min_hours_override')
+      .eq('org_id', ctx.orgId)
+      .in('user_id', userIds)
+      .in('week_start', weeks)
+      .not('min_hours_override', 'is', null),
   ]);
-  for (const r of [fromRes, hoursRes, pendingRes]) {
+  for (const r of [fromRes, hoursRes, pendingRes, minRes, overrideRes]) {
     if (r.error) throw new Error(`hydrateRequests: ${r.error.message}`);
   }
   const fromById = new Map((fromRes.data as ShiftRow[]).map((s) => [s.id, s]));
@@ -167,6 +179,18 @@ export async function hydrateRequests(ctx: ShiftsCtx, rows: RequestRow[]) {
     const k = `${h.user_id}|${h.week_start}`;
     hoursBy.set(k, (hoursBy.get(k) ?? 0) + Number(h.hours));
   }
+  const orgMinimum = Number(
+    (minRes.data as { min_weekly_hours: number | string } | null)?.min_weekly_hours ?? 0
+  );
+  const overrideBy = new Map(
+    (
+      overrideRes.data as {
+        user_id: string;
+        week_start: string;
+        min_hours_override: number | string;
+      }[]
+    ).map((o) => [`${o.user_id}|${o.week_start}`, Number(o.min_hours_override)])
+  );
   const pending = new Set(
     (pendingRes.data as { from_shift_id: string | null }[])
       .map((p) => p.from_shift_id)
@@ -178,6 +202,7 @@ export async function hydrateRequests(ctx: ShiftsCtx, rows: RequestRow[]) {
       reviewerName: r.reviewer_id ? (names.get(r.reviewer_id) ?? null) : null,
       fromShift: r.from_shift_id ? (fromById.get(r.from_shift_id) ?? null) : null,
       hoursBefore: hoursBy.get(`${r.user_id}|${r.week_start}`) ?? 0,
+      weekMinimum: overrideBy.get(`${r.user_id}|${r.week_start}`) ?? orgMinimum,
       pendingShiftIds: pending,
     })
   );
