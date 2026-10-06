@@ -327,6 +327,14 @@ Deno.test('error mapping: statuses, sentences, details spread, rpc error parsing
     code: 'shifts_disabled',
     detail: {},
   });
+  assertEquals(
+    parseShiftRpcError({
+      code: 'P0001',
+      message: 'overlap',
+      details: '{"reason": "x", "secret": "y"}',
+    }),
+    { code: 'overlap', detail: { reason: 'x' } }
+  );
   assertEquals(parseShiftRpcError({ code: '23505', message: 'duplicate key' }), null);
   assertEquals(parseShiftRpcError({ code: 'P0001', message: 'some random exception' }), null);
   assertEquals(parseShiftRpcError(null), null);

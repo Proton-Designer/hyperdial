@@ -533,6 +533,8 @@ export function shiftErrorStatus(code: string): number {
   return STATUS[code] ?? 500;
 }
 
+const DETAIL_KEYS = ['index', 'reason', 'hours', 'minimum', 'hoursAfter', 'length', 'deadline'];
+
 /** Recognises an error raised by one of our SQL functions (`P0001`, message = a known code). */
 export function parseShiftRpcError(
   err: { code?: string; message?: string; details?: string | null } | null | undefined
@@ -542,7 +544,11 @@ export function parseShiftRpcError(
   if (err.details) {
     try {
       const parsed = JSON.parse(err.details);
-      if (parsed && typeof parsed === 'object') detail = parsed as Record<string, unknown>;
+      if (parsed && typeof parsed === 'object') {
+        // Only the keys our SQL raises ever reach a client; nothing else from the DB passes through.
+        for (const k of DETAIL_KEYS)
+          if (k in parsed) detail[k] = (parsed as Record<string, unknown>)[k];
+      }
     } catch {
       // detail is best-effort
     }

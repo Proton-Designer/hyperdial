@@ -20,8 +20,8 @@
 --    (local, org timezone). requestedMinHours must be > 0 and below the org minimum.
 --  * For move/drop the request's week_start is the original shift's week; for add it is the week of
 --    the new time; for light_week the target week.
---  * is_late: the AFFECTED shift (move/drop: the original; add: the new time) starts within
---    change_notice_hours of now. light_week is never late.
+--  * is_late: the AFFECTED shift starts within change_notice_hours of now (move: the original OR the
+--    new time; drop: the original; add: the new time). light_week is never late.
 --  * Managers notified (public.notifications, type 'shift_request'): active owners/admins plus
 --    managers whose pods include the requester's pod; never the requester.
 
@@ -92,6 +92,7 @@ declare
   v_late boolean := false;
   v_req public.shift_change_requests;
   v_name text;
+  v_reason text;
 begin
   perform private.ensure_shift_config(p_org);
   select * into v_set from public.shift_settings where org_id = p_org;
@@ -105,9 +106,14 @@ begin
   if p_type is null or p_type not in ('move', 'drop', 'add', 'light_week') then
     perform private.shift_err('bad_request', jsonb_build_object('reason', 'bad_type'));
   end if;
-  if char_length(btrim(coalesce(p_reason, ''))) < 20 then
-    perform private.shift_err('reason_too_short',
-      jsonb_build_object('minimum', 20, 'length', char_length(btrim(coalesce(p_reason, '')))));
+  -- "At least 20 characters after trimming": trim ALL leading/trailing whitespace (incl. NBSP and
+  -- zero-width characters that btrim ignores) and require some real content, so a reason made of
+  -- invisible characters cannot pass. The table check (btrim >= 20) stays as the backstop.
+  v_reason := regexp_replace(coalesce(p_reason, ''),
+    '^[\s\u00a0\u200b-\u200d\u2060\ufeff]+|[\s\u00a0\u200b-\u200d\u2060\ufeff]+$', '', 'g');
+  if char_length(v_reason) < 20
+     or char_length(regexp_replace(v_reason, '[\s\u00a0\u200b-\u200d\u2060\ufeff]', '', 'g')) < 10 then
+    perform private.shift_err('reason_too_short', jsonb_build_object('minimum', 20, 'length', char_length(v_reason)));
   end if;
 
   -- ---- the affected existing shift (move / drop) ----------------------------------------------------
@@ -166,6 +172,9 @@ begin
     if p_type = 'add' then
       v_week := p_date - (extract(isodow from p_date)::int - 1);
       v_late := v_to_start < now() + make_interval(hours => v_set.change_notice_hours);
+    else
+      -- a move is late when EITHER end of it falls inside the notice window
+      v_late := v_late or v_to_start < now() + make_interval(hours => v_set.change_notice_hours);
     end if;
   else
     v_to_start := null; v_to_end := null; v_activity := null;
@@ -195,7 +204,7 @@ begin
     ) values (
       p_org, p_user, v_week, p_type, case when p_type in ('move', 'drop') then v_from.id end,
       v_to_start, v_to_end, v_activity,
-      case when p_type = 'light_week' then p_requested_min_hours end, btrim(p_reason), v_late
+      case when p_type = 'light_week' then p_requested_min_hours end, v_reason, v_late
     ) returning * into v_req;
   exception when unique_violation then
     perform private.shift_err('request_pending');
