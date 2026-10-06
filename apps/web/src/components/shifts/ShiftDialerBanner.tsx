@@ -24,11 +24,14 @@ export function ShiftDialerBanner({ sessionActive }: { sessionActive: boolean })
     return () => clearInterval(id);
   }, [enabled]);
 
-  const { current, upcoming, justEnded } = useMemo(() => {
+  const { current, upcoming, endedCurrent, justEnded } = useMemo(() => {
     const scheduled = myShifts.filter((s) => s.status === 'scheduled');
-    const cur = scheduled.find(
+    const inProgress = scheduled.filter(
       (s) => new Date(s.startsAt).getTime() <= now && new Date(s.endsAt).getTime() > now
     );
+    // A shift the intern already ended gives way to one about to start; it only shows when nothing else does.
+    const cur = inProgress.find((s) => !s.clockedOutAt) ?? null;
+    const endedCur = inProgress.find((s) => s.clockedOutAt) ?? null;
     const next = scheduled
       .filter(
         (s) =>
@@ -43,13 +46,13 @@ export function ShiftDialerBanner({ sessionActive }: { sessionActive: boolean })
         new Date(s.endsAt).getTime() <= now &&
         new Date(s.endsAt).getTime() > now - LEAD_MS
     );
-    return { current: cur ?? null, upcoming: next ?? null, justEnded: ended };
+    return { current: cur, upcoming: next ?? null, endedCurrent: endedCur, justEnded: ended };
   }, [myShifts, now]);
 
   if (!enabled) return null;
 
-  if (current || upcoming) {
-    const s = (current ?? upcoming)!;
+  if (current || upcoming || endedCurrent) {
+    const s = (current ?? upcoming ?? endedCurrent)!;
     const kind = ACTIVITY_LABEL[s.activity].toLowerCase();
     const range = fmtRange(s.startsAt, s.endsAt, timezone).replace('–', ' to ');
     const phase = clockPhase(s, now);

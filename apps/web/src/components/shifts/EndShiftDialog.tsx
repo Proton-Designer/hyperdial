@@ -132,7 +132,10 @@ function EndForm({
 
   const set = <K extends keyof SurveyDraft>(k: K, v: SurveyDraft[K]) => {
     setDraft((d) => ({ ...d, [k]: v }));
-    setServerErrors((s) => ({ ...s, [k]: undefined }));
+    setServerErrors((s) => {
+      const { [k as SurveyField]: _gone, ...rest } = s;
+      return rest;
+    });
     setError(null);
   };
 

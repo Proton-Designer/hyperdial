@@ -387,7 +387,7 @@ function ShiftCard({
     clockHasContent(phase, shift, now);
   const started = new Date(shift.startsAt).getTime() <= now;
   const ended = new Date(shift.endsAt).getTime() <= now;
-  const live = started && !ended && shift.status === 'scheduled';
+  const live = started && !ended && shift.status === 'scheduled' && !shift.clockedOutAt;
   const canRequest = !started && shift.status === 'scheduled';
   const others = useMemo(() => alsoOn(shift, roster), [shift, roster]);
   const shown = others.slice(0, 3);
