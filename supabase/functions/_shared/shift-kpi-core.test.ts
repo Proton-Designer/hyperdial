@@ -359,3 +359,43 @@ Deno.test('finalize only after 2 hours past the end', () => {
   assertEquals(isFinalizable(end, Date.parse('2026-10-13T22:59:00Z')), false);
   assertEquals(isFinalizable(end, Date.parse('2026-10-13T23:01:00Z')), true);
 });
+
+Deno.test(
+  'S05F: a leg with no ended_at ends at min(now, created + 30 min), never at "now" for ever',
+  () => {
+    // created 19:30Z, never ended, evaluated at 21:30Z: ends 20:00Z, so the idle gap to the shift end (21:00Z) is 60 min
+    const stale = computeShiftKpi(
+      input({ events: [ev('dialing', '19:00', '21:00')], legs: [leg('19:30')] })
+    );
+    assertEquals(stale.last_call_end_at, '2026-10-13T20:00:00.000Z');
+    assertEquals(stale.longest_idle_minutes, 60);
+    // created 20:50Z, still running at 20:55Z: it counts as "now" (20:55Z)
+    const running = computeShiftKpi(
+      input({
+        events: [ev('dialing', '19:00', null)],
+        legs: [leg('20:50')],
+        nowMs: Date.parse('2026-10-13T20:55:00Z'),
+      })
+    );
+    assertEquals(running.last_call_end_at, '2026-10-13T20:55:00.000Z');
+  }
+);
+
+Deno.test('S05F: a failed placeholder leg counts as a dial, like call_leg_analytics', () => {
+  const k = computeShiftKpi(
+    input({
+      events: [ev('dialing', '19:00', '21:00')],
+      legs: [
+        leg('19:05', { outcome: 'failed', ended_at: '2026-10-13T19:05:01Z' }),
+        leg('19:06', {
+          outcome: 'connected',
+          duration_seconds: 90,
+          ended_at: '2026-10-13T19:08:00Z',
+        }),
+      ],
+    })
+  );
+  assertEquals(k.dials, 2);
+  assertEquals(k.connects, 1);
+  assertEquals(k.connect_rate_pct, 50);
+});

@@ -5,7 +5,7 @@
 //  * Active dialing time = intervals of `agent_state_events` whose state is NOT paused / paused_agent_lost /
 //    stopped / completed, clipped to the shift (and to "now" while it is still running). An interval that
 //    never closed (browser closed, crash) ends at min(now, last contact-leg end of its session + tail minutes)
-//    (no legs: its start + tail). `lastLegEnd` counts a leg still in progress as "now".
+//    (no legs: its start + tail). `lastLegEnd` counts a leg still in progress as min(now, created + 30 min).
 //  * Calls = contact legs created inside [starts_at, ends_at) of that agent's sessions (dialing outside a shift
 //    never counts). connect = outcome 'connected' OR amd_result human/not_sure/human_residence/human_business;
 //    conversation = connect with duration >= conversation_min_seconds; voicemail = amd 'machine' OR outcome
@@ -63,7 +63,7 @@ export interface KpiInput {
   windows: KpiWindow[];
   events: KpiEvent[];
   legs: KpiLeg[];
-  /** session id -> ISO time of its last contact-leg end (an in-progress leg counts as "now"). */
+  /** session id -> ISO time of its last contact-leg end (an open leg counts as min(now, created + 30 min)). */
   lastLegEnd: Record<string, string>;
   nowMs: number;
 }
@@ -169,6 +169,11 @@ export function powerIntervals(
   return intersect(mergeIntervals(out), [[fromMs, toMs]]);
 }
 
+/** A leg that never got an end (lost webhook) counts as ended at min(now, created + 30 min), never as "now" for ever. */
+export const OPEN_LEG_CAP_MINUTES = 30;
+export const legEndMs = (l: Pick<KpiLeg, 'created_at' | 'ended_at'>, nowMs: number): number =>
+  l.ended_at ? t(l.ended_at) : Math.min(nowMs, t(l.created_at) + OPEN_LEG_CAP_MINUTES * MIN);
+
 const HUMAN_AMD = ['human', 'not_sure', 'human_residence', 'human_business'];
 export const isConnect = (l: Pick<KpiLeg, 'outcome' | 'amd_result'>) =>
   l.outcome === 'connected' || (l.amd_result !== null && HUMAN_AMD.includes(l.amd_result));
@@ -207,7 +212,7 @@ export function computeShiftKpi(i: KpiInput): KpiResult {
   }
 
   const firstDial = dials > 0 ? t(legs[0].created_at) : null;
-  const ends_ = legs.filter((l) => l.ended_at).map((l) => t(l.ended_at as string));
+  const ends_ = legs.map((l) => legEndMs(l, nowMs));
   const lastEnd = ends_.length > 0 ? Math.max(...ends_) : null;
 
   const lateStart =
