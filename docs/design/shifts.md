@@ -247,7 +247,7 @@ Rules (server-enforced):
 - Start is allowed from 15 min before `starts_at` until `ends_at`, only for the caller's own `scheduled` shift, once (idempotent:
   a second start returns the existing clock-in). Server clock only. `clockInLateMinutes = max(0, clockedInAt - startsAt)` in
   whole minutes; > `grace_minutes` adds the KPI flag `late_clock_in`. No clock-in by the time the shift is finalized adds
-  `no_clock_in` (not for shifts that are excused/cancelled).
+  `no_clock_in` (not for shifts that are excused/cancelled). A `no_show` shift (zero dials) keeps the single flag `no_show`; the clock flags are not added to it.
 - End is allowed any time after Start (an early end is fine; it shows as early). For a **dialing** shift End REQUIRES the survey in the
   same call; for follow_up/social shifts End takes no survey. A shift never ended is closed by the KPI finalize step at `ends_at`
   (`clockedOutAt` stays null, `survey` stays null, flag `no_clock_out`).
