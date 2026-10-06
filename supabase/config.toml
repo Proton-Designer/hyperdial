@@ -412,6 +412,10 @@ verify_jwt = false
 # gateway 401s every tick once deployed, before the function's own X-Cron-Secret check ever
 # runs (TASK-P3-P3, caught in review). Auth is that header, not a JWT.
 verify_jwt = false
+[functions.shift-ghl-sync]
+# Called by cron (X-Cron-Secret) and by the shifts functions after a write (service-role bearer):
+# neither carries a user JWT. The function does its own check and fails closed (TASK-S04).
+verify_jwt = false
 [functions.ghl-pull-worker]
 # Same shape as ghl-sync-worker above: pg_net sends only X-Cron-Secret, no Supabase JWT --
 # without this the gateway 401s every tick before the function's own secret check ever runs
