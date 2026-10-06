@@ -1356,10 +1356,10 @@ Written from the Shifts reviews (`.claude/overnight/run-20261006-1130/audit/`); 
   the intern contact search (`GET /contacts/?query=<email>`, exact-email filter; `POST /contacts/search` has no documented body) have only run against mocks. Clearing a
   field sends `""`, which may be rejected for NUMERICAL/DATE definitions. Kareem owns the live pass.
 - **Config is seeded on first read**: `shift_settings`/`open_hours`/`power_windows` rows appear when the first shifts function runs for an org (`ensure_shift_config`), not at org creation.
-- **Duplicate GHL appointment after a lease retry**: a sync run killed mid-call leaves the row leased (10 min); a retry can create a second appointment. Open SHOULD: a run time budget in `shift-ghl-sync`.
+- **Duplicate GHL appointment after a lease retry** (reduced by S03F): `shift-ghl-sync` now stops a run after 100 s and pauses an org after 3 timeouts, but a run killed mid-call still leaves the row leased (10 min) and a retry can create a second appointment.
 - **Dialer banner edge**: it reads the current week's cached shifts only, so a next-week shift that starts within 15 minutes of Sunday midnight is missed.
-- **Pending requests can dangle**: a manager cancelling/moving a shift does not touch its pending request; approving it later fails with `bad_request shift_not_scheduled` until denied. Self-approval by a participating manager in their own pod is not blocked.
-- **`timezone` is patchable by any manager-level role** via `admin-shift-settings-update`; changing it with shifts booked reinterprets local times. The UI does not expose it.
+- ~~Pending requests can dangle~~ **Fixed in S03F**: a request waiting on a shift that a manager moves/cancels/excuses, or that finalizes, is denied automatically with a note. ~~Self-approval not blocked~~ **Fixed**: a manager gets 403 `self_review` (owner/admin may). ~~`timezone` patchable by any manager~~ **Fixed**: owner/admin only.
+- **Open hours / high leverage windows are org-wide by design**: one config per org, managed by whoever has manager-level access, so a pod-scoped manager's edit affects every pod. Narrowing open hours leaves booked shifts in place; the Setup screen warns with `affectedShiftCount`, and the Coverage heatmap only draws open slots.
 - **A no-GHL org shows every outbox row as waiting** with "org has no connected GHL integration"; the UI collapses these into a single "GoHighLevel isn't connected" callout.
 
 ## Not issues — deliberate, documented elsewhere

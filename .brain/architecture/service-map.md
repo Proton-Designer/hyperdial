@@ -143,7 +143,7 @@ functions (`funnel_summary`, `answer_rate_heatmap`, `connect_rate_by_number`,
 | `shift-requests-create` / `shift-requests-withdraw` | JWT (any member, own rows) | Move / drop / add / light-week requests; 409 `shifts_disabled` while off | Medium |
 | `admin-shifts-overview` | JWT (owner/admin/manager, pod-scoped) | One GET for every Team Shifts screen (coverage, requests, KPIs, setup, sync health) | Low |
 | `admin-shift-requests-review` / `admin-shift-update` | JWT (manager-level, pod-scoped) | Approve/deny a request; create/move/cancel/excuse a shift. Rules live in SQL (`review_shift_request`, `admin_update_shift`) | **High** |
-| `admin-shift-settings-update` / `admin-open-hours-upsert` / `admin-power-windows-upsert` / `admin-profiles-upsert` | JWT (manager-level; `enabled` owner/admin only) | Setup writes | Medium |
+| `admin-shift-settings-update` / `admin-open-hours-upsert` / `admin-power-windows-upsert` / `admin-profiles-upsert` | JWT (manager-level; `enabled` and `timezone` owner/admin only; config is org-wide). `admin-open-hours-upsert` returns `affectedShiftCount` | Setup writes | Medium |
 | `admin-ghl-find-contact` / `admin-ghl-retry` | JWT (manager-level) | Find an intern's GHL contact by email; re-queue failed outbox rows | Low |
 | `shift-ghl-sync` | Shared secret (cron, every minute) or service-role bearer | Drains `shift_ghl_outbox` to GHL per org (appointments, fields, notes, tags) | Medium |
 | `shift-kpi-compute` / `shifts-week-lock` / `shifts-week-close` | Shared secret (cron: 15 min / hourly :05 / hourly :35) | Per-shift KPIs, deadline flags, Power week close | Medium |

@@ -14,6 +14,8 @@ sources:
   - supabase/migrations/20261006124500_shifts_ghl_outbox_rpcs.sql
   - supabase/migrations/20261006130000_shifts_admin_rpcs.sql
   - supabase/migrations/20261006131500_shifts_ghl_hardening.sql
+  - supabase/migrations/20261006143000_shifts_admin_followups.sql
+  - supabase/migrations/20261006144500_shifts_open_hours_scope.sql
   - supabase/migrations/20261006140000_shifts_kpi_jobs.sql
   - supabase/migrations/20261006140100_shifts_cron.sql
   - supabase/functions/_shared/shifts-core.ts
@@ -69,7 +71,7 @@ calendar. Off by default per org (`shift_settings.enabled`).
 
 ## Rules that are easy to get wrong
 
-- Roles come from `org_members`, there is no profiles table (D1). `enabled` is owner/admin only; manager-level may write the other settings, open hours and windows.
+- Roles come from `org_members`, there is no profiles table (D1). `enabled` and `timezone` are owner/admin only; manager-level may write the other settings, open hours and high leverage windows. That config is org-wide by design (one config per org, the manager owns it), so a pod-scoped manager's change applies to every pod. A manager cannot decide their own request (403 `self_review`); owner/admin can.
 - Request approval (`review_shift_request`, one transaction): `move` updates the SAME shift row (keeps `ghl_appointment_id`) and stays inside its week; `drop` sets `excused` and, if it takes counted hours under the week's effective minimum, needs an explicit acknowledgement (409 `under_minimum_needs_ack {hoursAfter, minimum}`) and then sets `min_hours_override` to the new total; `add` inserts `source='request'`; `light_week` sets the flag + override. Always recompute week hours, notify the intern, enqueue the GHL event. A non-pending request is 409 `not_pending`.
 - Overlaps are impossible: a gist exclusion constraint on scheduled shifts per user; SQL maps it to 422 `overlap`.
 - Intern functions refuse with 409 `shifts_disabled` while the org has it off. Names: interns see "First L.", manager-level callers see full names.
@@ -97,7 +99,7 @@ calendar. Off by default per org (`shift_settings.enabled`).
 2. Hourly `shifts-week-lock` (after the deadline, once per org per week) flags Not submitted / Under minimum. After the deadline changes are requests; Henry approves or denies (Requests tab), or edits a shift directly (`admin_update_shift`, source `admin`).
 3. `shift-kpi-compute` (every 15 min) derives KPIs per shift from `agent_state_events` (active dialing time, D5) and `call_legs` of kind contact (dials, connects, conversations, D6), flags late start / idle / low adherence, finalises shifts that ended more than 2 hours ago (`completed` or `missed`).
 4. Monday after 00:30 local `shifts-week-close` computes `power_dial_pct` and `power_week`, queues Week closed / Power week.
-5. Every change queues outbox rows; `shift-ghl-sync` (every minute, also nudged after writes) drains them per org through the org's own GHL connection. Appointments use GHL API Version 2021-04-15, contacts 2021-07-28. A 429 delays the rest; a 401/403 pauses that org; failures show in Setup -> Sync health with Retry.
+5. Every change queues outbox rows; `shift-ghl-sync` (every minute, also nudged after writes) drains them per org through the org's own GHL connection. Appointments use GHL API Version 2021-04-15, contacts 2021-07-28. A 429 delays that row (60 s, or Retry-After up to 1 h) and releases the rest of the org's batch; a run stops after 100 s; a 401/403 pauses that org; failures show in Setup -> Sync health with Retry.
 
 ## Testing without a backend
 
