@@ -237,7 +237,8 @@ const num = (v: number | string | null): number | null =>
 export const isoz = <T extends string | null>(v: T): T =>
   (v === null || v === undefined ? v : new Date(v).toISOString()) as T;
 
-export function mapSettings(r: ShiftSettingsRow) {
+/** GHL ids are for manager-level callers only (`includeGhl`); interns get null. */
+export function mapSettings(r: ShiftSettingsRow, includeGhl = false) {
   return {
     enabled: r.enabled,
     timezone: r.timezone,
@@ -252,8 +253,8 @@ export function mapSettings(r: ShiftSettingsRow) {
     openSessionTailMinutes: r.open_session_tail_minutes,
     powerCoverageAlert: r.power_coverage_alert,
     powerWeekPct: r.power_week_pct,
-    ghlCalendarId: r.ghl_calendar_id,
-    ghlOwnerUserId: r.ghl_owner_user_id,
+    ghlCalendarId: includeGhl ? r.ghl_calendar_id : null,
+    ghlOwnerUserId: includeGhl ? r.ghl_owner_user_id : null,
   };
 }
 

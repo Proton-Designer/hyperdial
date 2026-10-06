@@ -91,6 +91,13 @@ Deno.test('mapSettings: camelCase, HH:MM, numeric strings become numbers', () =>
   assertEquals(s.minWeeklyHours, 8);
   assertEquals(s.lockTime, '18:00');
   assertEquals(s.ghlCalendarId, null);
+  const withGhl = mapSettings(
+    { ...settings, ghl_calendar_id: 'cal1', ghl_owner_user_id: 'own1' },
+    true
+  );
+  assertEquals([withGhl.ghlCalendarId, withGhl.ghlOwnerUserId], ['cal1', 'own1']);
+  const intern = mapSettings({ ...settings, ghl_calendar_id: 'cal1', ghl_owner_user_id: 'own1' });
+  assertEquals([intern.ghlCalendarId, intern.ghlOwnerUserId], [null, null]);
   assertEquals(Object.keys(s).length, 15);
 });
 

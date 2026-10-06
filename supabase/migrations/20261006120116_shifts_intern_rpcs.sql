@@ -62,6 +62,12 @@ begin
 end;
 $$;
 
+-- One pending light-week request per user per week, enforced by the database (the exists-check in
+-- create_shift_request is only the friendly path; this closes the double-submit race).
+create unique index one_pending_light_week_per_user_week
+  on public.shift_change_requests (org_id, user_id, week_start)
+  where type = 'light_week' and status = 'pending';
+
 create function public.create_shift_request(
   p_org uuid,
   p_user uuid,
@@ -168,6 +174,11 @@ begin
         and tstzrange(s.starts_at, s.ends_at) && tstzrange(v_to_start, v_to_end)
     ) then
       perform private.shift_err('overlap');
+    end if;
+    -- A move stays inside the original shift's week (the approval keeps shifts.week_start == the week
+    -- of starts_at; moving into another week is a drop + add).
+    if p_type = 'move' and (p_date < v_week or p_date > v_week + 6) then
+      perform private.shift_err('bad_request', jsonb_build_object('reason', 'bad_date'));
     end if;
     if p_type = 'add' then
       v_week := p_date - (extract(isodow from p_date)::int - 1);

@@ -201,7 +201,7 @@ Deno.serve(async (req) => {
     return jsonResponse(200, {
       role: ctx.role,
       week: buildWeekInfo(weekStart, settings, commitment, nowMs),
-      settings: mapSettings(settings),
+      settings: mapSettings(settings, ctx.managerLevel),
       openHours: ((openHoursRes.data ?? []) as OpenHoursRow[]).map(mapOpenHours),
       powerWindows: ((windowsRes.data ?? []) as PowerWindowRow[]).map(mapPowerWindow),
       roster: ((rosterRes.data ?? []) as RosterRow[]).map((r) => mapRosterEntry(r, ctx.userId)),
