@@ -22,6 +22,7 @@ import {
   fmtWeekRange,
   flagLabel,
   localDateKey,
+  displayName,
 } from './shiftFormat';
 
 interface MyShiftsProps {
@@ -253,7 +254,7 @@ function HoursCounter({
             {fmtHours(scheduledHours)}
           </div>
           <div className="mt-1.5 text-meta text-text-secondary">
-            {fmtHours(powerHours)} in power windows · {fmtHours(minHours)} minimum
+            {fmtHours(powerHours)} in high leverage windows · {fmtHours(minHours)} minimum
           </div>
         </div>
         {alarm && (
@@ -278,8 +279,8 @@ function PowerProgress({ pct }: { pct: number }) {
     <div className="flex items-center gap-3 rounded-app-lg border border-accent-to/20 bg-accent-to/5 px-4 py-3">
       <Zap className="h-4 w-4 shrink-0 text-accent-to" />
       <p className="text-body text-text-primary">
-        <span className="text-metric font-semibold">{v}%</span> of your dialing this week is in
-        power windows.
+        <span className="text-metric font-semibold">{v}%</span> of your dialing this week is in high
+        leverage windows.
       </p>
     </div>
   );
@@ -313,7 +314,7 @@ function alsoOn(shift: Shift, roster: ShiftRosterEntry[]): string[] {
   const names = new Set<string>();
   for (const r of roster) {
     if (r.isMe || r.userId === shift.userId) continue;
-    if (r.startsAt < shift.endsAt && r.endsAt > shift.startsAt) names.add(r.name);
+    if (r.startsAt < shift.endsAt && r.endsAt > shift.startsAt) names.add(displayName(r.name));
   }
   return [...names].sort((a, b) => a.localeCompare(b));
 }
@@ -367,7 +368,7 @@ function ShiftCard({
             )}
             {shift.powerMinutes > 0 && (
               <Pill tone="accent" icon={<Zap />}>
-                Power window
+                High leverage
               </Pill>
             )}
             {shift.hasPendingRequest && <Pill tone="warning">Change requested</Pill>}

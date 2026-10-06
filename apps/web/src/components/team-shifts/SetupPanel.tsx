@@ -25,12 +25,14 @@ export function SetupPanel({
   canManage,
   onChanged,
   onManagePods,
+  onOpenIntegrations,
 }: {
   overview: AdminShiftsOverview;
   /** Owner/admin: can switch Shifts off and manage pods. Managers can edit the rest. */
   canManage: boolean;
   onChanged: () => void;
   onManagePods?: () => void;
+  onOpenIntegrations?: () => void;
 }) {
   const [confirmOff, setConfirmOff] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -83,7 +85,11 @@ export function SetupPanel({
         onManagePods={onManagePods}
         onSaved={onChanged}
       />
-      <SyncHealth health={overview.syncHealth} onRetried={onChanged} />
+      <SyncHealth
+        health={overview.syncHealth}
+        onRetried={onChanged}
+        onOpenIntegrations={canManage ? onOpenIntegrations : undefined}
+      />
 
       <AlertDialog open={confirmOff} onOpenChange={setConfirmOff}>
         <AlertDialogContent className="border-border-subtle bg-surface-1 text-text-primary">

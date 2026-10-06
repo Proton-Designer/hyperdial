@@ -18,6 +18,7 @@ import { SetupPanel } from './team-shifts/SetupPanel';
 import { ShiftKpiTable } from './team-shifts/ShiftKpiTable';
 import { fmtWeekRange } from './shifts/shiftFormat';
 import { addDaysYmd } from './shifts/pickerModel';
+import type { SettingsSection } from './Settings';
 
 type LoadState = 'loading' | 'ready' | 'disabled' | 'error';
 type TeamTab = 'coverage' | 'requests' | 'kpis' | 'setup';
@@ -29,7 +30,7 @@ interface TeamShiftsProps {
   /** Only owners and admins can switch Shifts on; managers are told to ask. */
   canEnable?: boolean;
   /** "Manage pods" in Setup: the existing pods assignment lives in Settings. */
-  onNavigateToSettings?: () => void;
+  onNavigateToSettings?: (section?: SettingsSection) => void;
 }
 
 /** Team Shifts (manager-level): Coverage, Requests, Shift KPIs and Setup for one week at a time. */
@@ -227,7 +228,10 @@ export function TeamShifts({ canEnable = false, onNavigateToSettings }: TeamShif
               overview={overview}
               canManage={canEnable}
               onChanged={() => void load(week, true)}
-              onManagePods={onNavigateToSettings}
+              onManagePods={onNavigateToSettings && (() => onNavigateToSettings('pods'))}
+              onOpenIntegrations={
+                onNavigateToSettings && (() => onNavigateToSettings('integrations'))
+              }
             />
           </TabsContent>
         </div>

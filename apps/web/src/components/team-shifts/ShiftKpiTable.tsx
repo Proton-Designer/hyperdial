@@ -14,7 +14,14 @@ import {
 import { cn } from '@/components/ui/utils';
 import { computeShiftKpi, type AdminShiftsOverview, type ShiftKpi } from '@/lib/api';
 import { Pill } from '../shifts/pills';
-import { fmtDay, fmtHours, fmtRange, fmtMinutes, flagLabel } from '../shifts/shiftFormat';
+import {
+  fmtDay,
+  fmtHours,
+  fmtRange,
+  fmtMinutes,
+  flagLabel,
+  displayName,
+} from '../shifts/shiftFormat';
 
 interface Props {
   overview: AdminShiftsOverview;
@@ -158,7 +165,9 @@ export function ShiftKpiTable({ overview, onRefreshed }: Props) {
                   {rollup.map((r) => (
                     <tr key={r.userId}>
                       <td className="sticky left-0 z-10 bg-surface-1 px-3 py-2 text-text-primary">
-                        <span className="font-medium">{r.name}</span>
+                        <span className="font-medium" title={r.name}>
+                          {displayName(r.name)}
+                        </span>
                         {r.powerWeek && (
                           <Pill tone="success" icon={<Trophy />} className="ml-2">
                             Power week
@@ -191,7 +200,7 @@ export function ShiftKpiTable({ overview, onRefreshed }: Props) {
                   <SelectItem value="all">All interns</SelectItem>
                   {internsWithKpis.map((m) => (
                     <SelectItem key={m.userId} value={m.userId}>
-                      {m.name}
+                      {displayName(m.name)}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -245,7 +254,7 @@ export function ShiftKpiTable({ overview, onRefreshed }: Props) {
                     {rows.map(({ k, s }) => (
                       <tr key={k.shiftId} className="hover:bg-white/[0.03]">
                         <td className="sticky left-0 z-10 whitespace-nowrap bg-surface-1 px-3 py-2 font-medium text-text-primary">
-                          {s.userName}
+                          {displayName(s.userName)}
                           {!k.final && (
                             <Pill tone="accent" className="ml-2">
                               Live

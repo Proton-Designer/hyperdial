@@ -12,6 +12,7 @@ import {
   type AdminShiftsOverview,
 } from '@/lib/api';
 import { SetupCard, describeSetupError } from './setupUi';
+import { displayName } from '../shifts/shiftFormat';
 
 const ROLE_LABEL: Record<string, string> = {
   owner: 'Owner',
@@ -106,7 +107,9 @@ function MemberRow({ member: m, onSaved }: { member: AdminShiftMember; onSaved: 
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
         <div className="min-w-0 basis-52 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="truncate text-body font-medium text-text-primary">{m.name}</span>
+            <span className="truncate text-body font-medium text-text-primary" title={m.name}>
+              {displayName(m.name)}
+            </span>
             <Pill>{ROLE_LABEL[m.role] ?? m.role}</Pill>
             {m.podName && <Pill tone="accent">{m.podName}</Pill>}
           </div>
@@ -117,7 +120,7 @@ function MemberRow({ member: m, onSaved }: { member: AdminShiftMember; onSaved: 
             checked={m.participates}
             disabled={busy !== null}
             onCheckedChange={(v) => void run('toggle', { userId: m.userId, participates: v })}
-            aria-label={`${m.name} takes part in Shifts`}
+            aria-label={`${displayName(m.name)} takes part in Shifts`}
           />
           Takes part
         </label>
@@ -129,7 +132,7 @@ function MemberRow({ member: m, onSaved }: { member: AdminShiftMember; onSaved: 
               setError(null);
             }}
             placeholder="GHL contact ID"
-            aria-label={`GHL contact ID for ${m.name}`}
+            aria-label={`GHL contact ID for ${displayName(m.name)}`}
             className="h-8 min-w-0 flex-1"
           />
           {contactDirty ? (

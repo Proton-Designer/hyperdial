@@ -345,9 +345,9 @@ export function MainApp() {
             <PageTransition>
               <TeamShifts
                 canEnable={role === 'owner' || role === 'admin'}
-                onNavigateToSettings={() => {
+                onNavigateToSettings={(section) => {
                   setActiveTab('settings');
-                  setSettingsSection('pods');
+                  setSettingsSection(section);
                 }}
               />
             </PageTransition>

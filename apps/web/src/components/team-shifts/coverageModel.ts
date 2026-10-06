@@ -1,6 +1,6 @@
 import type { AdminShiftMember, AdminShiftsOverview, Shift } from '@/lib/api';
 import { SLOT, buildDays, type PickDay } from '../shifts/pickerModel';
-import { localDateKey, localMinutes } from '../shifts/shiftFormat';
+import { localDateKey, localMinutes, displayName } from '../shifts/shiftFormat';
 
 export type TeamShift = AdminShiftsOverview['shifts'][number];
 
@@ -103,7 +103,9 @@ export function heatColor(count: number, max: number): string | undefined {
 }
 
 export function uniqueNames(shifts: TeamShift[] | undefined): string[] {
-  return [...new Set((shifts ?? []).map((s) => s.userName))].sort((a, b) => a.localeCompare(b));
+  return [...new Set((shifts ?? []).map((s) => displayName(s.userName)))].sort((a, b) =>
+    a.localeCompare(b)
+  );
 }
 
 export function maxHeadcount(model: CoverageModel): number {

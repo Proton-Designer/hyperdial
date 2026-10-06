@@ -1,9 +1,10 @@
 import { useState } from 'react';
-import { CheckCircle2, RefreshCw, TriangleAlert } from 'lucide-react';
+import { CheckCircle2, Plug, RefreshCw, TriangleAlert } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { retryShiftGhl, type AdminShiftsOverview } from '@/lib/api';
 import { SetupCard, describeSetupError } from './setupUi';
+import { displayName } from '../shifts/shiftFormat';
 
 const KIND_LABEL: Record<string, string> = {
   appointment_upsert: 'Calendar appointment',
@@ -15,13 +16,25 @@ const KIND_LABEL: Record<string, string> = {
   contact_tags_remove: 'Remove tag',
 };
 
-/** GHL sync health: failed outbox rows with the last error, and Retry. */
+type RowKind = 'not_connected' | 'token' | 'error';
+const classify = (lastError: string | null): RowKind =>
+  /no connected GHL integration/i.test(lastError ?? '')
+    ? 'not_connected'
+    : /token rejected/i.test(lastError ?? '')
+      ? 'token'
+      : 'error';
+
+/** GHL sync health. Rows waiting because GoHighLevel isn't connected, or its token was rejected,
+ *  are one calm callout with a link (nothing is wrong with the rows). Real errors keep the list. */
 export function SyncHealth({
   health,
   onRetried,
+  onOpenIntegrations,
 }: {
   health: AdminShiftsOverview['syncHealth'];
   onRetried: () => void;
+  /** Owner/admin only; managers are told to ask. */
+  onOpenIntegrations?: () => void;
 }) {
   const [busy, setBusy] = useState<number | 'all' | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -40,13 +53,20 @@ export function SyncHealth({
     }
   };
 
+  const realRows = health.rows.filter((r) => classify(r.lastError) === 'error');
+  const tokenRows = health.rows.filter((r) => classify(r.lastError) === 'token');
+  // Rows beyond the 50 shown are counted with the waiting ones unless they are known real errors.
+  const realCount = realRows.length;
+  const waiting = Math.max(0, health.errorCount - realCount);
+  const rejected = tokenRows.length > 0;
   const ok = health.errorCount === 0;
+  const hasReal = realCount > 0;
   return (
     <SetupCard
       title="GoHighLevel sync"
       description="Shift changes reach GoHighLevel in the background. Anything that fails shows up here."
       actions={
-        !ok ? (
+        hasReal || rejected ? (
           <Button
             variant="fe-secondary"
             size="sm"
@@ -65,47 +85,66 @@ export function SyncHealth({
         </p>
       ) : (
         <div className="space-y-3">
-          <p className="flex items-start gap-2 text-body text-text-primary">
-            <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
-            <span>
-              {health.errorCount} {health.errorCount === 1 ? 'item' : 'items'} couldn’t sync.
-              {health.lastError && (
+          {waiting > 0 && (
+            <div
+              role="status"
+              className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-app-md border border-border-subtle bg-surface-2 px-3 py-3"
+            >
+              <Plug className="h-4 w-4 shrink-0 text-text-muted" />
+              <p className="min-w-0 flex-1 basis-64 text-body text-text-primary">
+                {rejected
+                  ? 'GoHighLevel rejected the connection. Reconnect it to resume syncing.'
+                  : 'GoHighLevel isn’t connected. Connect it in Settings → Integrations to start syncing.'}
                 <span className="block text-meta text-text-secondary">
-                  Last error: {health.lastError}
+                  {waiting} {waiting === 1 ? 'update is' : 'updates are'} waiting
+                  {onOpenIntegrations ? '.' : '. Ask an owner or admin to connect it.'}
                 </span>
-              )}
-            </span>
-          </p>
-          <ul className="divide-y divide-border-subtle rounded-app-md border border-border-subtle bg-surface-2">
-            {health.rows.map((r) => (
-              <li key={r.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2">
-                <div className="min-w-0 flex-1 basis-60">
-                  <div className="text-body text-text-primary">
-                    {KIND_LABEL[r.kind] ?? r.kind}
-                    {r.userName ? ` · ${r.userName}` : ''}
-                    {r.event ? ` · ${r.event}` : ''}
-                  </div>
-                  <div className="text-meta text-danger">{r.lastError ?? 'Unknown error'}</div>
-                  <div className="text-meta text-text-muted">
-                    {r.attempts} {r.attempts === 1 ? 'attempt' : 'attempts'}
-                  </div>
-                </div>
-                <Button
-                  variant="fe-ghost"
-                  size="sm"
-                  loading={busy === r.id}
-                  disabled={busy !== null}
-                  onClick={() => void retry(r.id)}
-                >
-                  Retry
+              </p>
+              {onOpenIntegrations && (
+                <Button variant="fe-secondary" size="sm" onClick={onOpenIntegrations}>
+                  {rejected ? 'Reconnect' : 'Open Integrations'}
                 </Button>
-              </li>
-            ))}
-          </ul>
-          {health.rows.length < health.errorCount && (
-            <p className="text-meta text-text-muted">
-              Showing the latest {health.rows.length}. Retry all queues the rest.
+              )}
+            </div>
+          )}
+          {hasReal && (
+            <p className="flex items-start gap-2 text-body text-text-primary">
+              <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
+              <span>
+                {realCount} {realCount === 1 ? 'item' : 'items'} couldn’t sync.
+                <span className="block text-meta text-text-secondary">
+                  Last error: {realRows[0].lastError}
+                </span>
+              </span>
             </p>
+          )}
+          {hasReal && (
+            <ul className="divide-y divide-border-subtle rounded-app-md border border-border-subtle bg-surface-2">
+              {realRows.map((r) => (
+                <li key={r.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2">
+                  <div className="min-w-0 flex-1 basis-60">
+                    <div className="text-body text-text-primary">
+                      {KIND_LABEL[r.kind] ?? r.kind}
+                      {r.userName ? ` · ${displayName(r.userName)}` : ''}
+                      {r.event ? ` · ${r.event}` : ''}
+                    </div>
+                    <div className="text-meta text-danger">{r.lastError ?? 'Unknown error'}</div>
+                    <div className="text-meta text-text-muted">
+                      {r.attempts} {r.attempts === 1 ? 'attempt' : 'attempts'}
+                    </div>
+                  </div>
+                  <Button
+                    variant="fe-ghost"
+                    size="sm"
+                    loading={busy === r.id}
+                    disabled={busy !== null}
+                    onClick={() => void retry(r.id)}
+                  >
+                    Retry
+                  </Button>
+                </li>
+              ))}
+            </ul>
           )}
         </div>
       )}

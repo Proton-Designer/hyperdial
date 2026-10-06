@@ -345,7 +345,7 @@ const ROLE_LABEL: Record<string, string> = {
 };
 
 /** Optional deep-link target inside the Team tab (used by Team Shifts -> Manage pods). */
-export type SettingsSection = 'pods';
+export type SettingsSection = 'pods' | 'integrations';
 
 function TeamTab({ scrollTo }: { scrollTo?: SettingsSection }) {
   const { user } = useAuth();
@@ -5302,7 +5302,9 @@ function InboundSettingsCard() {
 
 export function Settings({ section }: { section?: SettingsSection } = {}) {
   const { role, loading: orgLoading } = useOrg();
-  const [activeTab, setActiveTab] = useState<SettingsTab>(section === 'pods' ? 'team' : 'profile');
+  const [activeTab, setActiveTab] = useState<SettingsTab>(
+    section === 'pods' ? 'team' : section === 'integrations' ? 'integrations' : 'profile'
+  );
   const [purchaseModalOpen, setPurchaseModalOpen] = useState(false);
 
   const [telnyxStatus, setTelnyxStatus] = useState<TelnyxConnectionStatus | null>(null);

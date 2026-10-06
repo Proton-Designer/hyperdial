@@ -127,6 +127,40 @@ const syncErrors = [
   },
 ];
 
+/** ghl_not_connected: every row waits with the "no connected integration" error (as in a QA org with
+ *  no GHL). ghl_token: rows held by a rejected token plus one real error. */
+function syncHealthFor(scenario: string) {
+  const mk = (id: number, lastError: string) => ({
+    id,
+    kind: 'appointment_upsert',
+    event: 'Week submitted',
+    userName: 'Ava Chen',
+    lastError,
+    attempts: 0,
+    createdAt: new Date().toISOString(),
+  });
+  if (scenario === 'ghl_not_connected') {
+    const rows = Array.from({ length: 24 }, (_, i) =>
+      mk(300 - i, 'org has no connected GHL integration')
+    );
+    return { errorCount: 24, lastError: rows[0].lastError, rows };
+  }
+  if (scenario === 'ghl_token') {
+    const rows = [
+      syncErrors[0],
+      ...Array.from({ length: 5 }, (_, i) =>
+        mk(300 - i, 'GHL token rejected (401/403): reconnect GoHighLevel')
+      ),
+    ];
+    return { errorCount: rows.length, lastError: rows[0].lastError, rows };
+  }
+  return {
+    errorCount: syncErrors.length,
+    lastError: syncErrors[0]?.lastError ?? null,
+    rows: [...syncErrors],
+  };
+}
+
 let seq = 0;
 const stores = new Map<string, TeamShift[]>();
 
@@ -357,11 +391,7 @@ export function buildAdminOverview(
             },
           ]
         : [],
-    syncHealth: {
-      errorCount: syncErrors.length,
-      lastError: syncErrors[0]?.lastError ?? null,
-      rows: [...syncErrors],
-    },
+    syncHealth: syncHealthFor(scenario),
   };
 }
 

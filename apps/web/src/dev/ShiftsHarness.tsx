@@ -626,6 +626,8 @@ function useShiftsFixtureStubs(scenario: string) {
 
 const SCENARIOS = [
   'default',
+  'ghl_not_connected',
+  'ghl_token',
   'unsubmitted',
   'under_minimum',
   'deadline_passed',

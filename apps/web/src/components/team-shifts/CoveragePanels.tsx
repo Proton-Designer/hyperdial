@@ -3,7 +3,13 @@ import { Button } from '@/components/ui/button';
 import { cn } from '@/components/ui/utils';
 import { SLOT, minRangeLabel } from '../shifts/pickerModel';
 import { ShiftStatusPill } from '../shifts/pills';
-import { ACTIVITY_LABEL, fmtDateOnly, fmtHours, fmtRange } from '../shifts/shiftFormat';
+import {
+  ACTIVITY_LABEL,
+  fmtDateOnly,
+  fmtHours,
+  fmtRange,
+  displayName,
+} from '../shifts/shiftFormat';
 import { slotKey, type CoverageModel, type PanelStats, type TeamShift } from './coverageModel';
 import type { SelectedSlot } from './CoverageGrid';
 
@@ -105,12 +111,14 @@ export function CoverageSummary({
       <NameList
         title={`Under ${fmtHours(minHours)}`}
         empty="Everyone has their minimum."
-        items={stats.underMinimum.map((u) => `${u.member.name} · ${fmtHours(u.hours)}`)}
+        items={stats.underMinimum.map(
+          (u) => `${displayName(u.member.name)} · ${fmtHours(u.hours)}`
+        )}
       />
       <NameList
         title="Not submitted"
         empty="Everyone has submitted."
-        items={stats.notSubmitted.map((m) => m.name)}
+        items={stats.notSubmitted.map((m) => displayName(m.name))}
       />
     </div>
   );
@@ -159,11 +167,14 @@ export function SlotShifts({
                 type="button"
                 onClick={() => onEdit(s)}
                 className="flex w-full items-center gap-3 py-2 text-left transition-colors hover:bg-white/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-to/60"
-                aria-label={`Edit ${s.userName}'s shift, ${fmtRange(s.startsAt, s.endsAt, timezone)}`}
+                aria-label={`Edit ${displayName(s.userName)}'s shift, ${fmtRange(s.startsAt, s.endsAt, timezone)}`}
               >
                 <div className="min-w-0 flex-1">
-                  <div className="truncate text-body font-medium text-text-primary">
-                    {s.userName}
+                  <div
+                    className="truncate text-body font-medium text-text-primary"
+                    title={s.userName}
+                  >
+                    {displayName(s.userName)}
                   </div>
                   <div className="flex flex-wrap items-center gap-x-2 text-meta text-text-muted">
                     <span className="text-metric">{fmtRange(s.startsAt, s.endsAt, timezone)}</span>

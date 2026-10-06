@@ -150,6 +150,19 @@ export function fmtMinutes(m: number): string {
   return rest === 0 ? `${h}h` : `${h}h ${rest}m`;
 }
 
+/** A person's name for display. A member with no profile name arrives as their email; show its
+ *  local part ("qa-agent") instead of the long address. Pair with `title={name}` where it truncates. */
+export function displayName(name: string): string {
+  const n = name.trim();
+  const at = n.indexOf('@');
+  return at > 0 && !n.includes(' ') ? n.slice(0, at) : n;
+}
+
+/** First word of a display name, for "Note to Sara". */
+export function firstName(name: string): string {
+  return displayName(name).split(/\s+/)[0] || 'them';
+}
+
 /** "Sara K." from a full name; names the server already abbreviated pass through unchanged. */
 export function shortName(full: string): string {
   const parts = full.trim().split(/\s+/);

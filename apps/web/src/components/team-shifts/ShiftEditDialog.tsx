@@ -47,6 +47,7 @@ import {
   fmtShiftWhen,
   localDateKey,
   localMinutes,
+  displayName,
 } from '../shifts/shiftFormat';
 import type { TeamShift } from './coverageModel';
 
@@ -81,7 +82,7 @@ export function ShiftEditDialog(props: Props) {
   const title = target?.kind === 'create' ? 'Add a shift' : 'Edit shift';
   const description =
     target?.kind === 'edit'
-      ? `${target.shift.userName} · ${fmtShiftWhen(target.shift.startsAt, target.shift.endsAt, tz)}`
+      ? `${displayName(target.shift.userName)} · ${fmtShiftWhen(target.shift.startsAt, target.shift.endsAt, tz)}`
       : `Week of ${fmtDateOnly(overview.week.weekStart)}`;
   const body =
     open && props.target ? (
@@ -261,7 +262,7 @@ function EditForm({
               <SelectContent className="max-h-64">
                 {people.map((m) => (
                   <SelectItem key={m.userId} value={m.userId}>
-                    {m.name}
+                    {displayName(m.name)}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -371,8 +372,8 @@ function EditForm({
               <div className="space-y-2">
                 <p className="text-body text-text-primary">
                   {confirm === 'cancel'
-                    ? `Cancel ${shift.userName}'s shift? It leaves their hours and the calendar.`
-                    : `Mark this shift excused? It won't count against ${shift.userName}.`}
+                    ? `Cancel ${displayName(shift.userName)}'s shift? It leaves their hours and the calendar.`
+                    : `Mark this shift excused? It won't count against ${displayName(shift.userName)}.`}
                 </p>
                 <div className="flex gap-2">
                   <Button

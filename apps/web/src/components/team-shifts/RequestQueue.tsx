@@ -16,6 +16,8 @@ import {
   fmtInstant,
   fmtShiftWhen,
   fmtWeekRange,
+  displayName,
+  firstName,
 } from '../shifts/shiftFormat';
 
 interface Props {
@@ -101,7 +103,9 @@ export function RequestQueue({ requests, timezone, minimumHours, onDecided }: Pr
           <ul className="divide-y divide-border-subtle overflow-hidden rounded-app-lg border border-border-subtle bg-surface-1">
             {decided.map((r) => (
               <li key={r.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-3">
-                <span className="text-body font-medium text-text-primary">{r.userName}</span>
+                <span className="text-body font-medium text-text-primary" title={r.userName}>
+                  {displayName(r.userName)}
+                </span>
                 <span className="text-body text-text-secondary">{REQUEST_TYPE_LABEL[r.type]}</span>
                 <RequestStatusPill status={r.status} />
                 <span className="ml-auto text-meta text-text-muted">
@@ -229,7 +233,12 @@ function RequestCard({
   return (
     <article className="rounded-app-lg border border-border-subtle bg-surface-1 p-4">
       <header className="flex flex-wrap items-center gap-x-2 gap-y-1">
-        <h3 className="text-body font-semibold text-text-primary">{r.userName}</h3>
+        <h3
+          className="min-w-0 truncate text-body font-semibold text-text-primary"
+          title={r.userName}
+        >
+          {displayName(r.userName)}
+        </h3>
         <Pill tone="accent">{REQUEST_TYPE_LABEL[r.type]}</Pill>
         {r.isLate && (
           <Pill tone="warning" icon={<Clock />}>
@@ -280,7 +289,7 @@ function RequestCard({
         <div className="mt-3 space-y-3 rounded-app-md border border-border-subtle bg-surface-2 p-3">
           <label className="block">
             <span className="mb-1 block text-meta font-medium text-text-secondary">
-              Note to {r.userName.split(' ')[0]} (optional)
+              Note to {firstName(r.userName)} (optional)
             </span>
             <Textarea
               value={note}
@@ -303,8 +312,8 @@ function RequestCard({
               <span>
                 Allow under {fmtHours(minimumHours)} this week
                 <span className="block text-meta text-text-muted">
-                  This leaves {r.userName.split(' ')[0]} at {fmtHours(hoursAfter)}. Their minimum
-                  for the week drops to match.
+                  This leaves {firstName(r.userName)} at {fmtHours(hoursAfter)}. Their minimum for
+                  the week drops to match.
                 </span>
               </span>
             </label>
