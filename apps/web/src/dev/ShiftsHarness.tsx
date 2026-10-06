@@ -190,12 +190,14 @@ function buildWeek(scenario: string, weekStart: string): ShiftsWeekResponse {
   const passedByScenario = scenario === 'deadline_passed';
   const deadlinePassed = isNext ? passedByScenario : new Date(deadlineAt).getTime() < Date.now();
   const minHours = 8;
+  // before_launch: the current week ended before Shifts was switched on (neutral, nothing to pick).
+  const beforeLaunch = scenario === 'before_launch' && isCurrent;
 
   let myShifts: Shift[] = [];
   let kpis: ShiftKpi[] = [];
   const roster: ShiftRosterEntry[] = [];
 
-  if (isCurrent && scenario !== 'empty') {
+  if (isCurrent && scenario !== 'empty' && !beforeLaunch) {
     const done = shift(weekStart, iso(-240), iso(-150), { status: 'completed', powerMinutes: 90 });
     const flagged = shift(weekStart, iso(-150 - 360), iso(-150 - 240), { status: 'completed' });
     const live = shift(weekStart, iso(-30), iso(90), { powerMinutes: 60 });
@@ -393,6 +395,7 @@ function buildWeek(scenario: string, weekStart: string): ShiftsWeekResponse {
       isCurrentWeek: isCurrent,
       isNextWeek: isNext,
       minHours,
+      beforeLaunch,
     },
     settings: SETTINGS,
     openHours: OPEN_HOURS,

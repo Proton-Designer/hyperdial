@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowRight, Check, Clock, Inbox, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { EmptyState } from '@/components/app/EmptyState';
@@ -31,7 +31,8 @@ interface Props {
   onDecided: () => void;
 }
 
-/** Pending requests (any week, oldest first) with approve/deny, then this week's decided ones. */
+/** Every pending request (any week, oldest first) with approve/deny, then those decided in the last
+ *  14 days. Never filtered by the week being viewed. */
 export function RequestQueue({
   requests,
   timezone,
@@ -107,8 +108,11 @@ export function RequestQueue({
       </section>
 
       {decided.length > 0 && (
-        <section aria-label="Decided this week" className="space-y-3">
-          <h2 className="text-section-title text-text-primary">Decided this week</h2>
+        <section aria-label="Recently decided" className="space-y-3">
+          <h2 className="text-section-title text-text-primary">
+            Recently decided
+            <span className="ml-2 text-meta font-normal text-text-muted">last 14 days</span>
+          </h2>
           <ul className="divide-y divide-border-subtle overflow-hidden rounded-app-lg border border-border-subtle bg-surface-1">
             {decided.map((r) => (
               <li key={r.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-3">
@@ -118,9 +122,12 @@ export function RequestQueue({
                 <span className="text-body text-text-secondary">{REQUEST_TYPE_LABEL[r.type]}</span>
                 <RequestStatusPill status={r.status} />
                 <span className="ml-auto text-meta text-text-muted">
-                  {r.reviewerName ? `${r.reviewerName} · ` : ''}
+                  {r.reviewerName ? `${displayName(r.reviewerName)} · ` : ''}
                   {fmtInstant(r.reviewedAt ?? r.createdAt, timezone)}
                 </span>
+                <p className="basis-full text-meta text-text-muted">
+                  {requestSubject(r, timezone)} · week of {fmtDateOnly(r.weekStart)}
+                </p>
                 {r.reviewerNote && (
                   <p className="basis-full text-meta text-text-secondary">“{r.reviewerNote}”</p>
                 )}
@@ -131,6 +138,13 @@ export function RequestQueue({
       )}
     </div>
   );
+}
+
+/** "Wed, Oct 14 · 9:00–11:30 AM" for the shift a request is about (or the new time for an add). */
+function requestSubject(r: ShiftRequest, tz: string): string {
+  if (r.fromShift) return fmtShiftWhen(r.fromShift.startsAt, r.fromShift.endsAt, tz);
+  if (r.toStartsAt && r.toEndsAt) return fmtShiftWhen(r.toStartsAt, r.toEndsAt, tz);
+  return r.type === 'light_week' ? 'Lighter week' : 'A shift that was removed';
 }
 
 function ChangeSummary({ r, tz }: { r: ShiftRequest; tz: string }) {
@@ -196,9 +210,21 @@ function RequestCard({
   const [serverNeedsAck, setServerNeedsAck] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const approveRef = useRef<HTMLButtonElement>(null);
+  const denyRef = useRef<HTMLButtonElement>(null);
+  // What was open on the previous render, so focus follows the panel in and back out again.
+  const prevOpen = useRef<null | 'approve' | 'deny'>(null);
+  useEffect(() => {
+    // The note field takes focus itself (autoFocus) when the panel opens.
+    if (open === null && prevOpen.current !== null)
+      (prevOpen.current === 'approve' ? approveRef : denyRef).current?.focus();
+    prevOpen.current = open;
+  }, [open]);
 
   const hoursAfter = serverNeedsAck ?? r.hoursAfter;
-  const wouldBeUnder = (r.type === 'move' || r.type === 'drop') && hoursAfter < minimumHours;
+  // The request week's effective minimum (after any override), not the org default.
+  const weekMin = r.weekMinimum ?? minimumHours;
+  const wouldBeUnder = (r.type === 'move' || r.type === 'drop') && hoursAfter < weekMin;
   const needsAck = wouldBeUnder || serverNeedsAck !== null;
 
   const decide = async (decision: 'approve' | 'deny') => {
@@ -281,7 +307,7 @@ function RequestCard({
               >
                 {fmtHours(hoursAfter)}
               </span>
-              {wouldBeUnder && ` (below the ${fmtHours(minimumHours)} minimum)`}
+              {wouldBeUnder && ` (below the ${fmtHours(weekMin)} minimum)`}
             </>
           )}
         </p>
@@ -293,10 +319,10 @@ function RequestCard({
         </p>
       ) : open === null ? (
         <div className="mt-3 flex flex-wrap gap-2">
-          <Button variant="primary" size="sm" onClick={() => setOpen('approve')}>
+          <Button ref={approveRef} variant="primary" size="sm" onClick={() => setOpen('approve')}>
             <Check /> Approve
           </Button>
-          <Button variant="fe-secondary" size="sm" onClick={() => setOpen('deny')}>
+          <Button ref={denyRef} variant="fe-secondary" size="sm" onClick={() => setOpen('deny')}>
             <X /> Deny
           </Button>
         </div>
@@ -307,6 +333,8 @@ function RequestCard({
               Note to {firstName(r.userName)} (optional)
             </span>
             <Textarea
+              // The panel just opened from a button, so the note field takes focus.
+              autoFocus
               value={note}
               onChange={(e) => setNote(e.target.value)}
               rows={2}
@@ -325,7 +353,7 @@ function RequestCard({
                 className="mt-0.5"
               />
               <span>
-                Allow under {fmtHours(minimumHours)} this week
+                Allow under {fmtHours(weekMin)} this week
                 <span className="block text-meta text-text-muted">
                   This leaves {firstName(r.userName)} at {fmtHours(hoursAfter)}. Their minimum for
                   the week drops to match.

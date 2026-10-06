@@ -219,7 +219,9 @@ export function ShiftKpiTable({ overview, onRefreshed }: Props) {
             </div>
             {rows.length === 0 ? (
               <p className="rounded-app-lg border border-dashed border-border-subtle p-6 text-center text-body text-text-secondary">
-                No shifts match these filters.
+                {overview.kpis.length === 0 || (intern === 'all' && !powerOnly && !flaggedOnly)
+                  ? 'No finished shifts yet. Results appear here once a dialing shift has run.'
+                  : 'No shifts match these filters.'}
               </p>
             ) : (
               <div className="overflow-x-auto rounded-app-lg border border-border-subtle bg-surface-1">

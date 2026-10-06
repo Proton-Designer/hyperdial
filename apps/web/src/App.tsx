@@ -71,7 +71,7 @@ export default function App() {
             toasts/banners to remove (grepped the tree, none exist), just nothing mounted it
             yet. theme="dark" avoids depending on next-themes' ThemeProvider, which this
             dark-only app never sets up. */}
-        <Toaster theme="dark" position="bottom-right" />
+        <Toaster theme="dark" position="bottom-right" visibleToasts={3} />
       </OrgProvider>
     </AuthProvider>
   );

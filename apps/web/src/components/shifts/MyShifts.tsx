@@ -12,6 +12,7 @@ import type {
   ShiftsWeekResponse,
 } from '@/lib/api';
 import { Pill, ShiftStatusPill } from './pills';
+import { addDaysYmd } from './pickerModel';
 import {
   ACTIVITY_LABEL,
   fmtDateOnly,
@@ -133,7 +134,9 @@ function WeekSection({
       .filter((s) => s.status === 'scheduled' || s.status === 'completed' || s.status === 'missed')
       .reduce((n, s) => n + s.hours, 0);
   const powerHours = shifts.reduce((n, s) => n + s.powerMinutes, 0) / 60;
-  const under = scheduledHours < week.minHours;
+  const beforeLaunch = week.beforeLaunch === true;
+  // A week before Shifts started is neutral: never under the minimum.
+  const under = !beforeLaunch && scheduledHours < week.minHours;
 
   // Group by LOCAL day (settings.timezone), never the browser's.
   const byDay = useMemo(() => {
@@ -158,7 +161,7 @@ function WeekSection({
             Power week
           </Pill>
         )}
-        {(week.isCurrentWeek || week.deadlinePassed) && (
+        {!beforeLaunch && (week.isCurrentWeek || week.deadlinePassed) && (
           <div className="ml-auto flex items-center gap-1">
             <Button variant="fe-ghost" size="sm" onClick={() => onRequestWeek(data, 'add')}>
               <Plus /> Add time
@@ -170,30 +173,42 @@ function WeekSection({
         )}
       </header>
 
-      <HoursCounter
-        scheduledHours={scheduledHours}
-        powerHours={powerHours}
-        minHours={week.minHours}
-        under={under}
-        submitted={commitment?.submittedAt != null}
-        isNextWeek={week.isNextWeek}
-      />
+      {beforeLaunch && byDay.length === 0 ? (
+        <EmptyState
+          icon={CalendarClock}
+          title="No shifts this week"
+          body={`Shifts start with the week of ${fmtDateOnly(addDaysYmd(week.weekStart, 7), { month: 'short', day: 'numeric' })}. Pick your hours there.`}
+          className="p-8"
+        />
+      ) : (
+        <HoursCounter
+          scheduledHours={scheduledHours}
+          powerHours={powerHours}
+          minHours={week.minHours}
+          under={under}
+          submitted={commitment?.submittedAt != null}
+          isNextWeek={week.isNextWeek}
+          beforeLaunch={beforeLaunch}
+        />
+      )}
 
       {week.isCurrentWeek && commitment?.powerDialPct != null && commitment.powerDialPct > 0 && (
         <PowerProgress pct={commitment.powerDialPct} />
       )}
 
       {byDay.length === 0 ? (
-        <EmptyState
-          icon={CalendarClock}
-          title={week.isNextWeek ? 'No shifts picked yet' : 'No shifts this week'}
-          body={
-            week.isNextWeek && !week.deadlinePassed
-              ? 'Pick your hours and they will show up here.'
-              : 'Shifts you schedule or get added will show up here.'
-          }
-          className="p-8"
-        />
+        beforeLaunch ? null : (
+          <EmptyState
+            icon={CalendarClock}
+            title={week.isNextWeek ? 'No shifts picked yet' : 'No shifts this week'}
+            body={
+              week.isNextWeek && !week.deadlinePassed
+                ? 'Pick your hours and they will show up here.'
+                : 'Shifts you schedule or get added will show up here.'
+            }
+            className="p-8"
+          />
+        )
       ) : (
         <div className="space-y-4">
           {byDay.map(([dayKey, dayShifts]) => (
@@ -229,6 +244,7 @@ function HoursCounter({
   under,
   submitted,
   isNextWeek,
+  beforeLaunch = false,
 }: {
   scheduledHours: number;
   powerHours: number;
@@ -236,6 +252,7 @@ function HoursCounter({
   under: boolean;
   submitted: boolean;
   isNextWeek: boolean;
+  beforeLaunch?: boolean;
 }) {
   // No upper limit is shown: the bar fills to the minimum and stops there.
   const pct = minHours > 0 ? Math.min(100, (scheduledHours / minHours) * 100) : 100;
@@ -254,7 +271,8 @@ function HoursCounter({
             {fmtHours(scheduledHours)}
           </div>
           <div className="mt-1.5 text-meta text-text-secondary">
-            {fmtHours(powerHours)} in high leverage windows · {fmtHours(minHours)} minimum
+            {fmtHours(powerHours)} in high leverage windows
+            {!beforeLaunch && ` · ${fmtHours(minHours)} minimum`}
           </div>
         </div>
         {alarm && (
@@ -262,13 +280,17 @@ function HoursCounter({
             {fmtHours(Math.max(0, minHours - scheduledHours))} under the minimum
           </Pill>
         )}
-        {!alarm && scheduledHours >= minHours && <Pill tone="success">Minimum met</Pill>}
+        {!alarm && !beforeLaunch && scheduledHours >= minHours && (
+          <Pill tone="success">Minimum met</Pill>
+        )}
       </div>
-      <Progress
-        value={pct}
-        aria-label={`${fmtHours(scheduledHours)} of ${fmtHours(minHours)} minimum`}
-        className={cn('mt-3 h-1.5 bg-white/5', alarm && '[&>div]:bg-danger')}
-      />
+      {!beforeLaunch && (
+        <Progress
+          value={pct}
+          aria-label={`${fmtHours(scheduledHours)} of ${fmtHours(minHours)} minimum`}
+          className={cn('mt-3 h-1.5 bg-white/5', alarm && '[&>div]:bg-danger')}
+        />
+      )}
     </div>
   );
 }

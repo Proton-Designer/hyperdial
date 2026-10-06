@@ -55,11 +55,16 @@ export function SyncHealth({
 
   const realRows = health.rows.filter((r) => classify(r.lastError) === 'error');
   const tokenRows = health.rows.filter((r) => classify(r.lastError) === 'token');
-  // Rows beyond the 50 shown are counted with the waiting ones unless they are known real errors.
   const realCount = realRows.length;
-  const waiting = Math.max(0, health.errorCount - realCount);
+  const notConnected = health.ghlConnected === false;
+  // The server's pendingCount covers every queued row, including those waiting behind an earlier
+  // delayed row that carry no error yet; older servers only give the rows with an error.
+  const waiting =
+    health.pendingCount !== undefined
+      ? Math.max(0, health.pendingCount - realCount)
+      : Math.max(0, health.errorCount - realCount);
   const rejected = tokenRows.length > 0;
-  const ok = health.errorCount === 0;
+  const ok = health.errorCount === 0 && !(notConnected && waiting > 0);
   const hasReal = realCount > 0;
   return (
     <SetupCard

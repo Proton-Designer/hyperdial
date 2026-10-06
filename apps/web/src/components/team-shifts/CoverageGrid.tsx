@@ -59,13 +59,15 @@ export function CoverageLegend({ alertBelow, max }: { alertBelow: number; max: n
         <span className="h-3 w-4 rounded-sm border border-warning/60" aria-hidden />
         <Zap className="h-3 w-3 text-warning" /> High leverage window
       </li>
-      <li className="inline-flex items-center gap-1.5">
-        <span
-          className="h-3 w-4 rounded-sm border border-danger/50 bg-[repeating-linear-gradient(135deg,rgba(255,61,0,0.25)_0_3px,transparent_3px_6px)]"
-          aria-hidden
-        />
-        Under {alertBelow} in a high leverage window
-      </li>
+      {alertBelow > 0 && (
+        <li className="inline-flex items-center gap-1.5">
+          <span
+            className="h-3 w-4 rounded-sm border border-danger/50 bg-[repeating-linear-gradient(135deg,rgba(255,61,0,0.25)_0_3px,transparent_3px_6px)]"
+            aria-hidden
+          />
+          Under {alertBelow} in a high leverage window
+        </li>
+      )}
     </ul>
   );
 }

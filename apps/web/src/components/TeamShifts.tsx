@@ -181,7 +181,16 @@ export function TeamShifts({ canEnable = false, viewerId, onNavigateToSettings }
           </div>
         }
       />
-      <Tabs value={tab} onValueChange={(v) => setTab(v as TeamTab)} className="gap-5">
+      <Tabs
+        value={tab}
+        onValueChange={(v) => {
+          setTab(v as TeamTab);
+          // Every pending card's before -> after hours depends on the other decisions, so look again
+          // whenever the queue is opened.
+          if (v === 'requests') void load(week, true);
+        }}
+        className="gap-5"
+      >
         <TabsList className="h-auto w-full justify-start gap-1 overflow-x-auto rounded-none border-b border-border-subtle bg-transparent p-0">
           <TabsTrigger value="coverage" className={TRIGGER_CLASS}>
             Coverage

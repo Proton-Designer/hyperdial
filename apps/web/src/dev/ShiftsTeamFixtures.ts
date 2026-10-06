@@ -143,7 +143,13 @@ function syncHealthFor(scenario: string) {
     const rows = Array.from({ length: 24 }, (_, i) =>
       mk(300 - i, 'org has no connected GHL integration')
     );
-    return { errorCount: 24, lastError: rows[0].lastError, rows };
+    return {
+      errorCount: 24,
+      lastError: rows[0].lastError,
+      rows,
+      pendingCount: 80,
+      ghlConnected: false,
+    };
   }
   if (scenario === 'ghl_token') {
     const rows = [
@@ -307,7 +313,8 @@ export function buildAdminOverview(
 ): AdminShiftsOverview {
   const thisMonday = mondayOf(localYmd(new Date()));
   const weekStart = weekParam ?? thisMonday;
-  const shifts = shiftsFor(weekStart, scenario);
+  const beforeLaunch = scenario === 'before_launch' && weekStart === thisMonday;
+  const shifts = beforeLaunch ? [] : shiftsFor(weekStart, scenario);
   const commitments: (ShiftWeekCommitment & { userId: string })[] = MEMBERS.filter(
     (m) => m.participates && m.userId !== 'intern-7'
   ).map((m) => ({
@@ -372,6 +379,7 @@ export function buildAdminOverview(
       isCurrentWeek: thisW,
       isNextWeek: weekStart === addDays(thisMonday, 7),
       minHours: SETTINGS.minWeeklyHours,
+      beforeLaunch,
     },
     settings: getSetup().settings,
     openHours: getSetup().openHours,

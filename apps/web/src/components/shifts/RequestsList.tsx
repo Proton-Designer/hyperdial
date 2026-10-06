@@ -20,6 +20,7 @@ import {
   fmtHours,
   fmtShiftWhen,
   fmtWeekRange,
+  displayName,
 } from './shiftFormat';
 
 interface RequestsListProps {
@@ -118,7 +119,7 @@ function RequestCard({
       {r.reviewerNote && (
         <div className="mt-3 rounded-app-md border border-border-subtle bg-surface-2 px-3 py-2">
           <div className="text-meta text-text-muted">
-            {r.reviewerName ? `Note from ${r.reviewerName}` : 'Reviewer note'}
+            {r.reviewerName ? `Note from ${displayName(r.reviewerName)}` : 'Reviewer note'}
           </div>
           <p className="text-body text-text-primary">{r.reviewerNote}</p>
         </div>

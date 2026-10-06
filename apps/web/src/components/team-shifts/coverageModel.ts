@@ -18,28 +18,31 @@ export interface CoverageModel {
   rows: number[];
   /** slot -> shifts covering it. */
   bySlot: Map<SlotKey, TeamShift[]>;
+  /** slot -> excused / cancelled / missed shifts there: not counted in the heat, listed muted in the slot panel. */
+  inactiveBySlot: Map<SlotKey, TeamShift[]>;
 }
 
 export function buildCoverage(overview: AdminShiftsOverview): CoverageModel {
   const tz = overview.week.timezone;
   const days = buildDays(overview.week.weekStart, overview.openHours, overview.powerWindows);
   const bySlot = new Map<SlotKey, TeamShift[]>();
+  const inactiveBySlot = new Map<SlotKey, TeamShift[]>();
   for (const s of overview.shifts) {
-    if (!COVERING.has(s.status)) continue;
+    const target = COVERING.has(s.status) ? bySlot : inactiveBySlot;
     const end = new Date(s.endsAt).getTime();
     for (let t = new Date(s.startsAt).getTime(); t < end; t += SLOT * 60000) {
       const iso = new Date(t).toISOString();
       const key = slotKey(localDateKey(iso, tz), localMinutes(iso, tz));
-      const list = bySlot.get(key);
+      const list = target.get(key);
       if (list) list.push(s);
-      else bySlot.set(key, [s]);
+      else target.set(key, [s]);
     }
   }
   const from = days.length ? Math.min(...days.map((d) => d.openFrom)) : 0;
   const to = days.length ? Math.max(...days.map((d) => d.openUntil)) : 0;
   const rows: number[] = [];
   for (let m = from; m < to; m += SLOT) rows.push(m);
-  return { days, rows, bySlot };
+  return { days, rows, bySlot, inactiveBySlot };
 }
 
 export function isOpen(day: PickDay, min: number): boolean {

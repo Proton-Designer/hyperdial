@@ -5625,6 +5625,8 @@ export interface ShiftRequest {
   hoursBefore: number;
   /** The intern's week hours if approved. */
   hoursAfter: number;
+  /** Effective minimum for the request's week, after any override (absent on older servers). */
+  weekMinimum?: number;
 }
 
 export interface ShiftWeekInfo {
@@ -5636,6 +5638,8 @@ export interface ShiftWeekInfo {
   isNextWeek: boolean;
   /** Effective minimum, after any light-week override. */
   minHours: number;
+  /** The week's pick deadline is before Shifts was first switched on: neutral, never flagged (absent on older servers). */
+  beforeLaunch?: boolean;
 }
 
 export interface ShiftsWeekResponse {
@@ -5716,12 +5720,19 @@ export interface AdminShiftsOverview {
   members: AdminShiftMember[];
   shifts: (Shift & { userName: string })[];
   commitments: (ShiftWeekCommitment & { userId: string })[];
-  /** Pending (any week) oldest first + this week's decided. */
+  /** Every pending request (oldest first) + those decided in the last 14 days (newest first), any week. */
   requests: ShiftRequest[];
   kpis: ShiftKpi[];
   rollup: AdminShiftRollupRow[];
   powerWeekCallouts: { userId: string; sentence: string }[];
-  syncHealth: { errorCount: number; lastError: string | null; rows: AdminShiftSyncRow[] };
+  syncHealth: {
+    errorCount: number;
+    lastError: string | null;
+    rows: AdminShiftSyncRow[];
+    /** All pending outbox rows of the org (absent on older servers). */
+    pendingCount?: number;
+    ghlConnected?: boolean;
+  };
 }
 
 export interface AdminShiftUpdateInput {

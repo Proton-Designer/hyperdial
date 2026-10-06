@@ -23,7 +23,9 @@ export function CoverageTab({
   const model = useMemo(() => buildCoverage(overview), [overview]);
   const stats = useMemo(() => buildStats(overview), [overview]);
   const max = useMemo(() => maxHeadcount(model), [model]);
-  const alertBelow = overview.settings.powerCoverageAlert;
+  const beforeLaunch = overview.week.beforeLaunch === true;
+  // A week that ended before Shifts started is neutral: nothing is flagged as under-covered.
+  const alertBelow = beforeLaunch ? 0 : overview.settings.powerCoverageAlert;
   const [selected, setSelected] = useState<SelectedSlot | null>(null);
   const [target, setTarget] = useState<EditTarget | null>(null);
   const [summaryOpen, setSummaryOpen] = useState(false);
@@ -55,6 +57,7 @@ export function CoverageTab({
     <CoverageSummary
       stats={stats}
       minHours={overview.week.minHours}
+      beforeLaunch={beforeLaunch}
       onOpenRequests={onOpenRequests}
     />
   );
@@ -74,7 +77,8 @@ export function CoverageTab({
             <span className="flex-1">
               Team summary
               <span className="ml-2 text-meta font-normal text-text-muted">
-                {stats.underMinimum.length} under minimum · {stats.pendingRequests} requests
+                {beforeLaunch ? 'Not tracked' : `${stats.underMinimum.length} under minimum`} ·{' '}
+                {stats.pendingRequests} requests
               </span>
             </span>
             <ChevronDown

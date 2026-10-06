@@ -265,10 +265,10 @@ export function MainApp() {
             // Mobile: clear the fixed bottom tab bar (56px + the device's own safe-area inset)
             // so the last row of content is never hidden behind it.
             paddingBottom: isMobile ? 'calc(56px + env(safe-area-inset-bottom, 0px))' : undefined,
-            // Sticky footers (Shifts picker) sit above the fixed bottom tab bar on mobile.
-            ['--app-bottom-inset' as string]: isMobile
-              ? 'calc(56px + env(safe-area-inset-bottom, 0px))'
-              : '0px',
+            // Sticky footers (Shifts picker) pin to the bottom edge of <main>'s CONTENT box, which already
+            // ends above the tab bar because of the padding-bottom above. Adding the tab bar height here
+            // counted it twice and left a 56px gap (live QA D2), so this stays 0.
+            ['--app-bottom-inset' as string]: '0px',
           }}
         >
           {activeTab === 'dashboard' && (

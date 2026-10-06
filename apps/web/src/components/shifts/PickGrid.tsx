@@ -375,7 +375,13 @@ const SlotCell = memo(function SlotCell({
       style={{ height: ROW_H, touchAction: 'none' }}
     >
       {blockLabel && (
-        <span className="pointer-events-none absolute left-1.5 top-[5px] truncate text-[10px] font-medium leading-none text-white/95">
+        <span
+          className={cn(
+            'pointer-events-none absolute left-1.5 top-[5px] truncate text-[10px] font-medium leading-none text-white/95',
+            // Leave room for the headcount digit on the right so the two never collide.
+            names ? 'right-5' : 'right-1.5'
+          )}
+        >
           {blockLabel}
         </span>
       )}

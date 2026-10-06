@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, type ReactNode } from 'react';
+import { useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { AlertCircle, Ban, Check, UserRoundX } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -79,6 +79,18 @@ export function ShiftEditDialog(props: Props) {
   const target = props.target ?? lastTarget.current;
   const isMobile = useBreakpoint() === 'mobile';
   const tz = overview.week.timezone;
+  // Focus goes back to whatever opened the dialog (a slot-panel row or the Add shift button); when that
+  // control is gone after a save, to the grid's current cell, so keyboard users keep their place.
+  const opener = useRef<HTMLElement | null>(null);
+  useLayoutEffect(() => {
+    if (open) opener.current = document.activeElement as HTMLElement | null;
+  }, [open]);
+  const restoreFocus = (e: Event) => {
+    e.preventDefault();
+    const el = opener.current;
+    const fallback = document.querySelector<HTMLElement>('[data-slot-date][tabindex="0"]');
+    (el && el.isConnected && el !== document.body ? el : fallback)?.focus();
+  };
   const title = target?.kind === 'create' ? 'Add a shift' : 'Edit shift';
   const description =
     target?.kind === 'edit'
@@ -102,6 +114,7 @@ export function ShiftEditDialog(props: Props) {
     return (
       <Sheet open={open} onOpenChange={onOpenChange}>
         <SheetContent
+          onCloseAutoFocus={restoreFocus}
           side="bottom"
           className="max-h-[92dvh] gap-0 overflow-hidden rounded-t-app-lg border-border-subtle bg-surface-1 p-0 text-text-primary"
         >
@@ -118,7 +131,10 @@ export function ShiftEditDialog(props: Props) {
   }
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="flex max-h-[90dvh] flex-col gap-0 overflow-hidden border-border-subtle bg-surface-1 p-0 text-text-primary sm:max-w-lg">
+      <DialogContent
+        onCloseAutoFocus={restoreFocus}
+        className="flex max-h-[90dvh] flex-col gap-0 overflow-hidden border-border-subtle bg-surface-1 p-0 text-text-primary sm:max-w-lg"
+      >
         <DialogHeader className="border-b border-border-subtle px-6 py-4 text-left">
           <DialogTitle className="text-section-title text-text-primary">{title}</DialogTitle>
           <DialogDescription className="text-meta text-text-secondary">
