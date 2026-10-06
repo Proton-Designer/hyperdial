@@ -778,7 +778,7 @@ begin
     p_extra := p_extra || jsonb_build_object('appointment_status', 'noshow');
     v_fields := private.shift_last_fields(p_org, v_shift, 'missed') || private.shift_week_rollup(p_org, p_user, v_week)
       || jsonb_build_object('shifts_missed_total',
-           (select count(*) from public.shifts s where s.org_id = p_org and s.status = 'missed')
+           (select count(*) from public.shifts s where s.org_id = p_org and s.user_id = p_user and s.status = 'missed')
            + case when v_shift.status = 'missed' then 0 else 1 end)
       || private.shift_next_shift_field(p_org, p_user);
     v_note := 'Shift ' || private.shift_line(v_shift, v_tz) || ' missed (no dials).';
@@ -800,12 +800,13 @@ begin
       'week_power_week', 'Yes',
       'week_power_dial_pct', coalesce((p_extra ->> 'power_pct')::numeric, v_c.power_dial_pct, 0),
       'week_power_summary', v_note,
-      'power_weeks_total', (select count(*) from public.week_commitments c where c.org_id = p_org and c.power_week));
+      'power_weeks_total', (select count(*) from public.week_commitments c where c.org_id = p_org and c.user_id = p_user and c.power_week));
     v_tags := array['shift-evt-power-week'];
 
   elsif p_event = 'week_closed' then
     v_label := 'Week closed';
-    -- Final week_* for the week that just ended, then roll: this-week fields describe the week that
+    -- Call this only AFTER the Monday boundary (S05's week-close job): this-week/next-week buckets are
+    -- computed from now(). Final week_* for the week that just ended, then roll: this-week fields describe the week that
     -- just started, next-week fields the one after (computed from truth, not blanket-reset).
     v_fields := private.shift_week_rollup(p_org, p_user, v_week)
       || jsonb_build_object('week_power_week', case when coalesce(v_c.power_week, false) then 'Yes' else 'No' end)
