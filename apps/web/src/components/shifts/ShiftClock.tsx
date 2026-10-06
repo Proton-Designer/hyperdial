@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { CheckCircle2, Play, Square } from 'lucide-react';
+import { CheckCircle2, Play, CircleStop } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/components/ui/utils';
@@ -104,7 +104,7 @@ export function ShiftClock({ shift, tz, onUpdated, onStale, now: nowProp }: Prop
           </span>
           {phase.late > 0 && <Pill>{lateText(phase.late)}</Pill>}
           <Button ref={endRef} variant="fe-secondary" size="sm" onClick={() => setEndOpen(true)}>
-            <Square /> End shift
+            <CircleStop /> End shift
           </Button>
         </div>
         <EndShiftDialog

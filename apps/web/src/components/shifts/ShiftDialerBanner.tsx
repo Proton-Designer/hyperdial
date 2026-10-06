@@ -24,7 +24,7 @@ export function ShiftDialerBanner({ sessionActive }: { sessionActive: boolean })
     return () => clearInterval(id);
   }, [enabled]);
 
-  const { current, upcoming, endedCurrent, justEnded } = useMemo(() => {
+  const { current, overdue, upcoming, endedCurrent, justEnded } = useMemo(() => {
     const scheduled = myShifts.filter((s) => s.status === 'scheduled');
     const inProgress = scheduled.filter(
       (s) => new Date(s.startsAt).getTime() <= now && new Date(s.endsAt).getTime() > now
@@ -32,6 +32,11 @@ export function ShiftDialerBanner({ sessionActive }: { sessionActive: boolean })
     // A shift the intern already ended gives way to one about to start; it only shows when nothing else does.
     const cur = inProgress.find((s) => !s.clockedOutAt) ?? null;
     const endedCur = inProgress.find((s) => s.clockedOutAt) ?? null;
+    // Clocked in and never ended, past its end time: End shift stays until the server finalizes it.
+    const overdue =
+      scheduled.find(
+        (s) => s.clockedInAt && !s.clockedOutAt && new Date(s.endsAt).getTime() <= now
+      ) ?? null;
     const next = scheduled
       .filter(
         (s) =>
@@ -46,13 +51,19 @@ export function ShiftDialerBanner({ sessionActive }: { sessionActive: boolean })
         new Date(s.endsAt).getTime() <= now &&
         new Date(s.endsAt).getTime() > now - LEAD_MS
     );
-    return { current: cur, upcoming: next ?? null, endedCurrent: endedCur, justEnded: ended };
+    return {
+      current: cur,
+      overdue,
+      upcoming: next ?? null,
+      endedCurrent: endedCur,
+      justEnded: ended,
+    };
   }, [myShifts, now]);
 
   if (!enabled) return null;
 
-  if (current || upcoming || endedCurrent) {
-    const s = (current ?? upcoming ?? endedCurrent)!;
+  if (current || overdue || upcoming || endedCurrent) {
+    const s = (current ?? overdue ?? upcoming ?? endedCurrent)!;
     const kind = ACTIVITY_LABEL[s.activity].toLowerCase();
     const range = fmtRange(s.startsAt, s.endsAt, timezone).replace('–', ' to ');
     const phase = clockPhase(s, now);

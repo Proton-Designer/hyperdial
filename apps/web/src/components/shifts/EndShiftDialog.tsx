@@ -6,7 +6,7 @@ import {
   type ReactNode,
   type RefObject,
 } from 'react';
-import { AlertCircle, Check, Square } from 'lucide-react';
+import { AlertCircle, Check, CircleStop } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -302,7 +302,7 @@ function EndForm({
           Keep working
         </Button>
         <Button type="submit" variant="primary" loading={submitting}>
-          {!submitting && (dialing ? <Check /> : <Square />)}
+          {!submitting && (dialing ? <Check /> : <CircleStop />)}
           {dialing ? 'Submit and end shift' : 'End shift'}
         </Button>
       </div>

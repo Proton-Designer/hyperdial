@@ -793,7 +793,7 @@ export function ShiftsHarness() {
   );
 }
 
-/** `?dev_shifts=1&view=dialer&scenario=live|soon|on|on_follow_up|ended|outside|none`: the dialer's
+/** `?dev_shifts=1&view=dialer&scenario=live|soon|on|on_follow_up|overdue|ended|outside|none`: the dialer's
  *  shift banner, with Start / End shift wired to the stubbed shift-clock. */
 function DialerBannerDemo({ scenario }: { scenario: string }) {
   const weekStart = mondayOf(localYmd(new Date()));
@@ -805,6 +805,9 @@ function DialerBannerDemo({ scenario }: { scenario: string }) {
     if (scenario === 'on') return [mk(-30, 90, { clockedInAt: at(-26), clockInLateMinutes: 4 })];
     if (scenario === 'on_follow_up')
       return [mk(-30, 90, { activity: 'follow_up', clockedInAt: at(-30), clockInLateMinutes: 0 })];
+    // Clocked in, never ended, past its end time: End shift must stay on the banner.
+    if (scenario === 'overdue')
+      return [mk(-150, -20, { clockedInAt: at(-146), clockInLateMinutes: 4 })];
     if (scenario === 'ended')
       return [mk(-30, 90, { clockedInAt: at(-26), clockInLateMinutes: 4, clockedOutAt: at(-2) })];
     return [];
@@ -823,7 +826,7 @@ function DialerBannerDemo({ scenario }: { scenario: string }) {
       <div className="mx-auto max-w-2xl p-4 pt-6">
         <ShiftDialerBanner sessionActive={scenario !== 'none'} />
         <p className="text-meta text-text-muted">
-          Scenario: {scenario} (live, soon, on, on_follow_up, ended, outside, none)
+          Scenario: {scenario} (live, soon, on, on_follow_up, overdue, ended, outside, none)
         </p>
       </div>
     </ShiftsContext.Provider>
