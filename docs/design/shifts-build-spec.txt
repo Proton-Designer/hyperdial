@@ -1,0 +1,486 @@
+Hyper Dialer Shifts Tab: Build Spec
+Oct 6, 2026 · @Kareem
+Overview
+Add a Shifts tab to Hyper Dialer where interns pick any times they want each week in 30-minute steps (8 hour minimum, no cap) with the highest-leverage windows highlighted, see who else is working at each time, request changes with a written reason, and get scored per shift from their own dialer data. Henry approves requests and sees coverage and per-shift KPIs in a Team Shifts tab. Everything is pushed to GHL (shifts, submissions, requests, decisions, and KPIs) so all management automation runs on GHL workflows.
+Source of truth: Supabase. The app writes shifts first, then syncs to GHL. GHL never decides anything; edits made directly in GHL get overwritten.
+Who uses it
+Role
+Who
+Can do
+intern
+Client-acquisition interns
+Pick next week's shifts, see who's on every shift, see own shifts and KPIs, submit and withdraw change requests
+manager
+Henry
+Everything an intern can, plus approve or deny requests, edit any shift, manage power windows and settings, see all KPIs
+admin
+Kareem, Ayman
+Same as manager
+Where it lives in the code (based on the public repo, commit d6a799f, Apr 29 2026; map to your current branch if the rebuild moved things)
+	•	Frontend: new shifts and team entries in TabType (Frontend/src/components/MainApp.tsx) and the tabs array in Sidebar.tsx. Team tab only renders for manager or admin.
+	•	Backend: new Supabase migration plus new edge functions, same pattern as the existing ones (getUserFromRequest from _shared/auth.ts, service-role client, corsHeaders).
+	•	Dialer: small changes to dialer-session-start, dialer-session-pause, dialer-session-stop (and wherever resume happens) to log session events.
+Out of scope for v1: intern-to-intern swaps, a busy/availability calendar, recurring weekly shifts, KPIs for non-dialing shifts.
+Rules
+All rules are enforced on the server (edge function or Postgres function), never only in the UI. Every number below lives in the shift_settings row so Henry can change it without a deploy.
+Rule
+Default
+Enforced where
+Week
+Monday 00:00 to Sunday 23:59, America/Chicago
+All date math converts with at time zone settings.timezone
+Open hours
+Mon to Fri 7:00 AM to 9:00 PM, Saturday 7:00 AM to 12:00 PM, Sunday closed (CT). No fixed shifts inside those hours
+open_hours table (one row per open weekday), checked in submit_week()
+Time steps
+Starts and ends on :00 or :30. Shortest shift is 30 minutes, no longest
+Check constraints on shifts
+Power windows
+Highest-leverage times, highlighted in the picker and tracked in KPIs. Mon to Fri only: Morning 7 to 10 AM, Lunch 11 AM to 2 PM, After work 4 to 6 PM. Never required
+power_windows table, editable by Henry
+Power week
+Positive recognition only. If at least 80% of an intern's actual dialing time in a week was inside power windows (and they met their minimum), they get a Power week: badge in the app, callout to Henry, and a GHL event, e.g. "Sara K. dialed 10.0 hrs this week, all in power windows." Nothing happens to anyone below it
+shifts-week-close, threshold power_week_pct in settings
+No headcount limit
+Any number of interns can work the same time. Nothing ever fills up
+Nothing to enforce
+Who's working
+Everyone sees who's on at each 30-minute slot. Interns see first name + last initial, managers see full names
+shifts-week-get returns a roster per slot
+Weekly minimum
+8.0 hours, made of any mix of times and days
+submit_week() rejects totals under this
+No weekly cap
+Interns can pick as many hours as they want (20 is fine)
+Nothing to enforce
+Merging
+Back-to-back picks with the same activity save as one shift (2:00 to 2:30 + 2:30 to 3:00 = one 2:00 to 3:00 shift, one GHL appointment)
+submit_week()
+Pick deadline
+Sunday 6:00 PM CT before the week starts
+After the deadline, submit_week() refuses and the UI switches to request mode
+No double booking
+One intern can't hold two overlapping shifts of their own
+Exclusion constraint on shifts
+Changes after deadline
+Only through a request: move, drop, add, or light week
+shift-requests-create
+Reason
+Required, at least 20 characters after trimming
+Check constraint on shift_change_requests.reason
+Notice
+Requests made less than 12 hours before the affected shift are allowed but marked late
+is_late set on insert
+One open request per shift
+Can't stack requests on the same shift
+Partial unique index
+Past shifts
+Can't request changes to a shift that already started
+shift-requests-create
+Light week
+Intern asks for a lower minimum for one week with a reason; if approved, that week's minimum becomes the requested hours
+week_commitments.min_hours_override
+Missed submission
+No submission by the deadline flags the intern in the app and in GHL
+shifts-week-lock cron
+Dialing outside a shift
+Allowed and logged to GHL, but doesn't count toward shift KPIs
+KPI job only reads calls inside shift windows
+Everything to GHL
+Every event in the event map (GHL section) updates the intern's GHL contact
+ghl_outbox + ghl-sync
+Before the deadline, interns can resubmit next week as many times as they want. Each resubmit replaces their picked shifts for that week in one transaction.
+DST test case: daylight saving ends Sunday, Nov 1, 2026, during the first cohort. Picks arrive as local date + time and are converted per date, so a 7:00 AM pick must stay 7:00 AM CT before and after. Add a test for the weeks of Oct 26 and Nov 2.
+Database
+One new migration, supabase/migrations/20261007000001_create_shifts.sql. The repo has no roles today and every table is scoped to one user_id, so this adds a profiles table with a role, and managers read across interns through RLS (is_manager()) or service-role edge functions.
+create extension if not exists btree_gist;  -- Who is who create table public.profiles (   user_id uuid primary key references auth.users(id) on delete cascade,   full_name text not null,   email text not null unique,   role text not null default 'intern' check (role in ('intern','manager','admin')),   ghl_contact_id text unique,            -- the intern's contact in GHL   active boolean not null default true,   created_at timestamptz not null default now() );  create or replace function public.is_manager() returns boolean language sql stable security definer set search_path = public as $$   select exists (select 1 from profiles                  where user_id = auth.uid() and role in ('manager','admin') and active); $$;  -- Single settings row create table public.shift_settings (   id smallint primary key default 1 check (id = 1),   timezone text not null default 'America/Chicago',   min_weekly_hours numeric(4,2) not null default 8,   -- no max: interns can go over   lock_weekday smallint not null default 7,           -- ISO weekday, 7 = Sunday before the week   lock_time time not null default '18:00',   change_notice_hours smallint not null default 12,   grace_minutes smallint not null default 10,   conversation_min_seconds smallint not null default 60,   idle_flag_minutes smallint not null default 20,   adherence_flag_pct smallint not null default 75,   open_session_tail_minutes smallint not null default 5,   power_coverage_alert smallint not null default 2,   -- flag power-window slots with fewer people   power_week_pct smallint not null default 80         -- % of a week's dialing in power windows that earns a Power week ); insert into public.shift_settings default values;  -- Bookable hours per weekday (no row = closed that day) create table public.open_hours (   iso_weekday smallint primary key check (iso_weekday between 1 and 7),   open_from time not null,   open_until time not null check (open_until > open_from) ); insert into public.open_hours values   (1, '07:00', '21:00'), (2, '07:00', '21:00'), (3, '07:00', '21:00'),   (4, '07:00', '21:00'), (5, '07:00', '21:00'),   (6, '07:00', '12:00');   -- Saturday until noon, Sunday closed  -- High-leverage windows (highlighted and celebrated, never required; weekdays only) create table public.power_windows (   id uuid primary key default gen_random_uuid(),   label text not null,   iso_weekdays smallint[] not null default '{1,2,3,4,5}',   start_time time not null,   end_time time not null check (end_time > start_time),   active boolean not null default true ); insert into public.power_windows (label, start_time, end_time) values   ('Morning', '07:00', '10:00'),   ('Lunch', '11:00', '14:00'),   ('After work', '16:00', '18:00');  -- One row per intern per week create table public.week_commitments (   user_id uuid references public.profiles(user_id) on delete cascade,   week_start date not null check (extract(isodow from week_start) = 1),   submitted_at timestamptz,   scheduled_hours numeric(5,2) not null default 0,   power_hours numeric(5,2) not null default 0,   power_dial_pct numeric(5,1),                        -- set at week close: % of actual dialing inside power windows   power_week boolean not null default false,          -- set at week close: earned a Power week   light_week boolean not null default false,   min_hours_override numeric(4,2),   primary key (user_id, week_start) );  -- Shifts: any start and end on a 30-minute mark, any length from 30 min up create table public.shifts (   id uuid primary key default gen_random_uuid(),   user_id uuid not null references public.profiles(user_id) on delete cascade,   week_start date not null,   activity text not null default 'dialing' check (activity in ('dialing','follow_up','social')),   starts_at timestamptz not null,   ends_at timestamptz not null,   hours numeric(5,2) generated always as (extract(epoch from (ends_at - starts_at)) / 3600) stored,   power_minutes integer not null default 0,           -- overlap with power windows, set by the app   status text not null default 'scheduled'     check (status in ('scheduled','cancelled','completed','missed','excused')),   source text not null check (source in ('pick','request','admin')),   ghl_appointment_id text,   ghl_sync_status text not null default 'pending' check (ghl_sync_status in ('pending','synced','error')),   ghl_sync_error text,   created_at timestamptz not null default now(),   updated_at timestamptz not null default now(),   check (ends_at - starts_at >= interval '30 minutes'),   check (extract(epoch from starts_at)::bigint % 1800 = 0 and extract(epoch from ends_at)::bigint % 1800 = 0),   exclude using gist (user_id with =, tstzrange(starts_at, ends_at) with &&)     where (status = 'scheduled') ); create index shifts_week_status on public.shifts(week_start, status); create index shifts_user_start on public.shifts(user_id, starts_at); create index shifts_time on public.shifts using gist (tstzrange(starts_at, ends_at)) where (status = 'scheduled');  -- Change requests create table public.shift_change_requests (   id uuid primary key default gen_random_uuid(),   user_id uuid not null references public.profiles(user_id) on delete cascade,   week_start date not null,   type text not null check (type in ('move','drop','add','light_week')),   from_shift_id uuid references public.shifts(id) on delete cascade,   to_starts_at timestamptz,   to_ends_at timestamptz,   to_activity text check (to_activity in ('dialing','follow_up','social')),   requested_min_hours numeric(4,2),   reason text not null check (char_length(btrim(reason)) >= 20),   is_late boolean not null default false,   status text not null default 'pending'     check (status in ('pending','approved','denied','withdrawn')),   reviewer_id uuid references public.profiles(user_id),   reviewer_note text,   reviewed_at timestamptz,   created_at timestamptz not null default now(),   check ((type in ('move','drop')) = (from_shift_id is not null)),   check ((type in ('move','add')) = (to_starts_at is not null and to_ends_at is not null)),   check ((type = 'light_week') = (requested_min_hours is not null)) ); create unique index one_open_request_per_shift   on public.shift_change_requests(from_shift_id) where status = 'pending';  -- Dialer activity log (needed for real working time) create table public.dialer_session_events (   id bigserial primary key,   session_id uuid not null references public.dialer_sessions(id) on delete cascade,   user_id uuid not null references auth.users(id) on delete cascade,   event text not null check (event in ('start','pause','resume','stop')),   at timestamptz not null default now() ); create index dse_user_at on public.dialer_session_events(user_id, at);  -- Per-shift results (one row per dialing shift) create table public.shift_kpis (   shift_id uuid primary key references public.shifts(id) on delete cascade,   user_id uuid not null references public.profiles(user_id) on delete cascade,   computed_at timestamptz not null default now(),   final boolean not null default false,   scheduled_minutes integer not null,   active_dial_minutes integer not null default 0,   power_active_minutes integer not null default 0,   adherence_pct integer not null default 0,   first_dial_at timestamptz,   last_call_end_at timestamptz,   late_start_minutes integer not null default 0,   early_end_minutes integer not null default 0,   longest_idle_minutes integer not null default 0,   dials integer not null default 0,   connects integer not null default 0,   conversations integer not null default 0,   voicemails integer not null default 0,   no_answers integer not null default 0,   talk_minutes integer not null default 0,   dials_per_active_hour numeric(6,1),   connect_rate_pct numeric(5,1),   dispositions jsonb not null default '{}',   flags text[] not null default '{}' );  -- Outbox for GHL calls (service role only) create table public.ghl_outbox (   id bigserial primary key,   kind text not null check (kind in ('appointment_upsert','appointment_cancel','appointment_status',                                      'contact_fields','contact_note','contact_tags_add','contact_tags_remove')),   shift_id uuid references public.shifts(id) on delete cascade,   user_id uuid references public.profiles(user_id) on delete cascade,   payload jsonb not null default '{}',   status text not null default 'pending' check (status in ('pending','done','error')),   attempts smallint not null default 0,   next_attempt_at timestamptz not null default now(),   last_error text,   created_at timestamptz not null default now() ); create index ghl_outbox_due on public.ghl_outbox(status, next_attempt_at);  -- Dispositions (skip if your GHL sync work already added this) alter table public.call_logs add column if not exists disposition text;
+RLS
+	•	Enable RLS on every new table.
+	•	profiles, week_commitments, shifts, shift_change_requests, shift_kpis: SELECT where user_id = auth.uid() or is_manager().
+	•	power_windows, open_hours, shift_settings: SELECT for any authenticated user.
+	•	No INSERT/UPDATE/DELETE policies on any of them. All writes go through edge functions with the service role so the rules can't be skipped from the browser.
+	•	dialer_session_events, ghl_outbox: no policies at all (service role only).
+submit_week(p_user uuid, p_week_start date, p_blocks jsonb) (plpgsql, security definer, called only by shifts-submit-week). p_blocks is the intern's full pick for the week, e.g. [{"date":"2026-10-13","start":"07:00","end":"10:00","activity":"dialing"}, {"date":"2026-10-14","start":"12:30","end":"13:00","activity":"dialing"}]. In one transaction:
+	•	Compute the deadline: ((p_week_start - 1) + lock_time) at time zone timezone. If now() is past it, raise deadline_passed.
+	•	Validate each block: date inside the week, start and end on :00 or :30, end > start, both inside that weekday's open_hours row (no row means the day is closed), valid activity. Raise bad_block with the index otherwise.
+	•	Sort by date and start. Merge blocks that touch or overlap and share an activity. Raise overlap if two overlapping blocks have different activities.
+	•	Convert each to starts_at = (date + start) at time zone timezone, same for ends_at. This is what keeps DST correct.
+	•	Sum hours. Raise under_minimum if below coalesce(min_hours_override, min_weekly_hours). No upper limit, no headcount check.
+	•	Set each shift's power_minutes: for every active power window whose iso_weekdays includes that date, add greatest(0, least(end, window_end) - greatest(start, window_start)) in minutes.
+	•	Diff against the intern's existing source = 'pick' shifts for that week, matching on exact starts_at, ends_at, activity. Mark removed ones cancelled and queue appointment_cancel. Insert new ones and queue appointment_upsert. Leave exact matches alone so their GHL ids survive.
+	•	Upsert week_commitments with submitted_at = now(), scheduled_hours, and power_hours.
+	•	Queue the GHL updates for the Week submitted event (see the event map in the GHL section).
+Return the error codes as-is so the UI can show a specific message, like "You picked 6 hours, the minimum is 8."
+Intern screens
+New files: Frontend/src/components/Shifts.tsx plus shifts/WeekPicker.tsx, shifts/MyShifts.tsx, shifts/RequestChangeModal.tsx, shifts/RequestsList.tsx. Add { id: 'shifts', icon: CalendarClock, label: 'Shifts' } to the sidebar. Use the existing ui/ components (tabs, table, dialog, badge, progress) and the current dark theme.
+The Shifts tab has three sub-tabs.
+1. My Shifts (default)
+	•	This week and next week as two lists of shift cards: day, time, activity, status badge, a Power window badge if it overlaps one, and who else is on during that time ("Also on: Sara K., Omar B.").
+	•	Hours counter: 9.5 hrs this week (6.0 in power windows), 8 minimum, red if under the minimum. No upper limit shown.
+	•	Power week progress: "82% of your dialing this week is in power windows." Past weeks that earned it show a Power week badge. Purely positive, never shown as a shortfall.
+	•	Each future shift has a Request change button (opens the modal). Past shifts show their KPIs inline once computed: active minutes, dials, connects, conversations, flags.
+	•	Banner if next week isn't submitted: "Pick next week's hours by Sunday 6 PM."
+2. Pick Next Week (only shows before the deadline)
+	•	Desktop: a week calendar. Columns Mon to Sat, rows are 30-minute slots following open_hours (7 AM to 9 PM on weekdays, 7 AM to noon on Saturday). Sunday doesn't appear. Click or drag to paint time on, drag again to erase. Painted time shows as blocks; each block has an activity dropdown (dialing by default).
+	•	Power windows are shaded across the weekday columns with their label (Morning, Lunch, After work) and a "High leverage" tag in the legend.
+	•	Every slot shows a small headcount of interns already on; tap or hover to see their names. Nothing ever greys out.
+	•	Phone: one day at a time, Mon to Sat. Quick-add chips for that day's power windows ("Morning 7 to 10", "Lunch 11 to 2", "After work 4 to 6") plus Add custom time with start and end pickers in 30-minute steps.
+	•	Sticky footer: "9.5 hrs selected, 6.0 in power windows. 8 minimum." Submit is disabled until the total is at least 8. On submit, send the full set to shifts-submit-week.
+	•	If they already submitted, the grid preloads their picks so they can edit and resubmit. Rosters refresh on load and after submit.
+3. Requests
+	•	List of their requests with type, affected shift, reason, status, reviewer note. Pending ones have Withdraw.
+Request change modal
+	•	Type picker: Move this shift, Drop this shift, Add time, Light week.
+	•	Move and Add use the same time picker (date, start, end in 30-minute steps, activity), with power windows highlighted and who's on at those times. Light week shows a number input for hours they can do.
+	•	Reason textarea, required, live counter to 20 characters minimum.
+	•	Live warnings before submit: "This leaves you at 6 hrs, below the 8 hr minimum. Henry has to approve it." and "This is less than 12 hours before the shift, it will be marked late."
+Dialer screen additions (Dialer.tsx / DialerIdle.tsx)
+	•	Banner when a shift starts within 15 minutes or is in progress: "Your dialing shift 2:00 to 4:00 PM is live."
+	•	Banner when they start a session with no shift in progress: "You're dialing outside a scheduled shift. These calls won't count toward shift KPIs." Don't block them.
+Edge functions (intern side)
+Function
+Method
+Input
+Does
+shifts-week-get
+GET
+?week=YYYY-MM-DD
+Settings (open hours, minimum, deadline), power windows, a roster per 30-minute slot of who's scheduled (names only, via service role since interns can't read other interns' rows), the caller's shifts and commitment, their KPIs for that week
+shifts-submit-week
+POST
+{ weekStart, blocks[] }
+Calls submit_week(), then invokes ghl-sync
+shift-requests-create
+POST
+{ type, fromShiftId?, toStartsAt?, toEndsAt?, toActivity?, requestedMinHours?, reason }
+Validates (future shift, one open request, new time inside open hours and on 30-minute marks), sets is_late, inserts, adds a row to the existing notifications table for every manager, queues the Request created GHL updates
+shift-requests-withdraw
+POST
+{ requestId }
+Own pending requests only, queues the Request withdrawn GHL updates
+Admin screens (Team Shifts)
+New Frontend/src/components/TeamShifts.tsx plus team/CoverageGrid.tsx, team/RequestQueue.tsx, team/ShiftKpiTable.tsx, team/PowerWindowsEditor.tsx. Sidebar entry { id: 'team', icon: UsersRound, label: 'Team Shifts' }, rendered only when the caller's profile role is manager or admin. Every admin function checks the role server-side too and returns 403 otherwise.
+1. Coverage (week picker at the top, defaults to this week)
+	•	Heatmap of the week: columns Mon to Sat, rows are 30-minute slots following open_hours, each cell colored by headcount. Hover or tap for full names. Power windows are outlined.
+	•	Power-window slots with fewer than power_coverage_alert (2) people are flagged red so Henry can push interns toward them.
+	•	Side panel: interns under the minimum, interns who haven't submitted, open request count, team hours this week and how many are in power windows.
+	•	Click any shift to edit it directly (move, resize, cancel, mark excused). These save with source = 'admin', skip the request flow, and still push to GHL.
+2. Requests (badge with pending count)
+	•	Queue sorted oldest first. Each row: intern, type, from shift, to shift, reason, late flag, their hours this week before and after.
+	•	Approve / Deny buttons with an optional note. If approving would leave the intern under the minimum, show it and require a checkbox: "Allow under 8 hrs this week."
+3. Shift KPIs
+	•	Table, one row per completed dialing shift, newest first. Columns: intern, date, time, scheduled min, active min, power-window active min, adherence %, late start, early end, longest idle, dials, connects, conversations, dials per active hr, connect rate, flags.
+	•	Filters: week, intern, power windows only, flagged only.
+	•	Weekly rollup per intern at the top: hours scheduled, hours actually dialing, power-window dial %, total dials, conversations, missed shifts, and a Power week badge for anyone who earned it.
+	•	Power week callouts card at the top of each closed week, listing everyone who earned it in plain sentences: "Sara K. dialed 10.0 hrs this week, all in power windows." "Omar B. dialed 8.5 hrs, 88% in power windows."
+	•	Sort by name by default, not by rank (matches the intern program playbook).
+4. Setup
+	•	Open hours editor: one row per weekday with open and close times; remove a row to close that day. Defaults Mon to Fri 7 AM to 9 PM, Sat 7 AM to noon, Sun closed.
+	•	Power windows editor: add, edit, deactivate windows (label, weekdays, start, end). Changes apply to future picks; power_minutes on existing shifts is recomputed for weeks that haven't started.
+	•	Settings form for every column in shift_settings (minimum, deadline, alert thresholds, Power week %).
+	•	Intern list: name, email, role, GHL contact id, active. Henry pastes the GHL contact id or clicks Find in GHL (searches by email).
+	•	GHL sync health: count of outbox rows in error with the last error and a Retry button.
+Request approval logic (admin-shift-requests-review, POST { requestId, decision, note, allowUnderMinimum }), in one transaction:
+Type
+On approve
+move
+Update the existing shift row's starts_at, ends_at, activity, and recompute power_minutes (keep the row so the GHL appointment id stays). Queue appointment_upsert.
+drop
+Set shift status excused. Queue appointment_cancel. If it drops them under the minimum, require allowUnderMinimum and set min_hours_override to the new total.
+add
+Insert shift with source = 'request' and its power_minutes. Queue appointment_upsert. No limit on hours.
+light_week
+Set light_week = true, min_hours_override = requested_min_hours.
+On approve or deny: set status, reviewer_id, reviewer_note, reviewed_at; recompute week_commitments.scheduled_hours; insert a row into notifications for the intern; queue the Request approved or Request denied GHL updates.
+Other admin functions: admin-shifts-overview (GET ?week=), admin-shift-update (POST, direct edits), admin-power-windows-upsert, admin-open-hours-upsert, admin-shift-settings-update, admin-profiles-upsert, admin-ghl-find-contact (POST /contacts/search by email), admin-ghl-retry (resets an outbox row to pending).
+Dialer tie-in and per-shift KPIs
+The dialer already logs every call in call_logs and every session in dialer_sessions, but dialer-session-pause only flips status to paused and keeps no timestamp. Without pause and resume times there's no way to know how long someone actually dialed, so this part is required.
+Session event logging
+	•	dialer-session-start: after the session row is created, insert ('start', now()) into dialer_session_events.
+	•	dialer-session-pause: insert pause.
+	•	Wherever a paused session resumes (start or active function, whichever handles it now): insert resume.
+	•	dialer-session-stop and any code path that sets status to completed (the engine sets it when the list runs out): insert stop.
+	•	Use the server clock for at, never a time from the browser.
+Active dialing time
+Build intervals from the events: each start or resume opens one, the next pause or stop closes it. If an interval never closes (browser closed, crash), close it at the intern's last call ended_at in that session plus open_session_tail_minutes (5). Clip every interval to the shift window and add them up.
+KPI definitions (calls counted when call_logs.started_at is inside [starts_at, ends_at) for that intern)
+KPI
+Formula
+scheduled_minutes
+ends_at - starts_at
+active_dial_minutes
+Sum of clipped active intervals (above)
+power_active_minutes
+Same, clipped to the parts of the shift inside power windows
+adherence_pct
+active_dial_minutes / scheduled_minutes x 100, rounded
+first_dial_at
+Earliest started_at in the window
+last_call_end_at
+Latest ended_at in the window
+late_start_minutes
+max(0, first_dial_at - starts_at), or the full shift if no dials
+early_end_minutes
+max(0, ends_at - last_call_end_at)
+longest_idle_minutes
+Largest gap between consecutive call starts, including shift start to first dial and last call end to shift end
+dials
+Count of rows
+connects
+amd_result in ('human','not_sure')
+conversations
+Connects with duration_seconds >= conversation_min_seconds (60)
+voicemails
+amd_result = 'machine'
+no_answers
+status = 'no_answer'
+talk_minutes
+Sum of duration_seconds on connects / 60
+dials_per_active_hour
+dials / (active_dial_minutes / 60), null if 0 active
+connect_rate_pct
+connects / dials x 100
+dispositions
+{ "Yes: profile build": 2, "Not a fit": 4, ... } grouped from call_logs.disposition
+Note: status ends as completed for most answered calls, so count connects from amd_result, not status. If dispositions only live in GHL after your sync work, write them back to call_logs.disposition when the intern saves the disposition so this job can read them.
+Flags (stored in shift_kpis.flags)
+	•	no_show: zero dials in the window
+	•	late_start: late_start_minutes > grace_minutes (10)
+	•	left_early: early_end_minutes > grace_minutes (10)
+	•	long_idle: longest_idle_minutes > idle_flag_minutes (20)
+	•	low_adherence: adherence_pct < adherence_flag_pct (75)
+Jobs (schedule with pg_cron + pg_net calling the edge functions; pg_cron runs in UTC, so check the local time inside the function)
+Function
+Schedule
+Does
+shift-kpi-compute
+Every 15 min
+For dialing shifts that started and haven't been finalized: compute and upsert shift_kpis. Shifts that ended more than 2 hours ago get final = true, shift status completed (or missed if no_show), and queue the Shift completed or Shift missed GHL updates. Non-dialing shifts are set to completed at end time with no KPIs and still queue Shift completed.
+shifts-week-lock
+Hourly, acts once after Sunday 6:00 PM CT
+Interns with no submitted_at for next week: notifications row, queue Not submitted. Interns under their minimum: queue Under minimum.
+shifts-week-close
+Hourly, acts once after Monday 12:30 AM CT
+For the week that just ended: final weekly rollup; power_dial_pct = sum(power_active_minutes) / sum(active_dial_minutes) x 100; power_week = true when power_dial_pct >= power_week_pct (80), they dialed at least 1 hour, and they met their minimum. Save both to week_commitments, queue Power week for each winner and Week closed for everyone, then roll the next-week fields into this-week.
+ghl-sync
+Every minute, and invoked right after any write
+Drains ghl_outbox (next section)
+Power week message format (used in the app callout, the GHL note, and the week_power_summary field): {First name} {Last initial}. dialed {hours} hrs this week, {all | NN%} in power windows. Use "all" at 100%, otherwise the rounded percent.
+Also in dialer-session-start: if the intern has no shift in progress (with a 15 min grace on each side), queue Off-shift dialing.
+The intern's My Shifts view and Henry's KPI table can also call shift-kpi-compute for a single in-progress shift to show live numbers.
+GHL integration
+Everything the app knows goes to the intern's GHL contact so Kareem and Henry can run all management automation as GHL workflows. Shifts become appointments, current state lives in custom fields, every event adds a tag (which triggers workflows), and the full history is kept as notes. Data flows one way, app to GHL. All calls run server-side from ghl-sync; the token never touches the browser.
+GHL setup (Kareem does this before Ayman tests)
+	•	Create a calendar named Intern Shifts, type Class Booking, Henry as the only team member (class calendars allow one owner). Set seats per slot high (100): any number of interns can work the same time.
+	•	In that calendar turn off Allow reschedule and Allow cancellation so interns can't change shifts from GHL confirmation links. Don't publish its booking link anywhere.
+	•	Every intern must exist as a contact (they already do from onboarding). Their GHL contact id goes on their Hyper Dialer profile.
+	•	Create the custom fields below in a contact field folder named Intern Shifts, using these exact keys.
+	•	Create the event tags below.
+	•	Settings > Private Integrations > Create. Scopes: calendars.readonly, calendars/events.readonly, calendars/events.write, contacts.readonly, contacts.write, locations/customFields.readonly. Copy the token right away, it shows once.
+Contact custom fields
+Field keys
+Type
+Holds
+shift_hours_this_week, shift_hours_next_week, shift_min_hours_this_week
+Number
+Scheduled hours and the minimum that applies (8, or lower on a light week)
+shift_power_hours_this_week, shift_power_hours_next_week
+Number
+Scheduled hours inside power windows
+shift_week_submitted, shift_light_week
+Single option: Yes, No
+Next week submitted; this week is a light week
+shift_schedule_this_week, shift_schedule_next_week
+Large text
+One line per shift: Tue Oct 13, 7:00-10:00 AM, dialing (power)
+shift_next_shift_at
+Date
+Start of their next scheduled shift
+shift_requests_pending
+Number
+Open requests
+shift_last_request_type, shift_last_request_reason, shift_last_request_note
+Text / Large text
+Latest request and Henry's note
+shift_last_request_status
+Single option: pending, approved, denied, withdrawn
+Latest request status
+shift_last_request_late
+Single option: Yes, No
+Latest request was under 12 hours' notice
+last_shift_date, last_shift_status
+Date / Single option: completed, missed
+Most recent finished shift
+last_shift_active_minutes, last_shift_power_active_minutes, last_shift_adherence_pct, last_shift_dials, last_shift_connects, last_shift_conversations, last_shift_talk_minutes, last_shift_longest_idle_minutes, last_shift_late_start_minutes
+Number
+KPIs for the most recent shift
+last_shift_flags
+Text
+Comma list, e.g. late_start, long_idle
+week_dial_minutes, week_power_dial_minutes, week_power_dial_pct, week_dials, week_conversations, week_adherence_pct, week_missed_shifts
+Number
+Week-to-date rollup, final after Week closed
+week_power_week
+Single option: Yes, No
+Earned a Power week last week
+week_power_summary
+Text
+The Power week sentence, e.g. Sara K. dialed 10.0 hrs this week, all in power windows.
+power_weeks_total
+Number
+Power weeks earned across the whole cohort
+shifts_missed_total
+Number
+Missed shifts across the whole cohort
+hyper_dialer_user_id
+Text
+Links the contact back to the app
+Event tags: shift-evt-submitted, shift-evt-not-submitted, shift-evt-under-minimum, shift-evt-request-created, shift-evt-request-late, shift-evt-request-approved, shift-evt-request-denied, shift-evt-request-withdrawn, shift-evt-admin-edit, shift-evt-completed, shift-evt-missed, shift-evt-flagged, shift-evt-off-shift-dialing, shift-evt-power-week, shift-evt-week-closed.
+Supabase secrets
+GHL_TOKEN=<private integration token> GHL_LOCATION_ID=<sub-account location id> GHL_SHIFT_CALENDAR_ID=<Intern Shifts calendar id> GHL_SHIFT_OWNER_USER_ID=<Henry's GHL user id> GHL_WEBHOOK_SECRET=<random string, only if you build the optional webhook>
+New helper supabase/functions/_shared/ghl.ts: base URL https://services.leadconnectorhq.com, headers Authorization: Bearer ${GHL_TOKEN}, Version: 2021-04-15, Content-Type: application/json, Accept: application/json. On 429 or 5xx, throw a retryable error; on other 4xx, throw a permanent one.
+What each outbox kind calls
+Outbox kind
+GHL call
+appointment_upsert
+No ghl_appointment_id: POST /calendars/events/appointments, save the returned id. Has one: PUT /calendars/events/appointments/{id} with new times
+appointment_cancel
+PUT /calendars/events/appointments/{id} with appointmentStatus: "cancelled" (keeps history in GHL; don't DELETE)
+appointment_status
+PUT with appointmentStatus: "showed" (completed) or "noshow" (missed)
+contact_fields
+PUT /contacts/{contactId} with customFields: [{ key, field_value }]
+contact_note
+POST /contacts/{contactId}/notes with { body }
+contact_tags_add / remove
+POST / DELETE /contacts/{contactId}/tags with { tags: [...] }
+Event map (what each event queues, in this order: appointment, fields, note, tag)
+Event
+When
+Fields updated
+Tag
+Note
+Week submitted
+Intern submits or resubmits
+next-week hours, power hours, and schedule, shift_week_submitted = Yes, shift_next_shift_at
+submitted
+Week, total hours, power hours, every shift
+Not submitted
+Sunday 6 PM, nothing submitted
+shift_week_submitted = No
+not-submitted
+Yes
+Under minimum
+Sunday 6 PM, below their minimum
+next-week hours
+under-minimum
+Hours vs minimum
+Request created
+Intern sends a request
+shift_requests_pending, all shift_last_request_*
+request-created, plus request-late if late
+Type, shift, reason
+Request approved / denied
+Henry decides
+shift_last_request_status, shift_last_request_note, pending count, hours and schedule fields
+request-approved / request-denied
+Decision, note, reviewer
+Request withdrawn
+Intern withdraws
+status, pending count
+request-withdrawn
+Yes
+Admin edit
+Henry edits a shift directly
+hours, schedule, shift_next_shift_at
+admin-edit
+Who changed what
+Shift completed
+KPI job finalizes it
+all last_shift_*, all week_*, shift_next_shift_at
+completed, plus flagged if any flags
+KPI note (below)
+Shift missed
+Finalized with zero dials
+last_shift_*, week_missed_shifts, shifts_missed_total
+missed
+Shift and time
+Off-shift dialing
+Session started with no shift in progress
+none
+off-shift-dialing
+Start time
+Power week
+Week close, at least 80% of their dialing was in power windows and minimum met
+week_power_week = Yes, week_power_dial_pct, week_power_summary, power_weeks_total
+power-week
+The Power week sentence
+Week closed
+Monday 12:30 AM CT
+final week_* (week_power_week = No if not earned), then roll next-week fields into this-week, reset shift_week_submitted and shift_light_week to No
+week-closed
+Weekly summary
+Any shift added, moved, or cancelled (by pick, request, or admin) also queues the matching appointment call and refreshes the schedule fields.
+Create appointment body
+{   "calendarId": "<GHL_SHIFT_CALENDAR_ID>",   "locationId": "<GHL_LOCATION_ID>",   "contactId": "<profiles.ghl_contact_id>",   "assignedUserId": "<GHL_SHIFT_OWNER_USER_ID>",   "title": "Shift: Dialing, Tue Oct 13, 2:00-4:00 PM",   "startTime": "2026-10-13T14:00:00-05:00",   "endTime": "2026-10-13T16:00:00-05:00",   "appointmentStatus": "confirmed",   "ignoreFreeSlotValidation": true,   "ignoreDateRange": true,   "toNotify": true }
+Send times with the correct offset for that date (-05:00 in CDT, -06:00 after Nov 1). toNotify: true is what lets GHL workflows fire on these appointments.
+Shift-finalized note body
+Shift Tue Oct 13, 2:00-4:00 PM (dialing) Active dialing: 104 of 120 min (87%) Dials 142 | Connects 19 | Conversations 7 | Talk 38 min First dial 2:06 PM | Last call ended 3:58 PM | Longest idle 12 min Dispositions: Yes: profile build 2, Call back 3, Not a fit 4 Flags: none
+ghl-sync processing rules
+	•	Select up to 50 rows where status = 'pending' and next_attempt_at <= now(), ordered by id, using for update skip locked so two runs never send the same row.
+	•	Process rows for the same contact in id order. Queue fields before the tag for every event so a workflow triggered by the tag always reads fresh field values.
+	•	Event tags: always send DELETE then POST for the tag. GHL's Tag Added trigger only fires when the tag is new, so this makes the same event fire every time it happens.
+	•	Skip and mark error ("intern has no GHL contact id") if the profile has no ghl_contact_id.
+	•	Before sending an appointment_upsert, re-read the shift so a stale payload never wins. If the shift is now cancelled, send a cancel instead.
+	•	Success: status = 'done'; for appointments set shifts.ghl_sync_status = 'synced'.
+	•	Retryable failure: attempts + 1, next_attempt_at = now() + 2^attempts minutes, and hold later rows for that contact so order is kept. After 6 attempts, status = 'error' and copy the message to shifts.ghl_sync_error, which shows in Henry's sync health panel.
+	•	Space requests by about 100 ms and stop the batch on a 429.
+GHL workflows (Kareem builds)
+	•	Shift reminder. Trigger: Customer Booked Appointment, calendar = Intern Shifts. Wait until 30 min before start, then SMS the intern and post to the Google Chat call-floor space with a Webhook action to its incoming webhook URL.
+	•	Not submitted. Tag added shift-evt-not-submitted: SMS the intern, internal notification to Henry.
+	•	Under minimum. Tag added shift-evt-under-minimum: notify Henry with {{contact.shift_hours_next_week}}.
+	•	New request. Tag added shift-evt-request-created: notify Henry with the type and {{contact.shift_last_request_reason}}. Separate workflow on shift-evt-request-late for an urgent SMS.
+	•	Request decided. Tags shift-evt-request-approved / -denied: SMS the intern the decision and {{contact.shift_last_request_note}}.
+	•	Missed shift. Tag added shift-evt-missed: notify Henry; if shifts_missed_total is 2 or more, create a task for Henry to hold an attendance 1:1.
+	•	Flagged shift. Tag added shift-evt-flagged: notify Henry with {{contact.last_shift_flags}}.
+	•	Power week. Tag added shift-evt-power-week: post {{contact.week_power_summary}} to the Google Chat wins space, SMS the intern a congrats, and notify Henry so he can mention it in their 1:1.
+	•	Week closed. Tag added shift-evt-week-closed: feeds the Monday KPI report from the week_* fields, including the Power week list.
+These are starting points. Since every event is a tag and every number is a field, any other management workflow can be built in GHL without touching the app.
+Optional: full event payloads. If a workflow needs more than the fields hold, add an outbox kind event_webhook that POSTs { event, contactId, occurredAt, data } to a GHL Inbound Webhook trigger URL stored as GHL_EVENTS_WEBHOOK_URL. Inbound Webhook is a premium trigger in GHL; tags work on any plan.
+Optional, phase 2: GHL to app. If Henry ends up cancelling shifts in GHL, add a workflow (Appointment Status changed on Intern Shifts) with a Webhook action to a new ghl-appointment-webhook function that checks a x-webhook-secret header against GHL_WEBHOOK_SECRET and marks the matching shift cancelled. Until then, the rule is: change shifts in Hyper Dialer only.
+Build order and checklist
+Start after the dialer rebuild and GHL call sync are stable. Build on a feature/shifts branch, keep all shift code in its own files and tables so nothing here can break dialing.
+	•	Session events. Add dialer_session_events and the logging in start, pause, resume, stop. Ship this first, even alone: every day without it is dialing time you can't measure later.
+	•	Schema and roles. Migration, RLS, is_manager(), seed Henry, Kareem, Ayman as manager/admin.
+	•	Picking. submit_week(), shifts-week-get, shifts-submit-week, Pick Next Week and My Shifts screens.
+	•	GHL sync. _shared/ghl.ts, outbox, ghl-sync, appointment create, update, cancel, then every event in the event map.
+	•	Requests. Request modal, Requests list, Henry's queue, review function.
+	•	KPIs. shift-kpi-compute, KPI table, notes and fields to GHL.
+	•	Cron and polish. shifts-week-lock, dialer banners, Setup screen, sync health panel.
+Acceptance checklist
+	•	☐ Intern can submit any mix of 30-minute pieces across any open days; 7.5 hrs is rejected, 20 hrs is accepted
+	•	☐ Times off the :00 / :30 marks are rejected; weekdays outside 7 AM to 9 PM, Saturday after noon, and anything on Sunday are rejected
+	•	☐ Picking 2:00 to 2:30 and 2:30 to 3:00 (same activity) saves as one 2:00 to 3:00 shift and one GHL appointment
+	•	☐ A 9:00 to 11:30 AM shift on a Tuesday counts 90 power-window minutes (60 Morning + 30 Lunch); a Saturday 9 to 11 AM shift counts 0
+	•	☐ An intern who dials 10 hrs with 10 inside power windows gets a Power week with "all in power windows"; one at 79% gets nothing and sees no negative message
+	•	☐ Power week shows in the intern's app, Henry's callout card, and GHL (shift-evt-power-week tag, fields, note)
+	•	☐ Six interns can pick overlapping times, nothing greys out, and each sees the others' names on those slots
+	•	☐ Overlapping shifts for one intern are impossible, even through admin edits
+	•	☐ After Sunday 6:00 PM CT, picking is closed and only requests work
+	•	☐ Request with a 19-character reason is rejected
+	•	☐ Request inside 12 hours is accepted and shows Late to Henry
+	•	☐ Approved move updates the same GHL appointment (same id, new time); approved drop shows Cancelled in GHL
+	•	☐ Shifts for the week of Nov 2 land at the right local time in GHL after DST ends
+	•	☐ Every row in the event map shows up on the intern's GHL contact: fields updated, note added, tag added
+	•	☐ The same event twice in a row (two requests, two missed shifts) fires the GHL workflow both times
+	•	☐ A workflow triggered by an event tag reads the new field values, not the old ones
+	•	☐ Pause for 20 min mid-shift: active minutes drop by 20 and long_idle fires
+	•	☐ Closing the browser mid-session doesn't count the rest of the shift as active
+	•	☐ Calls made outside any shift don't show up in shift KPIs, and shift-evt-off-shift-dialing is added
+	•	☐ Shift with zero dials is marked missed, GHL appointment goes to No Show, shift-evt-missed added
+	•	☐ Intern can't read another intern's shift rows or KPIs directly (test with the anon key and RLS), but sees names on the roster
+	•	☐ Killing the GHL token makes rows go to error and show in sync health; restoring it and clicking Retry clears them
+Open questions
+	•	☐ Ayman: after the GHL sync work, are dispositions stored in call_logs or only in GHL?
+	•	☐ Ayman: which function handles resume today?
+Sources: Hyper Dialer repo (softdial-studio) · HighLevel API docs · GHL class booking calendars
