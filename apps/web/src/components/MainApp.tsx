@@ -10,6 +10,8 @@ import { Team } from './Team';
 import { Recordings } from './Recordings';
 import { Inbox } from './Inbox';
 import { Settings } from './Settings';
+import { Shifts } from './Shifts';
+import { TeamShifts } from './TeamShifts';
 import { BottomTabBar } from './app/BottomTabBar';
 import { PageTransition } from './app/PageTransition';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
@@ -24,6 +26,8 @@ export type TabType =
   | 'team'
   | 'recordings'
   | 'inbox'
+  | 'shifts'
+  | 'team_shifts'
   | 'settings';
 
 export interface ParallelDialLaunchContext {
@@ -47,6 +51,9 @@ const AGENT_ALLOWED_TABS: readonly TabType[] = [
   'contacts',
   'recordings',
   'inbox',
+  // Shifts (TASK-F01): every role; the tab itself only appears once the org has switched Shifts on
+  // (ShiftsContext), and a deep link while it's off lands on the screen's own "not turned on" state.
+  'shifts',
 ];
 
 // MISSION-5 TASK-M5-A5: a manager gets Analytics (reports) and Team, plus Settings (internally
@@ -64,6 +71,8 @@ const MANAGER_ALLOWED_TABS: readonly TabType[] = [
   'team',
   'recordings',
   'inbox',
+  'shifts',
+  'team_shifts',
   'settings',
 ];
 
@@ -81,6 +90,8 @@ const TAB_PATHS: Record<TabType, string> = {
   team: '/team',
   recordings: '/recordings',
   inbox: '/inbox',
+  shifts: '/shifts',
+  team_shifts: '/team-shifts',
   settings: '/settings',
 };
 const PATH_TABS: Partial<Record<string, TabType>> = Object.fromEntries(
@@ -317,6 +328,16 @@ export function MainApp() {
           {activeTab === 'inbox' && (
             <PageTransition>
               <Inbox onNavigateToDialer={() => setActiveTab('dialer')} />
+            </PageTransition>
+          )}
+          {activeTab === 'shifts' && (
+            <PageTransition>
+              <Shifts />
+            </PageTransition>
+          )}
+          {activeTab === 'team_shifts' && (
+            <PageTransition>
+              <TeamShifts />
             </PageTransition>
           )}
           {activeTab === 'settings' && (

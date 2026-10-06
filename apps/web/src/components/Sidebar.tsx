@@ -8,6 +8,8 @@ import {
   UsersRound,
   Headphones,
   Inbox as InboxIcon,
+  CalendarClock,
+  CalendarRange,
   Settings,
   ChevronsLeft,
   ChevronsRight,
@@ -17,6 +19,7 @@ import { TabType } from './MainApp';
 import { LogoMark } from '@/components/brand/Logo';
 import { useOrg } from '@/contexts/OrgContext';
 import { useInboxOpenCount } from '@/hooks/useInboxOpenCount';
+import { useShiftsEnabled } from '@/contexts/ShiftsContext';
 
 interface SidebarProps {
   activeTab: TabType;
@@ -53,6 +56,10 @@ const tabs: NavTab[] = [
   // MISSION-5 TASK-M5-G6: no minRole -- an agent always sees their own missed calls
   // (`private.can_view_inbox_item`), same "server narrows, tab stays visible" shape as Recordings.
   { id: 'inbox', icon: InboxIcon, label: 'Inbox' },
+  // Shifts (TASK-F01): `shifts` shows to every role once the org has it switched on;
+  // `team_shifts` is manager-level and always shows (it carries the "Enable Shifts" setup card).
+  { id: 'shifts', icon: CalendarClock, label: 'Shifts' },
+  { id: 'team_shifts', icon: CalendarRange, label: 'Team Shifts', minRole: 'manager' },
 ];
 
 export function Sidebar({
@@ -74,7 +81,9 @@ export function Sidebar({
   const isManager = role === 'owner' || role === 'admin';
   const isManagerOrBetter = isManager || role === 'manager';
   const isAgent = role === 'agent';
+  const shiftsEnabled = useShiftsEnabled();
   const visibleTabs = tabs.filter((tab) => {
+    if (tab.id === 'shifts') return shiftsEnabled;
     if (tab.minRole === 'admin') return isManager;
     if (tab.minRole === 'manager') return isManagerOrBetter;
     return true;

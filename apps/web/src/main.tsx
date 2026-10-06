@@ -45,6 +45,13 @@ if (devHarness?.has('dev_wrapup')) {
   import('./dev/BillingHarness.tsx').then(({ BillingHarness }) => {
     root.render(<BillingHarness />);
   });
+} else if (devHarness?.has('dev_shifts')) {
+  // TASK-F01: the intern Shifts screen against fixture data, no live backend.
+  // `?dev_shifts=1&scenario=default|unsubmitted|under_minimum|deadline_passed|power_week|empty|
+  // disabled|error|slow|withdraw_error`.
+  import('./dev/ShiftsHarness.tsx').then(({ ShiftsHarness }) => {
+    root.render(<ShiftsHarness />);
+  });
 } else {
   root.render(<App />);
 }

@@ -11,9 +11,13 @@ import {
   Inbox as InboxIcon,
   Settings,
   LogOut,
+  CalendarClock,
+  CalendarRange,
 } from 'lucide-react';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { useAuth } from '@/contexts/AuthContext';
+import { useShiftsEnabled } from '@/contexts/ShiftsContext';
+import { useOrg } from '@/contexts/OrgContext';
 import type { TabType } from '../MainApp';
 
 interface BottomTabBarProps {
@@ -38,6 +42,9 @@ const PRIMARY: { tab: TabType; label: string; icon: typeof LayoutGrid }[] = [
 export function BottomTabBar({ activeTab, onTabChange, isManager }: BottomTabBarProps) {
   const { signOut } = useAuth();
   const [moreOpen, setMoreOpen] = useState(false);
+  const shiftsEnabled = useShiftsEnabled();
+  const { role } = useOrg();
+  const isManagerOrBetter = isManager || role === 'manager';
   const tabs = isManager ? PRIMARY : PRIMARY.filter((t) => t.tab !== 'campaigns');
 
   return (
@@ -119,6 +126,32 @@ export function BottomTabBar({ activeTab, onTabChange, isManager }: BottomTabBar
                   Settings
                 </button>
               </>
+            )}
+            {shiftsEnabled && (
+              <button
+                type="button"
+                onClick={() => {
+                  onTabChange('shifts');
+                  setMoreOpen(false);
+                }}
+                className="flex items-center gap-3 rounded-app-md px-3 py-3 text-text-primary hover:bg-white/5"
+              >
+                <CalendarClock className="w-5 h-5 text-text-secondary" />
+                Shifts
+              </button>
+            )}
+            {isManagerOrBetter && (
+              <button
+                type="button"
+                onClick={() => {
+                  onTabChange('team_shifts');
+                  setMoreOpen(false);
+                }}
+                className="flex items-center gap-3 rounded-app-md px-3 py-3 text-text-primary hover:bg-white/5"
+              >
+                <CalendarRange className="w-5 h-5 text-text-secondary" />
+                Team Shifts
+              </button>
             )}
             <button
               type="button"

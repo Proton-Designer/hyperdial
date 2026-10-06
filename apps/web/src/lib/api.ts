@@ -5496,3 +5496,369 @@ export async function acknowledgeTriggerFailure(id: string): Promise<void> {
   const { error } = await supabase.rpc('acknowledge_trigger_failure', { p_org: orgId, p_id: id });
   if (error) throw new Error(error.message);
 }
+
+// --- Shifts subsystem (TASK-F01): contract = docs/design/shifts.md §3. Hand-synced with the
+// shifts-*/shift-*/admin-* Edge Functions -- a response-shape change produces NO TypeScript
+// error, so change both sides in the same commit. ---
+
+export type ShiftActivity = 'dialing' | 'follow_up' | 'social';
+export type ShiftStatus = 'scheduled' | 'cancelled' | 'completed' | 'missed' | 'excused';
+
+export interface ShiftSettings {
+  enabled: boolean;
+  timezone: string;
+  minWeeklyHours: number;
+  lockWeekday: number;
+  /** HH:MM */
+  lockTime: string;
+  changeNoticeHours: number;
+  graceMinutes: number;
+  conversationMinSeconds: number;
+  idleFlagMinutes: number;
+  adherenceFlagPct: number;
+  openSessionTailMinutes: number;
+  powerCoverageAlert: number;
+  powerWeekPct: number;
+  ghlCalendarId: string | null;
+  ghlOwnerUserId: string | null;
+}
+
+export interface ShiftOpenHours {
+  isoWeekday: number;
+  /** HH:MM */
+  openFrom: string;
+  openUntil: string;
+}
+
+export interface ShiftPowerWindow {
+  id: string;
+  label: string;
+  isoWeekdays: number[];
+  startTime: string;
+  endTime: string;
+  active: boolean;
+}
+
+export interface Shift {
+  id: string;
+  userId: string;
+  weekStart: string;
+  activity: ShiftActivity;
+  startsAt: string;
+  endsAt: string;
+  hours: number;
+  powerMinutes: number;
+  status: ShiftStatus;
+  source: 'pick' | 'request' | 'admin';
+  ghlSyncStatus: 'pending' | 'synced' | 'error';
+  hasPendingRequest: boolean;
+}
+
+export interface ShiftRosterEntry {
+  userId: string;
+  /** "Sara K." for agents, full name for manager-level callers. */
+  name: string;
+  activity: ShiftActivity;
+  startsAt: string;
+  endsAt: string;
+  isMe: boolean;
+}
+
+export interface ShiftWeekCommitment {
+  weekStart: string;
+  submittedAt: string | null;
+  scheduledHours: number;
+  powerHours: number;
+  powerDialPct: number | null;
+  powerWeek: boolean;
+  lightWeek: boolean;
+  minHoursOverride: number | null;
+}
+
+export interface ShiftKpi {
+  shiftId: string;
+  userId: string;
+  final: boolean;
+  computedAt: string;
+  scheduledMinutes: number;
+  activeDialMinutes: number;
+  powerActiveMinutes: number;
+  adherencePct: number;
+  firstDialAt: string | null;
+  lastCallEndAt: string | null;
+  lateStartMinutes: number;
+  earlyEndMinutes: number;
+  longestIdleMinutes: number;
+  dials: number;
+  connects: number;
+  conversations: number;
+  voicemails: number;
+  noAnswers: number;
+  talkMinutes: number;
+  dialsPerActiveHour: number | null;
+  connectRatePct: number | null;
+  dispositions: Record<string, number>;
+  flags: string[];
+}
+
+export type ShiftRequestType = 'move' | 'drop' | 'add' | 'light_week';
+export type ShiftRequestStatus = 'pending' | 'approved' | 'denied' | 'withdrawn';
+
+export interface ShiftRequest {
+  id: string;
+  userId: string;
+  userName: string;
+  weekStart: string;
+  type: ShiftRequestType;
+  fromShift: Shift | null;
+  toStartsAt: string | null;
+  toEndsAt: string | null;
+  toActivity: ShiftActivity | null;
+  requestedMinHours: number | null;
+  reason: string;
+  isLate: boolean;
+  status: ShiftRequestStatus;
+  reviewerName: string | null;
+  reviewerNote: string | null;
+  reviewedAt: string | null;
+  createdAt: string;
+  hoursBefore: number;
+  /** The intern's week hours if approved. */
+  hoursAfter: number;
+}
+
+export interface ShiftWeekInfo {
+  weekStart: string;
+  timezone: string;
+  deadlineAt: string;
+  deadlinePassed: boolean;
+  isCurrentWeek: boolean;
+  isNextWeek: boolean;
+  /** Effective minimum, after any light-week override. */
+  minHours: number;
+}
+
+export interface ShiftsWeekResponse {
+  role: string;
+  week: ShiftWeekInfo;
+  settings: ShiftSettings;
+  openHours: ShiftOpenHours[];
+  powerWindows: ShiftPowerWindow[];
+  roster: ShiftRosterEntry[];
+  myShifts: Shift[];
+  commitment: ShiftWeekCommitment | null;
+  kpis: ShiftKpi[];
+  /** Last 60 days, newest first. */
+  myRequests: ShiftRequest[];
+  powerWeekHistory: { weekStart: string; sentence: string }[];
+  /** In progress or starting within 15 minutes -- drives the Dialer banner. */
+  liveShift: Shift | null;
+}
+
+export interface ShiftBlockInput {
+  /** Local date YYYY-MM-DD in settings.timezone. */
+  date: string;
+  /** HH:MM local. */
+  start: string;
+  end: string;
+  activity: ShiftActivity;
+}
+
+export interface CreateShiftRequestInput {
+  type: ShiftRequestType;
+  fromShiftId?: string;
+  date?: string;
+  start?: string;
+  end?: string;
+  toActivity?: ShiftActivity;
+  requestedMinHours?: number;
+  reason: string;
+}
+
+export interface AdminShiftMember {
+  userId: string;
+  name: string;
+  email: string;
+  role: string;
+  participates: boolean;
+  ghlContactId: string | null;
+}
+
+export interface AdminShiftRollupRow {
+  userId: string;
+  name: string;
+  hoursScheduled: number;
+  hoursDialing: number;
+  powerDialPct: number | null;
+  dials: number;
+  conversations: number;
+  missedShifts: number;
+  powerWeek: boolean;
+}
+
+export interface AdminShiftSyncRow {
+  id: number;
+  kind: string;
+  event: string | null;
+  userName: string | null;
+  lastError: string | null;
+  attempts: number;
+  createdAt: string;
+}
+
+export interface AdminShiftsOverview {
+  week: ShiftWeekInfo;
+  settings: ShiftSettings;
+  openHours: ShiftOpenHours[];
+  powerWindows: ShiftPowerWindow[];
+  members: AdminShiftMember[];
+  shifts: (Shift & { userName: string })[];
+  commitments: (ShiftWeekCommitment & { userId: string })[];
+  /** Pending (any week) oldest first + this week's decided. */
+  requests: ShiftRequest[];
+  kpis: ShiftKpi[];
+  rollup: AdminShiftRollupRow[];
+  powerWeekCallouts: { userId: string; sentence: string }[];
+  syncHealth: { errorCount: number; lastError: string | null; rows: AdminShiftSyncRow[] };
+}
+
+export interface AdminShiftUpdateInput {
+  action: 'create' | 'move' | 'cancel' | 'excuse';
+  shiftId?: string;
+  userId?: string;
+  date?: string;
+  start?: string;
+  end?: string;
+  activity?: ShiftActivity;
+}
+
+/** A non-2xx shifts response: `{ error: <code>, message: <sentence>, ...detail }`. `code` is one
+ *  of the §3 codes (shifts_disabled, deadline_passed, bad_block, overlap, under_minimum, ...);
+ *  `details` carries the rest of the body (`index`, `hours`, `minimum`, `hoursAfter`, ...). */
+export class ShiftsApiError extends Error {
+  code: string;
+  status: number;
+  details: Record<string, unknown>;
+  constructor(code: string, message: string, status: number, details: Record<string, unknown>) {
+    super(message);
+    this.name = 'ShiftsApiError';
+    this.code = code;
+    this.status = status;
+    this.details = details;
+  }
+}
+
+async function callShiftsFunction<T>(
+  fn: string,
+  opts: { method?: 'GET' | 'POST'; query?: Record<string, string | undefined>; body?: unknown } = {}
+): Promise<T> {
+  const method = opts.method ?? (opts.body === undefined ? 'GET' : 'POST');
+  const qs = Object.entries(opts.query ?? {})
+    .filter((e): e is [string, string] => e[1] !== undefined)
+    .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
+    .join('&');
+  const res = await fetch(`${getFunctionsUrl()}/${fn}${qs ? `?${qs}` : ''}`, {
+    method,
+    headers: await getEdgeFunctionHeaders(),
+    body: method === 'POST' ? JSON.stringify(opts.body ?? {}) : undefined,
+  });
+  let data: Record<string, unknown> = {};
+  try {
+    data = (await res.json()) as Record<string, unknown>;
+  } catch {
+    // Non-JSON body (gateway error page) -- fall through to the generic error below.
+  }
+  if (!res.ok) {
+    const { error, message, ...details } = data;
+    throw new ShiftsApiError(
+      typeof error === 'string' ? error : `http_${res.status}`,
+      typeof message === 'string' ? message : 'Something went wrong. Try again.',
+      res.status,
+      details
+    );
+  }
+  return data as T;
+}
+
+/** `week` = the Monday (YYYY-MM-DD); omitted = the current week. */
+export function getShiftsWeek(week?: string): Promise<ShiftsWeekResponse> {
+  return callShiftsFunction('shifts-week-get', { query: { week } });
+}
+
+export function submitShiftsWeek(
+  weekStart: string,
+  blocks: ShiftBlockInput[]
+): Promise<{ shifts: Shift[]; commitment: ShiftWeekCommitment }> {
+  return callShiftsFunction('shifts-submit-week', { body: { weekStart, blocks } });
+}
+
+export function createShiftRequest(
+  input: CreateShiftRequestInput
+): Promise<{ request: ShiftRequest }> {
+  return callShiftsFunction('shift-requests-create', { body: input });
+}
+
+export function withdrawShiftRequest(requestId: string): Promise<{ request: ShiftRequest }> {
+  return callShiftsFunction('shift-requests-withdraw', { body: { requestId } });
+}
+
+/** Client calls never finalize: live numbers for one in-progress/own shift. */
+export function computeShiftKpi(shiftId: string): Promise<{ kpis: ShiftKpi[] }> {
+  return callShiftsFunction('shift-kpi-compute', { body: { shiftId } });
+}
+
+export function getAdminShiftsOverview(week?: string): Promise<AdminShiftsOverview> {
+  return callShiftsFunction('admin-shifts-overview', { query: { week } });
+}
+
+export function reviewShiftRequest(input: {
+  requestId: string;
+  decision: 'approve' | 'deny';
+  note?: string;
+  allowUnderMinimum?: boolean;
+}): Promise<{ request: ShiftRequest }> {
+  return callShiftsFunction('admin-shift-requests-review', { body: input });
+}
+
+export function adminUpdateShift(input: AdminShiftUpdateInput): Promise<{ shift: Shift }> {
+  return callShiftsFunction('admin-shift-update', { body: input });
+}
+
+export function upsertPowerWindow(
+  input: Omit<ShiftPowerWindow, 'id'> & { id?: string }
+): Promise<{ powerWindow: ShiftPowerWindow }> {
+  return callShiftsFunction('admin-power-windows-upsert', { body: input });
+}
+
+/** Full replace: a weekday missing from `rows` becomes closed. */
+export function upsertOpenHours(rows: ShiftOpenHours[]): Promise<{ openHours: ShiftOpenHours[] }> {
+  return callShiftsFunction('admin-open-hours-upsert', { body: { rows } });
+}
+
+/** `enabled` is owner/admin only (server-enforced). */
+export function updateShiftSettings(
+  patch: Partial<ShiftSettings>
+): Promise<{ settings: ShiftSettings }> {
+  return callShiftsFunction('admin-shift-settings-update', { body: patch });
+}
+
+export function upsertShiftMember(input: {
+  userId: string;
+  ghlContactId?: string | null;
+  participates?: boolean;
+}): Promise<{ member: AdminShiftMember }> {
+  return callShiftsFunction('admin-profiles-upsert', { body: input });
+}
+
+export function findGhlContact(
+  email: string
+): Promise<{ contacts: { id: string; name: string; email: string }[] }> {
+  return callShiftsFunction('admin-ghl-find-contact', { body: { email } });
+}
+
+/** Omit `outboxId` to reset every errored row for the org. */
+export function retryShiftGhl(outboxId?: number): Promise<{ reset: number }> {
+  return callShiftsFunction('admin-ghl-retry', {
+    body: outboxId === undefined ? {} : { outboxId },
+  });
+}

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { AuthProvider, useAuth } from '@/contexts/AuthContext';
 import { OrgProvider } from '@/contexts/OrgContext';
+import { ShiftsProvider } from '@/contexts/ShiftsContext';
 import { PhoneNumbersProvider } from '@/contexts/PhoneNumbersContext';
 import { AuthScreen } from './components/AuthScreen';
 import { MainApp } from './components/MainApp';
@@ -48,7 +49,17 @@ function AppContent() {
     );
   }
 
-  return <PhoneNumbersProvider>{!user ? <AuthScreen /> : <MainApp />}</PhoneNumbersProvider>;
+  return (
+    <PhoneNumbersProvider>
+      {!user ? (
+        <AuthScreen />
+      ) : (
+        <ShiftsProvider>
+          <MainApp />
+        </ShiftsProvider>
+      )}
+    </PhoneNumbersProvider>
+  );
 }
 
 export default function App() {
