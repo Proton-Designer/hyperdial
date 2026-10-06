@@ -86,6 +86,28 @@ export function localMinutes(iso: string, tz: string): number {
   return g('hour') * 60 + g('minute');
 }
 
+/** The UTC instant (ms) at which local `date` (YYYY-MM-DD) + `minutes` after midnight happens in
+ *  `tz`. Two correction passes make it DST-correct; a time that doesn't exist (spring-forward gap)
+ *  lands on the next valid instant. */
+export function zonedInstant(date: string, minutes: number, tz: string): number {
+  const [y, m, d] = date.split('-').map(Number);
+  const wall = Date.UTC(y, m - 1, d, 0, minutes);
+  let guess = wall;
+  for (let i = 0; i < 2; i++) {
+    const iso = new Date(guess).toISOString();
+    const shown = Date.UTC(
+      ...(localDateKey(iso, tz)
+        .split('-')
+        .map(Number)
+        .map((v, k) => (k === 1 ? v - 1 : v)) as [number, number, number]),
+      0,
+      localMinutes(iso, tz)
+    );
+    guess += wall - shown;
+  }
+  return guess;
+}
+
 /** ISO weekday (1=Mon..7=Sun) of an instant in `tz`. */
 export function localIsoWeekday(iso: string, tz: string): number {
   const w = dtf(tz, { weekday: 'short' }).format(new Date(iso));

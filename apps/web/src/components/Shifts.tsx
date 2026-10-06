@@ -12,6 +12,7 @@ import {
   withdrawShiftRequest,
   type Shift,
   type ShiftRequest,
+  type ShiftRequestType,
   type ShiftsWeekResponse,
 } from '@/lib/api';
 import { MyShifts } from './shifts/MyShifts';
@@ -42,7 +43,11 @@ export function Shifts() {
   const [tab, setTab] = useState<SubTab>('my-shifts');
   // Bumped after a submit so the picker re-seeds from the saved week instead of its draft.
   const [pickerKey, setPickerKey] = useState(0);
-  const [modal, setModal] = useState<{ shift: Shift; week: ShiftsWeekResponse } | null>(null);
+  const [modal, setModal] = useState<{
+    shift: Shift | null;
+    week: ShiftsWeekResponse;
+    type?: ShiftRequestType;
+  } | null>(null);
   const mounted = useRef(true);
   useEffect(() => {
     mounted.current = true;
@@ -169,6 +174,7 @@ export function Shifts() {
             current={current}
             next={next}
             onRequestChange={(shift, week) => setModal({ shift, week })}
+            onRequestWeek={(week, type) => setModal({ shift: null, week, type })}
             onPickNextWeek={() => setTab('pick')}
           />
         </TabsContent>
@@ -196,6 +202,7 @@ export function Shifts() {
         onOpenChange={(o) => !o && setModal(null)}
         shift={modal?.shift ?? null}
         week={modal?.week ?? current}
+        initialType={modal?.type}
         onSubmitted={() => void load({ quiet: true })}
       />
     </div>

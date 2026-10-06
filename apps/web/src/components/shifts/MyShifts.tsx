@@ -1,10 +1,16 @@
 import { useMemo } from 'react';
-import { CalendarClock, CalendarPlus, Radio, Trophy, Zap } from 'lucide-react';
+import { CalendarClock, CalendarPlus, Plus, Radio, Trophy, Zap } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { EmptyState } from '@/components/app/EmptyState';
 import { cn } from '@/components/ui/utils';
-import type { Shift, ShiftKpi, ShiftRosterEntry, ShiftsWeekResponse } from '@/lib/api';
+import type {
+  Shift,
+  ShiftKpi,
+  ShiftRequestType,
+  ShiftRosterEntry,
+  ShiftsWeekResponse,
+} from '@/lib/api';
 import { Pill, ShiftStatusPill } from './pills';
 import {
   ACTIVITY_LABEL,
@@ -22,16 +28,35 @@ interface MyShiftsProps {
   current: ShiftsWeekResponse;
   next: ShiftsWeekResponse | null;
   onRequestChange: (shift: Shift, week: ShiftsWeekResponse) => void;
+  onRequestWeek: (week: ShiftsWeekResponse, type: ShiftRequestType) => void;
   onPickNextWeek: () => void;
 }
 
-export function MyShifts({ current, next, onRequestChange, onPickNextWeek }: MyShiftsProps) {
+export function MyShifts({
+  current,
+  next,
+  onRequestChange,
+  onRequestWeek,
+  onPickNextWeek,
+}: MyShiftsProps) {
   const nextUnsubmitted = next !== null && !next.commitment?.submittedAt;
   return (
     <div className="space-y-6">
       {next && nextUnsubmitted && <NextWeekBanner next={next} onPick={onPickNextWeek} />}
-      <WeekSection title="This week" data={current} onRequestChange={onRequestChange} />
-      {next && <WeekSection title="Next week" data={next} onRequestChange={onRequestChange} />}
+      <WeekSection
+        title="This week"
+        data={current}
+        onRequestChange={onRequestChange}
+        onRequestWeek={onRequestWeek}
+      />
+      {next && (
+        <WeekSection
+          title="Next week"
+          data={next}
+          onRequestChange={onRequestChange}
+          onRequestWeek={onRequestWeek}
+        />
+      )}
       {current.powerWeekHistory.length > 0 && <PowerWeekHistory data={current} />}
     </div>
   );
@@ -61,7 +86,7 @@ function NextWeekBanner({ next, onPick }: { next: ShiftsWeekResponse; onPick: ()
           </div>
           <p className="text-meta text-text-secondary">
             {closed
-              ? 'You can still ask for changes. Open a shift and choose Request change.'
+              ? 'You can still ask for changes. Use Request change on a shift, or Add time below.'
               : `You haven't submitted ${fmtWeekRange(week.weekStart)} yet. Any times in 30-minute steps, ${fmtHours(week.minHours)} minimum.`}
           </p>
         </div>
@@ -79,10 +104,12 @@ function WeekSection({
   title,
   data,
   onRequestChange,
+  onRequestWeek,
 }: {
   title: string;
   data: ShiftsWeekResponse;
   onRequestChange: (shift: Shift, week: ShiftsWeekResponse) => void;
+  onRequestWeek: (week: ShiftsWeekResponse, type: ShiftRequestType) => void;
 }) {
   const { week, commitment } = data;
   const tz = week.timezone;
@@ -97,9 +124,13 @@ function WeekSection({
 
   // Counted from the live shift rows so the counter matches the cards below it; the commitment
   // row only exists after a submit.
-  const scheduledHours = shifts
-    .filter((s) => s.status !== 'excused' && s.status !== 'missed')
-    .reduce((n, s) => n + s.hours, 0);
+  // The server's counted hours (scheduled + completed + missed; not excused/cancelled) win once a
+  // commitment row exists.
+  const scheduledHours =
+    commitment?.scheduledHours ??
+    shifts
+      .filter((s) => s.status === 'scheduled' || s.status === 'completed' || s.status === 'missed')
+      .reduce((n, s) => n + s.hours, 0);
   const powerHours = shifts.reduce((n, s) => n + s.powerMinutes, 0) / 60;
   const under = scheduledHours < week.minHours;
 
@@ -125,6 +156,16 @@ function WeekSection({
           <Pill tone="success" icon={<Trophy />}>
             Power week
           </Pill>
+        )}
+        {(week.isCurrentWeek || week.deadlinePassed) && (
+          <div className="ml-auto flex items-center gap-1">
+            <Button variant="fe-ghost" size="sm" onClick={() => onRequestWeek(data, 'add')}>
+              <Plus /> Add time
+            </Button>
+            <Button variant="fe-ghost" size="sm" onClick={() => onRequestWeek(data, 'light_week')}>
+              Light week
+            </Button>
+          </div>
         )}
       </header>
 

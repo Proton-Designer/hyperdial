@@ -113,11 +113,22 @@ export function WeekPicker({ week, onSubmitted, onClosed }: WeekPickerProps) {
             Number(err.details.minimum ?? min)
           )}.`;
           break;
-        case 'bad_block':
-          msg = `The pick on ${describeBlock(blocks[idx])} isn't valid. Times must be inside open hours and start and end on the hour or half hour.`;
+        case 'bad_block': {
+          const what = idx >= 0 ? `The pick on ${describeBlock(blocks[idx])}` : 'One of your picks';
+          const why = err.details.reason;
+          msg =
+            why === 'outside_open_hours'
+              ? `${what} is outside open hours.`
+              : why === 'bad_time_step'
+                ? `${what} must start and end on the hour or half hour.`
+                : `${what} isn't valid. Times must be inside open hours and start and end on the hour or half hour.`;
           break;
+        }
         case 'overlap':
-          msg = `The pick on ${describeBlock(blocks[idx])} overlaps another pick with a different activity.`;
+          msg =
+            err.details.reason === 'conflicts_with_existing_shift' || idx < 0
+              ? 'One of your picks overlaps a shift your manager set or approved. Remove that time and submit again.'
+              : `The pick on ${describeBlock(blocks[idx])} overlaps another pick with a different activity.`;
           break;
       }
       setError(msg);

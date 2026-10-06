@@ -522,6 +522,26 @@ function useShiftsFixtureStubs(scenario: string) {
           },
         });
       }
+      if (u.pathname.endsWith('/shift-requests-create')) {
+        const body = JSON.parse(String(init?.body ?? '{}')) as { type: string; reason: string };
+        await new Promise((r) => setTimeout(r, 600));
+        if (scenario === 'request_pending')
+          return json(409, { error: 'request_pending', message: 'Already pending.' });
+        if (scenario === 'request_started')
+          return json(409, { error: 'shift_started', message: 'Started.' });
+        if (scenario === 'request_500')
+          return json(500, { error: 'server_error', message: 'Something went wrong. Try again.' });
+        const base = buildWeek(scenario, mondayOf(localYmd(new Date()))).myRequests[0];
+        return json(200, {
+          request: {
+            ...base,
+            id: 'req-new',
+            type: body.type,
+            reason: body.reason,
+            status: 'pending',
+          },
+        });
+      }
       if (u.pathname.endsWith('/shift-requests-withdraw')) {
         const { requestId } = JSON.parse(String(init?.body ?? '{}'));
         if (scenario === 'withdraw_error')
@@ -554,6 +574,13 @@ const SCENARIOS = [
   'error',
   'slow',
   'withdraw_error',
+  'submit_deadline',
+  'submit_badblock',
+  'submit_overlap',
+  'submit_500',
+  'request_pending',
+  'request_started',
+  'request_500',
 ];
 
 export function ShiftsHarness() {
