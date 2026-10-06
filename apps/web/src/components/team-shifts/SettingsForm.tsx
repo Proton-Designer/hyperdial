@@ -150,6 +150,7 @@ export function SettingsForm({
     const raw = d.nums[f.key].trim();
     const n = Number(raw);
     if (raw === '' || !Number.isFinite(n)) return 'Enter a number.';
+    if (!f.step && !Number.isInteger(n)) return 'Use a whole number.';
     if (n < f.min) return `At least ${f.min}.`;
     if (f.max !== undefined && n > f.max) return `At most ${f.max}.`;
     return null;

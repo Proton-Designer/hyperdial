@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Zap } from 'lucide-react';
 import { cn } from '@/components/ui/utils';
 import { minLabel, minRangeLabel, SLOT, type PickDay } from '../shifts/pickerModel';
@@ -77,6 +77,52 @@ export function CoverageGrid({ model, alertBelow, selected, onSelect }: Coverage
   const max = useMemo(() => maxHeadcount(model), [model]);
   const [hover, setHover] = useState<{ day: PickDay; min: number } | null>(null);
   const hoverNames = hover ? uniqueNames(bySlot.get(slotKey(hover.day.date, hover.min))) : [];
+  // Rows are memoised: a hover or focus move re-renders the readout and nothing else, so the
+  // callbacks handed down must be stable.
+  const onSelectRef = useRef(onSelect);
+  onSelectRef.current = onSelect;
+  const stableSelect = useCallback((s: SelectedSlot) => onSelectRef.current(s), []);
+  // Roving tab stop: one cell is in the tab order, arrow keys move between cells.
+  const firstOpen = useMemo(() => {
+    for (const min of rows) for (const d of days) if (isOpen(d, min)) return slotKey(d.date, min);
+    return null;
+  }, [rows, days]);
+  const [tabKey, setTabKey] = useState<string | null>(null);
+  const stopKey =
+    tabKey ?? (selected ? slotKey(selected.date, selected.min) : firstOpen) ?? firstOpen;
+  const gridRef = useRef<HTMLDivElement>(null);
+  const onGridKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    const t = (e.target as HTMLElement).closest<HTMLElement>('[data-slot-date]');
+    if (!t) return;
+    const di = days.findIndex((d) => d.date === t.dataset.slotDate);
+    const mi = rows.indexOf(Number(t.dataset.slotMin));
+    if (di < 0 || mi < 0) return;
+    let dd = 0;
+    let dm = 0;
+    if (e.key === 'ArrowRight') dd = 1;
+    else if (e.key === 'ArrowLeft') dd = -1;
+    else if (e.key === 'ArrowDown') dm = 1;
+    else if (e.key === 'ArrowUp') dm = -1;
+    else if (e.key === 'Home') dm = -mi;
+    else if (e.key === 'End') dm = rows.length - 1 - mi;
+    else return;
+    e.preventDefault();
+    let ni = di;
+    let nm = mi;
+    // Step in the direction until an open cell turns up (closed cells are not focusable).
+    for (;;) {
+      ni += dd;
+      nm += dm === 0 ? 0 : Math.sign(dm);
+      if (dm !== 0 && Math.abs(nm - mi) >= Math.abs(dm)) nm = mi + dm;
+      if (ni < 0 || ni >= days.length || nm < 0 || nm >= rows.length) return;
+      if (isOpen(days[ni], rows[nm])) break;
+      if (dm !== 0 && Math.abs(nm - mi) >= Math.abs(dm) && nm === mi + dm) return;
+    }
+    const next = gridRef.current?.querySelector<HTMLElement>(
+      `[data-slot-date="${days[ni].date}"][data-slot-min="${rows[nm]}"]`
+    );
+    next?.focus();
+  };
 
   return (
     <div>
@@ -101,16 +147,14 @@ export function CoverageGrid({ model, alertBelow, selected, onSelect }: Coverage
         <div
           className="grid min-w-[640px] gap-px rounded-app-md border border-border-subtle bg-border-subtle"
           style={{ gridTemplateColumns: `56px repeat(${days.length}, minmax(0, 1fr))` }}
-          role="grid"
-          aria-label="Team coverage by 30-minute slot"
+          role="group"
+          aria-label="Team coverage by 30-minute slot. Arrow keys move between slots, Enter edits."
+          ref={gridRef}
+          onKeyDown={onGridKeyDown}
         >
           <div className="sticky top-0 z-10 bg-surface-1" />
           {days.map((d) => (
-            <div
-              key={d.date}
-              role="columnheader"
-              className="sticky top-0 z-10 bg-surface-1 px-2 py-2 text-center"
-            >
+            <div key={d.date} className="sticky top-0 z-10 bg-surface-1 px-2 py-2 text-center">
               <div className="text-body font-medium text-text-primary">{d.short}</div>
               <div className="text-meta text-text-muted">{fmtDateOnly(d.date)}</div>
             </div>
@@ -122,9 +166,11 @@ export function CoverageGrid({ model, alertBelow, selected, onSelect }: Coverage
               model={model}
               max={max}
               alertBelow={alertBelow}
-              selected={selected}
-              onSelect={onSelect}
+              selDate={selected?.min === min ? selected.date : null}
+              stopDate={stopKey?.endsWith(`|${min}`) ? stopKey.split('|')[0] : null}
+              onSelect={stableSelect}
               onHover={setHover}
+              onStop={setTabKey}
             />
           ))}
         </div>
@@ -133,22 +179,28 @@ export function CoverageGrid({ model, alertBelow, selected, onSelect }: Coverage
   );
 }
 
-function GridRow({
+const GridRow = memo(function GridRow({
   min,
   model,
   max,
   alertBelow,
-  selected,
+  selDate,
+  stopDate,
   onSelect,
   onHover,
+  onStop,
 }: {
   min: number;
   model: CoverageModel;
   max: number;
   alertBelow: number;
-  selected: SelectedSlot | null;
+  /** Date of the selected cell in this row, if any (primitive so unrelated rows stay memoised). */
+  selDate: string | null;
+  /** Date of the cell holding the roving tab stop, if it is in this row. */
+  stopDate: string | null;
   onSelect: (s: SelectedSlot) => void;
   onHover: (h: { day: PickDay; min: number } | null) => void;
+  onStop: (key: string) => void;
 }) {
   return (
     <>
@@ -165,18 +217,23 @@ function GridRow({
         const flagged = power && count < alertBelow;
         const prevPower = isPowerSlot(day, min - SLOT) && isOpen(day, min - SLOT);
         const nextPower = isPowerSlot(day, min + SLOT) && isOpen(day, min + SLOT);
-        const isSel = selected?.date === day.date && selected.min === min;
+        const isSel = selDate === day.date;
         return (
           <button
             key={day.date}
             type="button"
-            role="gridcell"
+            data-slot-date={day.date}
+            data-slot-min={min}
+            tabIndex={stopDate === day.date ? 0 : -1}
             aria-label={slotLabel(day, min, count, power, flagged)}
             aria-pressed={isSel}
             onClick={() => onSelect({ date: day.date, min })}
             onMouseEnter={() => onHover({ day, min })}
             onMouseLeave={() => onHover(null)}
-            onFocus={() => onHover({ day, min })}
+            onFocus={() => {
+              onHover({ day, min });
+              onStop(slotKey(day.date, min));
+            }}
             onBlur={() => onHover(null)}
             style={{ background: flagged ? undefined : (heatColor(count, max) ?? undefined) }}
             className={cn(
@@ -196,7 +253,7 @@ function GridRow({
       })}
     </>
   );
-}
+});
 
 /** Phone: one day at a time, one row per 30-minute slot with a bar for headcount. */
 export function CoverageDayView({ model, alertBelow, selected, onSelect }: CoverageProps) {

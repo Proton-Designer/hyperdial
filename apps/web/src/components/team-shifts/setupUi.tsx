@@ -103,6 +103,8 @@ export function describeSetupError(e: unknown): string {
       case 'unauthorized':
         return 'Sign in again to continue.';
       case 'bad_request':
+        if (e.details.reason === 'ghl_contact_in_use')
+          return 'That GoHighLevel contact is already linked to another member.';
         return 'One of the values isn’t valid. Check the highlighted fields.';
       case 'ghl_not_connected':
         return 'GoHighLevel isn’t connected for this team. Connect it in Settings → Integrations.';

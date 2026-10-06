@@ -344,7 +344,10 @@ const ROLE_LABEL: Record<string, string> = {
   manager: 'Manager',
 };
 
-function TeamTab() {
+/** Optional deep-link target inside the Team tab (used by Team Shifts -> Manage pods). */
+export type SettingsSection = 'pods';
+
+function TeamTab({ scrollTo }: { scrollTo?: SettingsSection }) {
   const { user } = useAuth();
   const { role } = useOrg();
   const breakpoint = useBreakpoint();
@@ -387,6 +390,15 @@ function TeamTab() {
   const [managerPodIds, setManagerPodIds] = useState<Record<string, string[]>>({});
   const [newPodName, setNewPodName] = useState('');
   const [podBusy, setPodBusy] = useState(false);
+  const podsHeadingRef = useRef<HTMLHeadingElement>(null);
+  // Deep link (Team Shifts -> Manage pods): once the roster has loaded, bring Pods into view.
+  useEffect(() => {
+    if (scrollTo !== 'pods' || loading) return;
+    const el = podsHeadingRef.current;
+    if (!el) return;
+    el.scrollIntoView({ block: 'start' });
+    el.focus({ preventScroll: true });
+  }, [scrollTo, loading]);
   const [podError, setPodError] = useState<string | null>(null);
 
   const canManage = role === 'owner' || role === 'admin';
@@ -885,8 +897,17 @@ function TeamTab() {
           and a manager's own SCOPE (which pods they supervise) is the checkbox list under their
           row -- two different relationships, see the migration header. */}
       {canManage && (
-        <div className="bg-surface-1 rounded-app-lg p-6 border border-border-subtle mb-6">
-          <h3 className="text-section-title text-text-primary mb-4">Pods</h3>
+        <div
+          id="settings-pods"
+          className="bg-surface-1 rounded-app-lg p-6 border border-border-subtle mb-6 scroll-mt-4"
+        >
+          <h3
+            ref={podsHeadingRef}
+            tabIndex={-1}
+            className="text-section-title text-text-primary mb-4 outline-none"
+          >
+            Pods
+          </h3>
           {podError && <p className="text-body text-danger mb-3">{podError}</p>}
           <div className="flex flex-wrap items-center gap-2 mb-4">
             {pods.length === 0 ? (
@@ -5279,9 +5300,9 @@ function InboundSettingsCard() {
   );
 }
 
-export function Settings() {
+export function Settings({ section }: { section?: SettingsSection } = {}) {
   const { role, loading: orgLoading } = useOrg();
-  const [activeTab, setActiveTab] = useState<SettingsTab>('profile');
+  const [activeTab, setActiveTab] = useState<SettingsTab>(section === 'pods' ? 'team' : 'profile');
   const [purchaseModalOpen, setPurchaseModalOpen] = useState(false);
 
   const [telnyxStatus, setTelnyxStatus] = useState<TelnyxConnectionStatus | null>(null);
@@ -5626,7 +5647,7 @@ export function Settings() {
                 </motion.div>
               )}
 
-              {activeTab === 'team' && !hideFromManager && <TeamTab />}
+              {activeTab === 'team' && !hideFromManager && <TeamTab scrollTo={section} />}
 
               {activeTab === 'integrations' && !hideFromManager && <IntegrationsTab />}
 

@@ -9,7 +9,7 @@ import { Analytics } from './Analytics';
 import { Team } from './Team';
 import { Recordings } from './Recordings';
 import { Inbox } from './Inbox';
-import { Settings } from './Settings';
+import { Settings, type SettingsSection } from './Settings';
 import { Shifts } from './Shifts';
 import { TeamShifts } from './TeamShifts';
 import { BottomTabBar } from './app/BottomTabBar';
@@ -171,7 +171,9 @@ export function MainApp() {
     else window.history.pushState(null, '', path);
   };
 
+  const [settingsSection, setSettingsSection] = useState<SettingsSection | undefined>();
   const setActiveTab = (tab: TabType) => {
+    if (tab !== 'settings') setSettingsSection(undefined);
     const resolved = allowedTabs !== null && !allowedTabs.includes(tab) ? 'dialer' : tab;
     setActiveTabState(resolved);
     syncUrl(resolved);
@@ -343,13 +345,16 @@ export function MainApp() {
             <PageTransition>
               <TeamShifts
                 canEnable={role === 'owner' || role === 'admin'}
-                onNavigateToSettings={() => setActiveTab('settings')}
+                onNavigateToSettings={() => {
+                  setActiveTab('settings');
+                  setSettingsSection('pods');
+                }}
               />
             </PageTransition>
           )}
           {activeTab === 'settings' && (
             <PageTransition>
-              <Settings />
+              <Settings section={settingsSection} />
             </PageTransition>
           )}
         </main>

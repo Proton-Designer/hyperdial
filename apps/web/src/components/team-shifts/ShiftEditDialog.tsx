@@ -482,6 +482,10 @@ function describeAdminError(e: unknown): string {
       case 'bad_block':
         return 'That time isn’t valid. Check the day and times.';
       case 'bad_request':
+        if (e.details.reason === 'shift_not_scheduled')
+          return 'That shift has already been changed. Close this and refresh.';
+        if (e.details.reason === 'not_participating')
+          return 'That person isn’t taking part in Shifts. Turn them on in Setup first.';
         return 'That change isn’t valid. Check the details and try again.';
       case 'not_found':
         return 'That shift no longer exists. Close this and refresh.';

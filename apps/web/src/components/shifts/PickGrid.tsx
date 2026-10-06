@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { cn } from '@/components/ui/utils';
 import {
   ACTIVITY_FILL,
@@ -263,79 +263,30 @@ export function PickGrid({ days, picks, locked, headcount, onChange }: PickGridP
                 );
               }
               const act = effective[day.date]?.[m];
-              const prev = effective[day.date]?.[m - SLOT];
-              const next = effective[day.date]?.[m + SLOT];
-              const isLocked = locked[day.date]?.has(m) ?? false;
-              const joinsPrev = act !== undefined && prev === act;
-              const joinsNext = act !== undefined && next === act;
-              const power = slotPowerMinutes(day, m) > 0;
-              const windowStart = day.windows.find((w) => w.start <= m && m < w.start + SLOT);
-              const names = headcount.get(`${day.date}|${m}`);
-              const isFocus = focus.dayIdx === dayIdx && focus.min === m;
-              const isDraftCell = draft && draft.dayIdx === dayIdx;
+              const joinsPrev = act !== undefined && effective[day.date]?.[m - SLOT] === act;
+              const joinsNext = act !== undefined && effective[day.date]?.[m + SLOT] === act;
               return (
-                <button
+                <SlotCell
                   key={m}
-                  type="button"
-                  tabIndex={isFocus ? 0 : -1}
-                  data-cell
-                  data-day={dayIdx}
-                  data-min={m}
-                  data-key={`${day.date}|${m}`}
-                  aria-pressed={act !== undefined}
-                  aria-disabled={isLocked || undefined}
-                  aria-label={`${day.long} ${fmtDateOnly(day.date)}, ${minRangeLabel(m, m + SLOT)}${
-                    isLocked ? ', set by your manager' : act ? ', picked' : ''
-                  }${power ? ', high leverage' : ''}${names ? `, ${names.length} ${names.length === 1 ? 'other' : 'others'} working` : ''}`}
-                  onFocus={(e) => {
-                    setFocus({ dayIdx, min: m });
-                    if (!draftRef.current && e.currentTarget.matches(':focus-visible')) {
-                      setHover({ dayIdx, min: m, rect: e.currentTarget.getBoundingClientRect() });
-                    }
-                  }}
-                  onBlur={() => setHover(null)}
-                  className={cn(
-                    'relative block w-full overflow-hidden text-left outline-none',
-                    'border-t focus-visible:z-[2] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent-to',
-                    m % 60 === 0 ? 'border-white/10' : 'border-border-subtle',
-                    act === undefined &&
-                      (power
-                        ? 'bg-warning/[0.13] hover:bg-warning/[0.22]'
-                        : 'hover:bg-white/[0.06]'),
-                    act !== undefined && ACTIVITY_FILL[act],
-                    joinsPrev && 'border-t-transparent',
-                    act !== undefined &&
-                      !joinsPrev &&
-                      'mx-[2px] w-[calc(100%-4px)] rounded-t-md border-t-transparent',
-                    act !== undefined && joinsPrev && 'mx-[2px] w-[calc(100%-4px)]',
-                    act !== undefined && !joinsNext && 'rounded-b-md',
-                    isLocked &&
-                      'cursor-not-allowed bg-[repeating-linear-gradient(135deg,rgba(255,255,255,0.10)_0_4px,transparent_4px_8px)]',
-                    isDraftCell && draft?.mode === 'erase' && 'cursor-cell'
-                  )}
-                  style={{ height: ROW_H, touchAction: 'none' }}
-                >
-                  {act !== undefined && !joinsPrev && (
-                    <span className="pointer-events-none absolute left-1.5 top-[5px] truncate text-[10px] font-medium leading-none text-white/95">
-                      {compactRange(m, blockEnd(effective[day.date] ?? {}, m, act))}
-                    </span>
-                  )}
-                  {act === undefined && windowStart && (
-                    <span className="pointer-events-none absolute left-1.5 top-[5px] text-[9px] font-medium uppercase leading-none tracking-wide text-warning/80">
-                      {windowStart.label}
-                    </span>
-                  )}
-                  {names && (
-                    <span
-                      className={cn(
-                        'pointer-events-none absolute right-1.5 top-[5px] text-[10px] font-medium leading-none',
-                        act !== undefined ? 'text-white/80' : 'text-text-secondary'
-                      )}
-                    >
-                      {names.length}
-                    </span>
-                  )}
-                </button>
+                  day={day}
+                  dayIdx={dayIdx}
+                  m={m}
+                  act={act}
+                  joinsPrev={joinsPrev}
+                  joinsNext={joinsNext}
+                  isLocked={locked[day.date]?.has(m) ?? false}
+                  names={headcount.get(`${day.date}|${m}`)}
+                  isFocus={focus.dayIdx === dayIdx && focus.min === m}
+                  erasing={draft?.dayIdx === dayIdx && draft.mode === 'erase'}
+                  blockLabel={
+                    act !== undefined && !joinsPrev
+                      ? compactRange(m, blockEnd(effective[day.date] ?? {}, m, act))
+                      : null
+                  }
+                  draftRef={draftRef}
+                  setFocus={setFocus}
+                  setHover={setHover}
+                />
               );
             })}
           </div>
@@ -346,6 +297,106 @@ export function PickGrid({ days, picks, locked, headcount, onChange }: PickGridP
     </div>
   );
 }
+
+interface SlotCellProps {
+  day: PickDay;
+  dayIdx: number;
+  m: number;
+  act: string | undefined;
+  joinsPrev: boolean;
+  joinsNext: boolean;
+  isLocked: boolean;
+  names: string[] | undefined;
+  isFocus: boolean;
+  erasing: boolean;
+  blockLabel: string | null;
+  draftRef: React.MutableRefObject<Draft | null>;
+  setFocus: (f: { dayIdx: number; min: number }) => void;
+  setHover: (h: Hover | null) => void;
+}
+
+/** One 30-minute cell. Memoised on primitives so a pointer move, a focus move or a drag
+ *  re-renders only the cells whose own look changed, not all ~170. */
+const SlotCell = memo(function SlotCell({
+  day,
+  dayIdx,
+  m,
+  act,
+  joinsPrev,
+  joinsNext,
+  isLocked,
+  names,
+  isFocus,
+  erasing,
+  blockLabel,
+  draftRef,
+  setFocus,
+  setHover,
+}: SlotCellProps) {
+  const power = slotPowerMinutes(day, m) > 0;
+  const windowStart = day.windows.find((w) => w.start <= m && m < w.start + SLOT);
+  return (
+    <button
+      type="button"
+      tabIndex={isFocus ? 0 : -1}
+      data-cell
+      data-day={dayIdx}
+      data-min={m}
+      data-key={`${day.date}|${m}`}
+      aria-pressed={act !== undefined}
+      aria-disabled={isLocked || undefined}
+      aria-label={`${day.long} ${fmtDateOnly(day.date)}, ${minRangeLabel(m, m + SLOT)}${
+        isLocked ? ', set by your manager' : act ? ', picked' : ''
+      }${power ? ', high leverage' : ''}${names ? `, ${names.length} ${names.length === 1 ? 'other' : 'others'} working` : ''}`}
+      onFocus={(e) => {
+        setFocus({ dayIdx, min: m });
+        if (!draftRef.current && e.currentTarget.matches(':focus-visible')) {
+          setHover({ dayIdx, min: m, rect: e.currentTarget.getBoundingClientRect() });
+        }
+      }}
+      onBlur={() => setHover(null)}
+      className={cn(
+        'relative block w-full overflow-hidden text-left outline-none',
+        'border-t focus-visible:z-[2] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent-to',
+        m % 60 === 0 ? 'border-white/10' : 'border-border-subtle',
+        act === undefined &&
+          (power ? 'bg-warning/[0.13] hover:bg-warning/[0.22]' : 'hover:bg-white/[0.06]'),
+        act !== undefined && ACTIVITY_FILL[act as keyof typeof ACTIVITY_FILL],
+        joinsPrev && 'border-t-transparent',
+        act !== undefined &&
+          !joinsPrev &&
+          'mx-[2px] w-[calc(100%-4px)] rounded-t-md border-t-transparent',
+        act !== undefined && joinsPrev && 'mx-[2px] w-[calc(100%-4px)]',
+        act !== undefined && !joinsNext && 'rounded-b-md',
+        isLocked &&
+          'cursor-not-allowed bg-[repeating-linear-gradient(135deg,rgba(255,255,255,0.10)_0_4px,transparent_4px_8px)]',
+        erasing && 'cursor-cell'
+      )}
+      style={{ height: ROW_H, touchAction: 'none' }}
+    >
+      {blockLabel && (
+        <span className="pointer-events-none absolute left-1.5 top-[5px] truncate text-[10px] font-medium leading-none text-white/95">
+          {blockLabel}
+        </span>
+      )}
+      {act === undefined && windowStart && (
+        <span className="pointer-events-none absolute left-1.5 top-[5px] text-[9px] font-medium uppercase leading-none tracking-wide text-warning/80">
+          {windowStart.label}
+        </span>
+      )}
+      {names && (
+        <span
+          className={cn(
+            'pointer-events-none absolute right-1.5 top-[5px] text-[10px] font-medium leading-none',
+            act !== undefined ? 'text-white/80' : 'text-text-secondary'
+          )}
+        >
+          {names.length}
+        </span>
+      )}
+    </button>
+  );
+});
 
 /** "7:30–10:00" -- the meridiem is dropped to fit a narrow column; the header and the picks list
  *  carry the full times. */
