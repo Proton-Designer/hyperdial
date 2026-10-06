@@ -70,6 +70,9 @@ export class ShiftGhlError extends Error {
   get orgLevel(): boolean {
     return this.status === 401 || this.status === 403;
   }
+  get timedOut(): boolean {
+    return this.status === 0 && this.message === TIMEOUT_MESSAGE;
+  }
 }
 
 /** Seconds to hold rows after a 429 (Retry-After when sent, else a minute; never more than an hour). */
@@ -77,6 +80,13 @@ export const RATE_LIMIT_DELAY_SECONDS = 60;
 /** Seconds to hold an org's rows after a 401/403 from GHL. */
 export const TOKEN_REJECTED_DELAY_SECONDS = 600;
 export const TOKEN_REJECTED_MESSAGE = 'GHL token rejected (401/403): reconnect GoHighLevel';
+/** 403 is more often a missing scope or calendar permission than a dead token. */
+export const ACCESS_DENIED_MESSAGE =
+  'GHL denied access (403): check the integration scopes and calendar permissions';
+export const TIMEOUT_MESSAGE = 'GHL request timed out';
+/** After this many timeouts in one run the org is paused for a few minutes. */
+export const MAX_TIMEOUTS_PER_RUN = 3;
+export const GHL_NOT_ANSWERING_MESSAGE = 'GHL is not answering (repeated timeouts); will retry';
 export const GHL_TIMEOUT_MS = 20_000;
 
 // ---- HTTP ---------------------------------------------------------------------------------------
@@ -122,7 +132,7 @@ export function createShiftGhlHttp(opts: HttpOptions): ShiftGhlHttp {
         const name = (e as { name?: string })?.name;
         throw new ShiftGhlError(
           name === 'TimeoutError' || name === 'AbortError'
-            ? 'GHL request timed out'
+            ? TIMEOUT_MESSAGE
             : `network error: ${String(e)}`,
           0,
           true
@@ -321,6 +331,9 @@ export interface ProcessDeps {
   loadFieldDefs(): Promise<FieldDef[]>;
   /** Called (awaited) after every row, right away, so a saved appointment id survives a crash. */
   record(result: RowResult): Promise<void>;
+  /** Wall-clock budget: past this instant the rest of the batch is released unsent (no attempt counted). */
+  deadlineMs?: number;
+  now?: () => number;
 }
 
 const eventGroup = (r: OutboxRow) => `${r.user_id}|${r.event}|${r.created_at}`;
@@ -334,6 +347,8 @@ export async function processOutbox(rows: OutboxRow[], deps: ProcessDeps): Promi
   let defs: FieldDef[] | null = null;
   // Set by a 429 (rate limit) or a 401/403 (token): the rest of the batch is released, delayed.
   let stop: { delaySeconds: number; error?: string } | null = null;
+  let timeouts = 0;
+  const now = deps.now ?? Date.now;
 
   const finish = async (r: RowResult) => {
     results.push(r);
@@ -342,6 +357,9 @@ export async function processOutbox(rows: OutboxRow[], deps: ProcessDeps): Promi
 
   for (const row of ordered) {
     const user = row.user_id ?? `row-${row.id}`;
+    if (!stop && deps.deadlineMs !== undefined && now() >= deps.deadlineMs) {
+      stop = { delaySeconds: 0 };
+    }
     if (stop) {
       await finish({
         id: row.id,
@@ -386,7 +404,10 @@ export async function processOutbox(rows: OutboxRow[], deps: ProcessDeps): Promi
       const err = e instanceof ShiftGhlError ? e : new ShiftGhlError(String(e), 0, true);
       if (err.orgLevel) {
         // The org's token is the problem: nothing of this org can be sent. Keep every row pending.
-        stop = { delaySeconds: TOKEN_REJECTED_DELAY_SECONDS, error: TOKEN_REJECTED_MESSAGE };
+        stop = {
+          delaySeconds: TOKEN_REJECTED_DELAY_SECONDS,
+          error: err.status === 403 ? ACCESS_DENIED_MESSAGE : TOKEN_REJECTED_MESSAGE,
+        };
         await finish({ id: row.id, outcome: 'release', ...stop });
       } else if (err.retryable) {
         held.add(user);
@@ -397,6 +418,9 @@ export async function processOutbox(rows: OutboxRow[], deps: ProcessDeps): Promi
               Math.max(RATE_LIMIT_DELAY_SECONDS, err.retryAfterSeconds ?? 0)
             ),
           };
+        }
+        if (err.timedOut && ++timeouts >= MAX_TIMEOUTS_PER_RUN && !stop) {
+          stop = { delaySeconds: 120, error: GHL_NOT_ANSWERING_MESSAGE };
         }
         await finish({ id: row.id, outcome: 'retry', error: err.message });
       } else {

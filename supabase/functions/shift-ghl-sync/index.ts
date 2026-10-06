@@ -27,6 +27,8 @@ import {
 
 const CLAIM_BATCH_SIZE = 50;
 const NOT_CONNECTED_DELAY_SECONDS = 600;
+/** Run budget: stay well inside the platform's wall-clock limit so a run is never killed mid-row. */
+const RUN_BUDGET_MS = 100_000;
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -122,6 +124,8 @@ Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return corsPreflightResponse();
   if (req.method !== 'POST') return jsonResponse({ error: 'Method not allowed' }, 405);
   if (!isAuthorized(req)) return jsonResponse({ error: 'Unauthorized' }, 401);
+  const startedMs = Date.now();
+  const deadlineMs = startedMs + RUN_BUDGET_MS;
 
   const supabase = createClient(
     Deno.env.get('SUPABASE_URL')!,
@@ -142,6 +146,16 @@ Deno.serve(async (req: Request) => {
   for (const r of rows) byOrg.set(r.org_id, [...(byOrg.get(r.org_id) ?? []), r]);
 
   for (const [orgId, orgRows] of byOrg) {
+    if (Date.now() >= deadlineMs) {
+      // Out of time: hand the rest back untouched, due again on the next tick.
+      await supabase.rpc('release_shift_outbox', {
+        p_ids: orgRows.map((r) => r.id),
+        p_error: null,
+        p_delay_seconds: 0,
+      });
+      counts.released += orgRows.length;
+      continue;
+    }
     const ctx = await resolveOrgContext(supabase, orgId);
     if ('error' in ctx) {
       // Not connected (yet): keep the rows pending, try again later, no attempt counted.
@@ -187,6 +201,7 @@ Deno.serve(async (req: Request) => {
       },
       loadFieldDefs: () => fetchContactFieldDefs(http, ctx.locationId),
       record: (r) => recordResult(supabase, r),
+      deadlineMs,
     });
     for (const r of results) {
       if (r.outcome === 'done') counts.done++;

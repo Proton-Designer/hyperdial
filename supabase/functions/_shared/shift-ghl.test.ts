@@ -603,7 +603,10 @@ Deno.test(
           id: r.id,
           outcome: 'release',
           delaySeconds: 600,
-          error: 'GHL token rejected (401/403): reconnect GoHighLevel',
+          error:
+            status === 403
+              ? 'GHL denied access (403): check the integration scopes and calendar permissions'
+              : 'GHL token rejected (401/403): reconnect GoHighLevel',
         });
       }
     }
@@ -657,5 +660,69 @@ Deno.test(
       assert(e instanceof ShiftGhlError);
       assertEquals(e.retryAfterSeconds, 90);
     }
+  }
+);
+
+Deno.test(
+  'run budget: past the deadline the rest of the batch is released unsent, no attempt counted',
+  async () => {
+    let t = 1000;
+    const { http, calls } = fakeHttp(() => {
+      t += 60_000; // each call "takes" a minute
+      return {};
+    });
+    const { d, recorded } = deps(http, { deadlineMs: 1000 + 100_000, now: () => t });
+    await processOutbox(
+      [
+        row({ payload: { body: 'a' } }),
+        row({ user_id: 'u2', payload: { body: 'b' } }),
+        row({ user_id: 'u3', payload: { body: 'c' } }),
+        row({ user_id: 'u4', payload: { body: 'd' } }),
+      ],
+      d
+    );
+    assertEquals(calls.length, 2);
+    assertEquals(
+      recorded.map((r) => r.outcome),
+      ['done', 'done', 'release', 'release']
+    );
+    assertEquals(recorded[2], { id: recorded[2].id, outcome: 'release', delaySeconds: 0 });
+  }
+);
+
+Deno.test(
+  'three timeouts in one run pause the org for 2 minutes; the rows are released, not burned',
+  async () => {
+    const { http, calls } = fakeHttp(() => new ShiftGhlError('GHL request timed out', 0, true));
+    const { d, recorded } = deps(http);
+    await processOutbox(
+      [1, 2, 3, 4, 5].map((n) => row({ user_id: `u${n}`, payload: { body: String(n) } })),
+      d
+    );
+    assertEquals(calls.length, 3);
+    assertEquals(
+      recorded.map((r) => r.outcome),
+      ['retry', 'retry', 'retry', 'release', 'release']
+    );
+    assertEquals(recorded[3], {
+      id: recorded[3].id,
+      outcome: 'release',
+      delaySeconds: 120,
+      error: 'GHL is not answering (repeated timeouts); will retry',
+    });
+    // two timeouts then success: no pause
+    let n = 0;
+    const mixed = fakeHttp(() =>
+      ++n <= 2 ? new ShiftGhlError('GHL request timed out', 0, true) : {}
+    );
+    const r2 = deps(mixed.http);
+    await processOutbox(
+      [1, 2, 3, 4].map((k) => row({ user_id: `u${k}`, payload: { body: String(k) } })),
+      r2.d
+    );
+    assertEquals(
+      r2.recorded.map((r) => r.outcome),
+      ['retry', 'retry', 'done', 'done']
+    );
   }
 );

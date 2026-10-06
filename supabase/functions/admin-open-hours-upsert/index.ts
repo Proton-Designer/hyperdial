@@ -1,4 +1,6 @@
-// TASK-S03: POST { rows: OpenHours[] } (full replace; a missing weekday becomes closed) -> { openHours }.
+// TASK-S03: POST { rows: OpenHours[] } (full replace; a missing weekday becomes closed) ->
+// { openHours, affectedShiftCount } (S03F: scheduled future shifts now outside the new hours; the shifts
+// themselves are not touched).
 import {
   handleAdminPost,
   jsonResponse,
@@ -18,6 +20,16 @@ Deno.serve((req) =>
       p_rows: parsed.value,
     });
     if (error) return rpcErrorResponse(error, 'admin_replace_open_hours');
-    return jsonResponse(200, { openHours: ((data ?? []) as OpenHoursRow[]).map(mapOpenHours) });
+    // `rows` + `affected` since S03F; an older database answers a bare array.
+    const result = (
+      Array.isArray(data) ? { rows: data, affected: 0 } : (data ?? { rows: [], affected: 0 })
+    ) as {
+      rows: OpenHoursRow[];
+      affected: number;
+    };
+    return jsonResponse(200, {
+      openHours: result.rows.map(mapOpenHours),
+      affectedShiftCount: Number(result.affected ?? 0),
+    });
   })
 );
