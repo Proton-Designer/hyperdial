@@ -3,6 +3,7 @@
 // hydration and the fire-and-forget nudge of shift-ghl-sync. Pure logic lives in shifts-core.ts.
 
 import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2';
+import { timingSafeEqual } from 'jsr:@std/crypto@1/timing-safe-equal';
 import { corsHeaders, corsPreflightResponse } from './cors.ts';
 import { requireOrgRole, type OrgRole } from './auth.ts';
 import {
@@ -228,4 +229,50 @@ export async function handleAdminPost(
       message: 'Something went wrong. Try again.',
     });
   }
+}
+
+function secretsMatch(a: string, b: string): boolean {
+  const enc = new TextEncoder();
+  const x = enc.encode(a);
+  const y = enc.encode(b);
+  return x.length === y.length && timingSafeEqual(x, y);
+}
+
+/** Cron / internal caller: X-Cron-Secret (CRM_SYNC_WORKER_SECRET) OR the service-role key as a bearer.
+ *  Fails closed: an unset secret never matches. */
+export function isCronAuthorized(req: Request): boolean {
+  const cronExpected = Deno.env.get('CRM_SYNC_WORKER_SECRET');
+  const cronGiven = req.headers.get('X-Cron-Secret');
+  if (cronExpected && cronGiven && secretsMatch(cronGiven, cronExpected)) return true;
+  const svc = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+  const bearer = /^Bearer (.+)$/.exec(req.headers.get('Authorization') ?? '')?.[1];
+  return Boolean(svc && bearer && secretsMatch(bearer, svc));
+}
+
+/** Shell of the cron-only jobs (shifts-week-lock / shifts-week-close): POST + cron auth, runs one RPC. */
+export async function handleCronJob(
+  req: Request,
+  name: string,
+  rpcName: string
+): Promise<Response> {
+  if (req.method === 'OPTIONS') return corsPreflightResponse();
+  if (req.method !== 'POST')
+    return jsonResponse(405, { error: 'method_not_allowed', message: 'Use POST.' });
+  if (!isCronAuthorized(req)) {
+    return jsonResponse(401, { error: 'unauthorized', message: 'Please sign in again.' });
+  }
+  const supabase = createClient(
+    Deno.env.get('SUPABASE_URL')!,
+    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
+  );
+  const { data, error } = await supabase.rpc(rpcName);
+  if (error) {
+    console.error(`${name}: ${rpcName} failed:`, error.message);
+    return jsonResponse(500, {
+      error: 'server_error',
+      message: 'Something went wrong. Try again.',
+    });
+  }
+  nudgeShiftGhlSync();
+  return jsonResponse(200, data ?? { ok: true });
 }
