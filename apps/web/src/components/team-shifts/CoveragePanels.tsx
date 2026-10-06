@@ -226,22 +226,6 @@ export function SlotShifts({
               <ShiftStatusPill status={s.status} />
             </li>
           ))}
-          {inactive.map((s) => (
-            <li key={s.id} className="flex items-center gap-3 py-2 opacity-70">
-              <div className="min-w-0 flex-1">
-                <div className="truncate text-body text-text-secondary" title={s.userName}>
-                  {displayName(s.userName)}
-                </div>
-                <div className="flex flex-wrap items-center gap-x-2 text-meta text-text-muted">
-                  <span className="text-metric line-through">
-                    {fmtRange(s.startsAt, s.endsAt, timezone)}
-                  </span>
-                  <span>{ACTIVITY_LABEL[s.activity]}</span>
-                </div>
-              </div>
-              <ShiftStatusPill status={s.status} />
-            </li>
-          ))}
         </ul>
       )}
     </div>

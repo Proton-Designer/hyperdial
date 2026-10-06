@@ -57,14 +57,25 @@ export function SyncHealth({
   const tokenRows = health.rows.filter((r) => classify(r.lastError) === 'token');
   const realCount = realRows.length;
   const notConnected = health.ghlConnected === false;
-  // The server's pendingCount covers every queued row, including those waiting behind an earlier
-  // delayed row that carry no error yet; older servers only give the rows with an error.
-  const waiting =
-    health.pendingCount !== undefined
-      ? Math.max(0, health.pendingCount - realCount)
-      : Math.max(0, health.errorCount - realCount);
   const rejected = tokenRows.length > 0;
-  const ok = health.errorCount === 0 && !(notConnected && waiting > 0);
+  // Everything is held while GoHighLevel isn't connected; with a rejected token, the held rows are
+  // the pending ones minus the real errors. Ordinary in-flight pending rows of a connected org are
+  // normal and are never shown as a problem. Older servers (no pendingCount) fall back to the rows
+  // that carry an error.
+  const pendingAll = health.pendingCount ?? health.errorCount;
+  const waiting = notConnected
+    ? pendingAll
+    : rejected
+      ? Math.max(0, pendingAll - realCount)
+      : health.pendingCount === undefined
+        ? Math.max(0, health.errorCount - realCount)
+        : 0;
+  // Older servers cannot say whether GHL is connected; rows with the "not connected" error say it.
+  const legacyNotConnected =
+    health.ghlConnected === undefined &&
+    health.rows.some((r) => classify(r.lastError) === 'not_connected');
+  const showHeld = (notConnected || rejected || legacyNotConnected) && waiting > 0;
+  const ok = health.errorCount === 0 && !showHeld;
   const hasReal = realCount > 0;
   return (
     <SetupCard
@@ -90,7 +101,7 @@ export function SyncHealth({
         </p>
       ) : (
         <div className="space-y-3">
-          {waiting > 0 && (
+          {showHeld && (
             <div
               role="status"
               className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-app-md border border-border-subtle bg-surface-2 px-3 py-3"

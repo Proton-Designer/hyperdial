@@ -631,6 +631,7 @@ const SCENARIOS = [
   'default',
   'ghl_not_connected',
   'ghl_token',
+  'ghl_connected_pending',
   'unsubmitted',
   'under_minimum',
   'deadline_passed',

@@ -158,7 +158,25 @@ function syncHealthFor(scenario: string) {
         mk(300 - i, 'GHL token rejected (401/403): reconnect GoHighLevel')
       ),
     ];
-    return { errorCount: rows.length, lastError: rows[0].lastError, rows };
+    return {
+      errorCount: rows.length,
+      lastError: rows[0].lastError,
+      rows,
+      pendingCount: rows.length,
+      ghlConnected: true,
+    };
+  }
+  // ghl_connected_pending: GHL connected, two real errors and three ordinary in-flight pending rows
+  // (the connected-but-busy case must show the error list and no "isn't connected" callout).
+  if (scenario === 'ghl_connected_pending') {
+    const rows = syncErrors.slice(0, 2);
+    return {
+      errorCount: rows.length,
+      lastError: rows[0]?.lastError ?? null,
+      rows,
+      pendingCount: 5,
+      ghlConnected: true,
+    };
   }
   return {
     errorCount: syncErrors.length,
