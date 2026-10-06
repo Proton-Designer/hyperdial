@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { CalendarClock, CalendarPlus, RefreshCw, ServerCrash } from 'lucide-react';
+import { CalendarClock, RefreshCw, ServerCrash } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -17,6 +17,7 @@ import {
 import { MyShifts } from './shifts/MyShifts';
 import { RequestsList } from './shifts/RequestsList';
 import { RequestChangeModal } from './shifts/RequestChangeModal';
+import { WeekPicker } from './shifts/WeekPicker';
 import { fmtDeadline, fmtWeekRange } from './shifts/shiftFormat';
 
 type SubTab = 'my-shifts' | 'pick' | 'requests';
@@ -39,6 +40,8 @@ export function Shifts() {
   const [next, setNext] = useState<ShiftsWeekResponse | null>(null);
   const [requests, setRequests] = useState<ShiftRequest[]>([]);
   const [tab, setTab] = useState<SubTab>('my-shifts');
+  // Bumped after a submit so the picker re-seeds from the saved week instead of its draft.
+  const [pickerKey, setPickerKey] = useState(0);
   const [modal, setModal] = useState<{ shift: Shift; week: ShiftsWeekResponse } | null>(null);
   const mounted = useRef(true);
   useEffect(() => {
@@ -169,13 +172,17 @@ export function Shifts() {
             onPickNextWeek={() => setTab('pick')}
           />
         </TabsContent>
-        {pickOpen && (
-          <TabsContent value="pick">
-            {/* TASK-F02 replaces this with the week picker. */}
-            <EmptyState
-              icon={CalendarPlus}
-              title="Week picker is on its way"
-              body="You'll choose your times for next week here."
+        {pickOpen && next && (
+          // forceMount keeps the draft alive while the intern checks My Shifts or Requests.
+          <TabsContent value="pick" forceMount className="data-[state=inactive]:hidden">
+            <WeekPicker
+              key={pickerKey}
+              week={next}
+              onSubmitted={() => {
+                setTab('my-shifts');
+                void load({ quiet: true }).then(() => setPickerKey((k) => k + 1));
+              }}
+              onClosed={() => void load({ quiet: true })}
             />
           </TabsContent>
         )}

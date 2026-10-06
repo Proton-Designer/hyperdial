@@ -4,6 +4,7 @@ import { Shifts } from '../components/Shifts';
 import { Toaster } from '@/components/ui/sonner';
 import type {
   Shift,
+  ShiftBlockInput,
   ShiftKpi,
   ShiftRequest,
   ShiftRosterEntry,
@@ -118,6 +119,8 @@ const POWER_WINDOWS = [
 const OTHERS = ['Sara K.', 'Omar B.', 'Priya N.', 'Liam T.', 'Maya R.'];
 
 let seq = 0;
+/** Blocks last accepted by the stubbed shifts-submit-week, so the refetch after a submit shows them. */
+let submittedBlocks: ShiftBlockInput[] | null = null;
 function shift(
   weekStart: string,
   startsAt: string,
@@ -230,7 +233,42 @@ function buildWeek(scenario: string, weekStart: string): ShiftsWeekResponse {
       })
     );
   }
-  if (
+  if (isNext && scenario !== 'empty') {
+    // Other interns across next week so the picker's headcounts/popovers have something to show.
+    const plan: [number, string, string, number][] = [
+      [1, '07:00', '10:00', 0],
+      [1, '07:00', '09:00', 1],
+      [1, '08:00', '11:00', 2],
+      [1, '09:00', '12:00', 3],
+      [2, '11:00', '14:00', 0],
+      [2, '12:00', '15:00', 4],
+      [3, '16:00', '18:00', 1],
+      [3, '16:00', '19:00', 2],
+      [3, '17:00', '20:00', 3],
+      [4, '07:00', '10:00', 4],
+      [4, '10:00', '13:00', 0],
+      [5, '16:00', '18:00', 2],
+      [6, '07:00', '12:00', 1],
+      [0, '08:30', '11:30', 3],
+      [0, '13:00', '17:00', 4],
+    ];
+    for (const [dow, a, b, who] of plan) {
+      const day = addDays(weekStart, dow);
+      roster.push({
+        userId: `r${roster.length}`,
+        name: OTHERS[who],
+        activity: 'dialing',
+        startsAt: zoned(day, a),
+        endsAt: zoned(day, b),
+        isMe: false,
+      });
+    }
+  }
+  if (isNext && submittedBlocks) {
+    myShifts = submittedBlocks.map((b) =>
+      shift(weekStart, zoned(b.date, b.start), zoned(b.date, b.end), { activity: b.activity })
+    );
+  } else if (
     isNext &&
     scenario !== 'unsubmitted' &&
     scenario !== 'deadline_passed' &&
@@ -269,7 +307,8 @@ function buildWeek(scenario: string, weekStart: string): ShiftsWeekResponse {
 
   const scheduledHours = myShifts.reduce((n, s) => n + s.hours, 0);
   const submitted =
-    !(isNext && (scenario === 'unsubmitted' || scenario === 'deadline_passed')) &&
+    (!(isNext && (scenario === 'unsubmitted' || scenario === 'deadline_passed')) ||
+      (isNext && submittedBlocks !== null)) &&
     myShifts.length > 0;
   const powerWeek = scenario === 'power_week' && isCurrent;
 
@@ -429,6 +468,59 @@ function useShiftsFixtureStubs(scenario: string) {
       if (u.pathname.endsWith('/shifts-week-get')) {
         const week = u.searchParams.get('week') ?? mondayOf(localYmd(new Date()));
         return json(200, buildWeek(scenario, week));
+      }
+      if (u.pathname.endsWith('/shifts-submit-week')) {
+        const { weekStart, blocks } = JSON.parse(String(init?.body ?? '{}')) as {
+          weekStart: string;
+          blocks: ShiftBlockInput[];
+        };
+        await new Promise((r) => setTimeout(r, 600));
+        if (scenario === 'submit_deadline')
+          return json(409, { error: 'deadline_passed', message: 'The pick deadline has passed.' });
+        if (scenario === 'submit_badblock')
+          return json(422, { error: 'bad_block', message: 'Block 0 is invalid.', index: 0 });
+        if (scenario === 'submit_overlap')
+          return json(422, {
+            error: 'overlap',
+            message: 'Overlap.',
+            index: Math.min(1, blocks.length - 1),
+          });
+        if (scenario === 'submit_500')
+          return json(500, {
+            error: 'internal',
+            message: 'The shifts service is unavailable. Try again in a moment.',
+          });
+        const hours = blocks.reduce(
+          (n, b) =>
+            n +
+            (Number(b.end.slice(0, 2)) * 60 +
+              Number(b.end.slice(3)) -
+              Number(b.start.slice(0, 2)) * 60 -
+              Number(b.start.slice(3))) /
+              60,
+          0
+        );
+        if (hours < 8)
+          return json(422, {
+            error: 'under_minimum',
+            message: `You picked ${hours} hours, the minimum is 8.`,
+            hours,
+            minimum: 8,
+          });
+        submittedBlocks = blocks;
+        return json(200, {
+          shifts: [],
+          commitment: {
+            weekStart,
+            submittedAt: new Date().toISOString(),
+            scheduledHours: hours,
+            powerHours: 0,
+            powerDialPct: null,
+            powerWeek: false,
+            lightWeek: false,
+            minHoursOverride: null,
+          },
+        });
       }
       if (u.pathname.endsWith('/shift-requests-withdraw')) {
         const { requestId } = JSON.parse(String(init?.body ?? '{}'));

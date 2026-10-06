@@ -5682,6 +5682,8 @@ export interface AdminShiftMember {
   role: string;
   participates: boolean;
   ghlContactId: string | null;
+  podId: string | null;
+  podName: string | null;
 }
 
 export interface AdminShiftRollupRow {
