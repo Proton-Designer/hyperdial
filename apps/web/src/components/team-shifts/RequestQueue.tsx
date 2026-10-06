@@ -31,13 +31,16 @@ interface Props {
 export function RequestQueue({ requests, timezone, minimumHours, onDecided }: Props) {
   // Requests removed optimistically while their decision is in flight.
   const [hidden, setHidden] = useState<Record<string, ShiftRequest['status']>>({});
+  // Cards stay mounted while their decision is in flight (just visually hidden), so a failure can
+  // show its error and the server's acknowledgement request on the same card.
   const pending = useMemo(
     () =>
       requests
-        .filter((r) => r.status === 'pending' && !hidden[r.id])
+        .filter((r) => r.status === 'pending')
         .sort((a, b) => a.createdAt.localeCompare(b.createdAt)),
-    [requests, hidden]
+    [requests]
   );
+  const visibleCount = pending.filter((r) => !hidden[r.id]).length;
   const decided = useMemo(
     () =>
       [
@@ -62,21 +65,22 @@ export function RequestQueue({ requests, timezone, minimumHours, onDecided }: Pr
       <section aria-label="Waiting for review" className="space-y-3">
         <h2 className="text-section-title text-text-primary">
           Waiting for review
-          {pending.length > 0 && (
-            <span className="ml-2 text-meta font-normal text-text-muted">{pending.length}</span>
+          {visibleCount > 0 && (
+            <span className="ml-2 text-meta font-normal text-text-muted">{visibleCount}</span>
           )}
         </h2>
-        {pending.length === 0 ? (
+        {visibleCount === 0 && (
           <EmptyState
             icon={Inbox}
             title="No requests waiting"
             body="When an intern asks to move, drop or add time, it shows up here."
             className="p-8"
           />
-        ) : (
+        )}
+        {pending.length > 0 && (
           <ul className="space-y-3">
             {pending.map((r) => (
-              <li key={r.id}>
+              <li key={r.id} hidden={!!hidden[r.id]}>
                 <RequestCard
                   request={r}
                   timezone={timezone}
@@ -206,6 +210,12 @@ function RequestCard({
         onDecided();
       } else if (e instanceof ShiftsApiError && e.code === 'overlap') {
         setError('Approving this overlaps another of their shifts. Edit the schedule first.');
+      } else if (
+        e instanceof ShiftsApiError &&
+        e.code === 'bad_request' &&
+        e.details.reason === 'shift_not_scheduled'
+      ) {
+        setError('Their shift has changed since this request. Deny it, or ask them to resubmit.');
       } else {
         setError(e instanceof Error ? e.message : 'Could not save the decision. Try again.');
       }

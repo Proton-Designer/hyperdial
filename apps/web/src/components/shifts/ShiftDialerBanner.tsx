@@ -22,7 +22,7 @@ export function ShiftDialerBanner({ sessionActive }: { sessionActive: boolean })
     return () => clearInterval(id);
   }, [enabled]);
 
-  const { current, upcoming } = useMemo(() => {
+  const { current, upcoming, justEnded } = useMemo(() => {
     const scheduled = myShifts.filter((s) => s.status === 'scheduled');
     const cur = scheduled.find(
       (s) => new Date(s.startsAt).getTime() <= now && new Date(s.endsAt).getTime() > now
@@ -33,7 +33,15 @@ export function ShiftDialerBanner({ sessionActive }: { sessionActive: boolean })
           new Date(s.startsAt).getTime() > now && new Date(s.startsAt).getTime() <= now + LEAD_MS
       )
       .sort((a, b) => a.startsAt.localeCompare(b.startsAt))[0];
-    return { current: cur ?? null, upcoming: next ?? null };
+    // The backend counts dialing within 15 minutes either side of a shift, so a session that runs
+    // on just past the end is not "outside a shift" yet.
+    const ended = myShifts.some(
+      (s) =>
+        ['scheduled', 'completed'].includes(s.status) &&
+        new Date(s.endsAt).getTime() <= now &&
+        new Date(s.endsAt).getTime() > now - LEAD_MS
+    );
+    return { current: cur ?? null, upcoming: next ?? null, justEnded: ended };
   }, [myShifts, now]);
 
   if (!enabled) return null;
@@ -67,7 +75,7 @@ export function ShiftDialerBanner({ sessionActive }: { sessionActive: boolean })
   }
 
   // A running session with nothing scheduled: say so, calmly, once the person is actually dialing.
-  if (sessionActive && (isIntern || myShifts.length > 0)) {
+  if (sessionActive && !justEnded && (isIntern || myShifts.length > 0)) {
     return (
       <div
         role="status"
