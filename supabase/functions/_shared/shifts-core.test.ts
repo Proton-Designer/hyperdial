@@ -553,6 +553,7 @@ Deno.test(
     assertEquals(field({ whatWorked: '  ' }), 'bad_survey:whatWorked');
     assertEquals(field({ slowedBy: 'weather' }), 'bad_survey:slowedBy');
     assertEquals(field({ slowedBy: 'script_off', slowedNote: null }), 'bad_survey:slowedNote');
+    assertEquals(field({ slowedBy: 'script_off', slowedNote: 'ab' }), 'bad_survey:slowedNote');
     assertEquals(field({ slowedBy: 'script_off', slowedNote: 'long intro' }), 'ok');
     assertEquals(field({ listQuality: 0 }), 'bad_survey:listQuality');
     assertEquals(field({ listQuality: 6 }), 'bad_survey:listQuality');

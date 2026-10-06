@@ -802,7 +802,8 @@ export function parseSurveyInput(raw: unknown): Parsed<ShiftSurveyInput> {
   if (!(SLOWED_BY as readonly unknown[]).includes(b.slowedBy)) return badSurvey('slowedBy');
   let slowedNote: string | null = text(b.slowedNote) || null;
   if (b.slowedBy === 'nothing') slowedNote = null;
-  else if (slowedNote === null || slowedNote.length > 500) return badSurvey('slowedNote');
+  else if (slowedNote === null || slowedNote.length < 3 || slowedNote.length > 500)
+    return badSurvey('slowedNote');
   const q = b.listQuality;
   if (typeof q !== 'number' || !Number.isInteger(q) || q < 1 || q > 5)
     return badSurvey('listQuality');
