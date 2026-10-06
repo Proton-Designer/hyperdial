@@ -12,6 +12,7 @@ import {
   parseRetryBody,
   parseReviewBody,
   parseSettingsPatch,
+  sortDecidedRequests,
   syncHealth,
 } from './shifts-admin.ts';
 import { shiftErrorBody, shiftErrorStatus } from './shifts-core.ts';
@@ -370,3 +371,18 @@ Deno.test('member DTO + new error codes', () => {
     'Approving this leaves them at 4 hours, below the 8 hours minimum.'
   );
 });
+
+Deno.test(
+  'sortDecidedRequests: withdrawn requests (no reviewed_at) sort by created_at, newest first',
+  () => {
+    const rows = [
+      { id: 'denied', reviewed_at: '2026-10-06T15:00:00Z', created_at: '2026-10-06T10:00:00Z' },
+      { id: 'withdrawn', reviewed_at: null, created_at: '2026-10-06T17:00:00Z' },
+      { id: 'approved', reviewed_at: '2026-10-06T16:00:00Z', created_at: '2026-10-05T10:00:00Z' },
+    ];
+    assertEquals(
+      sortDecidedRequests(rows).map((r) => r.id),
+      ['withdrawn', 'approved', 'denied']
+    );
+  }
+);

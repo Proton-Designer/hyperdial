@@ -379,3 +379,11 @@ export async function findContactsByEmail(
       email: c.email ?? email,
     }));
 }
+
+/** Decided requests, newest first: by reviewed_at, or created_at for a withdrawn one (withdraw sets no reviewed_at). */
+export function sortDecidedRequests<T extends { reviewed_at: string | null; created_at: string }>(
+  rows: T[]
+): T[] {
+  const key = (r: T) => Date.parse(r.reviewed_at ?? r.created_at);
+  return [...rows].sort((a, b) => key(b) - key(a));
+}

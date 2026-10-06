@@ -34,6 +34,7 @@ import {
   buildCallouts,
   buildRollup,
   mapAdminMember,
+  sortDecidedRequests,
   syncHealth,
   type MemberRow,
   type OutboxHealthRow,
@@ -112,9 +113,12 @@ Deno.serve(async (req) => {
         .select('*')
         .eq('org_id', ctx.orgId)
         .neq('status', 'pending')
-        .gte('reviewed_at', decidedSince)
+        // withdraw never sets reviewed_at: a withdrawn request counts by its created_at
+        .or(
+          `reviewed_at.gte.${decidedSince},and(status.eq.withdrawn,created_at.gte.${decidedSince})`
+        )
         .in('user_id', scope)
-        .order('reviewed_at', { ascending: false })
+        .order('created_at', { ascending: false })
         .limit(PENDING_LIMIT),
       sb
         .from('shift_ghl_outbox')
@@ -163,10 +167,8 @@ Deno.serve(async (req) => {
     if (kpiRes.error) throw new Error(`shift_kpis: ${kpiRes.error.message}`);
     const kpis = (kpiRes.data ?? []) as KpiRow[];
 
-    const requestRows = [
-      ...((pendingRes.data ?? []) as RequestRow[]),
-      ...((decidedRes.data ?? []) as RequestRow[]),
-    ];
+    const decidedRows = sortDecidedRequests((decidedRes.data ?? []) as RequestRow[]);
+    const requestRows = [...((pendingRes.data ?? []) as RequestRow[]), ...decidedRows];
     const requests = await hydrateRequests(ctx, requestRows);
     const pendingShiftIds = new Set(
       ((pendingRes.data ?? []) as RequestRow[])
