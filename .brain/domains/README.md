@@ -32,6 +32,7 @@ questions code was never the right source for.
 | [Auth & Access Control](/.brain/domains/auth.md) | Supabase auth, the two authorization layers, RLS policies | `supabase/functions/_shared/auth.ts` | maintainer |
 | [Analytics & Notifications](/.brain/domains/analytics.md) | Dashboard aggregates, call events, week summaries, notifications | `supabase/functions/dashboard-stats/` | maintainer |
 | [CRM Sync (GHL)](/.brain/domains/crm.md) | GHL connect/disconnect, token storage, the crm_sync_jobs push outbox contract | `supabase/functions/ghl-*` | maintainer |
+| [Shifts](/.brain/domains/shifts.md) | Weekly intern shift commitments, requests and approval, coverage, shift KPIs, GHL sync | `supabase/functions/shifts-*`, `admin-shift*`, `apps/web/src/components/TeamShifts.tsx` | maintainer |
 | [Dispositions](/.brain/domains/dispositions.md) | The disposition list, submit_disposition's lead/DNC/GHL-outbox effects | `supabase/migrations/20260924002200_dispositions.sql` | maintainer |
 
 ---

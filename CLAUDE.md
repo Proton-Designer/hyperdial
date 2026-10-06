@@ -26,6 +26,7 @@ Functions) · Postgres · Upstash Redis · Telnyx Call Control + WebRTC
 | How campaigns and leads work | `.brain/domains/campaigns.md` |
 | How auth and RLS work | `.brain/domains/auth.md` |
 | How the dashboard and analytics work | `.brain/domains/analytics.md` |
+| How Shifts (intern weekly shifts, requests, coverage, shift KPIs) work | `.brain/domains/shifts.md` |
 | Why a decision was made | `.brain/memory/decisions.md` |
 | What is known-broken | `.brain/memory/known-issues.md` |
 | What is in flight right now | `.brain/memory/active-work.md` |

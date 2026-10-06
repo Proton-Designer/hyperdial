@@ -46,6 +46,7 @@ routing table; everything here is one hop down from it.
   - [`domains/auth.md`](/.brain/domains/auth.md) — Supabase auth, the two authorization layers, RLS
   - [`domains/analytics.md`](/.brain/domains/analytics.md) — dashboard aggregates, call events, notifications
   - [`domains/crm.md`](/.brain/domains/crm.md) — GHL connect/disconnect, token storage, the push outbox contract
+  - [`domains/shifts.md`](/.brain/domains/shifts.md) — intern shifts: weekly picks, requests, coverage, KPIs, GHL sync
   - [`domains/dispositions.md`](/.brain/domains/dispositions.md) — the disposition list, submit_disposition's lead/DNC/GHL effects
 
 **Memory** — what we know that the code does not show

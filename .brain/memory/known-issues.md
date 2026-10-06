@@ -1348,6 +1348,20 @@ prevention (an optimistic-lock/version check inside the RPC itself).
 
 ---
 
+## 40. Shifts: GoHighLevel side is unverified live, and a few edges are open (2026-10-06)
+
+Written from the Shifts reviews (`.claude/overnight/run-20261006-1130/audit/`); see `.brain/domains/shifts.md`.
+
+- **GHL not verified against a real location**: the calendar id, custom-field definition ids (a field without a definition is skipped and reported), tags, and
+  the intern contact search (`GET /contacts/?query=<email>`, exact-email filter; `POST /contacts/search` has no documented body) have only run against mocks. Clearing a
+  field sends `""`, which may be rejected for NUMERICAL/DATE definitions. Kareem owns the live pass.
+- **Config is seeded on first read**: `shift_settings`/`open_hours`/`power_windows` rows appear when the first shifts function runs for an org (`ensure_shift_config`), not at org creation.
+- **Duplicate GHL appointment after a lease retry**: a sync run killed mid-call leaves the row leased (10 min); a retry can create a second appointment. Open SHOULD: a run time budget in `shift-ghl-sync`.
+- **Dialer banner edge**: it reads the current week's cached shifts only, so a next-week shift that starts within 15 minutes of Sunday midnight is missed.
+- **Pending requests can dangle**: a manager cancelling/moving a shift does not touch its pending request; approving it later fails with `bad_request shift_not_scheduled` until denied. Self-approval by a participating manager in their own pod is not blocked.
+- **`timezone` is patchable by any manager-level role** via `admin-shift-settings-update`; changing it with shifts booked reinterprets local times. The UI does not expose it.
+- **A no-GHL org shows every outbox row as waiting** with "org has no connected GHL integration"; the UI collapses these into a single "GoHighLevel isn't connected" callout.
+
 ## Not issues — deliberate, documented elsewhere
 
 - Redis alongside Postgres → `mem.decisions`

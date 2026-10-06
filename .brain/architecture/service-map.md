@@ -33,6 +33,8 @@ other services. (This doc previously said 16 — that count was stale by
 several missions' worth of work; verified by diffing `ls supabase/functions/`
 against this doc before rewriting.)
 
+TASK-S01..S05 (2026-10-06) added 17 Shifts functions, listed in the "Shifts" section below.
+
 ## Auth posture — read this first
 
 Two independent layers, routinely confused:
@@ -132,6 +134,19 @@ functions (`funnel_summary`, `answer_rate_heatmap`, `connect_rate_by_number`,
 | `ghl-pull-worker` | Shared secret (cron, 5 min) | TASK-T1 (GHL-5): the scheduled GHL pull, disabled per-org by default (`ghl_pull_enabled`) | Medium |
 | `ghl-sync-now` | JWT (owner/admin) | TASK-T1 (GHL-5): on-demand "Sync now" — runs the same pull core as the cron worker, regardless of the enabled flag, synchronously | Medium |
 | `ghl-sync-worker` | Shared secret (cron, 60s) | The GHL **push** outbox worker (disposition → note/tag/task/DND), claims `crm_sync_jobs` via `FOR UPDATE SKIP LOCKED` | Medium |
+
+## Shifts (domain doc: `.brain/domains/shifts.md`; contract: `docs/design/shifts.md` section 3)
+
+| Function | Auth | Purpose | Risk |
+|---|---|---|---|
+| `shifts-week-get` / `shifts-submit-week` | JWT (`requireOrgRole`, any member) | Intern's week (shifts, commitment, roster, deadline) and the weekly submit | Medium |
+| `shift-requests-create` / `shift-requests-withdraw` | JWT (any member, own rows) | Move / drop / add / light-week requests; 409 `shifts_disabled` while off | Medium |
+| `admin-shifts-overview` | JWT (owner/admin/manager, pod-scoped) | One GET for every Team Shifts screen (coverage, requests, KPIs, setup, sync health) | Low |
+| `admin-shift-requests-review` / `admin-shift-update` | JWT (manager-level, pod-scoped) | Approve/deny a request; create/move/cancel/excuse a shift. Rules live in SQL (`review_shift_request`, `admin_update_shift`) | **High** |
+| `admin-shift-settings-update` / `admin-open-hours-upsert` / `admin-power-windows-upsert` / `admin-profiles-upsert` | JWT (manager-level; `enabled` owner/admin only) | Setup writes | Medium |
+| `admin-ghl-find-contact` / `admin-ghl-retry` | JWT (manager-level) | Find an intern's GHL contact by email; re-queue failed outbox rows | Low |
+| `shift-ghl-sync` | Shared secret (cron, every minute) or service-role bearer | Drains `shift_ghl_outbox` to GHL per org (appointments, fields, notes, tags) | Medium |
+| `shift-kpi-compute` / `shifts-week-lock` / `shifts-week-close` | Shared secret (cron: 15 min / hourly :05 / hourly :35) | Per-shift KPIs, deadline flags, Power week close | Medium |
 
 ## Org / auth
 

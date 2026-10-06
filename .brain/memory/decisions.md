@@ -31,6 +31,29 @@ Newest first. Each entry answers: what was decided, why, and what it rules out.
 
 ---
 
+## 2026-10-06 — Shifts: reuse the org model, `agent_state_events` and the org's GHL connection instead of the spec's own tables and secrets
+
+**Status:** Active · **Decided by:** lead (docs/design/shifts.md section 1, decisions D1, D5, D7, D8, D14); recorded by eng2 (TASK-D1). Domain: `.brain/domains/shifts.md`.
+
+**D1 — no `profiles` table.** The spec assumed intern/manager/admin roles in a new table. Tenancy already lives in `org_members` (owner/admin/manager/agent) with pods and
+`private.is_agent_in_callers_pod_scope`; a second role system would disagree with it. So intern = `agent`, "Henry" = manager (own pods) or admin, and every shifts table carries `org_id`.
+Rules out: any `is_manager()` helper of its own. Consequence: if a manager must see every intern, make them `admin`.
+
+**D5 — KPIs reuse `agent_state_events`.** The spec added a `dialer_session_events` table and edits to the dialer-session functions. The existing trigger/`transition_session` already write one row per
+session state with the server clock, including engine-driven completion, so active dialing time is derived from those rows; open rows are closed at the last contact-leg end plus `open_session_tail_minutes`.
+Rules out: touching `dialer-engine.ts` or any `dialer-session-*` function for Shifts (those paths are never local).
+
+**D7 — GHL credentials come from the org's connection, not env secrets.** Token + location come from `org_integrations` and the Vault exactly as `ghl-sync-worker` reads them; the calendar id and the
+manager's GHL user id are per-org columns on `shift_settings`. An org with no connection or no calendar leaves outbox rows pending with a clear `last_error`; it never crashes.
+
+**D8 — a separate outbox and worker.** `shift_ghl_outbox` is drained by `shift-ghl-sync` (every minute plus a nudge after writes); `crm_sync_jobs`/`ghl-sync-worker` are untouched, so a Shifts bug
+cannot stall disposition syncing. The worker enforces per-contact ordering, per-org 429/401/403 holds and timeouts.
+
+**D14 — off-shift dialing is a guarded trigger, not an engine change.** An AFTER INSERT trigger on `dial_sessions` (swallowing all errors, so it can never block a session insert) queues the Off-shift
+dialing event when Shifts is on, the agent participates and no scheduled shift is within 15 minutes. The dialer banner is purely client-side and informational.
+
+---
+
 ## 2026-09-24 — Dial capacity (`lines`) is enforced inside `claim_next_leads`, under a row lock, not by the caller
 
 **Status:** Active · **Decided by:** eng2 (TASK-P2-E2 fix-forward, item 1; lead's diff-read of the first version of this engine)
