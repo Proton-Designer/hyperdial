@@ -3,7 +3,7 @@
 // hydration and the fire-and-forget nudge of shift-ghl-sync. Pure logic lives in shifts-core.ts.
 
 import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2';
-import { corsHeaders } from './cors.ts';
+import { corsHeaders, corsPreflightResponse } from './cors.ts';
 import { requireOrgRole, type OrgRole } from './auth.ts';
 import {
   mapRequest,
@@ -198,4 +198,34 @@ export function nudgeShiftGhlSync(): void {
   // deno-lint-ignore no-explicit-any
   const rt = (globalThis as any).EdgeRuntime;
   if (rt?.waitUntil) rt.waitUntil(p);
+}
+
+/** Shared shell of the admin-* POST functions: CORS, method, manager-level auth (403 otherwise), JSON
+ *  body, and a uniform 500. `roles` narrows further (e.g. owner/admin only) when a function needs it. */
+export async function handleAdminPost(
+  req: Request,
+  name: string,
+  run: (ctx: ShiftsCtx, body: unknown) => Promise<Response>,
+  roles: OrgRole[] = MANAGER_ROLES
+): Promise<Response> {
+  if (req.method === 'OPTIONS') return corsPreflightResponse();
+  if (req.method !== 'POST')
+    return jsonResponse(405, { error: 'method_not_allowed', message: 'Use POST.' });
+  const auth = await shiftsAuth(req, roles);
+  if (auth.response) return auth.response;
+  let body: unknown = {};
+  try {
+    body = await req.json();
+  } catch {
+    body = {};
+  }
+  try {
+    return await run(auth.ctx, body);
+  } catch (e) {
+    console.error(`${name} failed:`, String(e));
+    return jsonResponse(500, {
+      error: 'server_error',
+      message: 'Something went wrong. Try again.',
+    });
+  }
 }

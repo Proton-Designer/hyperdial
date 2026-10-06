@@ -453,6 +453,7 @@ const STATUS: Record<string, number> = {
   not_pending: 409,
   under_minimum_needs_ack: 409,
   ghl_not_connected: 409,
+  ghl_error: 502,
   bad_block: 422,
   overlap: 422,
   under_minimum: 422,
@@ -506,6 +507,8 @@ export function shiftErrorMessage(code: string, d: Record<string, unknown> = {})
       return 'That is not the start of a week (a Monday).';
     case 'ghl_not_connected':
       return 'GoHighLevel is not connected for this team.';
+    case 'ghl_error':
+      return 'GoHighLevel did not answer. Try again in a moment.';
     case 'bad_block':
       return d.reason === 'in_the_past'
         ? 'That time is in the past.'
