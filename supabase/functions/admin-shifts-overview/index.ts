@@ -8,6 +8,7 @@ import {
   hydrateRequests,
   jsonResponse,
   loadNames,
+  loadSurveys,
   loadSettings,
   rpcErrorResponse,
   shiftsAuth,
@@ -33,6 +34,7 @@ import {
 import {
   buildCallouts,
   buildRollup,
+  surveySummary,
   mapAdminMember,
   sortDecidedRequests,
   syncHealth,
@@ -168,6 +170,10 @@ Deno.serve(async (req) => {
     const kpis = (kpiRes.data ?? []) as KpiRow[];
 
     const decidedRows = sortDecidedRequests((decidedRes.data ?? []) as RequestRow[]);
+    const surveys = await loadSurveys(
+      ctx,
+      shifts.map((s) => s.id)
+    );
     const requestRows = [...((pendingRes.data ?? []) as RequestRow[]), ...decidedRows];
     const requests = await hydrateRequests(ctx, requestRows);
     const pendingShiftIds = new Set(
@@ -199,7 +205,7 @@ Deno.serve(async (req) => {
       powerWindows: ((windowsRes.data ?? []) as PowerWindowRow[]).map(mapPowerWindow),
       members,
       shifts: shifts.map((s) => ({
-        ...mapShift(s, pendingShiftIds),
+        ...mapShift(s, pendingShiftIds, surveys),
         userName: nameOf.get(s.user_id) ?? 'Member',
       })),
       commitments: commitments.map((c) => ({ ...mapCommitment(c), userId: c.user_id })),
@@ -216,6 +222,7 @@ Deno.serve(async (req) => {
         kpis,
       }),
       powerWeekCallouts: weekClosed ? buildCallouts(commitments, kpis, shortNames) : [],
+      surveySummary: surveySummary([...surveys.values()]),
       syncHealth: syncHealth(outbox, nameOf, {
         pendingCount: pendingCountRes.count ?? 0,
         ghlConnected: Boolean(

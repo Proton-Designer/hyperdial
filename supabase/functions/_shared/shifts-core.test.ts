@@ -25,6 +25,10 @@ import {
   type RequestRow,
   type ShiftRow,
   type ShiftSettingsRow,
+  clockInLateMinutes,
+  mapKpi,
+  parseClockBody,
+  parseSurveyInput,
 } from './shifts-core.ts';
 
 const TZ = 'America/Chicago';
@@ -141,6 +145,9 @@ Deno.test('mapShift / mapCommitment / mapRosterEntry keys and values', () => {
   assertEquals(s.hasPendingRequest, true);
   assertEquals(Object.keys(s).sort(), [
     'activity',
+    'clockInLateMinutes',
+    'clockedInAt',
+    'clockedOutAt',
     'endsAt',
     'ghlSyncStatus',
     'hasPendingRequest',
@@ -150,6 +157,7 @@ Deno.test('mapShift / mapCommitment / mapRosterEntry keys and values', () => {
     'source',
     'startsAt',
     'status',
+    'survey',
     'userId',
     'weekStart',
   ]);
@@ -469,4 +477,130 @@ Deno.test('buildWeekInfo: beforeLaunch only when the pick deadline fell before e
     true
   );
   assertEquals(buildWeekInfo('2026-10-05', withEnabled(null), null, tue).beforeLaunch, false);
+});
+
+const goodSurvey = {
+  topObjection: 'fees',
+  objectionNote: '  asked about the fee  ',
+  whatWorked: 'The referral opener',
+  slowedBy: 'nothing',
+  slowedNote: 'ignored',
+  listQuality: 4,
+};
+
+Deno.test(
+  'clockInLateMinutes: whole minutes after the start, 0 when early, null when not clocked in',
+  () => {
+    const start = '2026-10-13T19:00:00Z';
+    assertEquals(clockInLateMinutes(start, null), null);
+    assertEquals(clockInLateMinutes(start, '2026-10-13T19:07:59Z'), 7);
+    assertEquals(clockInLateMinutes(start, '2026-10-13T19:00:00Z'), 0);
+    assertEquals(clockInLateMinutes(start, '2026-10-13T18:50:00Z'), 0);
+  }
+);
+
+Deno.test('mapShift carries the clock fields and the survey; mapKpi the clock fields', () => {
+  const row = shiftRow({ clocked_in_at: '2026-10-13T12:08:30Z', clocked_out_at: null });
+  const none = mapShift(row);
+  assertEquals(none.clockedInAt, '2026-10-13T12:08:30.000Z');
+  assertEquals(none.clockedOutAt, null);
+  assertEquals(none.survey, null);
+  assertEquals(none.clockInLateMinutes, clockInLateMinutes(row.starts_at, row.clocked_in_at));
+  const withSurvey = mapShift(
+    row,
+    new Set(),
+    new Map([
+      [
+        row.id,
+        {
+          shift_id: row.id,
+          top_objection: 'fees',
+          objection_note: 'n',
+          what_worked: 'w',
+          slowed_by: 'nothing',
+          slowed_note: null,
+          list_quality: 5,
+          submitted_at: '2026-10-13T14:00:00Z',
+        },
+      ],
+    ])
+  );
+  assertEquals(withSurvey.survey?.listQuality, 5);
+  assertEquals(withSurvey.survey?.submittedAt, '2026-10-13T14:00:00.000Z');
+  const plain = mapShift(shiftRow());
+  assertEquals(
+    [plain.clockedInAt, plain.clockedOutAt, plain.clockInLateMinutes, plain.survey],
+    [null, null, null, null]
+  );
+});
+
+Deno.test(
+  'parseSurveyInput: trims, requires the notes, nothing drops the slowed note, names the bad field',
+  () => {
+    const ok = parseSurveyInput(goodSurvey);
+    assertEquals(ok.ok, true);
+    if (ok.ok) {
+      assertEquals(ok.value.objectionNote, 'asked about the fee');
+      assertEquals(ok.value.slowedNote, null);
+    }
+    const field = (over: Record<string, unknown>) => {
+      const r = parseSurveyInput({ ...goodSurvey, ...over });
+      return r.ok ? 'ok' : `${r.code}:${r.detail.field}`;
+    };
+    assertEquals(field({ topObjection: 'nope' }), 'bad_survey:topObjection');
+    assertEquals(field({ objectionNote: 'ab' }), 'bad_survey:objectionNote');
+    assertEquals(field({ objectionNote: 'x'.repeat(501) }), 'bad_survey:objectionNote');
+    assertEquals(field({ whatWorked: '  ' }), 'bad_survey:whatWorked');
+    assertEquals(field({ slowedBy: 'weather' }), 'bad_survey:slowedBy');
+    assertEquals(field({ slowedBy: 'script_off', slowedNote: null }), 'bad_survey:slowedNote');
+    assertEquals(field({ slowedBy: 'script_off', slowedNote: 'long intro' }), 'ok');
+    assertEquals(field({ listQuality: 0 }), 'bad_survey:listQuality');
+    assertEquals(field({ listQuality: 6 }), 'bad_survey:listQuality');
+    assertEquals(field({ listQuality: 2.5 }), 'bad_survey:listQuality');
+    assertEquals(field({ listQuality: '3' }), 'bad_survey:listQuality');
+    assertEquals(parseSurveyInput('x').ok, false);
+  }
+);
+
+Deno.test('parseClockBody: start needs only the shift, end carries an optional survey', () => {
+  const id = '5b010000-0000-4000-8000-0000000000e1';
+  assertEquals(parseClockBody({ shiftId: id, action: 'start' }).ok, true);
+  const end = parseClockBody({ shiftId: id, action: 'end', survey: goodSurvey });
+  assertEquals(end.ok && end.value.survey?.listQuality, 4);
+  const noSurvey = parseClockBody({ shiftId: id, action: 'end' });
+  assertEquals(noSurvey.ok && noSurvey.value.survey, null); // whether it is required is SQL's call (shift activity)
+  const bad = parseClockBody({
+    shiftId: id,
+    action: 'end',
+    survey: { ...goodSurvey, listQuality: 9 },
+  });
+  assertEquals(bad.ok, false);
+  assertEquals(parseClockBody({ shiftId: 'x', action: 'start' }).ok, false);
+  const act = parseClockBody({ shiftId: id, action: 'pause' });
+  assertEquals(!act.ok && act.code, 'bad_request');
+});
+
+Deno.test('clock error codes: statuses and the detail keys that reach the client', () => {
+  const statuses: Record<string, number> = {
+    shift_not_scheduled: 409,
+    too_early: 409,
+    shift_over: 409,
+    not_clocked_in: 409,
+    already_ended: 409,
+    survey_required: 422,
+    bad_survey: 422,
+  };
+  for (const [code, status] of Object.entries(statuses))
+    assertEquals(shiftErrorStatus(code), status);
+  const e = parseShiftRpcError({
+    code: 'P0001',
+    message: 'too_early',
+    details: JSON.stringify({ opensAt: '2026-10-13T18:45:00Z', secret: 'x' }),
+  });
+  assertEquals(e?.detail, { opensAt: '2026-10-13T18:45:00Z' });
+  assertEquals(
+    parseShiftRpcError({ code: 'P0001', message: 'bad_survey', details: '{"field":"listQuality"}' })
+      ?.detail,
+    { field: 'listQuality' }
+  );
 });

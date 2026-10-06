@@ -6,6 +6,7 @@ import {
   hydrateRequests,
   jsonResponse,
   loadNames,
+  loadSurveys,
   loadSettings,
   shiftsAuth,
   shiftsError,
@@ -197,6 +198,10 @@ Deno.serve(async (req) => {
     }
 
     const live = pickLiveShift((liveRes.data ?? []) as ShiftRow[], nowMs);
+    const surveys = await loadSurveys(ctx, [
+      ...myShifts.map((s) => s.id),
+      ...(live ? [live.id] : []),
+    ]);
 
     return jsonResponse(200, {
       role: ctx.role,
@@ -205,12 +210,12 @@ Deno.serve(async (req) => {
       openHours: ((openHoursRes.data ?? []) as OpenHoursRow[]).map(mapOpenHours),
       powerWindows: ((windowsRes.data ?? []) as PowerWindowRow[]).map(mapPowerWindow),
       roster: ((rosterRes.data ?? []) as RosterRow[]).map((r) => mapRosterEntry(r, ctx.userId)),
-      myShifts: myShifts.map((s) => mapShift(s, pendingShiftIds)),
+      myShifts: myShifts.map((s) => mapShift(s, pendingShiftIds, surveys)),
       commitment: commitment ? mapCommitment(commitment) : null,
       kpis: kpis.map(mapKpi),
       myRequests: await hydrateRequests(ctx, (requestsRes.data ?? []) as RequestRow[]),
       powerWeekHistory,
-      liveShift: live ? mapShift(live, pendingShiftIds) : null,
+      liveShift: live ? mapShift(live, pendingShiftIds, surveys) : null,
     });
   } catch (e) {
     console.error('shifts-week-get failed:', String(e));

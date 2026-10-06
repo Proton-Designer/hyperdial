@@ -55,6 +55,19 @@ export interface ShiftRow {
   status: string;
   source: string;
   ghl_sync_status: string;
+  clocked_in_at?: string | null;
+  clocked_out_at?: string | null;
+}
+
+export interface SurveyRow {
+  shift_id: string;
+  top_objection: string;
+  objection_note: string;
+  what_worked: string;
+  slowed_by: string;
+  slowed_note: string | null;
+  list_quality: number;
+  submitted_at: string;
 }
 
 export interface CommitmentRow {
@@ -92,6 +105,9 @@ export interface KpiRow {
   connect_rate_pct: number | string | null;
   dispositions: Record<string, number> | null;
   flags: string[] | null;
+  clocked_in_at?: string | null;
+  clocked_out_at?: string | null;
+  clock_in_late_minutes?: number | null;
 }
 
 export interface RequestRow {
@@ -275,7 +291,31 @@ export const mapPowerWindow = (r: PowerWindowRow) => ({
   active: r.active,
 });
 
-export function mapShift(r: ShiftRow, pendingShiftIds: ReadonlySet<string> = new Set()) {
+/** Whole minutes the clock-in came after the picked start (0 when on time or early); null when not clocked in. */
+export function clockInLateMinutes(
+  startsAt: string,
+  clockedInAt: string | null | undefined
+): number | null {
+  if (!clockedInAt) return null;
+  return Math.max(0, Math.floor((Date.parse(clockedInAt) - Date.parse(startsAt)) / 60000));
+}
+
+export const mapSurvey = (r: SurveyRow) => ({
+  topObjection: r.top_objection,
+  objectionNote: r.objection_note,
+  whatWorked: r.what_worked,
+  slowedBy: r.slowed_by,
+  slowedNote: r.slowed_note,
+  listQuality: r.list_quality,
+  submittedAt: isoz(r.submitted_at),
+});
+
+export function mapShift(
+  r: ShiftRow,
+  pendingShiftIds: ReadonlySet<string> = new Set(),
+  surveys: ReadonlyMap<string, SurveyRow> = new Map()
+) {
+  const survey = surveys.get(r.id);
   return {
     id: r.id,
     userId: r.user_id,
@@ -289,6 +329,10 @@ export function mapShift(r: ShiftRow, pendingShiftIds: ReadonlySet<string> = new
     source: r.source,
     ghlSyncStatus: r.ghl_sync_status,
     hasPendingRequest: pendingShiftIds.has(r.id),
+    clockedInAt: isoz(r.clocked_in_at ?? null),
+    clockedOutAt: isoz(r.clocked_out_at ?? null),
+    clockInLateMinutes: clockInLateMinutes(r.starts_at, r.clocked_in_at),
+    survey: survey ? mapSurvey(survey) : null,
   };
 }
 
@@ -327,6 +371,9 @@ export const mapKpi = (r: KpiRow) => ({
   connectRatePct: num(r.connect_rate_pct),
   dispositions: r.dispositions ?? {},
   flags: r.flags ?? [],
+  clockedInAt: isoz(r.clocked_in_at ?? null),
+  clockedOutAt: isoz(r.clocked_out_at ?? null),
+  clockInLateMinutes: r.clock_in_late_minutes ?? null,
 });
 
 export const mapRosterEntry = (r: RosterRow, viewerId: string) => ({
@@ -464,6 +511,13 @@ const STATUS: Record<string, number> = {
   under_minimum_needs_ack: 409,
   ghl_not_connected: 409,
   ghl_error: 502,
+  shift_not_scheduled: 409,
+  too_early: 409,
+  shift_over: 409,
+  not_clocked_in: 409,
+  already_ended: 409,
+  survey_required: 422,
+  bad_survey: 422,
   bad_block: 422,
   overlap: 422,
   under_minimum: 422,
@@ -519,6 +573,20 @@ export function shiftErrorMessage(code: string, d: Record<string, unknown> = {})
       return 'GoHighLevel is not connected for this team.';
     case 'ghl_error':
       return 'GoHighLevel did not answer. Try again in a moment.';
+    case 'shift_not_scheduled':
+      return 'That shift is no longer scheduled.';
+    case 'too_early':
+      return 'You can start a shift up to 15 minutes before it begins.';
+    case 'shift_over':
+      return 'That shift is already over.';
+    case 'not_clocked_in':
+      return 'Start the shift first.';
+    case 'already_ended':
+      return 'You already ended that shift.';
+    case 'survey_required':
+      return 'Answer the short end-of-shift survey to end your shift.';
+    case 'bad_survey':
+      return 'Check your survey answers.';
     case 'bad_block':
       return d.reason === 'in_the_past'
         ? 'That time is in the past.'
@@ -547,7 +615,17 @@ export function shiftErrorStatus(code: string): number {
   return STATUS[code] ?? 500;
 }
 
-const DETAIL_KEYS = ['index', 'reason', 'hours', 'minimum', 'hoursAfter', 'length', 'deadline'];
+const DETAIL_KEYS = [
+  'index',
+  'reason',
+  'hours',
+  'minimum',
+  'hoursAfter',
+  'length',
+  'deadline',
+  'opensAt',
+  'field',
+];
 
 /** Recognises an error raised by one of our SQL functions (`P0001`, message = a known code). */
 export function parseShiftRpcError(
@@ -673,4 +751,89 @@ export function parseCreateRequestBody(body: unknown): Parsed<CreateRequestBody>
       reason: b.reason,
     },
   };
+}
+
+// ---------------------------------------------------------------------------------------------
+// Clock in/out + the end-of-shift survey (docs/design/shifts.md section 4b)
+// ---------------------------------------------------------------------------------------------
+
+export const TOP_OBJECTIONS = [
+  'too_busy',
+  'enough_work',
+  'fees',
+  'dont_trust_apps',
+  'not_interested_app_jobs',
+  'other',
+] as const;
+export const SLOWED_BY = [
+  'bad_numbers',
+  'dialer_issue',
+  'didnt_know_answer',
+  'script_off',
+  'nothing',
+] as const;
+
+export interface ShiftSurveyInput {
+  topObjection: (typeof TOP_OBJECTIONS)[number];
+  objectionNote: string;
+  whatWorked: string;
+  slowedBy: (typeof SLOWED_BY)[number];
+  slowedNote: string | null;
+  listQuality: 1 | 2 | 3 | 4 | 5;
+}
+
+const badSurvey = (field: string): Parsed<never> => ({
+  ok: false,
+  code: 'bad_survey',
+  detail: { field },
+});
+
+/** The same rules clock_shift enforces in SQL, so the client gets the offending field either way. */
+export function parseSurveyInput(raw: unknown): Parsed<ShiftSurveyInput> {
+  const b = raw as Record<string, unknown> | null;
+  if (!b || typeof b !== 'object') return { ok: false, code: 'survey_required', detail: {} };
+  const text = (v: unknown) => (typeof v === 'string' ? v.trim() : '');
+  if (!(TOP_OBJECTIONS as readonly unknown[]).includes(b.topObjection))
+    return badSurvey('topObjection');
+  const objectionNote = text(b.objectionNote);
+  if (objectionNote.length < 3 || objectionNote.length > 500) return badSurvey('objectionNote');
+  const whatWorked = text(b.whatWorked);
+  if (whatWorked.length < 3 || whatWorked.length > 500) return badSurvey('whatWorked');
+  if (!(SLOWED_BY as readonly unknown[]).includes(b.slowedBy)) return badSurvey('slowedBy');
+  let slowedNote: string | null = text(b.slowedNote) || null;
+  if (b.slowedBy === 'nothing') slowedNote = null;
+  else if (slowedNote === null || slowedNote.length > 500) return badSurvey('slowedNote');
+  const q = b.listQuality;
+  if (typeof q !== 'number' || !Number.isInteger(q) || q < 1 || q > 5)
+    return badSurvey('listQuality');
+  return {
+    ok: true,
+    value: {
+      topObjection: b.topObjection as ShiftSurveyInput['topObjection'],
+      objectionNote,
+      whatWorked,
+      slowedBy: b.slowedBy as ShiftSurveyInput['slowedBy'],
+      slowedNote,
+      listQuality: q as ShiftSurveyInput['listQuality'],
+    },
+  };
+}
+
+export interface ClockBody {
+  shiftId: string;
+  action: 'start' | 'end';
+  survey: ShiftSurveyInput | null;
+}
+
+/** `survey` is only checked here when sent; whether it is REQUIRED depends on the shift (SQL decides). */
+export function parseClockBody(body: unknown): Parsed<ClockBody> {
+  const b = body as { shiftId?: unknown; action?: unknown; survey?: unknown } | null;
+  if (!b || !isUuid(b.shiftId)) return { ok: false, code: 'not_found', detail: {} };
+  if (b.action !== 'start' && b.action !== 'end')
+    return { ok: false, code: 'bad_request', detail: { reason: 'bad_action' } };
+  if (b.action === 'start' || b.survey === undefined || b.survey === null)
+    return { ok: true, value: { shiftId: b.shiftId, action: b.action, survey: null } };
+  const s = parseSurveyInput(b.survey);
+  if (!s.ok) return s;
+  return { ok: true, value: { shiftId: b.shiftId, action: 'end', survey: s.value } };
 }

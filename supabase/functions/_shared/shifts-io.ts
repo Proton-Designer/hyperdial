@@ -15,6 +15,7 @@ import {
   type RequestRow,
   type ShiftRow,
   type ShiftSettingsRow,
+  type SurveyRow,
 } from './shifts-core.ts';
 
 export interface ShiftsCtx {
@@ -120,6 +121,21 @@ export async function loadNames(
   });
   if (error) throw new Error(`shift_member_names: ${error.message}`);
   return new Map((data as { user_id: string; name: string }[]).map((r) => [r.user_id, r.name]));
+}
+
+/** shift_surveys rows by shift id (RLS-independent: service role; callers only pass ids they may see). */
+export async function loadSurveys(
+  ctx: ShiftsCtx,
+  shiftIds: string[]
+): Promise<Map<string, SurveyRow>> {
+  if (shiftIds.length === 0) return new Map();
+  const { data, error } = await ctx.supabase
+    .from('shift_surveys')
+    .select('*')
+    .eq('org_id', ctx.orgId)
+    .in('shift_id', shiftIds);
+  if (error) throw new Error(`shift_surveys: ${error.message}`);
+  return new Map((data as SurveyRow[]).map((r) => [r.shift_id, r]));
 }
 
 const COUNTED = ['scheduled', 'completed', 'missed'];

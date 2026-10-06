@@ -7,10 +7,13 @@ import {
   isUuid,
   isYmd,
   powerWeekSentence,
+  SLOWED_BY,
+  TOP_OBJECTIONS,
   type CommitmentRow,
   type KpiRow,
   type Parsed,
   type ShiftRow,
+  type SurveyRow,
 } from './shifts-core.ts';
 
 const bad = <T>(reason: string): Parsed<T> => ({
@@ -386,4 +389,31 @@ export function sortDecidedRequests<T extends { reviewed_at: string | null; crea
 ): T[] {
   const key = (r: T) => Date.parse(r.reviewed_at ?? r.created_at);
   return [...rows].sort((a, b) => key(b) - key(a));
+}
+
+/** Survey answers of the viewed week (pod-scoped by the caller): objection and slow-down counts, average list quality. */
+export function surveySummary(
+  rows: Pick<SurveyRow, 'top_objection' | 'slowed_by' | 'list_quality'>[]
+) {
+  const topObjections = Object.fromEntries(TOP_OBJECTIONS.map((k) => [k, 0])) as Record<
+    (typeof TOP_OBJECTIONS)[number],
+    number
+  >;
+  const slowedBy = Object.fromEntries(SLOWED_BY.map((k) => [k, 0])) as Record<
+    (typeof SLOWED_BY)[number],
+    number
+  >;
+  let total = 0;
+  for (const r of rows) {
+    if (r.top_objection in topObjections)
+      topObjections[r.top_objection as keyof typeof topObjections] += 1;
+    if (r.slowed_by in slowedBy) slowedBy[r.slowed_by as keyof typeof slowedBy] += 1;
+    total += r.list_quality;
+  }
+  return {
+    responses: rows.length,
+    topObjections,
+    slowedBy,
+    avgListQuality: rows.length ? Math.round((total / rows.length) * 10) / 10 : null,
+  };
 }

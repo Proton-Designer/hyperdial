@@ -4,6 +4,7 @@
 import {
   handleAdminPost,
   jsonResponse,
+  loadSurveys,
   nudgeShiftGhlSync,
   rpcErrorResponse,
   shiftsError,
@@ -29,6 +30,7 @@ Deno.serve((req) =>
     });
     if (error) return rpcErrorResponse(error, 'admin_update_shift');
     nudgeShiftGhlSync();
-    return jsonResponse(200, { shift: mapShift(data as ShiftRow) });
+    const row = data as ShiftRow;
+    return jsonResponse(200, { shift: mapShift(row, new Set(), await loadSurveys(ctx, [row.id])) });
   })
 );

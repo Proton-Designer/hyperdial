@@ -13,6 +13,7 @@ import {
   parseReviewBody,
   parseSettingsPatch,
   sortDecidedRequests,
+  surveySummary,
   syncHealth,
 } from './shifts-admin.ts';
 import { shiftErrorBody, shiftErrorStatus } from './shifts-core.ts';
@@ -384,5 +385,28 @@ Deno.test(
       sortDecidedRequests(rows).map((r) => r.id),
       ['withdrawn', 'approved', 'denied']
     );
+  }
+);
+
+Deno.test(
+  'surveySummary: counts every objection/slow-down key (zeros included) and averages list quality',
+  () => {
+    const empty = surveySummary([]);
+    assertEquals(empty.responses, 0);
+    assertEquals(empty.avgListQuality, null);
+    assertEquals(Object.keys(empty.topObjections).length, 6);
+    assertEquals(Object.keys(empty.slowedBy).length, 5);
+    const s = surveySummary([
+      { top_objection: 'fees', slowed_by: 'nothing', list_quality: 4 },
+      { top_objection: 'fees', slowed_by: 'bad_numbers', list_quality: 3 },
+      { top_objection: 'too_busy', slowed_by: 'nothing', list_quality: 5 },
+    ]);
+    assertEquals(s.responses, 3);
+    assertEquals(s.topObjections.fees, 2);
+    assertEquals(s.topObjections.too_busy, 1);
+    assertEquals(s.topObjections.other, 0);
+    assertEquals(s.slowedBy.nothing, 2);
+    assertEquals(s.slowedBy.bad_numbers, 1);
+    assertEquals(s.avgListQuality, 4);
   }
 );
