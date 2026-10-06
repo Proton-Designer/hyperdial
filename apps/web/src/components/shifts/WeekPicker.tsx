@@ -71,7 +71,18 @@ export function WeekPicker({ week, onSubmitted, onClosed }: WeekPickerProps) {
   );
 
   const dirty = serializePicks(picks) !== baseline;
-  const { hours, powerHours } = totals(picks, days);
+  const picked = totals(picks, days);
+  // Shifts the manager set or approved (request/admin) count toward the minimum on the server, so
+  // they count here too; they just can't be edited in the picker.
+  const lockedHours = week.myShifts
+    .filter(
+      (s) =>
+        s.source !== 'pick' &&
+        (s.status === 'scheduled' || s.status === 'completed' || s.status === 'missed')
+    )
+    .reduce((n, s) => n + s.hours, 0);
+  const hours = picked.hours + lockedHours;
+  const powerHours = picked.powerHours;
   const min = info.minHours;
   const missing = Math.max(0, min - hours);
   const blocks = useMemo(() => toBlocks(picks), [picks]);
@@ -236,6 +247,11 @@ export function WeekPicker({ week, onSubmitted, onClosed }: WeekPickerProps) {
                 <Zap className="h-3 w-3" /> {fmtHours(powerHours)} high leverage
               </span>
               <span className="text-meta text-text-muted">· {fmtHours(min)} minimum</span>
+              {lockedHours > 0 && (
+                <span className="text-meta text-text-muted">
+                  · includes {fmtHours(lockedHours)} set by your manager
+                </span>
+              )}
             </div>
             <Progress
               value={Math.min(100, (hours / min) * 100)}

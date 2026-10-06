@@ -58,7 +58,7 @@ import {
   zonedInstant,
 } from './shiftFormat';
 
-export const REASON_MIN = 20;
+const REASON_MIN = 20;
 
 export interface RequestChangeModalProps {
   open: boolean;

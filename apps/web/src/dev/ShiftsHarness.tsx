@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { Shifts } from '../components/Shifts';
+import { TeamShifts } from '../components/TeamShifts';
+import { applyAdminUpdate, buildAdminOverview } from './ShiftsTeamFixtures';
 import { Toaster } from '@/components/ui/sonner';
 import type {
   Shift,
@@ -27,7 +29,7 @@ import type {
  *   slow             2.5s latency (skeleton)
  * Later tasks (F02-F06) extend this file with picker/team fixtures.
  */
-const TZ = 'America/Chicago';
+export const TZ = 'America/Chicago';
 const ME = 'dev-me';
 const FIXTURE_ORG_ID = 'dev-fixture-org';
 
@@ -38,20 +40,20 @@ function dtfParts(d: Date, opts: Intl.DateTimeFormatOptions) {
     ...opts,
   }).formatToParts(d);
 }
-function localYmd(d: Date): string {
+export function localYmd(d: Date): string {
   const p = dtfParts(d, { year: 'numeric', month: '2-digit', day: '2-digit' });
   const g = (t: string) => p.find((x) => x.type === t)!.value;
   return `${g('year')}-${g('month')}-${g('day')}`;
 }
-function addDays(ymd: string, n: number): string {
+export function addDays(ymd: string, n: number): string {
   return new Date(new Date(`${ymd}T12:00:00Z`).getTime() + n * 86400000).toISOString().slice(0, 10);
 }
-function mondayOf(ymd: string): string {
+export function mondayOf(ymd: string): string {
   const dow = (new Date(`${ymd}T12:00:00Z`).getUTCDay() + 6) % 7; // Mon=0
   return addDays(ymd, -dow);
 }
 /** Local date + HH:MM in TZ -> UTC ISO (per-date offset, so DST-correct). */
-function zoned(ymd: string, hhmm: string): string {
+export function zoned(ymd: string, hhmm: string): string {
   const [h, m] = hhmm.split(':').map(Number);
   const [y, mo, d] = ymd.split('-').map(Number);
   let utc = Date.UTC(y, mo - 1, d, h, m);
@@ -70,7 +72,7 @@ function zoned(ymd: string, hhmm: string): string {
   return new Date(utc).toISOString();
 }
 
-const SETTINGS: ShiftSettings = {
+export const SETTINGS: ShiftSettings = {
   enabled: true,
   timezone: TZ,
   minWeeklyHours: 8,
@@ -87,10 +89,10 @@ const SETTINGS: ShiftSettings = {
   ghlCalendarId: null,
   ghlOwnerUserId: null,
 };
-const OPEN_HOURS = [1, 2, 3, 4, 5]
+export const OPEN_HOURS = [1, 2, 3, 4, 5]
   .map((d) => ({ isoWeekday: d, openFrom: '07:00', openUntil: '21:00' }))
   .concat([{ isoWeekday: 6, openFrom: '07:00', openUntil: '12:00' }]);
-const POWER_WINDOWS = [
+export const POWER_WINDOWS = [
   {
     id: 'pw1',
     label: 'Morning',
@@ -118,6 +120,8 @@ const POWER_WINDOWS = [
 ];
 const OTHERS = ['Sara K.', 'Omar B.', 'Priya N.', 'Liam T.', 'Maya R.'];
 
+/** Set once the stubbed admin-shift-settings-update ran, so a 'disabled' scenario flips on. */
+let adminEnabled = false;
 let seq = 0;
 /** Blocks last accepted by the stubbed shifts-submit-week, so the refetch after a submit shows them. */
 let submittedBlocks: ShiftBlockInput[] | null = null;
@@ -455,7 +459,11 @@ function useShiftsFixtureStubs(scenario: string) {
       if (!u.pathname.includes('/functions/v1/') && !/\/(shifts?|admin)-/.test(u.pathname))
         return originalFetch(url as RequestInfo, init);
       if (scenario === 'slow') await new Promise((r) => setTimeout(r, 2500));
-      if (scenario === 'disabled')
+      if (
+        scenario === 'disabled' &&
+        !adminEnabled &&
+        !u.pathname.endsWith('/admin-shift-settings-update')
+      )
         return json(409, {
           error: 'shifts_disabled',
           message: 'Shifts is not enabled for this organization.',
@@ -465,6 +473,19 @@ function useShiftsFixtureStubs(scenario: string) {
           error: 'internal',
           message: 'The shifts service is unavailable. Try again in a moment.',
         });
+      if (u.pathname.endsWith('/admin-shifts-overview')) {
+        return json(200, buildAdminOverview(scenario, u.searchParams.get('week')));
+      }
+      if (u.pathname.endsWith('/admin-shift-settings-update')) {
+        adminEnabled = true;
+        await new Promise((r) => setTimeout(r, 500));
+        return json(200, { settings: { ...SETTINGS, enabled: true } });
+      }
+      if (u.pathname.endsWith('/admin-shift-update')) {
+        await new Promise((r) => setTimeout(r, 500));
+        const out = applyAdminUpdate(scenario, JSON.parse(String(init?.body ?? '{}')));
+        return out.error ? json(out.error.status, out.error.body) : json(200, { shift: out.shift });
+      }
       if (u.pathname.endsWith('/shifts-week-get')) {
         const week = u.searchParams.get('week') ?? mondayOf(localYmd(new Date()));
         return json(200, buildWeek(scenario, week));
@@ -581,10 +602,13 @@ const SCENARIOS = [
   'request_pending',
   'request_started',
   'request_500',
+  'update_overlap',
 ];
 
 export function ShiftsHarness() {
-  const scenario = new URLSearchParams(window.location.search).get('scenario') ?? 'default';
+  const params = new URLSearchParams(window.location.search);
+  const scenario = params.get('scenario') ?? 'default';
+  const team = params.get('view') === 'team';
   useShiftsFixtureStubs(scenario);
   return (
     <div className="min-h-screen bg-surface-0 font-sans text-text-primary">
@@ -593,17 +617,23 @@ export function ShiftsHarness() {
         className="flex flex-wrap items-center gap-2 border-b border-border-subtle bg-surface-1 px-4 py-2 text-xs"
       >
         <span className="text-text-muted">Shifts harness (fixtures):</span>
+        <a
+          href={`?dev_shifts=1&view=${team ? 'intern' : 'team'}&scenario=${scenario}`}
+          className="rounded-full border border-border-subtle px-2 py-0.5 text-text-primary"
+        >
+          {team ? 'Team view' : 'Intern view'} (switch)
+        </a>
         {SCENARIOS.map((s) => (
           <a
             key={s}
-            href={`?dev_shifts=1&scenario=${s}`}
+            href={`?dev_shifts=1${team ? '&view=team' : ''}&scenario=${s}`}
             className={`rounded-full px-2 py-0.5 ${s === scenario ? 'bg-accent-to/15 text-accent-to' : 'text-text-secondary hover:text-text-primary'}`}
           >
             {s}
           </a>
         ))}
       </nav>
-      <Shifts />
+      {team ? <TeamShifts canEnable /> : <Shifts />}
       <Toaster theme="dark" position="bottom-right" />
     </div>
   );

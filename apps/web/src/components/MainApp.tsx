@@ -341,7 +341,7 @@ export function MainApp() {
           )}
           {activeTab === 'team_shifts' && (
             <PageTransition>
-              <TeamShifts />
+              <TeamShifts canEnable={role === 'owner' || role === 'admin'} />
             </PageTransition>
           )}
           {activeTab === 'settings' && (

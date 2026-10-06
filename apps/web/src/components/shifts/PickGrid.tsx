@@ -286,7 +286,7 @@ export function PickGrid({ days, picks, locked, headcount, onChange }: PickGridP
                   aria-disabled={isLocked || undefined}
                   aria-label={`${day.long} ${fmtDateOnly(day.date)}, ${minRangeLabel(m, m + SLOT)}${
                     isLocked ? ', set by your manager' : act ? ', picked' : ''
-                  }${power ? ', high leverage' : ''}${names ? `, ${names.length} others working` : ''}`}
+                  }${power ? ', high leverage' : ''}${names ? `, ${names.length} ${names.length === 1 ? 'other' : 'others'} working` : ''}`}
                   onFocus={(e) => {
                     setFocus({ dayIdx, min: m });
                     if (!draftRef.current && e.currentTarget.matches(':focus-visible')) {
