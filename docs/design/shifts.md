@@ -63,6 +63,17 @@ Errors: non-2xx with `{ "error": "<code>", "message": "<human sentence>", ...det
 `reason_too_short` 422, `shift_started` 409, `request_pending` 409, `under_minimum_needs_ack` 409
 `{hoursAfter, minimum}`, `not_found` 404, `ghl_not_connected` 409.
 
+**Additions from S01/S02 (eng1, lead-approved 12:2x; full list in the run's audit/S02/notes.md):**
+`bad_week` 422 (week is not a Monday) · `bad_request` 422 `{reason}` (bad_type, missing_time, bad_activity,
+light_week_hours, past_week, missing_shift, bad_date, bad_time, bad_shift_id) · `not_pending` 409 · `server_error` 500 ·
+`method_not_allowed` 405. `bad_block` detail = `{index, reason}` on submit (reason: bad_format, outside_week, bad_time_step,
+end_before_start, bad_activity, outside_open_hours); a request's new time gives `{reason:'in_the_past'}` with no index.
+`overlap` may omit `index` (`{reason:'conflicts_with_existing_shift'}`). `under_minimum` counts every counted shift that week
+(picks + request/admin shifts; counted = scheduled, completed, missed). light_week takes an optional `date` (any day of the
+target week, default next week); requestedMinHours > 0 and below the org minimum. Every timestamp in a response is UTC `...Z`;
+`weekStart`/`date` are plain `YYYY-MM-DD`. `myShifts` holds every status (the client hides cancelled); roster = scheduled +
+completed shifts. hoursBefore/hoursAfter use the counted-hours rule above.
+
 Shared types (mirror exactly in `api.ts`):
 
 ```ts
