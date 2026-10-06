@@ -16,6 +16,7 @@ import {
   type ShiftsWeekResponse,
 } from '@/lib/api';
 import { useShiftsSnapshot } from '@/contexts/ShiftsContext';
+import { applyClock } from './shifts/clockModel';
 import { MyShifts } from './shifts/MyShifts';
 import { RequestsList } from './shifts/RequestsList';
 import { RequestChangeModal } from './shifts/RequestChangeModal';
@@ -109,8 +110,9 @@ export function Shifts() {
       const swap = (w: ShiftsWeekResponse | null) =>
         w && {
           ...w,
-          myShifts: w.myShifts.map((x) => (x.id === updated.id ? { ...x, ...updated } : x)),
-          liveShift: w.liveShift?.id === updated.id ? { ...w.liveShift, ...updated } : w.liveShift,
+          myShifts: w.myShifts.map((x) => (x.id === updated.id ? applyClock(x, updated) : x)),
+          liveShift:
+            w.liveShift?.id === updated.id ? applyClock(w.liveShift, updated) : w.liveShift,
         };
       setCurrent(swap);
       setNext(swap);

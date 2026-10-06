@@ -8,6 +8,7 @@ import {
   type ReactNode,
 } from 'react';
 import { ShiftsApiError, getShiftsWeek, type Shift } from '@/lib/api';
+import { applyClock } from '@/components/shifts/clockModel';
 import { useOrg } from '@/contexts/OrgContext';
 import { useVisibilityPacedPolling } from '@/hooks/useVisibilityPacedPolling';
 
@@ -50,7 +51,7 @@ export function ShiftsProvider({ children }: { children: ReactNode }) {
   const [nonce, setNonce] = useState(0);
   const refresh = useCallback(() => setNonce((n) => n + 1), []);
   const patchShift = useCallback(
-    (s: Shift) => setMyShifts((list) => list.map((x) => (x.id === s.id ? { ...x, ...s } : x))),
+    (s: Shift) => setMyShifts((list) => list.map((x) => (x.id === s.id ? applyClock(x, s) : x))),
     []
   );
 

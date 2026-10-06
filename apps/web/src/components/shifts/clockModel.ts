@@ -200,3 +200,16 @@ export function describeClockError(e: unknown): string {
   }
   return e instanceof Error ? e.message : 'Something went wrong. Try again.';
 }
+
+/** Copy only the clock fields of a shift the server returned from shift-clock onto our copy. The
+ *  response doesn't know about pending requests (`hasPendingRequest` is always false there), so
+ *  the rest of the row must stay as we had it. */
+export function applyClock(x: Shift, u: Shift): Shift {
+  return {
+    ...x,
+    clockedInAt: u.clockedInAt ?? null,
+    clockedOutAt: u.clockedOutAt ?? null,
+    clockInLateMinutes: u.clockInLateMinutes ?? null,
+    survey: u.survey ?? null,
+  };
+}
