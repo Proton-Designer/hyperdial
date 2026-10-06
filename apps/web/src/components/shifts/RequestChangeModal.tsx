@@ -177,16 +177,25 @@ function RequestForm({
 
   // Time picker state. A move starts from the shift's own time; an add from the first open day.
   const startDate = shift ? localDateKey(shift.startsAt, tz) : null;
-  const seedDay = days.find((d) => d.date === startDate) ?? days[0];
-  const seedStart =
-    shift && seedDay?.date === startDate
-      ? localMinutes(shift.startsAt, tz)
-      : (seedDay?.openFrom ?? 0);
-  const seedEnd =
-    shift && seedDay?.date === startDate
-      ? seedStart +
-        Math.round((new Date(shift.endsAt).getTime() - new Date(shift.startsAt).getTime()) / 60000)
-      : Math.min(seedDay?.openUntil ?? 0, seedStart + 60);
+  // A week-level add starts on the first day that still has open time ahead, after "now".
+  const nextOpenDay = days.find((d) => zonedInstant(d.date, d.openUntil, tz) > now);
+  const seedDay = days.find((d) => d.date === startDate) ?? nextOpenDay ?? days[0];
+  const fromShift = shift && seedDay?.date === startDate;
+  let seedStart = fromShift ? localMinutes(shift.startsAt, tz) : (seedDay?.openFrom ?? 0);
+  if (!shift && seedDay) {
+    // Round up to the next half hour when seeding today, so the first view has no "already
+    // started" alert.
+    while (
+      seedStart < seedDay.openUntil - SLOT &&
+      zonedInstant(seedDay.date, seedStart, tz) <= now
+    ) {
+      seedStart += SLOT;
+    }
+  }
+  const seedEnd = fromShift
+    ? seedStart +
+      Math.round((new Date(shift.endsAt).getTime() - new Date(shift.startsAt).getTime()) / 60000)
+    : Math.min(seedDay?.openUntil ?? 0, seedStart + 60);
   const [date, setDate] = useState(seedDay?.date ?? '');
   const [start, setStart] = useState(seedStart);
   const [end, setEnd] = useState(seedEnd);

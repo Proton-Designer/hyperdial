@@ -481,6 +481,37 @@ function useShiftsFixtureStubs(scenario: string) {
         await new Promise((r) => setTimeout(r, 500));
         return json(200, { settings: { ...SETTINGS, enabled: true } });
       }
+      if (u.pathname.endsWith('/shift-kpi-compute')) {
+        await new Promise((r) => setTimeout(r, 700));
+        return json(200, { kpis: [] });
+      }
+      if (u.pathname.endsWith('/admin-shift-requests-review')) {
+        const b = JSON.parse(String(init?.body ?? '{}')) as {
+          requestId: string;
+          decision: string;
+          allowUnderMinimum?: boolean;
+        };
+        await new Promise((r) => setTimeout(r, 600));
+        if (scenario === 'review_error')
+          return json(500, { error: 'server_error', message: 'Something went wrong. Try again.' });
+        const req = buildAdminOverview(scenario, null).requests.find((r) => r.id === b.requestId);
+        if (
+          b.decision === 'approve' &&
+          req &&
+          req.type === 'drop' &&
+          !b.allowUnderMinimum &&
+          req.hoursAfter < 8
+        )
+          return json(409, {
+            error: 'under_minimum_needs_ack',
+            message: 'Approving this leaves them below the minimum.',
+            hoursAfter: req.hoursAfter,
+            minimum: 8,
+          });
+        return json(200, {
+          request: { ...req, status: b.decision === 'approve' ? 'approved' : 'denied' },
+        });
+      }
       if (u.pathname.endsWith('/admin-shift-update')) {
         await new Promise((r) => setTimeout(r, 500));
         const out = applyAdminUpdate(scenario, JSON.parse(String(init?.body ?? '{}')));
@@ -603,6 +634,7 @@ const SCENARIOS = [
   'request_started',
   'request_500',
   'update_overlap',
+  'review_error',
 ];
 
 export function ShiftsHarness() {

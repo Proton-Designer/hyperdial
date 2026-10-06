@@ -13,6 +13,8 @@ import {
   type AdminShiftsOverview,
 } from '@/lib/api';
 import { CoverageTab } from './team-shifts/CoverageTab';
+import { RequestQueue } from './team-shifts/RequestQueue';
+import { ShiftKpiTable } from './team-shifts/ShiftKpiTable';
 import { fmtWeekRange } from './shifts/shiftFormat';
 import { addDaysYmd } from './shifts/pickerModel';
 
@@ -207,18 +209,15 @@ export function TeamShifts({ canEnable = false }: TeamShiftsProps) {
             />
           </TabsContent>
           <TabsContent value="requests">
-            <EmptyState
-              icon={CalendarRange}
-              title="Requests are coming next"
-              body="Approve or deny change requests here."
+            <RequestQueue
+              requests={overview.requests}
+              timezone={overview.week.timezone}
+              minimumHours={overview.settings.minWeeklyHours}
+              onDecided={() => void load(week, true)}
             />
           </TabsContent>
           <TabsContent value="kpis">
-            <EmptyState
-              icon={CalendarRange}
-              title="Shift KPIs are coming next"
-              body="Per-shift results and weekly rollups will appear here."
-            />
+            <ShiftKpiTable overview={overview} onRefreshed={() => void load(week, true)} />
           </TabsContent>
           <TabsContent value="setup">
             <EmptyState

@@ -1,5 +1,7 @@
 import type {
   AdminShiftMember,
+  AdminShiftRollupRow,
+  ShiftKpi,
   AdminShiftsOverview,
   AdminShiftUpdateInput,
   Shift,
@@ -107,7 +109,7 @@ function power(startsAt: string, endsAt: string): number {
 function build(weekStart: string, scenario: string): TeamShift[] {
   if (scenario === 'empty') return [];
   const now = Date.now();
-  return PLAN.map(([dow, a, b, who, activity]) => {
+  const planned = PLAN.map(([dow, a, b, who, activity]) => {
     const day = addDays(weekStart, dow);
     const startsAt = zoned(day, a);
     const endsAt = zoned(day, b);
@@ -129,6 +131,28 @@ function build(weekStart: string, scenario: string): TeamShift[] {
       hasPendingRequest: false,
     } satisfies TeamShift;
   });
+  if (weekStart === mondayOf(localYmd(new Date(now)))) {
+    // One shift in progress right now, so "Refresh live numbers" has something to act on.
+    const startMs = Math.floor(now / 1800000) * 1800000 - 1800000;
+    const startsAt = new Date(startMs).toISOString();
+    const endsAt = new Date(startMs + 2 * 3600000).toISOString();
+    planned.push({
+      id: `ts-${++seq}`,
+      userId: 'intern-6',
+      userName: NAMES[6][0],
+      weekStart,
+      activity: 'dialing',
+      startsAt,
+      endsAt,
+      hours: 2,
+      powerMinutes: 0,
+      status: 'scheduled',
+      source: 'pick',
+      ghlSyncStatus: 'synced',
+      hasPendingRequest: false,
+    });
+  }
+  return planned;
 }
 
 function shiftsFor(weekStart: string, scenario: string): TeamShift[] {
@@ -139,6 +163,38 @@ function shiftsFor(weekStart: string, scenario: string): TeamShift[] {
     stores.set(key, list);
   }
   return list;
+}
+
+function kpiFor(s: TeamShift, i: number): ShiftKpi {
+  const sched = Math.round(s.hours * 60);
+  const flagged = i % 5 === 2;
+  const active = Math.round(sched * (flagged ? 0.55 : 0.88));
+  const dials = Math.round((active / 60) * (flagged ? 22 : 38));
+  return {
+    shiftId: s.id,
+    userId: s.userId,
+    final: true,
+    computedAt: s.endsAt,
+    scheduledMinutes: sched,
+    activeDialMinutes: active,
+    powerActiveMinutes: Math.min(active, s.powerMinutes),
+    adherencePct: Math.round((100 * active) / sched),
+    firstDialAt: s.startsAt,
+    lastCallEndAt: s.endsAt,
+    lateStartMinutes: flagged ? 14 : 0,
+    earlyEndMinutes: 0,
+    longestIdleMinutes: flagged ? 26 : 8,
+    dials,
+    connects: Math.round(dials * 0.31),
+    conversations: Math.round(dials * 0.12),
+    voicemails: Math.round(dials * 0.2),
+    noAnswers: Math.round(dials * 0.45),
+    talkMinutes: Math.round(active * 0.22),
+    dialsPerActiveHour: Math.round((dials / (active / 60)) * 10) / 10,
+    connectRatePct: 31,
+    dispositions: {},
+    flags: flagged ? ['late_start', 'long_idle'] : [],
+  };
 }
 
 function request(weekStart: string, who: number, over: Partial<ShiftRequest>): ShiftRequest {
@@ -198,10 +254,41 @@ export function buildAdminOverview(
     scenario === 'empty'
       ? []
       : [
-          request(weekStart, 1, { type: 'drop', isLate: true, hoursAfter: 5.5 }),
-          request(weekStart, 3, { type: 'move', hoursAfter: 9 }),
+          request(weekStart, 1, {
+            type: 'drop',
+            isLate: true,
+            hoursAfter: 5.5,
+            fromShift: shifts.find((x) => x.userId === 'intern-1') ?? null,
+          }),
+          request(weekStart, 3, {
+            type: 'move',
+            hoursAfter: 9,
+            fromShift: shifts.find((x) => x.userId === 'intern-3') ?? null,
+          }),
           request(weekStart, 4, { type: 'light_week', requestedMinHours: 5, hoursAfter: 8 }),
         ];
+  const kpis =
+    scenario === 'empty'
+      ? []
+      : shifts.filter((s) => s.status === 'completed' && s.activity === 'dialing').map(kpiFor);
+  const rollup: AdminShiftRollupRow[] = MEMBERS.filter((m) => m.participates).map((m) => {
+    const mine = shifts.filter((s) => s.userId === m.userId && s.status !== 'cancelled');
+    const k = kpis.filter((x) => x.userId === m.userId);
+    const dialing = k.reduce((n, x) => n + x.activeDialMinutes, 0);
+    return {
+      userId: m.userId,
+      name: m.name,
+      hoursScheduled: mine.reduce((n, s) => n + s.hours, 0),
+      hoursDialing: dialing / 60,
+      powerDialPct: dialing
+        ? Math.round((100 * k.reduce((n, x) => n + x.powerActiveMinutes, 0)) / dialing)
+        : null,
+      dials: k.reduce((n, x) => n + x.dials, 0),
+      conversations: k.reduce((n, x) => n + x.conversations, 0),
+      missedShifts: mine.filter((s) => s.status === 'missed').length,
+      powerWeek: m.userId === 'intern-0' && weekStart < thisMonday,
+    };
+  });
   const thisW = weekStart === thisMonday;
   return {
     week: {
@@ -220,9 +307,17 @@ export function buildAdminOverview(
     shifts,
     commitments,
     requests,
-    kpis: [],
-    rollup: [],
-    powerWeekCallouts: [],
+    kpis,
+    rollup,
+    powerWeekCallouts:
+      weekStart < thisMonday && scenario !== 'empty'
+        ? [
+            {
+              userId: 'intern-0',
+              sentence: 'Sara K. dialed 10.0 hrs this week, all in power windows.',
+            },
+          ]
+        : [],
     syncHealth: { errorCount: 0, lastError: null, rows: [] },
   };
 }
