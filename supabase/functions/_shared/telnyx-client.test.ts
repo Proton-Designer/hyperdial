@@ -1073,3 +1073,33 @@ Deno.test(
     }
   }
 );
+
+Deno.test(
+  'createTelnyxClient.set*OutboundProfile: PATCHes outbound.outbound_voice_profile_id on the application and the credential connection',
+  async () => {
+    const seen: { url: string; method?: string; body: Record<string, unknown> }[] = [];
+    const restore = stubFetch((url, init) => {
+      seen.push({ url, method: init?.method, body: JSON.parse(String(init?.body ?? '{}')) });
+      return new Response(JSON.stringify({ data: { id: 'x' } }), { status: 200 });
+    });
+    try {
+      const client = createTelnyxClient('test-api-key');
+      await client.setCallControlApplicationOutboundProfile('app-1', 'ovp-1');
+      await client.setCredentialConnectionOutboundProfile('cred-1', 'ovp-1');
+      assertEquals(seen, [
+        {
+          url: 'https://api.telnyx.com/v2/call_control_applications/app-1',
+          method: 'PATCH',
+          body: { outbound: { outbound_voice_profile_id: 'ovp-1' } },
+        },
+        {
+          url: 'https://api.telnyx.com/v2/credential_connections/cred-1',
+          method: 'PATCH',
+          body: { outbound: { outbound_voice_profile_id: 'ovp-1' } },
+        },
+      ]);
+    } finally {
+      restore();
+    }
+  }
+);

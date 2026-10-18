@@ -214,6 +214,10 @@ export function useTelnyxCall(options: UseTelnyxCallOptions = {}) {
    *  tracks the in-flight promise itself so a second caller awaits the SAME attempt, and the
    *  catch handler below clears `clientRef` on failure so the next call genuinely starts over. */
   const connectPromiseRef = useRef<Promise<void> | null>(null);
+  /** Manual-dial failure reporting: whether the current outbound call was ever answered, and
+   *  whether the user hung up themselves (neither should show a "could not be placed" error). */
+  const outboundAnsweredRef = useRef(false);
+  const hangupRequestedRef = useRef(false);
 
   const connect = useCallback((): Promise<void> => {
     if (connectPromiseRef.current) return connectPromiseRef.current;
@@ -273,6 +277,10 @@ export function useTelnyxCall(options: UseTelnyxCallOptions = {}) {
                   customHeaders?: unknown;
                   remoteCallerNumber?: string;
                 };
+                cause?: string;
+                causeCode?: number;
+                sipReason?: string;
+                sipCode?: number;
                 hangup: () => void;
                 answer: (params?: { remoteElement?: string }) => void | Promise<void>;
               };
@@ -400,7 +408,26 @@ export function useTelnyxCall(options: UseTelnyxCallOptions = {}) {
                 setCallState('ringing');
               } else if (state === 'active' || state === 'answering' || state === 'early') {
                 setCallState('connected');
+                if (state === 'active') outboundAnsweredRef.current = true;
               } else if (state === 'hangup' || state === 'destroy' || state === 'purge') {
+                // A manual outbound call that Telnyx tore down before it was ever answered used
+                // to just reset the dial pad with no explanation (e.g. no outbound voice profile
+                // attached to the connection). Surface the SDK's reason instead.
+                if (
+                  call.direction !== 'inbound' &&
+                  !outboundAnsweredRef.current &&
+                  !hangupRequestedRef.current
+                ) {
+                  const reason = [call.sipReason || call.cause, call.sipCode ?? call.causeCode]
+                    .filter(Boolean)
+                    .join(' ');
+                  setError(
+                    `The call could not be placed${reason ? ` (${reason})` : ''}. ` +
+                      'Check that your Telnyx connection has an outbound voice profile attached.'
+                  );
+                }
+                outboundAnsweredRef.current = false;
+                hangupRequestedRef.current = false;
                 setCallState('ended');
                 activeCallRef.current = null;
                 setActiveCoaching(null);
@@ -465,6 +492,8 @@ export function useTelnyxCall(options: UseTelnyxCallOptions = {}) {
       }
 
       setCallState('dialing');
+      outboundAnsweredRef.current = false;
+      hangupRequestedRef.current = false;
 
       const destinationNumber = toE164(toNumber);
       const callerNumber = toE164(callerId);
@@ -489,6 +518,7 @@ export function useTelnyxCall(options: UseTelnyxCallOptions = {}) {
   );
 
   const hangup = useCallback(() => {
+    hangupRequestedRef.current = true;
     if (activeCallRef.current) {
       activeCallRef.current.hangup();
       activeCallRef.current = null;

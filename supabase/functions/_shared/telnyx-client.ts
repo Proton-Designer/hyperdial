@@ -513,6 +513,9 @@ export interface TelnyxClient {
     webhookEventUrl: string;
   }): Promise<TelnyxIdData>;
   getCallControlApplication(id: string): Promise<TelnyxIdData>;
+  /** `PATCH /call_control_applications/{id}` with `outbound.outbound_voice_profile_id` --
+   *  without a profile attached Telnyx refuses every outbound call from this application. */
+  setCallControlApplicationOutboundProfile(id: string, profileId: string): Promise<void>;
   listCallControlApplications(): Promise<TelnyxIdData[]>;
   findCallControlApplicationByName(name: string): Promise<TelnyxIdData | null>;
 
@@ -525,6 +528,10 @@ export interface TelnyxClient {
     connectionName: string;
   }): Promise<TelnyxIdData>;
   findCredentialConnectionByName(name: string): Promise<TelnyxIdData | null>;
+  /** `PATCH /credential_connections/{id}` with `outbound.outbound_voice_profile_id` -- the
+   *  browser's WebRTC (manual dial) calls leave Telnyx through this connection, and Telnyx
+   *  refuses them outright when no outbound voice profile is attached. */
+  setCredentialConnectionOutboundProfile(id: string, profileId: string): Promise<void>;
 
   createTelephonyCredential(args: { connectionId: string; name?: string }): Promise<TelnyxIdData>;
   getTelephonyCredential(id: string): Promise<TelnyxIdData>;
@@ -803,6 +810,20 @@ export function createTelnyxClient(
         `/call_control_applications?${qs}`
       );
       return (response.data ?? []).find((r) => r.application_name === name) ?? null;
+    },
+
+    async setCallControlApplicationOutboundProfile(id, profileId) {
+      await req<unknown>(`/call_control_applications/${encodeURIComponent(id)}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ outbound: { outbound_voice_profile_id: profileId } }),
+      });
+    },
+
+    async setCredentialConnectionOutboundProfile(id, profileId) {
+      await req<unknown>(`/credential_connections/${encodeURIComponent(id)}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ outbound: { outbound_voice_profile_id: profileId } }),
+      });
     },
 
     async createOutboundVoiceProfile(args) {

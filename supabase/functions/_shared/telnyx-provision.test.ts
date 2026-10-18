@@ -61,6 +61,12 @@ function makeMockClient(overrides: Partial<TelnyxClient> = {}): {
       return { id: 'app-1' };
     },
     getCallControlApplication: async () => ({}),
+    setCallControlApplicationOutboundProfile: async (id, profileId) => {
+      record('setCallControlApplicationOutboundProfile', [id, profileId]);
+    },
+    setCredentialConnectionOutboundProfile: async (id, profileId) => {
+      record('setCredentialConnectionOutboundProfile', [id, profileId]);
+    },
     listCallControlApplications: async () => [],
     findCallControlApplicationByName: async (name) => {
       record('findCallControlApplicationByName', [name]);
@@ -129,6 +135,8 @@ Deno.test('provisionTelnyxOrg: first run creates all three resources', async () 
     'createCallControlApplication',
     'findCredentialConnectionByName',
     'createCredentialConnection',
+    'setCallControlApplicationOutboundProfile',
+    'setCredentialConnectionOutboundProfile',
   ]);
 
   const appCall = calls.find((c) => c.method === 'createCallControlApplication');
@@ -162,7 +170,20 @@ Deno.test('provisionTelnyxOrg: second run with existing IDs creates nothing', as
   });
   assertEquals(
     calls.map((c) => c.method),
-    ['getBalance']
+    [
+      'getBalance',
+      'setCallControlApplicationOutboundProfile',
+      'setCredentialConnectionOutboundProfile',
+    ]
+  );
+  // Repairs orgs provisioned before the profile was ever attached: even with every id already
+  // stored, both connections get the profile PATCHed.
+  assertEquals(
+    calls.filter((c) => c.method.startsWith('set')).map((c) => c.args),
+    [
+      ['app-existing', 'ovp-existing'],
+      ['cred-existing', 'ovp-existing'],
+    ]
   );
 });
 
@@ -187,6 +208,8 @@ Deno.test(
         'createCallControlApplication',
         'findCredentialConnectionByName',
         'createCredentialConnection',
+        'setCallControlApplicationOutboundProfile',
+        'setCredentialConnectionOutboundProfile',
       ]
     );
   }
@@ -244,6 +267,13 @@ Deno.test(
       methodsCalled.some((m) => m.startsWith('create')),
       false
     );
+    assertEquals(
+      calls.filter((c) => c.method.startsWith('set')).map((c) => c.args),
+      [
+        ['app-reused', 'ovp-reused'],
+        ['cred-reused', 'ovp-reused'],
+      ]
+    );
   }
 );
 
@@ -271,6 +301,8 @@ Deno.test(
         'createCallControlApplication',
         'findCredentialConnectionByName',
         'createCredentialConnection',
+        'setCallControlApplicationOutboundProfile',
+        'setCredentialConnectionOutboundProfile',
       ]
     );
   }

@@ -68,7 +68,7 @@ export function webhookUrlForOrg(webhookBaseUrl: string, orgId: string): string 
 /**
  * Validates the key (`GET /v2/balance`) then finds-or-creates the outbound voice
  * profile, the Call Control Application (webhook URL tagged with `?org=<orgId>`)
- * and the credential connection, in that order. For each resource: reuse the ID in
+ * and the credential connection, in that order, then attaches the profile to both connections. For each resource: reuse the ID in
  * `args.existing` if present; otherwise look it up on Telnyx by its deterministic
  * name (`resourceNamesForOrg`) and reuse that if found; otherwise create it. Throws
  * on the first missing id Telnyx doesn't return.
@@ -134,6 +134,19 @@ export async function provisionTelnyxOrg(
     }
     created.credentialConnection = true;
   }
+
+  // Attach the profile to both connections on EVERY run, not just on create: Telnyx refuses
+  // outbound calls from a connection with no outbound voice profile, and orgs provisioned
+  // before this step existed have connections with none. PATCHing the same value is a no-op,
+  // so re-running "Connect Telnyx" repairs them.
+  await client.setCallControlApplicationOutboundProfile(
+    callControlApplicationId,
+    outboundVoiceProfileId
+  );
+  await client.setCredentialConnectionOutboundProfile(
+    credentialConnectionId,
+    outboundVoiceProfileId
+  );
 
   return { outboundVoiceProfileId, callControlApplicationId, credentialConnectionId, created };
 }

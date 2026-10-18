@@ -1362,6 +1362,29 @@ Written from the Shifts reviews (`.claude/overnight/run-20261006-1130/audit/`); 
 - **Open hours / high leverage windows are org-wide by design**: one config per org, managed by whoever has manager-level access, so a pod-scoped manager's edit affects every pod. Narrowing open hours leaves booked shifts in place; the Setup screen warns with `affectedShiftCount`, and the Coverage heatmap only draws open slots.
 - **A no-GHL org shows every outbox row as waiting** with "org has no connected GHL integration"; the UI collapses these into a single "GoHighLevel isn't connected" callout.
 
+## 41. Manual dial "rings" for ~1s then resets — two Telnyx-side rejections (2026-10-18)
+
+**Symptom:** manual dial shows the ringing state, nothing rings on the far end, and the dial pad
+comes back within a second. Manual dial is pure browser WebRTC (`useTelnyxCall.ts`'s
+`client.newCall()`), leaving Telnyx through the org's **credential connection** — no Edge
+Function is involved, so there are no server logs. Telnyx's own CDRs
+(`GET /v2/detail_records?filter[record_type]=sip-trunking`, field `telnyx_error_code`) are the
+only evidence; the SDK just reports a hangup.
+
+1. **D38 — no outbound voice profile on the connection. FIXED in code.** `telnyx-provision.ts`
+   created the outbound voice profile but never attached it to the Call Control App or the
+   credential connection, so every outbound call from either was refused. Provisioning now
+   PATCHes `outbound.outbound_voice_profile_id` onto both on every run (idempotent), so an
+   owner re-clicking **Connect Telnyx** repairs an org provisioned before this fix. Live-verified:
+   after re-connect, CDRs show the profile applied and D38 gone.
+2. **D60 — "cannot make calls to non-verified numbers at this account level". NOT a code bug.**
+   The Telnyx account is on the trial/freemium tier, which only allows calls to numbers listed
+   under Verified Numbers (`GET /v2/verified_numbers`). Fix is in Telnyx: upgrade/verify the
+   account, or verify the destination for testing.
+
+Also: `useTelnyxCall.ts` used to swallow the hangup reason and silently reset to idle; it now sets
+`error` with the SIP reason/code when an outbound call is torn down before ever being answered.
+
 ## Not issues — deliberate, documented elsewhere
 
 - Redis alongside Postgres → `mem.decisions`
