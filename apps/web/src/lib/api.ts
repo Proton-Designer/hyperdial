@@ -3700,6 +3700,43 @@ export async function updateGhlBlockedTags(
   return data;
 }
 
+// --- GHL reconcile: "Remove from call lists" (TASK-G08 backend, TASK-G12 settings) ---
+
+export interface GhlReconcileSettings {
+  /** Master switch for the 5-minute sweep. DND / DNC in GHL removes a lead only while it is on. */
+  enabled: boolean;
+  /** GHL tags that mean "signed up / already in an active conversation" -> leads are completed. */
+  excludeTags: string[];
+  /** GHL pipeline stage ids with the same meaning (pick from listGhlPipelineStages). */
+  excludeStageIds: string[];
+  lastReconcileAt: string | null;
+  /** Counts from the last sweep, or `{ error }` when it failed; null before the first run. */
+  lastReconcileCounts: Record<string, unknown> | null;
+}
+
+async function callGhlReconcileSettings(body: unknown): Promise<GhlReconcileSettings> {
+  const res = await fetch(`${getFunctionsUrl()}/ghl-reconcile-settings`, {
+    method: 'POST',
+    headers: await getEdgeFunctionHeaders(),
+    body: JSON.stringify(body),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Failed to load GHL call-list settings');
+  return data as GhlReconcileSettings;
+}
+
+/** Owner/admin only (the endpoint refuses anyone else; not readable through the status view). */
+export async function getGhlReconcileSettings(): Promise<GhlReconcileSettings> {
+  return callGhlReconcileSettings({ action: 'get' });
+}
+
+/** Owner/admin only. Replaces all three settings wholesale; returns the saved state. */
+export async function updateGhlReconcileSettings(
+  settings: Pick<GhlReconcileSettings, 'enabled' | 'excludeTags' | 'excludeStageIds'>
+): Promise<GhlReconcileSettings> {
+  return callGhlReconcileSettings({ action: 'set', ...settings });
+}
+
 export async function connectGhl(
   token: string,
   locationId: string
@@ -4242,6 +4279,8 @@ export interface SubmitDispositionInput {
    *  `required_fields` names them; ignored otherwise. */
   licenseNumber?: string;
   zips?: string[];
+  /** TASK-G13: optional per-call top objection (same six keys as the shift survey). */
+  topObjection?: TopObjection;
 }
 
 export interface SubmitDispositionResult {
@@ -4266,6 +4305,7 @@ export async function submitDisposition(
       callbackAt: input.callbackAt,
       licenseNumber: input.licenseNumber,
       zips: input.zips,
+      topObjection: input.topObjection,
     }),
   });
   const data = await res.json();

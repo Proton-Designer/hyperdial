@@ -45,6 +45,12 @@ if (devHarness?.has('dev_wrapup')) {
   import('./dev/BillingHarness.tsx').then(({ BillingHarness }) => {
     root.render(<BillingHarness />);
   });
+} else if (devHarness?.has('dev_ghl_reconcile')) {
+  // TASK-G12: the Settings "Remove from call lists" card against fixtures. `?dev_ghl_reconcile=1`
+  // (`&scenario=fresh|failed_run|load_error|save_error|stages_error|slow`).
+  import('./dev/GhlReconcileHarness.tsx').then(({ GhlReconcileHarness }) => {
+    root.render(<GhlReconcileHarness />);
+  });
 } else if (devHarness?.has('dev_shifts')) {
   // TASK-F01: the intern Shifts screen against fixture data, no live backend.
   // `?dev_shifts=1&scenario=default|unsubmitted|under_minimum|deadline_passed|power_week|empty|
