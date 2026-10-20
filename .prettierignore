@@ -24,3 +24,4 @@ PRODUCT_CONTEXT.md
 
 # Claude Code local settings and overnight run folders
 .claude/
+.remember/
