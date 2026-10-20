@@ -308,7 +308,10 @@ export interface RollupInput {
   members: { userId: string; name: string; participates: boolean }[];
   shifts: Pick<ShiftRow, 'user_id' | 'status' | 'hours'>[];
   commitments: (CommitmentRow & { user_id: string })[];
-  kpis: Pick<KpiRow, 'user_id' | 'active_dial_minutes' | 'dials' | 'conversations'>[];
+  kpis: Pick<
+    KpiRow,
+    'user_id' | 'active_dial_minutes' | 'dials' | 'connects' | 'conversations' | 'sign_ups'
+  >[];
 }
 
 /** One row per participating member with something this week; sorted by name (no ranking). */
@@ -330,7 +333,10 @@ export function buildRollup(i: RollupInput) {
       hoursDialing: round1(k.reduce((n, x) => n + x.active_dial_minutes, 0) / 60),
       powerDialPct: c && c.power_dial_pct !== null ? Number(c.power_dial_pct) : null,
       dials: k.reduce((n, x) => n + x.dials, 0),
+      connects: k.reduce((n, x) => n + x.connects, 0),
       conversations: k.reduce((n, x) => n + x.conversations, 0),
+      // sign_ups is absent on a database without the G01 migration
+      signUps: k.reduce((n, x) => n + (x.sign_ups ?? 0), 0),
       missedShifts: mine.filter((s) => s.status === 'missed').length,
       powerWeek: c?.power_week === true,
     });

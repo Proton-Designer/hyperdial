@@ -168,6 +168,7 @@ export function ShiftKpiTable({ overview, onRefreshed }: Props) {
                     <Th>High leverage</Th>
                     <Th>Dials</Th>
                     <Th>Conversations</Th>
+                    <Th>Sign-ups</Th>
                     <Th>Missed</Th>
                   </tr>
                 </thead>
@@ -189,6 +190,7 @@ export function ShiftKpiTable({ overview, onRefreshed }: Props) {
                       <Td>{pct(r.powerDialPct)}</Td>
                       <Td>{nf.format(r.dials)}</Td>
                       <Td>{nf.format(r.conversations)}</Td>
+                      <Td>{r.signUps === undefined ? '–' : nf.format(r.signUps)}</Td>
                       <Td className={r.missedShifts > 0 ? 'text-warning' : undefined}>
                         {r.missedShifts}
                       </Td>

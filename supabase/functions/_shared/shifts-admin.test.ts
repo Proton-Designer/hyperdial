@@ -266,9 +266,23 @@ Deno.test(
       },
     ];
     const kpis = [
-      { user_id: U1, active_dial_minutes: 600, dials: 300, conversations: 20 },
-      { user_id: U2, active_dial_minutes: 510, dials: 200, conversations: 9 },
-      { user_id: U2, active_dial_minutes: 0, dials: 0, conversations: 0 },
+      {
+        user_id: U1,
+        active_dial_minutes: 600,
+        dials: 300,
+        connects: 60,
+        conversations: 20,
+        sign_ups: 4,
+      },
+      {
+        user_id: U2,
+        active_dial_minutes: 510,
+        dials: 200,
+        connects: 30,
+        conversations: 9,
+        sign_ups: 2,
+      },
+      { user_id: U2, active_dial_minutes: 0, dials: 0, connects: 0, conversations: 0, sign_ups: 1 },
     ];
     const roll = buildRollup({
       members: [
@@ -295,11 +309,14 @@ Deno.test(
       hoursDialing: 8.5,
       powerDialPct: 88,
       dials: 200,
+      connects: 30,
       conversations: 9,
+      signUps: 3,
       missedShifts: 1,
       powerWeek: true,
     });
     assertEquals(roll[1].hoursDialing, 10);
+    assertEquals([roll[1].connects, roll[1].signUps], [60, 4]);
 
     const callouts = buildCallouts(
       commitments,

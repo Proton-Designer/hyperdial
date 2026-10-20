@@ -5734,7 +5734,9 @@ export interface AdminShiftRollupRow {
   hoursDialing: number;
   powerDialPct: number | null;
   dials: number;
+  connects: number;
   conversations: number;
+  signUps: number;
   missedShifts: number;
   powerWeek: boolean;
 }

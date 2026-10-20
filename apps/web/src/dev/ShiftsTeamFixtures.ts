@@ -504,7 +504,9 @@ export function buildAdminOverview(
         ? Math.round((100 * k.reduce((n, x) => n + x.powerActiveMinutes, 0)) / dialing)
         : null,
       dials: k.reduce((n, x) => n + x.dials, 0),
+      connects: k.reduce((n, x) => n + x.connects, 0),
       conversations: k.reduce((n, x) => n + x.conversations, 0),
+      signUps: k.reduce((n, x) => n + x.signUps, 0),
       missedShifts: mine.filter((s) => s.status === 'missed').length,
       powerWeek: m.userId === 'intern-0' && weekStart < thisMonday,
     };
