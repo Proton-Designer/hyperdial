@@ -314,6 +314,11 @@ async function processJob(
       });
       return;
     }
+    const { lastCallAt, callAttempts } = await resolveDispositionPushTimeContext(
+      supabase,
+      job.org_id,
+      job.call_leg_id
+    );
     result = await processTagJob({
       client: ctx.client,
       locationId: ctx.locationId,
@@ -321,6 +326,8 @@ async function processJob(
       contactFields: contact.fields,
       tag,
       progress: job.progress ?? {},
+      pushConfig: ctx.pushConfig,
+      pushTimeContext: { lastCallAt, callAttempts },
     });
   } else if (job.kind === 'transfer_note') {
     // Lead follow-up to TASK-T2's own fix-forward: same missing-required-field shape as the

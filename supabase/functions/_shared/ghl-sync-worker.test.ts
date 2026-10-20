@@ -1228,3 +1228,82 @@ Deno.test(
     }
   }
 );
+
+// ---------------------------------------------------------------------------
+// TASK-G03 (spec §1): attempt count + last attempt date for automated no-answer / voicemail
+// ---------------------------------------------------------------------------
+
+Deno.test(
+  'processTagJob: TASK-G03 pushes call_attempts + last_call_at custom fields after the tag, and no note',
+  async () => {
+    const calls: string[] = [];
+    let putBody: unknown = null;
+    const restore = stubFetch((url, init) => {
+      calls.push(`${init?.method ?? 'GET'} ${new URL(url).pathname}`);
+      if (init?.method === 'PUT') putBody = JSON.parse(String(init.body));
+      return Response.json({ id: 'ok' });
+    });
+    try {
+      const result = await processTagJob({
+        client: createGhlClient('tok'),
+        locationId: 'loc-1',
+        ghlContactId: 'ghl-1',
+        contactFields: { firstName: 'A', lastName: 'B', phone: '+14155552671' },
+        tag: 'call:no-answer-3',
+        progress: {},
+        pushConfig: { pushFieldMapping: { call_attempts: 'f-att', last_call_at: 'f-lca' } },
+        pushTimeContext: { lastCallAt: '2026-10-19T21:00:00.000Z', callAttempts: 3 },
+      });
+      assertEquals(result.ok, true);
+      assertEquals(result.progress.custom_fields_pushed, true);
+      assertEquals(calls, ['POST /contacts/ghl-1/tags', 'PUT /contacts/ghl-1']);
+      assertEquals(putBody, {
+        customFields: [
+          { id: 'f-lca', field_value: '2026-10-19T21:00:00.000Z' },
+          { id: 'f-att', field_value: '3' },
+        ],
+      });
+    } finally {
+      restore();
+    }
+  }
+);
+
+Deno.test(
+  'processTagJob: TASK-G03 no push mapping -> tag only, no PUT; a retry skips an already-pushed field step',
+  async () => {
+    const calls: string[] = [];
+    const restore = stubFetch((url, init) => {
+      calls.push(`${init?.method ?? 'GET'} ${new URL(url).pathname}`);
+      return Response.json({ id: 'ok' });
+    });
+    try {
+      const base = {
+        client: createGhlClient('tok'),
+        locationId: 'loc-1',
+        ghlContactId: 'ghl-1',
+        contactFields: { firstName: 'A', lastName: 'B', phone: '+14155552671' },
+        tag: 'call:voicemail-1',
+      };
+      const noMap = await processTagJob({
+        ...base,
+        progress: {},
+        pushTimeContext: { lastCallAt: '2026-10-19T21:00:00.000Z', callAttempts: 1 },
+      });
+      assertEquals(noMap.ok, true);
+      assertEquals(calls, ['POST /contacts/ghl-1/tags']);
+
+      calls.length = 0;
+      const retry = await processTagJob({
+        ...base,
+        progress: { upserted: true, tag_added: true, custom_fields_pushed: true },
+        pushConfig: { pushFieldMapping: { call_attempts: 'f-att' } },
+        pushTimeContext: { callAttempts: 1 },
+      });
+      assertEquals(retry.ok, true);
+      assertEquals(calls, []);
+    } finally {
+      restore();
+    }
+  }
+);

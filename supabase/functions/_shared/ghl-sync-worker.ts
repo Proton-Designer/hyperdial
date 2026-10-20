@@ -499,6 +499,11 @@ export interface ProcessTagJobArgs {
    *  whole point (TASK-F-T3, VMD-3/GHL-9) is a per-contact COUNT baked into the tag string. */
   tag: string;
   progress: JobProgress;
+  /** TASK-G03 (spec §1): same org push mapping a disposition job gets. Absent = no field push. */
+  pushConfig?: GhlPushConfig;
+  /** TASK-G03: only `lastCallAt`/`callAttempts` are used -- an automated no-answer/voicemail has no
+   *  callback, duration worth a field, recording or stage move. */
+  pushTimeContext?: Pick<DispositionPushTimeContext, 'lastCallAt' | 'callAttempts'>;
 }
 
 /** TASK-F-T3 (VMD-3, GHL-9 overlap): "voicemail_tag"/"no_answer_tag" job kinds -- an automated
@@ -534,6 +539,19 @@ export async function processTagJob(args: ProcessTagJobArgs): Promise<ProcessJob
     if (!progress.tag_added) {
       await args.client.addTags(ghlContactId, [args.tag]);
       progress.tag_added = true;
+    }
+
+    // TASK-G03 (spec §1): attempt count + last attempt date after EVERY call, not only agent
+    // dispositions. No note (spec: "do not log every no-answer as a separate note").
+    if (!progress.custom_fields_pushed) {
+      const fields = buildPushCustomFields(args.pushConfig?.pushFieldMapping, {
+        lastCallAt: args.pushTimeContext?.lastCallAt,
+        callAttempts: args.pushTimeContext?.callAttempts,
+      });
+      if (fields.length > 0) {
+        await args.client.updateContactCustomFields(ghlContactId, fields);
+      }
+      progress.custom_fields_pushed = true;
     }
 
     return { ok: true, progress, resolvedGhlContactId: ghlContactId };
