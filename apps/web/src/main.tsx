@@ -51,6 +51,12 @@ if (devHarness?.has('dev_wrapup')) {
   import('./dev/GhlReconcileHarness.tsx').then(({ GhlReconcileHarness }) => {
     root.render(<GhlReconcileHarness />);
   });
+} else if (devHarness?.has('dev_ghl_fields')) {
+  // TASK-G17: the Settings "Field coverage" card against fixtures. `?dev_ghl_fields=1`
+  // (`&scenario=none|all|error|slow`).
+  import('./dev/GhlFieldCoverageHarness.tsx').then(({ GhlFieldCoverageHarness }) => {
+    root.render(<GhlFieldCoverageHarness />);
+  });
 } else if (devHarness?.has('dev_shifts')) {
   // TASK-F01: the intern Shifts screen against fixture data, no live backend.
   // `?dev_shifts=1&scenario=default|unsubmitted|under_minimum|deadline_passed|power_week|empty|

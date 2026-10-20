@@ -3740,6 +3740,52 @@ export async function updateGhlReconcileSettings(
 export async function connectGhl(
   token: string,
   locationId: string
+// --- GHL field coverage (TASK-G17) ---
+
+export type GhlFieldCoverageStatus = 'ready' | 'missing_in_ghl' | 'not_mapped' | 'missing';
+
+export interface GhlFieldCoverageItem {
+  key: string;
+  label: string;
+  /** GHL dataType we expect: TEXT | LARGE_TEXT | NUMERICAL | SINGLE_OPTIONS | DATE. */
+  type: string;
+  /** Exact dropdown option texts we send, or null. */
+  options: string[] | null;
+  /** ready = found in GHL; missing_in_ghl = mapped id no longer exists; not_mapped = no mapping
+   *  (provider); missing = no field with that key (intern). */
+  status: GhlFieldCoverageStatus;
+  /** The field's dataType in GHL when found. */
+  ghlType: string | null;
+  /** Warnings on a ready field: its type cannot hold our value, or dropdown options differ. */
+  issues: ('type' | 'options')[];
+  missingOptions: string[];
+}
+
+export interface GhlFieldCoverageGroup {
+  items: GhlFieldCoverageItem[];
+  ready: number;
+  total: number;
+}
+
+export interface GhlFieldCoverage {
+  provider: GhlFieldCoverageGroup;
+  intern: GhlFieldCoverageGroup;
+  ready: number;
+  total: number;
+}
+
+/** Owner/admin only. Read-only: lists the GHL location's contact fields once; creates nothing. */
+export async function getGhlFieldCoverage(): Promise<GhlFieldCoverage> {
+  const res = await fetch(`${getFunctionsUrl()}/ghl-field-coverage`, {
+    method: 'POST',
+    headers: await getEdgeFunctionHeaders(),
+    body: JSON.stringify({}),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Failed to check GHL fields');
+  return data as GhlFieldCoverage;
+}
+
 ): Promise<{ locationId: string; locationName: string }> {
   const orgId = await getActiveOrgId();
   const res = await fetch(`${getFunctionsUrl()}/ghl-connect`, {

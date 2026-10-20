@@ -37,6 +37,7 @@ import { NumberHealthPanel } from '@/components/settings/NumberHealthPanel';
 import { SystemHealthPanel } from '@/components/settings/SystemHealthPanel';
 import { CollapsibleSection } from '@/components/settings/CollapsibleSection';
 import { GhlReconcileCard } from '@/components/settings/GhlReconcileCard';
+import { GhlFieldCoverageCard } from '@/components/settings/GhlFieldCoverageCard';
 import { PurchaseNumbersModal } from '@/components/settings/PurchaseNumbersModal';
 import { PageHeader } from '@/components/app/PageHeader';
 import { EmptyState } from '@/components/app/EmptyState';
@@ -2013,6 +2014,7 @@ function IntegrationsTab() {
         <GhlPullSettingsCard status={status} onSaved={load} />
       )}
       {isConnected && (isOwner || role === 'admin') && <GhlReconcileCard />}
+      {isConnected && (isOwner || role === 'admin') && <GhlFieldCoverageCard />}
       {isConnected && (isOwner || role === 'admin') && <GhlCampaignMappingsEditor />}
       {isConnected && <SyncStatusList />}
     </motion.div>
