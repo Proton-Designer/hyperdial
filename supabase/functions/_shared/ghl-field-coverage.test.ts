@@ -71,15 +71,33 @@ Deno.test('intern catalog == every shift field key the SQL emits (both direction
     if (!sql.includes(`'${k}'`))
       throw new Error(`catalog key ${k} not emitted by any shifts migration`);
   }
-  // every last_shift_* / week_* key literal in the SQL must be in the catalog
-  const found = new Set([...sql.matchAll(/'((?:last_shift|week)_[a-z_]+)'/g)].map((m) => m[1]));
-  // SQL string literals that are not GHL field keys
+  // every GHL-field-looking key literal in the SQL must be in the catalog: last_shift_* / week_* and
+  // (TASK-G22) the schedule/other prefixes shift_*, shifts_*, power_*, hyper_dialer_*
+  const found = new Set(
+    [...sql.matchAll(/'((?:last_shift|week|shift|shifts|power|hyper_dialer)_[a-z_]+)'/g)].map(
+      (m) => m[1]
+    )
+  );
+  // SQL string literals that are not GHL field keys (events, columns, error codes, tags' stems)
   const notFields = new Set([
     'week_closed',
     'week_start',
     'week_end',
     'week_lock',
     'week_submitted',
+    'power_active_minutes',
+    'power_pct',
+    'power_week',
+    'shift_completed',
+    'shift_ended',
+    'shift_missed',
+    'shift_not_scheduled',
+    'shift_over',
+    'shift_request',
+    'shift_request_reviewed',
+    'shift_started',
+    'shift_week_not_submitted',
+    'shifts_disabled',
   ]);
   const stray = [...found].filter((k) => !catalog.has(k) && !notFields.has(k));
   assertEquals(stray, []);
