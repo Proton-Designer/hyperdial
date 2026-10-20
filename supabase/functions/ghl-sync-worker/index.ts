@@ -25,6 +25,7 @@ import {
   processDncFlagJob,
   processInboundCallNoteJob,
   processNurtureTagJob,
+  processObjectionFieldJob,
   processTagJob,
   processTransferNoteJob,
   type ContactFields,
@@ -74,7 +75,8 @@ interface CrmSyncJobRow {
     | 'no_answer_tag'
     | 'inbound_call_note'
     | 'transfer_note'
-    | 'dnc_flag';
+    | 'dnc_flag'
+    | 'objection_field';
   contact_id: string | null;
   call_leg_id: string | null;
   payload: Record<string, unknown>;
@@ -289,6 +291,15 @@ async function processJob(
       ghlContactId: contact.ghlContactId,
       dncTag: await resolveDncTag(supabase, job.org_id),
       progress: job.progress ?? {},
+    });
+  } else if (job.kind === 'objection_field') {
+    // TASK-G21: late top objection on a re-submitted disposition (field only).
+    result = await processObjectionFieldJob({
+      client: ctx.client,
+      ghlContactId: contact.ghlContactId,
+      payload: job.payload as { top_objection?: string | null },
+      progress: job.progress ?? {},
+      pushConfig: ctx.pushConfig,
     });
   } else if (job.kind === 'transfer_note') {
     // Lead follow-up to TASK-T2's own fix-forward: same missing-required-field shape as the

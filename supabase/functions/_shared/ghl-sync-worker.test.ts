@@ -6,6 +6,7 @@ import {
   processContactUpsertJob,
   processDispositionJob,
   processDncFlagJob,
+  processObjectionFieldJob,
   processInboundCallNoteJob,
   processNurtureTagJob,
   processTagJob,
@@ -1544,6 +1545,72 @@ Deno.test(
       assertEquals(puts, []);
     } finally {
       restore();
+    }
+  }
+);
+
+// ---------------------------------------------------------------------------
+// TASK-G21: objection_field job -- a late top objection on a re-submitted disposition
+// ---------------------------------------------------------------------------
+
+Deno.test(
+  'processObjectionFieldJob: pushes only the top_objection label field, nothing else',
+  async () => {
+    const s = dncStub({});
+    try {
+      const r = await processObjectionFieldJob({
+        client: createGhlClient('tok'),
+        ghlContactId: 'ghl-1',
+        payload: { top_objection: 'fees' },
+        progress: {},
+        pushConfig: { pushFieldMapping: { top_objection: 'f-obj', called_by: 'f-by' } },
+      });
+      assertEquals(r.ok, true);
+      assertEquals(s.calls, ['PUT /contacts/ghl-1']);
+      assertEquals(s.bodies['PUT /contacts/ghl-1'], {
+        customFields: [{ id: 'f-obj', field_value: 'Fees' }],
+      });
+      assertEquals(r.progress, { custom_fields_pushed: true });
+    } finally {
+      s.restore();
+    }
+  }
+);
+
+Deno.test(
+  'processObjectionFieldJob: unmapped field / unknown key -> no call; done step is not repeated; no GHL id fails',
+  async () => {
+    const s = dncStub({});
+    try {
+      const base = { client: createGhlClient('tok'), ghlContactId: 'ghl-1', progress: {} };
+      const unmapped = await processObjectionFieldJob({
+        ...base,
+        payload: { top_objection: 'fees' },
+        pushConfig: { pushFieldMapping: {} },
+      });
+      assertEquals(unmapped.ok, true);
+      const unknown = await processObjectionFieldJob({
+        ...base,
+        payload: { top_objection: 'made_up' },
+        pushConfig: { pushFieldMapping: { top_objection: 'f-obj' } },
+      });
+      assertEquals(unknown.ok, true);
+      const done = await processObjectionFieldJob({
+        ...base,
+        progress: { custom_fields_pushed: true },
+        payload: { top_objection: 'fees' },
+        pushConfig: { pushFieldMapping: { top_objection: 'f-obj' } },
+      });
+      assertEquals(done.ok, true);
+      assertEquals(s.calls, []);
+      const noId = await processObjectionFieldJob({
+        ...base,
+        ghlContactId: null,
+        payload: { top_objection: 'fees' },
+      });
+      assertEquals(noId.ok, false);
+    } finally {
+      s.restore();
     }
   }
 );

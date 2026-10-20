@@ -637,6 +637,43 @@ export async function processDncFlagJob(args: ProcessDncFlagJobArgs): Promise<Pr
   }
 }
 
+export interface ProcessObjectionFieldJobArgs {
+  client: GhlClient;
+  /** The contact's GHL id (the disposition job that ran first links it). */
+  ghlContactId: string | null;
+  payload: { top_objection?: string | null };
+  progress: JobProgress;
+  pushConfig?: GhlPushConfig;
+}
+
+/** TASK-G21: a disposition re-submitted only to add a top objection. Pushes just the `top_objection`
+ *  custom field (the GHL dropdown label); no note, tag, task or stage. Skipped (ok) when the org has not
+ *  mapped the field or the stored key is unknown. */
+export async function processObjectionFieldJob(
+  args: ProcessObjectionFieldJobArgs
+): Promise<ProcessJobResult> {
+  const progress: JobProgress = { ...args.progress };
+  const ghlContactId = args.ghlContactId;
+  try {
+    if (!ghlContactId) throw new Error('objection_field job: contact has no GHL contact id');
+    if (!progress.custom_fields_pushed) {
+      const fields = buildPushCustomFields(args.pushConfig?.pushFieldMapping, {
+        topObjection: topObjectionLabel(args.payload.top_objection),
+      });
+      if (fields.length > 0) await args.client.updateContactCustomFields(ghlContactId, fields);
+      progress.custom_fields_pushed = true;
+    }
+    return { ok: true, progress, resolvedGhlContactId: ghlContactId };
+  } catch (err) {
+    return {
+      ok: false,
+      progress,
+      resolvedGhlContactId: ghlContactId,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
 export interface ProcessContactUpsertJobArgs {
   client: GhlClient;
   locationId: string;
