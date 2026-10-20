@@ -106,7 +106,9 @@ Deno.test(
       await resolveDispositionPushTimeContext(stubSupabase(TABLES, log), 'org-1', 'nope'),
       nulls
     );
-    assertEquals(log, ['call_legs:dispositioned_at, ended_at, created_at, lead_id, session_id']);
+    assertEquals(log, [
+      'call_legs:dispositioned_at, ended_at, created_at, lead_id, session_id, contact_id',
+    ]);
   }
 );
 
@@ -169,5 +171,55 @@ Deno.test(
       callerName: null,
       leadList: null,
     });
+  }
+);
+
+Deno.test(
+  'resolveDispositionPushTimeContext: lead_list prefers the lead list name, then the contact import list, then the campaign (TASK-G18)',
+  async () => {
+    const legBase = {
+      ended_at: '2026-10-19T20:00:00Z',
+      dispositioned_at: null,
+      session_id: 'sess-1',
+    };
+    const tables = {
+      ...TABLES,
+      call_legs: [
+        { ...legBase, id: 'leg-a', lead_id: 'lead-a', contact_id: 'c-1' },
+        { ...legBase, id: 'leg-b', lead_id: 'lead-b', contact_id: 'c-1' },
+        { ...legBase, id: 'leg-c', lead_id: null, contact_id: 'c-1' },
+        { ...legBase, id: 'leg-d', lead_id: 'lead-b', contact_id: 'c-2' },
+      ],
+      campaign_leads: [
+        { id: 'lead-a', attempts: 1, list_name: 'Scraped Austin 10-12' },
+        { id: 'lead-b', attempts: 2, list_name: null },
+      ],
+      contacts: [
+        { id: 'c-1', org_id: 'org-1', import_list: 'First CSV' },
+        { id: 'c-2', org_id: 'org-1', import_list: null },
+      ],
+    };
+    const sb = stubSupabase(tables);
+    assertEquals(
+      (await resolveDispositionPushTimeContext(sb, 'org-1', 'leg-a')).leadList,
+      'Scraped Austin 10-12'
+    );
+    assertEquals(
+      (await resolveDispositionPushTimeContext(sb, 'org-1', 'leg-b')).leadList,
+      'First CSV'
+    );
+    assertEquals(
+      (await resolveDispositionPushTimeContext(sb, 'org-1', 'leg-c')).leadList,
+      'First CSV'
+    );
+    assertEquals(
+      (await resolveDispositionPushTimeContext(sb, 'org-1', 'leg-d')).leadList,
+      'Austin HVAC batch 3'
+    );
+    // another org's contact never supplies the name (falls through to the campaign name)
+    assertEquals(
+      (await resolveDispositionPushTimeContext(sb, 'org-2', 'leg-c')).leadList,
+      'Austin HVAC batch 3'
+    );
   }
 );

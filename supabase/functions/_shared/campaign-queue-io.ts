@@ -78,13 +78,22 @@ export async function fetchDncE164Set(
  * claim more contacts were queued than actually were). Any other error still throws. */
 export async function upsertCampaignLeads(
   supabase: SupabaseAny,
-  args: { campaignId: string; orgId: string; contactIds: string[]; status: string }
+  args: {
+    campaignId: string;
+    orgId: string;
+    contactIds: string[];
+    status: string;
+    /** TASK-G18: the imported list's name, stored on NEW lead rows only (the upsert is
+     *  ignoreDuplicates, so an already-queued lead keeps the name it was created with). */
+    listName?: string | null;
+  }
 ): Promise<{ raceDropped: string[] }> {
   const toRow = (contactId: string) => ({
     campaign_id: args.campaignId,
     contact_id: contactId,
     org_id: args.orgId,
     status: args.status,
+    ...(args.listName ? { list_name: args.listName } : {}),
   });
   const raceDropped: string[] = [];
   for (const batch of chunk(args.contactIds, 200)) {

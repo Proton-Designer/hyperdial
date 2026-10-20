@@ -7,6 +7,7 @@
  * remembers from the first run -- no separate endpoint or server-side saved-search
  * state; dedupe on `ghl_contact_id`/phone makes a rerun naturally idempotent.
  */
+import { defaultGhlListName, normalizeListName } from '../_shared/list-name.ts';
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { corsHeaders, corsPreflightResponse } from '../_shared/cors.ts';
 import { requireOrgRole } from '../_shared/auth.ts';
@@ -45,7 +46,7 @@ Deno.serve(async (req: Request) => {
   const { user, orgId, error: authError } = await requireOrgRole(req, ['owner', 'admin']);
   if (authError) return authError;
 
-  let body: { mode?: string; value?: string; campaignId?: string };
+  let body: { mode?: string; value?: string; campaignId?: string; listName?: string };
   try {
     body = await req.json();
   } catch {
@@ -55,6 +56,8 @@ Deno.serve(async (req: Request) => {
   const mode = body.mode;
   const value = body.value?.trim();
   const campaignId = body.campaignId?.trim() || null;
+  // TASK-G18: the list name recorded on new contacts / queued leads (pushed to GHL as lead_list).
+  const listName = normalizeListName(body.listName) ?? defaultGhlListName();
   if (mode !== 'tag' && mode !== 'search') {
     return jsonResponse({ error: 'mode must be "tag" or "search"' }, 400);
   }
@@ -188,6 +191,7 @@ Deno.serve(async (req: Request) => {
           category: 'Cold',
           contact_status: 'No Contact',
           updated_at: now,
+          import_list: listName,
           ...fields,
         }))
       )
@@ -316,6 +320,7 @@ Deno.serve(async (req: Request) => {
           orgId,
           contactIds: queuePlan.toQueue,
           status: 'queued',
+          listName,
         });
         // TASK-L8 review nit: same as contacts-import -- count a contact that lost the race for
         // "active elsewhere" between the check above and this write, don't silently under-report.

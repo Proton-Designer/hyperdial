@@ -50,6 +50,8 @@ export function ImportContactsModal({
   const [error, setError] = useState<string | null>(null);
   const [importResult, setImportResult] = useState<ImportContactsResult | null>(null);
   const [importCategory, setImportCategory] = useState<string>('Cold');
+  // TASK-G18: name of the list being imported; defaults to the file name, sent to GHL as "Lead List / Batch ID".
+  const [listName, setListName] = useState('');
   const modalRef = useRef<HTMLDivElement>(null);
   useFocusTrap(modalRef, open);
 
@@ -83,6 +85,7 @@ export function ImportContactsModal({
       }
       setError(null);
       setFile(f);
+      setListName(f.name.replace(/\.csv$/i, '').slice(0, 120));
       const reader = new FileReader();
       reader.onload = () => {
         const text = (reader.result as string) || '';
@@ -153,7 +156,8 @@ export function ImportContactsModal({
           mapped_field: c.mapped_field === SKIP_OPTION ? null : (c.mapped_field ?? null),
         })),
         importCategory,
-        campaignId
+        campaignId,
+        listName.trim() || undefined
       );
       setImportResult(result);
       setStep(3);
@@ -174,6 +178,7 @@ export function ImportContactsModal({
       setError(null);
       setImportResult(null);
       setImportCategory('Cold');
+      setListName('');
       onClose();
     }
   };
@@ -299,6 +304,23 @@ export function ImportContactsModal({
                     isn't valid and will be skipped on import.
                   </div>
                 )}
+                <div className="flex flex-col gap-1">
+                  <label htmlFor="import-list-name" className="text-body text-text-secondary">
+                    List name (optional)
+                  </label>
+                  <input
+                    id="import-list-name"
+                    type="text"
+                    value={listName}
+                    maxLength={120}
+                    onChange={(e) => setListName(e.target.value)}
+                    placeholder="e.g. Austin HVAC scrape, Oct 12"
+                    className="w-full bg-surface-2 border border-border-subtle rounded-app-md px-3 py-2 text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent-to"
+                  />
+                  <p className="text-meta text-text-muted">
+                    Sent to GoHighLevel as the lead list for calls to these contacts.
+                  </p>
+                </div>
                 <div className="flex items-center gap-3">
                   <span className="text-body text-text-secondary">Category for this import:</span>
                   <Select value={importCategory} onValueChange={setImportCategory}>

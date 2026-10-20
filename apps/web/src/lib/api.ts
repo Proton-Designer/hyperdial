@@ -2233,7 +2233,9 @@ export async function importContacts(
   csvText: string,
   columnMappings: { original_header: string; mapped_field: string | null }[],
   category: string = 'Cold',
-  campaignId?: string
+  campaignId?: string,
+  /** TASK-G18: optional list name recorded on the new contacts / queued leads (pushed to GHL as lead_list). */
+  listName?: string
 ): Promise<ImportContactsResult> {
   const body: Record<string, unknown> = {
     csv_text: csvText,
@@ -2241,6 +2243,7 @@ export async function importContacts(
     category,
   };
   if (campaignId) body.campaign_id = campaignId;
+  if (listName) body.list_name = listName;
   const res = await fetch(`${getFunctionsUrl()}/contacts-import`, {
     method: 'POST',
     headers: await getEdgeFunctionHeaders(),
@@ -3963,6 +3966,8 @@ export interface ImportFromGhlInput {
   value: string;
   /** When set, every created/updated contact is also queued onto this campaign. */
   campaignId?: string;
+  /** TASK-G18: list name recorded on new contacts / queued leads; the server defaults to "GHL import <date>". */
+  listName?: string;
 }
 
 export interface ImportFromGhlResult {
@@ -4000,7 +4005,12 @@ export async function importFromGhl(input: ImportFromGhlInput): Promise<ImportFr
   const res = await fetch(`${getFunctionsUrl()}/ghl-import`, {
     method: 'POST',
     headers: await getEdgeFunctionHeaders(),
-    body: JSON.stringify({ mode: input.mode, value: input.value, campaignId: input.campaignId }),
+    body: JSON.stringify({
+      mode: input.mode,
+      value: input.value,
+      campaignId: input.campaignId,
+      listName: input.listName,
+    }),
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || 'Failed to import from GHL');

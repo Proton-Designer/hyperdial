@@ -12,7 +12,7 @@ export interface CallLegPushContext {
   callerGhlUserId: string | null;
   /** TASK-G11: the calling intern's display name (profiles first + last), null if unknown. */
   callerName: string | null;
-  /** TASK-G11: the dial session's campaign name -- the "lead list" the call came from. */
+  /** TASK-G11/G18: the imported list's name the call came from (lead, then contact), else the dial session's campaign name. */
   leadList: string | null;
 }
 
@@ -38,7 +38,7 @@ export async function resolveDispositionPushTimeContext(
   if (!callLegId) return { ...NO_CONTEXT };
   const { data: leg } = await supabase
     .from('call_legs')
-    .select('dispositioned_at, ended_at, created_at, lead_id, session_id')
+    .select('dispositioned_at, ended_at, created_at, lead_id, session_id, contact_id')
     .eq('id', callLegId)
     .maybeSingle();
   if (!leg) return { ...NO_CONTEXT };
@@ -50,14 +50,29 @@ export async function resolveDispositionPushTimeContext(
     (leg.dispositioned_at as string | null) ??
     (leg.created_at as string | null);
   const session = await resolveSessionContext(supabase, orgId, leg.session_id);
-  const { callerGhlUserId, callerName, leadList } = session;
-  if (!leg.lead_id)
-    return { lastCallAt, callAttempts: null, callerGhlUserId, callerName, leadList };
-  const { data: lead } = await supabase
-    .from('campaign_leads')
-    .select('attempts')
-    .eq('id', leg.lead_id)
-    .maybeSingle();
+  const { callerGhlUserId, callerName } = session;
+  // TASK-G18: lead_list = the imported list's name -- the lead's own (campaign_leads.list_name), else the
+  // list the contact was first imported with (contacts.import_list), else the session's campaign name.
+  let lead: { attempts?: number | null; list_name?: string | null } | null = null;
+  if (leg.lead_id) {
+    const { data } = await supabase
+      .from('campaign_leads')
+      .select('attempts, list_name')
+      .eq('id', leg.lead_id)
+      .maybeSingle();
+    lead = data;
+  }
+  let importList: string | null = null;
+  if (!lead?.list_name && leg.contact_id) {
+    const { data: contact } = await supabase
+      .from('contacts')
+      .select('import_list')
+      .eq('id', leg.contact_id)
+      .eq('org_id', orgId)
+      .maybeSingle();
+    importList = (contact?.import_list as string | null | undefined) || null;
+  }
+  const leadList = (lead?.list_name as string | null | undefined) || importList || session.leadList;
   return {
     lastCallAt,
     callAttempts: (lead?.attempts as number | undefined) ?? null,

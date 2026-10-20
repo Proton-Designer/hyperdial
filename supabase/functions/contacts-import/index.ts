@@ -4,6 +4,7 @@ import { corsHeaders, corsPreflightResponse } from '../_shared/cors.ts';
 import { requireOrgRole } from '../_shared/auth.ts';
 import { normalizePhoneStrict } from '../_shared/phone-normalize.ts';
 import { timezoneForAreaCode } from '../_shared/area-code-tz.ts';
+import { normalizeListName } from '../_shared/list-name.ts';
 import { planCampaignQueue, type CampaignQueueCandidate } from '../_shared/campaign-queue.ts';
 import {
   fetchActiveElsewhereContactIds,
@@ -70,6 +71,8 @@ Deno.serve(async (req) => {
       column_mappings?: { original_header: string; mapped_field: string | null }[];
       category?: string;
       campaign_id?: string;
+      /** TASK-G18: optional name of the list being imported (the UI defaults to the file name). */
+      list_name?: string;
     };
     const csvText = body?.csv_text;
     const columnMappings = body?.column_mappings;
@@ -78,6 +81,7 @@ Deno.serve(async (req) => {
         ? body.category
         : 'Cold';
     const campaignId = body?.campaign_id?.trim() || null;
+    const listName = normalizeListName(body?.list_name);
     if (!csvText || !Array.isArray(columnMappings)) {
       return new Response(JSON.stringify({ error: 'Missing csv_text or column_mappings' }), {
         status: 400,
@@ -188,6 +192,8 @@ Deno.serve(async (req) => {
       contact.phone_raw = phoneRaw;
       const timezone = timezoneForAreaCode(areaCode);
       if (timezone) contact.timezone = timezone;
+      // TASK-G18: only set when a list name was given, so a request without one never touches the new column.
+      if (listName) contact.import_list = listName;
       toInsert.push(contact);
     }
 
@@ -262,6 +268,7 @@ Deno.serve(async (req) => {
             orgId,
             contactIds: plan.toQueue,
             status: 'queued',
+            listName,
           });
           // TASK-L8 review nit: a contact that lost the race for "active elsewhere" between the
           // check above and this write was not queued -- count it, don't silently under-report.
