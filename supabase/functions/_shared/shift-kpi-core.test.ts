@@ -399,3 +399,54 @@ Deno.test('S05F: a failed placeholder leg counts as a dial, like call_leg_analyt
   assertEquals(k.connects, 1);
   assertEquals(k.connect_rate_pct, 50);
 });
+
+Deno.test(
+  'G01: sign_ups counts legs whose disposition is a win; conversion = sign_ups / conversations',
+  () => {
+    const legs: KpiLeg[] = [
+      leg('19:01', {
+        outcome: 'connected',
+        duration_seconds: 300,
+        disposition: 'Yes',
+        is_win: true,
+      }),
+      leg('19:10', {
+        outcome: 'connected',
+        duration_seconds: 120,
+        disposition: 'No',
+        is_win: false,
+      }),
+      leg('19:20', { outcome: 'connected', duration_seconds: 90 }), // is_win absent -> not a sign-up
+      leg('19:30', { outcome: 'no_answer' }),
+    ];
+    const k = computeShiftKpi(input({ events: [ev('dialing', '19:00', '21:00')], legs }));
+    assertEquals(k.conversations, 3);
+    assertEquals(k.sign_ups, 1);
+    assertEquals(k.conversion_rate_pct, 33.3);
+  }
+);
+
+Deno.test('G01: no conversations -> conversion rate is null; zero sign_ups is 0', () => {
+  const legs: KpiLeg[] = [leg('19:01', { outcome: 'no_answer' })];
+  const k = computeShiftKpi(input({ events: [ev('dialing', '19:00', '21:00')], legs }));
+  assertEquals(k.sign_ups, 0);
+  assertEquals(k.conversion_rate_pct, null);
+});
+
+Deno.test(
+  'G01: a win on a connect shorter than the conversation threshold counts as a sign-up, conversion stays null',
+  () => {
+    const legs: KpiLeg[] = [
+      leg('19:01', {
+        outcome: 'connected',
+        duration_seconds: 20,
+        disposition: 'Yes',
+        is_win: true,
+      }),
+    ];
+    const k = computeShiftKpi(input({ events: [ev('dialing', '19:00', '21:00')], legs }));
+    assertEquals(k.conversations, 0);
+    assertEquals(k.sign_ups, 1);
+    assertEquals(k.conversion_rate_pct, null);
+  }
+);

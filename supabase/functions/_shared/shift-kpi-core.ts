@@ -55,6 +55,8 @@ export interface KpiLeg {
   amd_result: string | null;
   duration_seconds: number | null;
   disposition: string | null;
+  /** The leg's disposition is a win (`dispositions.is_win`): a sign-up. Absent on older inputs = false. */
+  is_win?: boolean;
 }
 
 export interface KpiInput {
@@ -86,6 +88,9 @@ export interface KpiResult {
   talk_minutes: number;
   dials_per_active_hour: number | null;
   connect_rate_pct: number | null;
+  sign_ups: number;
+  /** sign_ups / conversations, null when there were no conversations. */
+  conversion_rate_pct: number | null;
   dispositions: Record<string, number>;
   flags: string[];
 }
@@ -206,6 +211,7 @@ export function computeShiftKpi(i: KpiInput): KpiResult {
   const noAnswers = legs.filter((l) => l.outcome === 'no_answer');
   const talkSeconds = connects.reduce((n, l) => n + (l.duration_seconds ?? 0), 0);
 
+  const signUps = legs.filter((l) => l.is_win === true).length;
   const dispositions: Record<string, number> = {};
   for (const l of legs) {
     if (l.disposition) dispositions[l.disposition] = (dispositions[l.disposition] ?? 0) + 1;
@@ -269,6 +275,9 @@ export function computeShiftKpi(i: KpiInput): KpiResult {
     talk_minutes: Math.round(talkSeconds / 60),
     dials_per_active_hour: activeMinutes > 0 ? round1(dials / (activeMinutes / 60)) : null,
     connect_rate_pct: dials > 0 ? round1((100 * connects.length) / dials) : null,
+    sign_ups: signUps,
+    conversion_rate_pct:
+      conversations.length > 0 ? round1((100 * signUps) / conversations.length) : null,
     dispositions,
     flags,
   };
