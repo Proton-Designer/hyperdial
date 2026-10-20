@@ -394,6 +394,32 @@ Deno.test(
   }
 );
 
+Deno.test(
+  'createGhlClient.searchOpportunities: contactId is sent as contact_id (TASK-G30)',
+  async () => {
+    let seenUrl = '';
+    const restore = stubFetch((url) => {
+      seenUrl = url;
+      return new Response(JSON.stringify({ opportunities: [], meta: { total: 0 } }), {
+        status: 200,
+      });
+    });
+    try {
+      await createGhlClient('test-token').searchOpportunities({
+        locationId: 'loc-1',
+        contactId: 'c9',
+        limit: 100,
+      });
+      assertEquals(
+        seenUrl,
+        'https://services.leadconnectorhq.com/opportunities/search?location_id=loc-1&contact_id=c9&limit=100'
+      );
+    } finally {
+      restore();
+    }
+  }
+);
+
 Deno.test('createGhlClient.getPipelines: GET /opportunities/pipelines?locationId=...', async () => {
   let seenUrl = '';
   const restore = stubFetch((url) => {
@@ -598,6 +624,63 @@ Deno.test(
           opportunityName: 'HyperDial lead',
         })
       );
+    } finally {
+      restore();
+    }
+  }
+);
+
+Deno.test(
+  'createGhlClient.listTags: GET /locations/{id}/tags, reads tags[].id/name (TASK-G28)',
+  async () => {
+    let seen = { url: '', method: '', version: '' };
+    const restore = stubFetch((url, init) => {
+      seen = {
+        url,
+        method: init?.method ?? 'GET',
+        version: (init?.headers as Record<string, string>).Version,
+      };
+      return Response.json({
+        tags: [
+          { id: 't1', name: 'signed up', locationId: 'loc-1' },
+          { id: 't2', name: 'active', locationId: 'loc-1' },
+          { name: 'no id' },
+        ],
+      });
+    });
+    try {
+      const tags = await createGhlClient('tok').listTags('loc-1');
+      assertEquals(seen, {
+        url: 'https://services.leadconnectorhq.com/locations/loc-1/tags',
+        method: 'GET',
+        version: '2021-07-28',
+      });
+      assertEquals(tags, [
+        { id: 't1', name: 'signed up' },
+        { id: 't2', name: 'active' },
+      ]);
+    } finally {
+      restore();
+    }
+  }
+);
+
+Deno.test(
+  'createGhlClient.createTag: POST /locations/{id}/tags with { name } (TASK-G28)',
+  async () => {
+    let seen = { url: '', method: '', body: '' };
+    const restore = stubFetch((url, init) => {
+      seen = { url, method: init?.method ?? 'GET', body: String(init?.body) };
+      return Response.json({ tag: { id: 't9', name: 'signed up', locationId: 'loc-1' } });
+    });
+    try {
+      const tag = await createGhlClient('tok').createTag('loc-1', 'signed up');
+      assertEquals(seen, {
+        url: 'https://services.leadconnectorhq.com/locations/loc-1/tags',
+        method: 'POST',
+        body: '{"name":"signed up"}',
+      });
+      assertEquals(tag, { id: 't9', name: 'signed up' });
     } finally {
       restore();
     }

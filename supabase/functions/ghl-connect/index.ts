@@ -15,6 +15,7 @@ import { corsHeaders, corsPreflightResponse } from '../_shared/cors.ts';
 import { getUserFromRequest } from '../_shared/auth.ts';
 import { createGhlClient } from '../_shared/ghl-client.ts';
 import { logOrgAction } from '../_shared/audit.ts';
+import { syncOrgTagsToGhl } from '../_shared/ghl-tags-io.ts';
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -112,9 +113,21 @@ Deno.serve(async (req: Request) => {
     details: { locationId: location.id, locationName: location.name },
   });
 
+  // TASK-G28: create every configured tag (exclude / DNC / paused / disposition) in the location. Never blocks the connect.
+  const tagSync = await syncOrgTagsToGhl(supabase, {
+    orgId,
+    token,
+    locationId: location.id,
+    apiBase: Deno.env.get('GHL_API_BASE') || undefined,
+  });
+  if (tagSync.listError || tagSync.failed.length > 0) {
+    console.warn('[ghl-connect] tag sync incomplete', tagSync.listError, tagSync.failed);
+  }
+
   return jsonResponse({
     status: 'connected',
     locationId: location.id,
     locationName: location.name,
+    tagSync,
   });
 });

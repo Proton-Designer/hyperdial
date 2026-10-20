@@ -195,6 +195,8 @@ export function buildSearchContactsQuery(args: SearchContactsArgs): string {
 export interface SearchOpportunitiesArgs {
   locationId: string;
   pipelineStageId?: string;
+  /** TASK-G30: only this contact's opportunities (`contact_id`, as the existing contact+pipeline lookup uses). */
+  contactId?: string;
   limit?: number;
   startAfterId?: string;
   startAfter?: number;
@@ -205,6 +207,7 @@ export interface SearchOpportunitiesArgs {
 export function buildSearchOpportunitiesQuery(args: SearchOpportunitiesArgs): string {
   const params = new URLSearchParams({ location_id: args.locationId });
   if (args.pipelineStageId !== undefined) params.set('pipeline_stage_id', args.pipelineStageId);
+  if (args.contactId !== undefined) params.set('contact_id', args.contactId);
   if (args.limit !== undefined) params.set('limit', String(args.limit));
   if (args.startAfterId !== undefined) params.set('startAfterId', args.startAfterId);
   if (args.startAfter !== undefined) params.set('startAfter', String(args.startAfter));
@@ -315,6 +318,11 @@ export interface GhlCustomFieldDef {
   name: string;
 }
 
+export interface GhlTag {
+  id: string;
+  name: string;
+}
+
 export interface GhlClient {
   /** GET /locations/{locationId} — used by ghl-connect to validate a token and confirm the location. */
   getLocation(locationId: string): Promise<GhlLocation>;
@@ -358,6 +366,12 @@ export interface GhlClient {
    *  field DEFINITIONS (id -> name), used to resolve `GhlContact.customFields[].id` to a name
    *  and to compute the field-mapping editor's "sensible defaults by field name". */
   listContactCustomFieldDefs(locationId: string): Promise<GhlCustomFieldDef[]>;
+  /** TASK-G28: GET /locations/{locationId}/tags -- the location's existing tags (locations.json `get-location-tags`,
+   *  200 -> `{ tags: [{ id, name, locationId }] }`; scope locations/tags.readonly). */
+  listTags(locationId: string): Promise<GhlTag[]>;
+  /** TASK-G28: POST /locations/{locationId}/tags with `{ name }` (locations.json `create-tag`, body `tagBody`
+   *  {name} required; 200 -> `{ tag: { id, name, locationId } }`; scope locations/tags.write). */
+  createTag(locationId: string, name: string): Promise<GhlTag>;
   /** MISSION-4 TASK-T2 (GHL-12): moves (or creates) the contact's opportunity in the given
    *  pipeline to the given stage. Verified against opportunities.json: `GET
    *  /opportunities/search?contact_id=&pipeline_id=` is the only way to find an existing
@@ -521,6 +535,30 @@ export function createGhlClient(token: string, options: CreateGhlClientOptions =
         `/custom-fields/object-key/contact?${qs}`
       );
       return res.fields ?? [];
+    },
+
+    async listTags(locationId) {
+      const res = await ghlRequest<{ tags?: { id?: string; name?: string }[] }>(
+        token,
+        apiBase,
+        `/locations/${encodeURIComponent(locationId)}/tags`
+      );
+      return (res.tags ?? [])
+        .filter((t) => typeof t.id === 'string' && typeof t.name === 'string')
+        .map((t) => ({ id: t.id as string, name: t.name as string }));
+    },
+
+    async createTag(locationId, name) {
+      const res = await ghlRequest<{ tag?: { id?: string; name?: string } }>(
+        token,
+        apiBase,
+        `/locations/${encodeURIComponent(locationId)}/tags`,
+        { method: 'POST', body: JSON.stringify({ name }) }
+      );
+      if (!res.tag?.id) {
+        throw new Error('GHL createTag: response had no tag.id');
+      }
+      return { id: res.tag.id, name: res.tag.name ?? name };
     },
 
     async moveOpportunityStage(args) {

@@ -3687,12 +3687,21 @@ export async function getGhlIntegrationStatus(): Promise<GhlIntegrationStatus | 
   return data as GhlIntegrationStatus | null;
 }
 
+/** TASK-G28: what happened when HyperDial made sure the org's configured tags exist in GHL (connect and every
+ *  tag save). Never blocks the connect / save: a problem shows up here. `listError` set = nothing was created. */
+export interface GhlTagSync {
+  existing: string[];
+  created: string[];
+  failed: { tag: string; error: string }[];
+  listError: string | null;
+}
+
 /** Owner/admin only (TASK-G7). Replaces both lists wholesale -- there's no partial-update
  *  endpoint, matching how the Settings editor always submits both lists together. */
 export async function updateGhlBlockedTags(
   dncTags: string[],
   pausedTags: string[]
-): Promise<{ dncTags: string[]; pausedTags: string[] }> {
+): Promise<{ dncTags: string[]; pausedTags: string[]; tagSync: GhlTagSync | null }> {
   const res = await fetch(`${getFunctionsUrl()}/ghl-update-blocked-tags`, {
     method: 'POST',
     headers: await getEdgeFunctionHeaders(),
@@ -3715,6 +3724,8 @@ export interface GhlReconcileSettings {
   lastReconcileAt: string | null;
   /** Counts from the last sweep, or `{ error }` when it failed; null before the first run. */
   lastReconcileCounts: Record<string, unknown> | null;
+  /** TASK-G28: only on a save ('set'): did the exclude tags get created in GHL. */
+  tagSync?: GhlTagSync | null;
 }
 
 async function callGhlReconcileSettings(body: unknown): Promise<GhlReconcileSettings> {
@@ -3738,6 +3749,75 @@ export async function updateGhlReconcileSettings(
   settings: Pick<GhlReconcileSettings, 'enabled' | 'excludeTags' | 'excludeStageIds'>
 ): Promise<GhlReconcileSettings> {
   return callGhlReconcileSettings({ action: 'set', ...settings });
+}
+
+// --- GHL tag picker (TASK-G28) ---
+
+async function callGhlTags<T>(body: unknown): Promise<T> {
+  const res = await fetch(`${getFunctionsUrl()}/ghl-tags`, {
+    method: 'POST',
+    headers: await getEdgeFunctionHeaders(),
+    body: JSON.stringify(body),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'GHL tags request failed');
+  return data as T;
+}
+
+/** Owner/admin only. The connected GHL location's existing tags, sorted. */
+export async function listGhlTags(): Promise<string[]> {
+  return (await callGhlTags<{ tags: string[] }>({ action: 'list' })).tags;
+}
+
+/** Owner/admin only. Creates the tag in GHL (no-op when it already exists); returns its stored spelling. */
+export async function createGhlTag(name: string): Promise<{ tag: string; created: boolean }> {
+  return callGhlTags({ action: 'create', name });
+}
+
+// --- GHL webhook: instant DND / tag / stage / owner changes (TASK-G30) ---
+
+export interface GhlWebhookSettings {
+  /** Where GoHighLevel posts to (Marketplace app webhook URL, or a workflow "Custom Webhook" URL). */
+  webhookUrl: string;
+  locationId: string | null;
+  /** The webhook only acts while "Remove from call lists" (reconcile) is on. */
+  reconcileEnabled: boolean;
+  /** A workflow-webhook secret exists (it is never readable again after it was shown). */
+  hasSecret: boolean;
+  secretRotatedAt: string | null;
+  lastEventAt: string | null;
+  lastEventType: string | null;
+  handledCount: number;
+  /** Present only in the answer to `rotateGhlWebhookSecret`: shown once, store it in GoHighLevel now. */
+  secret?: string;
+}
+
+async function callGhlWebhookSettings(
+  action: 'get' | 'rotate' | 'revoke'
+): Promise<GhlWebhookSettings> {
+  const res = await fetch(`${getFunctionsUrl()}/ghl-webhook-settings`, {
+    method: 'POST',
+    headers: await getEdgeFunctionHeaders(),
+    body: JSON.stringify({ action }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Failed to load the GoHighLevel webhook settings');
+  return data as GhlWebhookSettings;
+}
+
+/** Owner/admin only. */
+export async function getGhlWebhookSettings(): Promise<GhlWebhookSettings> {
+  return callGhlWebhookSettings('get');
+}
+
+/** Owner/admin only. Creates or replaces the workflow-webhook secret; the old one stops working at once. */
+export async function rotateGhlWebhookSecret(): Promise<GhlWebhookSettings> {
+  return callGhlWebhookSettings('rotate');
+}
+
+/** Owner/admin only. Deletes the secret: workflow webhooks are refused until a new one is created. */
+export async function revokeGhlWebhookSecret(): Promise<GhlWebhookSettings> {
+  return callGhlWebhookSettings('revoke');
 }
 
 // --- GHL field coverage (TASK-G17) ---
@@ -3789,7 +3869,7 @@ export async function getGhlFieldCoverage(): Promise<GhlFieldCoverage> {
 export async function connectGhl(
   token: string,
   locationId: string
-): Promise<{ locationId: string; locationName: string }> {
+): Promise<{ locationId: string; locationName: string; tagSync: GhlTagSync | null }> {
   const orgId = await getActiveOrgId();
   const res = await fetch(`${getFunctionsUrl()}/ghl-connect`, {
     method: 'POST',
@@ -3798,7 +3878,11 @@ export async function connectGhl(
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || 'Failed to connect GHL');
-  return { locationId: data.locationId, locationName: data.locationName };
+  return {
+    locationId: data.locationId,
+    locationName: data.locationName,
+    tagSync: (data.tagSync as GhlTagSync | undefined) ?? null,
+  };
 }
 
 export async function disconnectGhl(): Promise<void> {

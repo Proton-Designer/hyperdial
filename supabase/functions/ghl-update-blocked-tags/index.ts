@@ -11,6 +11,7 @@ import { createClient } from 'npm:@supabase/supabase-js@2';
 import { corsHeaders, corsPreflightResponse } from '../_shared/cors.ts';
 import { requireOrgRole } from '../_shared/auth.ts';
 import { logOrgAction } from '../_shared/audit.ts';
+import { syncOrgTagsForOrg } from '../_shared/ghl-tags-io.ts';
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -91,5 +92,11 @@ Deno.serve(async (req: Request) => {
     details: { dncTags, pausedTags },
   });
 
-  return jsonResponse({ dncTags, pausedTags });
+  // TASK-G28: make sure the saved tags exist in GHL; a problem is reported, never blocks the save
+  const tagSync = await syncOrgTagsForOrg(
+    supabase,
+    orgId,
+    Deno.env.get('GHL_API_BASE') || undefined
+  );
+  return jsonResponse({ dncTags, pausedTags, tagSync });
 });

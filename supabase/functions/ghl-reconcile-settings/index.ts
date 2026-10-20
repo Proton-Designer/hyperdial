@@ -13,6 +13,7 @@ import { createClient } from 'npm:@supabase/supabase-js@2';
 import { corsHeaders, corsPreflightResponse } from '../_shared/cors.ts';
 import { requireOrgRole } from '../_shared/auth.ts';
 import { logOrgAction } from '../_shared/audit.ts';
+import { syncOrgTagsForOrg } from '../_shared/ghl-tags-io.ts';
 import { parseReconcileSettingsBody } from '../_shared/ghl-reconcile-settings.ts';
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -91,6 +92,15 @@ Deno.serve(async (req: Request) => {
     }
     const settings = await readSettings(supabase, orgId);
     if (!settings) return jsonResponse({ error: 'GoHighLevel is not connected' }, 400);
+    if (parsed.value.action === 'set') {
+      // TASK-G28: make sure the saved exclude tags exist in GHL; a problem is reported, never blocks the save
+      const tagSync = await syncOrgTagsForOrg(
+        supabase,
+        orgId,
+        Deno.env.get('GHL_API_BASE') || undefined
+      );
+      return jsonResponse({ ...settings, tagSync });
+    }
     return jsonResponse(settings);
   } catch (err) {
     console.error('[ghl-reconcile-settings] failed', err);
