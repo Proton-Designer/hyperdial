@@ -23,13 +23,22 @@ export interface FieldSpec {
   type: GhlDataType;
   /** Dropdown options we send, EXACT text (only for SINGLE_OPTIONS). */
   options?: string[];
+  /** GHL dataTypes besides the default set for `type` that can hold our value without a warning
+   *  (TASK-G20: a free-label field an admin may legitimately make a dropdown). */
+  alsoAccepts?: string[];
 }
 
 type ProviderKey = (typeof GHL_FIELD_MAPPING_TARGET_KEYS)[number];
 
 /** Provider keys written by buildPushCustomFields (the other target keys are pull-only). */
 export const PROVIDER_PUSH_FIELDS: (FieldSpec & { key: ProviderKey })[] = [
-  { key: 'last_call_outcome', label: 'Last Call Outcome', type: 'TEXT' },
+  // our values are labels (org-editable dispositions + inbound codes): text OR a dropdown is fine
+  {
+    key: 'last_call_outcome',
+    label: 'Last Call Outcome',
+    type: 'TEXT',
+    alsoAccepts: ['SINGLE_OPTIONS', 'RADIO'],
+  },
   { key: 'last_call_at', label: 'Last Call At', type: 'TEXT' },
   { key: 'call_attempts', label: 'Call Attempts', type: 'NUMERICAL' },
   { key: 'callback_at', label: 'Callback Date/Time', type: 'TEXT' },

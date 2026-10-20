@@ -16,6 +16,7 @@ import {
   type FieldSpec,
   type GhlDataType,
 } from './ghl-field-catalog.ts';
+import type { GhlRateLimiter } from './ghl-rate-limit.ts';
 
 const GHL_DEFAULT_BASE = 'https://services.leadconnectorhq.com';
 const GHL_CONTACT_VERSION = '2021-07-28';
@@ -69,7 +70,12 @@ const ACCEPTS: Record<GhlDataType, string[]> = {
 function check(spec: FieldSpec, def: CoverageDef): { issues: CoverageIssue[]; missing: string[] } {
   const issues: CoverageIssue[] = [];
   let missing: string[] = [];
-  if (def.dataType && !ACCEPTS[spec.type].includes(def.dataType)) issues.push('type');
+  if (
+    def.dataType &&
+    !ACCEPTS[spec.type].includes(def.dataType) &&
+    !(spec.alsoAccepts ?? []).includes(def.dataType)
+  )
+    issues.push('type');
   if (spec.options && def.options.length > 0) {
     const have = new Set(def.options.map((o) => o.trim()));
     missing = spec.options.filter((o) => !have.has(o));
@@ -131,8 +137,11 @@ export async function fetchCoverageDefs(
   token: string,
   locationId: string,
   apiBase: string = GHL_DEFAULT_BASE,
-  fetchImpl: typeof fetch = fetch
+  fetchImpl: typeof fetch = fetch,
+  /** TASK-G20: called immediately before the GHL request (ghl-rate-limit.ts). */
+  limiter?: GhlRateLimiter
 ): Promise<CoverageDef[]> {
+  await limiter?.throttle();
   const qs = new URLSearchParams({ locationId }).toString();
   const res = await fetchImpl(`${apiBase}/custom-fields/object-key/contact?${qs}`, {
     headers: { Authorization: `Bearer ${token}`, Version: GHL_CONTACT_VERSION },

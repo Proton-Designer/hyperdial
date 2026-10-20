@@ -18,7 +18,7 @@ The sync follows your spec (`ghl-data-sync`, sections 1 to 4). Everything below 
 
 Notes on timing:
 
-- The queue is worked every minute. If GHL is down, HyperDial retries with growing waits and nothing is lost. A job that fails 8 times is parked and shows under **Settings → Integrations** (provider calls) or **Team Shifts → Setup → GoHighLevel sync** (shifts), where it can be retried.
+- The queue is worked every minute. If GHL is down, HyperDial retries with growing waits and nothing is lost. A job that fails 8 times (calls) or 6 times (shifts) is parked and shows under **Settings → Integrations** (provider calls) or **Team Shifts → Setup → GoHighLevel sync** (shifts), where it can be retried.
 - Field updates overwrite the old value each time, so a field always holds the latest call or shift. Tags are only added, never removed by HyperDial.
 - The End shift update (second row) exists so the clock times and survey reach GHL right away. The finalize update about 2 hours later adds late calls and the final flags, and is the only one that fires the "completed" or "missed" tag.
 
@@ -127,6 +127,8 @@ Folder: `Intern Shifts`. Create these with the exact key (GHL shows it as `conta
 
 Optional, per outcome: **Settings → Dispositions** lets you set a **GHL tag** and a **pipeline and stage** for each outcome. This is how "each disposition maps to a stage or a tag so your workflows fire". Tags are set for every outcome out of the box (section 5); stages are empty until you pick them.
 
+**Check your setup.** Still in **Settings → Integrations**, the **Field coverage** card (owner or admin) lists every field HyperDial sends, for provider contacts and for intern contacts, and says for each whether it is ready, not mapped (provider), or missing in GHL (intern), with an "N of M ready" count. It also warns when a GHL field's type cannot hold what we send or a dropdown is missing some of the exact options. It only reads your GHL fields; it never creates anything, and it cannot tell how GHL stores a value (see section 8). `Last Call Outcome` may be a text field or a dropdown without a warning.
+
 The intern fields (section 2b) need no mapping. Connect Team Shifts as described in [shifts-setup.md](shifts-setup.md): calendar id, Henry's GHL user id, and each intern's GHL contact id.
 
 ## 5. Tags HyperDial adds
@@ -178,6 +180,7 @@ The existing 5-minute pull (importing contacts by tag) is separate and also off 
 
 ## 7. Checks to run once it is live
 
+- [ ] Open **Settings → Integrations → Field coverage**. Expect every provider field you want to be ready (not "not mapped") and every intern field ready (not "missing"); fix the rest before testing.
 - [ ] Map the provider fields (section 4). Wrap up one test call as `Callback` and one as `Yes - Build Profile`; the test contact shows the outcome, attempts, callback time, duration, recording link, called by, lead list, the tag, and (for Callback) a task.
 - [ ] Pick a Top Objection at wrap-up on a test call; the dropdown field matches one of your options.
 - [ ] Let one automatic no-answer happen: attempt count and last call time update, a `call:no-answer-N` tag is added, and there is no new note.

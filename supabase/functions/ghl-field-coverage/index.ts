@@ -9,6 +9,10 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { corsHeaders, corsPreflightResponse } from '../_shared/cors.ts';
 import { requireOrgRole } from '../_shared/auth.ts';
+import {
+  createGhlRateLimiter,
+  GHL_PULL_RATE_LIMIT_MAX_PER_WINDOW,
+} from '../_shared/ghl-rate-limit.ts';
 import { classifyFieldCoverage, fetchCoverageDefs } from '../_shared/ghl-field-coverage.ts';
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -52,7 +56,9 @@ Deno.serve(async (req: Request) => {
       defs = await fetchCoverageDefs(
         token as string,
         integration.location_id as string,
-        Deno.env.get('GHL_API_BASE') || undefined
+        Deno.env.get('GHL_API_BASE') || undefined,
+        fetch,
+        createGhlRateLimiter({ maxPerWindow: GHL_PULL_RATE_LIMIT_MAX_PER_WINDOW })
       );
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

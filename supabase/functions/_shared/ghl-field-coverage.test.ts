@@ -178,3 +178,42 @@ Deno.test(
     assertEquals(threw, true);
   }
 );
+
+Deno.test(
+  'classifyFieldCoverage: last_call_outcome may be text OR a dropdown (no false type warning); other text fields still warn on a dropdown (TASK-G20)',
+  () => {
+    const dropdown = classifyFieldCoverage({ last_call_outcome: 'o', called_by: 'c' }, [
+      def('o', 'contact.last_call_outcome', 'SINGLE_OPTIONS', ['Callback']),
+      def('c', 'contact.called_by', 'SINGLE_OPTIONS', ['Jane']),
+    ]);
+    const outcome = dropdown.provider.items.find((i) => i.key === 'last_call_outcome')!;
+    assertEquals([outcome.status, outcome.issues], ['ready', []]);
+    // a free-text field made a dropdown still warns (positive control: the allowance is per key)
+    const calledBy = dropdown.provider.items.find((i) => i.key === 'called_by')!;
+    assertEquals(calledBy.issues, ['type']);
+    // and a number field is still wrong for last_call_outcome
+    const num = classifyFieldCoverage({ last_call_outcome: 'o' }, [
+      def('o', 'contact.last_call_outcome', 'NUMERICAL'),
+    ]);
+    assertEquals(num.provider.items.find((i) => i.key === 'last_call_outcome')!.issues, ['type']);
+  }
+);
+
+Deno.test(
+  'fetchCoverageDefs: throttles through the injected limiter BEFORE the request',
+  async () => {
+    const order: string[] = [];
+    const limiter = {
+      throttle: () => {
+        order.push('throttle');
+        return Promise.resolve();
+      },
+    };
+    const fake = (() => {
+      order.push('fetch');
+      return Promise.resolve(Response.json({ fields: [] }));
+    }) as unknown as typeof fetch;
+    await fetchCoverageDefs('tok', 'loc', 'https://ghl.test', fake, limiter);
+    assertEquals(order, ['throttle', 'fetch']);
+  }
+);
