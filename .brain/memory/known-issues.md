@@ -1352,9 +1352,10 @@ prevention (an optimistic-lock/version check inside the RPC itself).
 
 Written from the Shifts reviews (`.claude/overnight/run-20261006-1130/audit/`); see `.brain/domains/shifts.md`.
 
-- **GHL not verified against a real location**: the calendar id, custom-field definition ids (a field without a definition is skipped and reported), tags, and
+- **GHL not verified against a real location**: the calendar id, custom-field definition ids, tags, and
   the intern contact search (`GET /contacts/?query=<email>`, exact-email filter; `POST /contacts/search` has no documented body) have only run against mocks. Clearing a
   field sends `""`, which may be rejected for NUMERICAL/DATE definitions. Kareem owns the live pass.
+- **Missing GHL custom-field definitions are SKIPPED, logged, not failed (TASK-G07, 2026-10-19).** Until G07 a key with no definition in the location made the whole `contact_fields` row a permanent error and skipped the rest of that event's note/tags (this entry used to claim "skipped and reported", which was wrong). Now `shift-ghl.ts:513-521` PUTs the keys that have a definition, returns the rest as `skippedFields`, the row is `done`, and `shift-ghl-sync/index.ts:101-104` writes one `console.warn` per row. The skipped keys are NOT stored on the outbox row or shown in Setup -> Sync health, so a misspelled key is silent outside the edge-function logs. Field list for Kareem: `.claude/overnight/run-20261019-1905/audit/G07/ghl-fields-intern.md`.
 - **Config is seeded on first read**: `shift_settings`/`open_hours`/`power_windows` rows appear when the first shifts function runs for an org (`ensure_shift_config`), not at org creation.
 - **Duplicate GHL appointment after a lease retry** (reduced by S03F): `shift-ghl-sync` now stops a run after 100 s and pauses an org after 3 timeouts, but a run killed mid-call still leaves the row leased (10 min) and a retry can create a second appointment.
 - **Dialer banner edge**: it reads the current week's cached shifts only, so a next-week shift that starts within 15 minutes of Sunday midnight is missed.

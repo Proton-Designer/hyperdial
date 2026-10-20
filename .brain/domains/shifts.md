@@ -107,7 +107,7 @@ Open `http://localhost:3000/?dev_shifts=1&view=team` (or `view=intern`, `view=di
 
 ## NEEDS-LIVE-VERIFY (state at 2026-10-06)
 
-- GHL: calendar id, custom-field definition ids, tags and the contact search by email (`GET /contacts/?query=`) have not run against a real location; `""` for a cleared NUMERICAL/DATE field is untested. See `.brain/memory/known-issues.md`.
+- GHL: (custom-field keys without a definition are skipped and logged, never an error: `shift-ghl.ts:513-521`) calendar id, custom-field definition ids, tags and the contact search by email (`GET /contacts/?query=`) have not run against a real location; `""` for a cleared NUMERICAL/DATE field is untested. See `.brain/memory/known-issues.md`.
 - KPI jobs and cron (S05) and the live Team Shifts screens have only been exercised by dry-runs and the harness; the real-shell checks (tab-bar offset of the sticky footer, Manage-pods deep link, banner inside the real Dialer) are unverified.
 - Only the QA org has Shifts enabled; never switch it on for another org without the owner's say.
 
