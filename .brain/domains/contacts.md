@@ -36,7 +36,7 @@ answers:
 covers: "The contacts table, two-step CSV import, strict E.164 phone normalisation, area-code timezone derivation, per-org de-duplication, real contact editing, org-wide DNC, and the category/contact_status labels."
 excludes: "Per-call state (call_status, call_count, last_called_at) written by the dial loop — see domain.dialer. Campaign membership — see domain.campaigns."
 tokens_est: 5430
-source_hash: 75bc42f32e8574f8c9d723e6e5fccf18095819d8ba527194b850b0a4e296f6e7
+source_hash: 18df886c8a709f31e40a4506eaccb24c3a0b58a4cd3f8949ed4537ba6a2733b6
 ---
 
 # Contacts

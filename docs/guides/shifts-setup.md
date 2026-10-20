@@ -14,7 +14,7 @@ Shifts is off for every org until an owner or admin turns it on. Interns (role `
 3. Still in **Setup**, check the defaults (they follow the original spec):
    - **Open hours**: Mon to Fri 7 AM to 9 PM, Saturday until noon, Sunday closed.
    - **High leverage windows**: Morning 7 to 10, Lunch 11 to 2, After work 4 to 6 (weekdays).
-   - **Settings**: 8 hour weekly minimum, picks close Sunday 6 PM, 12 hours change notice, 10 minute grace, 60 second conversation, 20 minute idle flag,
+   - **Settings**: 8 hour weekly minimum, picks close Sunday 6 PM, 12 hours change notice, 10 minute grace, 30 second conversation (60 before 2026-10-19), 20 minute idle flag,
      75% adherence, 2 people coverage alert, 80% for a Power week. The time zone is America/Chicago and is not editable on this screen.
 4. **Interns** list in Setup: leave "Takes part" on for each intern, off for anyone who should not have shifts (managers and admins are off by default).
    These open hours, windows and settings are one config for the whole org.
@@ -44,8 +44,8 @@ HyperDial uses the GHL connection the org already has (Settings → Integrations
    | `last_shift_active_minutes`, `last_shift_power_active_minutes`, `last_shift_adherence_pct`, `last_shift_dials`, `last_shift_connects`, `last_shift_conversations`, `last_shift_talk_minutes`, `last_shift_longest_idle_minutes`, `last_shift_late_start_minutes` | Number                                              |
    | `week_dial_minutes`, `week_power_dial_minutes`, `week_power_dial_pct`, `week_dials`, `week_conversations`, `week_adherence_pct`, `week_missed_shifts`, `power_weeks_total`, `shifts_missed_total`                                                                | Number                                              |
 
-   HyperDial finds each field by its key at sync time. If a field is missing, that row stays in error naming it under **Setup → GoHighLevel sync** and none of that row's fields are written.
-   Creating it and pressing Retry fixes it; nothing is lost.
+   HyperDial finds each field by its key at sync time. A field that is missing in GHL is skipped (logged, not an error) and the rest of that row is written; it fills from the next update after you create it.
+   The newer per-shift, survey and weekly fields are listed in [ghl-data-sync-setup.md](ghl-data-sync-setup.md).
 
 4. **Event tags.** Create these 15 tags (every event adds one, which is what fires your workflows):
    `shift-evt-submitted`, `shift-evt-not-submitted`, `shift-evt-under-minimum`, `shift-evt-request-created`, `shift-evt-request-late`,

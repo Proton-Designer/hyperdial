@@ -5,7 +5,7 @@ layer: L2
 type: memory
 status: canonical
 owner: maintainer
-updated: 2026-09-23
+updated: 2026-10-19
 related:
   - mem.active-work
   - mem.decisions
@@ -18,7 +18,7 @@ answers:
   - "what should I not trust"
 covers: "Known defects, traps, and behaviour that looks intentional but is not"
 excludes: "Planned work (see mem.active-work), deliberate design choices (see mem.decisions)"
-tokens_est: 29785
+tokens_est: 31960
 ---
 
 # Known Issues
@@ -1385,6 +1385,23 @@ only evidence; the SDK just reports a hangup.
 
 Also: `useTelnyxCall.ts` used to swallow the hangup reason and silently reset to idle; it now sets
 `error` with the SIP reason/code when an outbound call is torn down before ever being answered.
+
+## 42. GHL data sync (2026-10-19): open follow-ups from the reviews
+
+Written from the review SHOULDs of TASK-G01..G13 (the run's `audit/*/review-*.md` files, run folder `run-20261019-1905`, untracked). None blocks use; the setup guide is `docs/guides/ghl-data-sync-setup.md`.
+
+- **GHL value typing is unverified live.** Numbers are sent as text (`"142"`), times as ISO text, a cleared field as `""`. Whether GHL accepts them for NUMERICAL/DATE fields, and whether a dropdown rejects text that is not an exact option, has only been checked against the docs. Use Single Line for time fields until verified.
+- **`lead_list` is the campaign NAME**, not an imported-list id (renaming a campaign changes later pushes). A proper import-batch column is not built.
+- **Reconcile sweep limits (`ghl-reconcile-worker`):** (fixed in TASK-G16: the read loop now stops at the worker's 100 s deadline, and the stage step only looks at contacts with a queued/callback lead) a stage with more than 1000 opportunities is still truncated (`STAGE_MAX_PAGES` 10 × 100); contacts claimed but not read after a deadline hit wait for the next rotation; throughput is about 100 contacts per 5-minute tick (max 300), so a very long linked list takes hours per rotation; removal is one way (a lead set `completed` stays completed if the GHL tag is removed).
+- **DNC HyperDial → GHL gaps:** a DNC contact with no `ghl_contact_id` is never flagged (and is not flagged when linked later); un-DNC (true → false) is not propagated; a GHL pull import that lands many already-DND linked contacts enqueues one `dnc_flag` job (one GET) each; the dedupe against an already-queued `dnc_flag` is not race-proof (the worker is idempotent). No backfill of pre-existing DNC contacts.
+- **Skipped shift fields are only logged** (`shift-ghl-sync/index.ts:101-104`, `console.warn`); they are not persisted on the outbox row or shown under Setup → GoHighLevel sync, and a skipped key is not replayed after the field is created. Create the fields before the first finalized shift.
+- **End-shift quick push can show zeros:** it reads `shift_kpis` as of the last 15-minute pass; with no KPI row yet it pushes 0 dials/connects/conversations and clears the rates until finalize. Its guard only warns (no `trigger_failures` row).
+- **Sign-ups are not backfilled** for shifts finalized before `20261019195842` (they stay 0, so the deploy week's `week_sign_ups` undercounts); conversion rate can exceed 100% (`shift-kpi-core.ts`).
+- **Threshold move 60 → 30** also moved any org that had chosen 60 on purpose; `apps/web/src/dev/ShiftsHarness.tsx` still fixtures `conversationMinSeconds: 60`.
+- **Re-submitting a wrap-up** that adds a top objection updates `call_legs.top_objection`, but the GHL job is deduped on `(call_leg_id, kind)`, so GHL never gets it.
+- **Reconcile settings function:** the owner/admin gate is `requireOrgRole` (shared, not pinned by a test in this function; checked live: agent → 403). More than 50 tags / 20 stage ids are silently truncated; the audit action `ghl.update_reconcile_settings` has no friendly label.
+- **Owner routing (TASK-G15) is "GHL wins":** a callback created in HyperDial is re-assigned to the GHL owner at the next sweep when they differ; clearing the owner in GHL unassigns nobody; it only runs while the org's reconcile switch is on.
+- **The Recording Link is an app URL** that needs a HyperDial login, not an audio file.
 
 ## Not issues — deliberate, documented elsewhere
 

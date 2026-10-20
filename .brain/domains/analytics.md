@@ -38,8 +38,8 @@ answers:
   - "where does the Team page's Attendance tab / Fairness metric / My stats self-view get its data"
 covers: "The Dashboard metrics, the Analytics screen, the call_leg_analytics/dial_session_hours views behind them, the weekly-summary job, the in-app notification bell, org timezone settings, and the Team page's Attendance/Fairness/My-stats additions (MISSION-5 TASK-M5-A4)."
 excludes: "The dial loop and call_legs state machine that produces the source data — see .brain/domains/dialer.md. Dispositions themselves — see .brain/domains/dispositions.md."
-tokens_est: 6553
-source_hash: bce9d0c520a519efa67aa508c50c894d25f34751319c8c01c39417cfeeceb8f3
+tokens_est: 6795
+source_hash: ad1df443285e98847f145fb368d226dd30e6672ef1eb8f505c233845da8c7cd9
 ---
 
 # Analytics & Notifications

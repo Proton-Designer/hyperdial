@@ -5,7 +5,7 @@ layer: L2
 type: domain
 status: canonical
 owner: maintainer
-updated: 2026-09-24
+updated: 2026-10-19
 sources:
   - supabase/migrations/20260924000900_ghl_integration_outbox.sql
   - supabase/migrations/20260924001200_ghl_integration_fixes.sql
@@ -22,6 +22,16 @@ sources:
   - apps/web/src/components/Settings.tsx
   - apps/web/src/components/contacts/ImportFromGhlModal.tsx
   - apps/web/src/lib/api.ts
+  - supabase/migrations/20261019200613_ghl_dnc_push.sql
+  - supabase/migrations/20261019201027_ghl_reconcile.sql
+  - supabase/migrations/20261019201849_call_top_objection.sql
+  - supabase/functions/_shared/ghl-reconcile.ts
+  - supabase/functions/_shared/ghl-reconcile-settings.ts
+  - supabase/functions/ghl-reconcile-worker/index.ts
+  - supabase/functions/ghl-reconcile-settings/index.ts
+  - supabase/functions/_shared/ghl-push-context.ts
+  - supabase/functions/_shared/ghl-field-mapping.ts
+  - apps/web/src/components/settings/GhlReconcileCard.tsx
 related:
   - domain.auth
   - domain.campaigns
@@ -34,10 +44,10 @@ answers:
   - "how does Import from GHL dedupe, and what happens if you run it twice"
   - "why does tag-based import page every contact instead of filtering server-side"
   - "how is a retried sync job kept from double-posting a note; what makes a GHL-tagged contact do-not-call or paused"
-covers: "GHL (GoHighLevel) connect/disconnect, the org_integrations token store, the crm_sync_jobs push outbox (worker included), and the pull-import (contacts by tag/search) path."
-excludes: "The disposition/wrap-up UI that will call enqueue_crm_job -- not yet built (see Not covered here)."
-tokens_est: 3645
-source_hash: 141fc54175e78893f5924f8c666bd88e87c54d6f72c3958e4966e48762c5e7e6
+covers: "GHL (GoHighLevel) connect/disconnect, the org_integrations token store, the crm_sync_jobs push outbox (worker included), the pull-import (contacts by tag/search) path, and the 2026-10-19 data sync (per-call fields, DNC push, GHL reconcile sweep)."
+excludes: "The disposition/wrap-up UI that calls enqueue_crm_job (see Not covered here)."
+tokens_est: 5295
+source_hash: 8c708dd7f9ab2f0d8c4551dd6f1ae02fb2a5b22c19a64a6f018ebbe0d3bfb6a2
 ---
 
 # CRM Sync (GHL)
@@ -49,8 +59,9 @@ Integration Token (design §6). Once connected, every call disposition pushes a
 note, a tag, a callback task and a DND flag into that GHL sub-account via a
 pg_cron-driven push worker (TASK-P3-P3); contacts can also be pulled the other
 way, by tag or search (TASK-P3-P2). The disposition/wrap-up UI that actually
-calls `enqueue_crm_job` isn't built yet (Phase 3, eng2) -- the worker exists
-and is tested, but has nothing feeding it in production until then.
+calls `enqueue_crm_job` is built (`dialer/WrapUpModal.tsx` -> `dialer-session-disposition` -> `submit_disposition`, which enqueues the job in the same
+transaction). Since 2026-10-19 (the HyperDial -> GHL data sync, Kareem's spec) the push also covers per-call fields, automatic no-answer/voicemail legs, DNC from
+every source, and a GHL -> HyperDial reconcile sweep; see "Data sync (2026-10-19)" below. Setup steps for the GHL admin: `docs/guides/ghl-data-sync-setup.md`.
 
 ## Key concepts
 
@@ -59,7 +70,9 @@ and is tested, but has nothing feeding it in production until then.
 | Private Integration Token | A GHL-issued bearer token scoped to one sub-account (location), pasted in by the org owner. Not OAuth -- there is no refresh flow. |
 | Location | GHL's term for a sub-account. `org_integrations.location_id` is confirmed against the token at connect time, not just trusted from user input. |
 | Outbox | `crm_sync_jobs` -- rows enqueued by `enqueue_crm_job`, drained every 60s by `ghl-sync-worker`. Exists so a GHL outage never blocks the dialer. `progress` (jsonb) tracks which push steps already succeeded, so a retry never redoes one. |
-| Disposition job | `kind='disposition'` outbox row. Its `payload` shape is fixed below; dispositions code (Phase 3, eng2) is the intended caller. |
+| Disposition job | `kind='disposition'` outbox row. Its `payload` shape is fixed below; `submit_disposition` (SQL) is the caller. |
+| Other job kinds | `crm_sync_jobs.kind` is checked against `disposition`, `contact_upsert`, `nurture_tag`, `voicemail_tag`, `no_answer_tag`, `inbound_call_note`, `transfer_note`, `dnc_flag` (`20261019200613_ghl_dnc_push.sql`). |
+| Reconcile | The 5-minute GHL -> HyperDial sweep that takes DNC / signed-up / paused contacts off call lists (`ghl-reconcile-worker`). Off by default per org. |
 
 ## Where the code lives
 
@@ -96,11 +109,15 @@ For `kind='disposition'`, `enqueue_crm_job`'s `payload` must be:
   "agent_name": "string",
   "duration_seconds": "number",
   "recording_url": "string | null",
-  "transcript_excerpt": "string | null"
+  "transcript_excerpt": "string | null",
+  "ghl_tag": "string | null",
+  "creates_task": "boolean",
+  "is_dnc": "boolean",
+  "top_objection": "string key | null (TASK-G13; absent on jobs queued before it)"
 }
 ```
 
-Maps onto `ghl-client.ts`'s `addNote`/`addTags`/`createTask`/`setDnd`. Written per TASK-P3-P1's requirement so dispositions (eng2, Phase 3) can call `enqueue_crm_job` without re-deriving this shape.
+Maps onto `ghl-client.ts`'s `addNote`/`addTags`/`createTask`/`setDnd`. The authoritative list of keys is the `jsonb_build_object` in the latest `submit_disposition` (`20261019201849_call_top_objection.sql`, ~line 200) and `DispositionPayload` in `ghl-sync-worker.ts`.
 
 ### Pull import (TASK-P3-P2)
 
@@ -123,12 +140,29 @@ skipping any step already marked done in `progress`. A failure partway persists 
 backoff (`least(2^attempts, 60)` minutes, `dead` at 8) -- a retry never re-posts a note that already landed. A resolved GHL contact id is stamped onto
 `contacts.ghl_contact_id` regardless of the job's outcome, so a retry never re-upserts either. `contact_upsert` jobs are the simpler one-step case.
 
+### Data sync (2026-10-19)
+
+The run `run-20261019-1905` implemented Kareem's `ghl-data-sync` spec. What each piece does and where it lives:
+
+- **Per-call fields on the provider contact** (`ghl-sync-worker.ts` `buildPushCustomFields`, ~line 85-130): `last_call_at` (call `ended_at`, falls back to disposition time, then leg creation), `last_call_outcome`, `call_attempts`, `callback_at`, `call_duration`, `recording_url` (an in-app, login-gated link), `called_by`, `called_by_ghl_user_id`, `lead_list` (the **campaign name**, not an import-list id), `top_objection` (label text), plus the older `license_number`/`service_zips`. A key only goes out when the org mapped it in `ghl_field_mapping` (Settings -> Integrations -> Custom field mapping; target keys in `ghl-field-mapping.ts` `GHL_FIELD_MAPPING_TARGET_KEYS`). Push-time lookups (caller name, GHL user id, campaign) are in `_shared/ghl-push-context.ts`.
+- **Note policy:** a `no_answer`/`voicemail_left`/`voicemail` disposition with empty notes adds no GHL note (`shouldSkipDispositionNote`) (TASK-G02, spec "do not log every no-answer as a note"). The callback GHL task is assigned to the calling intern's `org_members.ghl_user_id` when known; the contact's GHL owner is never written.
+- **Automatic no-answer / voicemail legs** (`voicemail_tag`/`no_answer_tag` jobs, `processTagJob`) also push `call_attempts` and `last_call_at`, still with no note (TASK-G03).
+- **DNC HyperDial -> GHL** (TASK-G05): guarded AFTER triggers on `contacts` (dnc set) and `dnc_numbers` insert enqueue ONE `dnc_flag` job per change, only for contacts that already have `ghl_contact_id` and orgs with a connected GHL. The worker reads the GHL contact first and skips DND/tag already present. Trigger failures are logged to `trigger_failures` (source `ghl_dnc_push`) and never block the write. **No backfill** of pre-existing DNC contacts.
+- **GHL -> HyperDial reconcile** (TASK-G08, migration `20261019201027_ghl_reconcile.sql`, `ghl-reconcile-worker`, `_shared/ghl-reconcile.ts`): cron `ghl-reconcile-worker` at `2-59/5 * * * *` -> `private.trigger_ghl_reconcile_worker()` -> secret `GHL_RECONCILE_WORKER_SECRET` (fails closed; `verify_jwt=false`). Per org with `org_integrations.ghl_reconcile_enabled`, `claim_ghl_reconcile_batch` leases contacts that have a `queued`/`callback` lead (oldest `contacts.ghl_reconciled_at` first, default batch 100, `GHL_RECONCILE_BATCH` max 300, 100 s budget checked between orgs), reads each from GHL, and `apply_ghl_reconcile` moves leads: DND on calls or a `ghl_dnc_tags` tag -> contact `dnc` + `dnc_numbers` row + leads `dnc`; a `ghl_exclude_tags` tag or an opportunity in `ghl_exclude_stage_ids` -> leads `completed`; a `ghl_paused_tags` tag -> leads `paused`. Only queued/callback leads move, never `in_flight`. A transaction-local flag `hyperdial.ghl_origin` makes the G05 triggers skip, so a GHL-origin DNC is not echoed back. Removal is one-way.
+- **Settings UI** (TASK-G12): Settings -> Integrations -> "Remove from call lists" (`settings/GhlReconcileCard.tsx`) via `ghl-reconcile-settings` (`get`/`set`, owner/admin only through `requireOrgRole`, writes through `set_org_ghl_reconcile_settings`; deliberately not exposed in `org_integrations_status`, which every member can read). Audit action `ghl.update_reconcile_settings`.
+- **Top objection** (TASK-G13): `call_legs.top_objection` (six keys shared with the shift survey), optional `p_top_objection` on `submit_disposition`, wrap-up select, pushed as `top_objection`.
+- **Shift side** (intern contact): see `.brain/domains/shifts.md`; the outbox is separate (`shift_ghl_outbox`).
+
+- **Owner routing** (TASK-G15, `20261019202452_ghl_owner_routing.sql`): the reconcile read's `assignedTo` goes to `apply_ghl_owner_routing(p_org, p_items)` (service_role only), which maps it through `org_members.ghl_user_id` (active members only), syncs the informational `contacts.assigned_user_id`, and sets `campaign_leads.assigned_agent_id` on that contact's `callback` leads when the member is on `campaign_agents` for the campaign. `claim_next_leads` already hands a callback only to its assigned agent. Runs after the DNC/exclude/paused decisions, same 5-minute tick, so it needs `ghl_reconcile_enabled`. GHL owner wins over the HyperDial-created callback assignee; a cleared owner changes nothing.
+
+Not built (verified absent): imported-list name/id, an instant GHL webhook receiver, a DNC backfill.
+
 ## Integration points
 
 | Direction | With | Via |
 |---|---|---|
 | Depends on | `domain.auth` | `private.is_org_member`, `has_org_role`, the org-owner check |
-| Depended on by | Dispositions (not yet built) | `enqueue_crm_job(org, 'disposition', ...)` |
+| Depended on by | `domain.dispositions` | `enqueue_crm_job(org, 'disposition', ...)` from `submit_disposition` |
 | Depended on by | `domain.contacts` | Pull import writes `contacts.ghl_contact_id`/`dnc`/`timezone`; the push worker also stamps `ghl_contact_id` |
 | External | GHL LeadConnector API v2 | `https://services.leadconnectorhq.com`, bearer token, `Version: 2021-07-28` header, `net.http_post` every 60s via pg_cron |
 
@@ -142,7 +176,7 @@ backoff (`least(2^attempts, 60)` minutes, `dead` at 8) -- a retry never re-posts
 
 ## Not covered here
 
-- The dial engine, dispositions, and wrap-up UI that will actually call `enqueue_crm_job` → not yet built (Phase 3, eng2). The worker that would drain what they enqueue exists and is tested, but nothing calls it in production yet.
+- The dial engine, dispositions and the wrap-up UI that call `enqueue_crm_job` → `.brain/domains/dialer.md` and `.brain/domains/dispositions.md`. Shift pushes -> `.brain/domains/shifts.md`.
 - Telnyx account connection → `.brain/domains/telephony.md`. Org/role/invite plumbing `ghl-connect` reuses → `.brain/domains/auth.md`.
 
 ## Unverified

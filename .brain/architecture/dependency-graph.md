@@ -23,7 +23,7 @@ answers:
 covers: "Directed dependency edges, layering rules and their enforcement, change-impact analysis"
 excludes: "Runtime data movement (see arch.data-flows), per-function behaviour (see arch.service-map)"
 tokens_est: 1626
-source_hash: d131457c5717515463ec48b68a6abf57b04e31fbef3ab079909ca08fe6490b82
+source_hash: 41d602305e9ff623ed0ab126fd244bb0c838b9798274305c9dd84d93a94869df
 ---
 
 # Dependency Graph

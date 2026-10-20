@@ -37,7 +37,7 @@ answers:
 covers: "Telnyx account wiring (API key, the two connection IDs, webhook auth), phone-number search/purchase/listing, and the agent's WebRTC browser leg."
 excludes: "The parallel dial loop itself — batching, AMD, call_logs state machine, Redis session state — see .brain/domains/dialer.md."
 tokens_est: 5847
-source_hash: 0f194f48c73dd577da03c0953d550614f506982223bf56f3b14b87727dcea950
+source_hash: 2da29ddc8ba134c0baca23daaa5a62813432a710031a596d19952302e77b8788
 ---
 
 # Telephony

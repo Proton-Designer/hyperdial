@@ -5,7 +5,7 @@ layer: L2
 type: architecture
 status: canonical
 owner: maintainer
-updated: 2026-09-27
+updated: 2026-10-19
 sources:
   - supabase/functions/**
   - supabase/config.toml
@@ -21,8 +21,8 @@ answers:
   - "which function is the biggest risk to change"
 covers: "Every Edge Function: purpose, auth posture, dependencies, and risk"
 excludes: "Public URLs and deploy commands (see docs/reference/edge-functions.md), dial-loop internals (see domain.dialer)"
-tokens_est: 3785
-source_hash: 652cd588377090e28807a9621a1fecb1b12764d35f503859880c8428e4a02aec
+tokens_est: 4478
+source_hash: dfc2a572726c08561607220448cb23548ccf3e80b5aef97910d956fad3f9d1d0
 ---
 
 # Service Map
@@ -134,6 +134,8 @@ functions (`funnel_summary`, `answer_rate_heatmap`, `connect_rate_by_number`,
 | `ghl-pull-worker` | Shared secret (cron, 5 min) | TASK-T1 (GHL-5): the scheduled GHL pull, disabled per-org by default (`ghl_pull_enabled`) | Medium |
 | `ghl-sync-now` | JWT (owner/admin) | TASK-T1 (GHL-5): on-demand "Sync now" — runs the same pull core as the cron worker, regardless of the enabled flag, synchronously | Medium |
 | `ghl-sync-worker` | Shared secret (cron, 60s) | The GHL **push** outbox worker (disposition → note/tag/task/DND), claims `crm_sync_jobs` via `FOR UPDATE SKIP LOCKED` | Medium |
+| `ghl-reconcile-worker` | Shared secret (cron, every 5 min at minutes 2,7,12…, `GHL_RECONCILE_WORKER_SECRET`) | TASK-G08: GHL → HyperDial sweep. For orgs with `ghl_reconcile_enabled`, reads the GHL contact of queued/callback leads and takes DND / DNC-tag / signed-up / active / paused contacts off call lists and (G15) routes callbacks to the GHL owner. Off by default | Medium — writes `campaign_leads`/`contacts.dnc` |
+| `ghl-reconcile-settings` | JWT (owner/admin) | TASK-G12: `get`/`set` of the reconcile switch, exclude tags and exclude stage ids (Settings → Integrations → "Remove from call lists"). Not exposed through `org_integrations_status` | Medium |
 
 ## Shifts (domain doc: `.brain/domains/shifts.md`; contract: `docs/design/shifts.md` section 3)
 

@@ -5,12 +5,15 @@ layer: L2
 type: domain
 status: canonical
 owner: maintainer
-updated: 2026-09-24
+updated: 2026-10-19
 sources:
   - supabase/migrations/20260924002200_dispositions.sql
   - supabase/functions/dialer-session-disposition/index.ts
   - apps/web/src/components/Settings.tsx
   - apps/web/src/lib/api.ts
+  - supabase/migrations/20261019201849_call_top_objection.sql
+  - apps/web/src/components/dialer/WrapUpModal.tsx
+  - supabase/functions/_shared/call-objection.ts
 related:
   - domain.dialer
   - domain.crm
@@ -21,9 +24,9 @@ answers:
   - "how does a disposition reach GHL"
   - "who can edit the disposition list"
 covers: "The per-org disposition list, the submit_disposition RPC and its lead/DNC/GHL-outbox effects, and the Settings editor."
-excludes: "The mandatory wrap-up FORM UI (components/dialer/**, eng2/E4's territory, not built as of this doc) → domain.dialer. The GHL push worker's own step-by-step mechanics (upsert/note/tag/task/dnd, retry/backoff) → domain.crm. Recording/transcription (not built) → domain.dialer's Not covered."
-tokens_est: 2170
-source_hash: 9960e76e70c591bb95e69ebd3f9e8d65f23711842d458b747ee02991f656ae09
+excludes: "The wrap-up form UI internals (components/dialer/WrapUpModal.tsx) → domain.dialer. The GHL push worker's own step-by-step mechanics (upsert/note/tag/task/dnd, retry/backoff) → domain.crm. Recording/transcription (not built) → domain.dialer's Not covered."
+tokens_est: 2496
+source_hash: 11b2138b18430995cb291cfeb735fb1c209431095064da588fd4d752c41938ba
 ---
 
 # Dispositions
@@ -44,6 +47,8 @@ dial session out of `wrap_up` so refilling resumes.
 | `ghl_tag` | Nullable. The GHL contact tag this disposition applies. Null means "no tag" (design §5: "Left voicemail"/"No answer (manual)" have none) — NOT a fallback to `key`. |
 | `creates_task` | Gates GHL task creation together with a non-null `callback_at`. Only "Callback" is true by default. |
 | leg disposition fields | `call_legs.disposition_id/notes/callback_at/dispositioned_by/dispositioned_at` — written once per leg by `submit_disposition`; `dispositioned_at` is the idempotency guard for a re-submit. |
+| `top_objection` | Optional per-call objection on `call_legs.top_objection`, one of `too_busy`, `enough_work`, `fees`, `dont_trust_apps`, `not_interested_app_jobs`, `other` (the same six keys as the shift survey). Chosen in the wrap-up modal (`WrapUpModal.tsx`, "Top objection (optional)"), validated in `_shared/call-objection.ts` (`parseTopObjection`, 400 on an unknown value) and again in SQL. Pushed to GHL as the `top_objection` field using the label text (`TOP_OBJECTION_GHL_LABELS`). TASK-G13. |
+| win disposition | `dispositions.is_win` (the seeded `yes_build_profile`, "Yes - Build Profile"): a leg with a win disposition counts as a **sign-up** in shift KPIs (`shift_kpi_inputs`, TASK-G01). |
 
 ## Where the code lives
 
@@ -59,12 +64,14 @@ dial session out of `wrap_up` so refilling resumes.
 
 ## How it works
 
-1. A leg reaches `ended` while the session is `wrap_up` (domain.dialer). The wrap-up form (not
-   built yet, E4's territory) will call `submitDisposition({legId, dispositionKey, notes,
-   callbackAt})` — `apps/web/src/lib/api.ts`.
+1. A leg reaches `ended` while the session is `wrap_up` (domain.dialer). The wrap-up form
+   (`components/dialer/WrapUpModal.tsx`) calls `submitDisposition({legId, dispositionKey, notes,
+   callbackAt, licenseNumber?, zips?, topObjection?})` — `apps/web/src/lib/api.ts`.
 2. `dialer-session-disposition/index.ts`: `requireTelnyxOrgRole`, loads the leg's session, 403s an
    `agent` caller who isn't that session's own agent (owner/admin always pass).
-3. `submit_disposition(p_leg, p_org, p_caller_user_id, p_disposition, p_notes, p_callback_at)` — a
+3. `submit_disposition(p_leg, p_org, p_caller_user_id, p_disposition, p_notes, p_callback_at,
+   p_license_number default null, p_zips default null, p_top_objection default null)` (latest definition:
+   `20261019201849_call_top_objection.sql`, which dropped the 8-argument version) — a
    service-role-only SQL RPC (same shape as `claim_leg`/`transition_session`, NOT the client-JWT
    4-arg sketch the task file first proposed — `auth.uid()` is null under a service-role caller).
    Re-checks caller identity itself (defense in depth), applies the lead effect, propagates DNC
@@ -106,13 +113,13 @@ dial session out of `wrap_up` so refilling resumes.
 
 ## Not covered here
 
-- The mandatory wrap-up form UI itself → `components/dialer/**` (eng2/E4, not built as of this
-  doc) → domain.dialer.
-- GHL push worker step mechanics (upsert/note/tag/task/dnd, retry/backoff, pg_cron) →
-  domain.crm.
+- The wrap-up form UI itself → `components/dialer/WrapUpModal.tsx` → domain.dialer.
+- GHL push worker step mechanics (upsert/note/tag/task/dnd, retry/backoff, pg_cron) and which
+  fields reach GHL → domain.crm.
 - Recording/transcription (design §5's other half — Storage bucket, `transcript_segments`, not
   built) → `enqueue_crm_job`'s payload always sends `recording_url`/`transcript_excerpt` as null
-  until that lands.
+  until that lands. (The recording link in the payload IS populated now: an in-app, login-gated
+  `/contacts?leg=<id>` URL, not an audio URL.)
 
 ## Unverified
 

@@ -5,7 +5,7 @@ layer: L2
 type: memory
 status: canonical
 owner: maintainer
-updated: 2026-09-21
+updated: 2026-10-19
 related:
   - arch.system-overview
   - mem.known-issues
@@ -18,7 +18,7 @@ answers:
   - "why is components/ui not formatted"
 covers: "Decisions made, alternatives considered, what superseded what"
 excludes: "Work in progress (see mem.active-work), currently-broken behaviour (see mem.known-issues)"
-tokens_est: 40396
+tokens_est: 42163
 ---
 
 # Decisions
@@ -30,6 +30,23 @@ Newest first. Each entry answers: what was decided, why, and what it rules out.
 > a written record — they are labeled as such, and their "decided by" is unknown.
 
 ---
+
+## 2026-10-19 — HyperDial → GoHighLevel data sync: defaults taken where the spec left a question open
+
+Run `run-20261019-1905` implemented Kareem's `ghl-data-sync` spec (setup guide: `docs/guides/ghl-data-sync-setup.md`; behaviour: `.brain/domains/crm.md`, `.brain/domains/shifts.md`). The user was not asked the open questions; the recommended default of each was built and is listed here so it can be overridden.
+
+- **"Signed up" = the existing win disposition** (`dispositions.is_win`, `yes_build_profile`, "Yes - Build Profile"). No new disposition. Sign-ups in shift KPIs = legs with a win disposition; conversion rate = sign-ups ÷ conversations (may exceed 100%; not capped). Week sign-up/connect totals live in a separate `private.shift_week_sign_totals`, not inside `shift_week_rollup`, because that jsonb is pushed to GHL verbatim.
+- **Conversation threshold 60 s → 30 s** (spec), migration `20261019201136_shifts_threshold_week_flag.sql`: the column default changed and every org row still at 60 was moved to 30 (2 orgs, 1 enabled). Consequence: an admin who chose 60 on purpose is indistinguishable from the old default and was moved too; unfinalized shifts recompute with 30. The analytics views keep their own fixed 30 and were not touched.
+- **Push timing:** a quick `shift_ended` push at End shift (clock times, survey, counts so far, week totals; contact fields only, no tags or note, in its own exception block so End shift can never fail on it), plus the unchanged full push at finalize (>2 h after the shift ends), which alone fires the completed/missed tags (`20261019201422_shifts_push_at_end_shift.sql`).
+- **Hours vs the 8 h minimum:** keep the Sunday scheduled-hours check and its `shift-evt-under-minimum` tag; add actual-hours fields at Week closed (`week_hours_vs_min`, `week_under_minimum`), with **no new tag** so no extra workflow fires.
+- **Late start:** new tag `shift-evt-late-start` added with the completed tag.
+- **Missing GHL custom fields are skipped, not failed** (`shift-ghl.ts:513-521`): the row completes with a `skippedFields` list and `shift-ghl-sync` logs a `console.warn`. Previously one missing field made the whole row a permanent error. Cost: the skipped keys are not persisted or shown in Sync health, and a skipped key is not replayed after the field is created.
+- **Provider fields are mapped-only** (a key goes out only when the org mapped it in `ghl_field_mapping`); intern fields are matched by key. Disposition → dropdown is the `last_call_outcome` text; disposition → tag/stage is the existing per-disposition setting. "Called by" is a custom field, never the GHL owner (spec §4 makes GHL the source of truth for the owner). Lead list = campaign name; an import-list id is a follow-up. Recording link = the in-app, login-gated URL.
+- **Top objection:** optional wrap-up dropdown with the same six keys as the shift survey (`20261019201849_call_top_objection.sql`; `submit_disposition` dropped and recreated with a 9th trailing optional parameter, rather than adding an overload that would make named-argument calls ambiguous).
+- **DNC HyperDial → GHL:** guarded triggers on `contacts.dnc` and `dnc_numbers` enqueue one `dnc_flag` job per change, only for contacts already linked to GHL. **No backfill** of existing DNC contacts (would be a historical flood).
+- **GHL → HyperDial: a 5-minute sweep, not a webhook** (no new unauthenticated endpoint). Off by default per org, owner/admin switch in Settings; only `queued`/`callback` leads move; GHL-origin DNC is not echoed back. The lead enables it per org as a live step once the org has chosen its signed-up/active tags and stages.
+- **Owner routing (TASK-G15):** the GHL owner (read by the same reconcile call, no extra GHL request) re-assigns a contact's waiting CALLBACK leads to the mapped, active, on-roster member; GHL wins over the callback's HyperDial assignee; HyperDial never writes the GHL owner.
+- **Not built, deliberately:** imported-list id, instant webhook, backfills.
 
 ## 2026-10-06 — Shifts: reuse the org model, `agent_state_events` and the org's GHL connection instead of the spec's own tables and secrets
 

@@ -2,10 +2,10 @@
   "meta": {
     "artifact": "dependency-index",
     "version": "1.0",
-    "generated_at": "2026-09-28T17:30:33.238Z",
+    "generated_at": "2026-10-20T01:28:02.571Z",
     "target": "/Users/aymanmohammed/Desktop/Softdial",
     "git": {
-      "commit": "64b09a9",
+      "commit": "0b43099",
       "branch": "feat/stage-1",
       "dirty": true
     },

@@ -11,7 +11,7 @@ answers:
   - "where does knowledge live"
 covers: "Index of the whole knowledge base, how to use it, rules for keeping it true"
 excludes: "The content of any single domain or architecture document (see that document itself)"
-tokens_est: 2029
+tokens_est: 2062
 ---
 
 # `.brain/`

@@ -5,7 +5,7 @@ layer: L2
 type: tooling
 status: canonical
 owner: maintainer
-updated: 2026-09-27
+updated: 2026-10-19
 sources:
   - supabase/functions/_shared/**
   - apps/web/src/lib/**
@@ -30,8 +30,8 @@ answers:
   - "where is the Telnyx API reference"
 covers: "Every external service this system depends on, how it is configured, and how it fails"
 excludes: "Commands (see tool.registry), Telnyx call semantics (see domain.telephony), variable-by-variable detail (see docs/reference/environment-variables.md)"
-tokens_est: 2197
-source_hash: 1373b8e10dc68e5e226841592c7136ee99f51aecbf237343ce0d89a98a0bc6ee
+tokens_est: 2256
+source_hash: 152d257dd043397c5c77848423d7208e9baba55d9934425f8af878c2782b460f
 ---
 
 # Integrations
@@ -129,11 +129,12 @@ own env var. Until that's run, the cron tick is a documented no-op.
 | `spend-alert-check` | hourly (:23) | `SPEND_ALERT_SECRET` | `private.set_spend_alert_config` |
 | `recording-retention` | daily 03:17 | `RECORDING_RETENTION_SECRET` | `private.set_recording_retention_config` |
 | `ghl-pull-worker` (Mission 4, TASK-T1) | every 5 min | `GHL_PULL_WORKER_SECRET` | `private.set_ghl_pull_worker_config` |
+| `ghl-reconcile-worker` (TASK-G08) | every 5 min (minutes 2, 7, 12 …) | `GHL_RECONCILE_WORKER_SECRET` | `private.set_ghl_reconcile_worker_config` (and optional env `GHL_RECONCILE_BATCH`, default 100, max 300) |
 | `reliability-alert-check` (Mission 4, TASK-T10) | every 5 min | `RELIABILITY_ALERT_SECRET` | `private.set_reliability_alert_config` — **not yet wired to the live project** |
 | `campaign-lines-guard-check` (Mission 4, TASK-S2) | every 5 min | `HIGH_LINES_GUARD_SECRET` | `private.set_high_lines_guard_config` |
 | `number-health-check` (Mission 4, TASK-T9) | weekly, Mon 08:00 | `NUMBER_HEALTH_CHECK_SECRET` | `private.set_number_health_check_config` |
 
-All 8 secrets are independent (a separate Vault-backed config row and env var
+All 9 secrets are independent (a separate Vault-backed config row and env var
 each) — never reused across workers, since each points at a different
 function URL.
 

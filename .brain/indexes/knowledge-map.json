@@ -2,10 +2,10 @@
   "meta": {
     "artifact": "knowledge-map",
     "version": "1.0",
-    "generated_at": "2026-09-28T17:30:33.238Z",
+    "generated_at": "2026-10-20T01:28:02.571Z",
     "target": "/Users/aymanmohammed/Desktop/Softdial",
     "git": {
-      "commit": "64b09a9",
+      "commit": "0b43099",
       "branch": "feat/stage-1",
       "dirty": true
     },
@@ -65,7 +65,7 @@
         "type": "architecture",
         "status": "canonical",
         "owner": "maintainer",
-        "tokens_est": 3785,
+        "tokens_est": 4478,
         "covers": "Every Edge Function: purpose, auth posture, dependencies, and risk",
         "excludes": "Public URLs and deploy commands (see docs/reference/edge-functions.md), dial-loop internals (see domain.dialer)",
         "answers": [
@@ -139,7 +139,7 @@
         "type": "domain",
         "status": "canonical",
         "owner": "maintainer",
-        "tokens_est": 6553,
+        "tokens_est": 6795,
         "covers": "The Dashboard metrics, the Analytics screen, the call_leg_analytics/dial_session_hours views behind them, the weekly-summary job, the in-app notification bell, org timezone settings, and the Team page's Attendance/Fairness/My-stats additions (MISSION-5 TASK-M5-A4).",
         "excludes": "The dial loop and call_legs state machine that produces the source data — see .brain/domains/dialer.md. Dispositions themselves — see .brain/domains/dispositions.md.",
         "answers": [
@@ -239,9 +239,9 @@
         "type": "domain",
         "status": "canonical",
         "owner": "maintainer",
-        "tokens_est": 3645,
-        "covers": "GHL (GoHighLevel) connect/disconnect, the org_integrations token store, the crm_sync_jobs push outbox (worker included), and the pull-import (contacts by tag/search) path.",
-        "excludes": "The disposition/wrap-up UI that will call enqueue_crm_job -- not yet built (see Not covered here).",
+        "tokens_est": 5295,
+        "covers": "GHL (GoHighLevel) connect/disconnect, the org_integrations token store, the crm_sync_jobs push outbox (worker included), the pull-import (contacts by tag/search) path, and the 2026-10-19 data sync (per-call fields, DNC push, GHL reconcile sweep).",
+        "excludes": "The disposition/wrap-up UI that calls enqueue_crm_job (see Not covered here).",
         "answers": [
           "how does an org connect its GHL sub-account",
           "where is the GHL Private Integration Token stored",
@@ -281,14 +281,39 @@
         "type": "domain",
         "status": "canonical",
         "owner": "maintainer",
-        "tokens_est": 2170,
+        "tokens_est": 2496,
         "covers": "The per-org disposition list, the submit_disposition RPC and its lead/DNC/GHL-outbox effects, and the Settings editor.",
-        "excludes": "The mandatory wrap-up FORM UI (components/dialer/**, eng2/E4's territory, not built as of this doc) → domain.dialer. The GHL push worker's own step-by-step mechanics (upsert/note/tag/task/dnd, retry/backoff) → domain.crm. Recording/transcription (not built) → domain.dialer's Not covered.",
+        "excludes": "The wrap-up form UI internals (components/dialer/WrapUpModal.tsx) → domain.dialer. The GHL push worker's own step-by-step mechanics (upsert/note/tag/task/dnd, retry/backoff) → domain.crm. Recording/transcription (not built) → domain.dialer's Not covered.",
         "answers": [
           "how does a disposition affect a lead",
           "where do dispositions get seeded for a new org",
           "how does a disposition reach GHL",
           "who can edit the disposition list"
+        ],
+        "populated": true
+      },
+      {
+        "id": "domain.shifts",
+        "path": ".brain/domains/shifts.md",
+        "title": "Shifts (intern weekly commitments)",
+        "layer": "L2",
+        "type": "domain",
+        "status": "canonical",
+        "owner": "maintainer",
+        "tokens_est": 3745,
+        "covers": "The Shifts subsystem end to end: roles and pod scope, the week/deadline/minimum rules, change requests, tables and RPCs, the edge functions and cron jobs, shift KPIs, the GHL outbox, and the two frontend surfaces with their dev harness.",
+        "excludes": "The exact request/response JSON (docs/design/shifts.md section 3 is the contract; apps/web/src/lib/api.ts is its hand-synced client copy). The dial loop (.brain/domains/dialer.md). The generic GHL push/pull sync (.brain/domains/crm.md). Pod and role administration (.brain/domains/auth.md).",
+        "answers": [
+          "how do Shifts work",
+          "what is the weekly minimum and the pick deadline",
+          "who can see or edit whose shifts (pod scope)",
+          "how does a request to move, drop, add or lighten a week get approved",
+          "what counts toward the weekly hours",
+          "how are shift KPIs and Power weeks computed",
+          "how do shifts get into GoHighLevel",
+          "which edge functions and cron jobs belong to Shifts",
+          "where is the Shifts UI and how do I test it without a backend",
+          "what is still unverified live for Shifts"
         ],
         "populated": true
       },
@@ -451,7 +476,7 @@
         "type": "memory",
         "status": "canonical",
         "owner": "maintainer",
-        "tokens_est": 40396,
+        "tokens_est": 42163,
         "covers": "Decisions made, alternatives considered, what superseded what",
         "excludes": "Work in progress (see mem.active-work), currently-broken behaviour (see mem.known-issues)",
         "answers": [
@@ -472,7 +497,7 @@
         "type": "memory",
         "status": "canonical",
         "owner": "maintainer",
-        "tokens_est": 29785,
+        "tokens_est": 31960,
         "covers": "Known defects, traps, and behaviour that looks intentional but is not",
         "excludes": "Planned work (see mem.active-work), deliberate design choices (see mem.decisions)",
         "answers": [
@@ -542,7 +567,7 @@
         "type": "meta",
         "status": "canonical",
         "owner": "unassigned",
-        "tokens_est": 2029,
+        "tokens_est": 2062,
         "covers": "Index of the whole knowledge base, how to use it, rules for keeping it true",
         "excludes": "The content of any single domain or architecture document (see that document itself)",
         "answers": [
@@ -559,7 +584,7 @@
         "type": "meta",
         "status": "canonical",
         "owner": "unassigned",
-        "tokens_est": 959,
+        "tokens_est": 1024,
         "covers": "What qualifies as a domain, how to write one, shared vs. local domain content",
         "excludes": "The domains themselves (see each domain's own .brain/domains/*.md)",
         "answers": [
@@ -594,7 +619,7 @@
         "type": "tooling",
         "status": "canonical",
         "owner": "maintainer",
-        "tokens_est": 2197,
+        "tokens_est": 2256,
         "covers": "Every external service this system depends on, how it is configured, and how it fails",
         "excludes": "Commands (see tool.registry), Telnyx call semantics (see domain.telephony), variable-by-variable detail (see docs/reference/environment-variables.md)",
         "answers": [
@@ -723,6 +748,11 @@
       {
         "from": "meta.brain-readme",
         "to": "domain.crm",
+        "kind": "links"
+      },
+      {
+        "from": "meta.brain-readme",
+        "to": "domain.shifts",
         "kind": "links"
       },
       {
@@ -931,6 +961,11 @@
         "kind": "links"
       },
       {
+        "from": "arch.service-map",
+        "to": "domain.shifts",
+        "kind": "links"
+      },
+      {
         "from": "arch.system-overview",
         "to": "arch.dependency-graph",
         "kind": "related"
@@ -1018,6 +1053,11 @@
       {
         "from": "meta.domains-readme",
         "to": "domain.crm",
+        "kind": "links"
+      },
+      {
+        "from": "meta.domains-readme",
+        "to": "domain.shifts",
         "kind": "links"
       },
       {
@@ -1552,7 +1592,72 @@
       },
       {
         "from": "domain.crm",
+        "to": "supabase/migrations/20261019200613_ghl_dnc_push.sql",
+        "kind": "sources"
+      },
+      {
+        "from": "domain.crm",
+        "to": "supabase/migrations/20261019201027_ghl_reconcile.sql",
+        "kind": "sources"
+      },
+      {
+        "from": "domain.crm",
+        "to": "supabase/migrations/20261019201849_call_top_objection.sql",
+        "kind": "sources"
+      },
+      {
+        "from": "domain.crm",
+        "to": "supabase/functions/_shared/ghl-reconcile.ts",
+        "kind": "sources"
+      },
+      {
+        "from": "domain.crm",
+        "to": "supabase/functions/_shared/ghl-reconcile-settings.ts",
+        "kind": "sources"
+      },
+      {
+        "from": "domain.crm",
+        "to": "supabase/functions/ghl-reconcile-worker/index.ts",
+        "kind": "sources"
+      },
+      {
+        "from": "domain.crm",
+        "to": "supabase/functions/ghl-reconcile-settings/index.ts",
+        "kind": "sources"
+      },
+      {
+        "from": "domain.crm",
+        "to": "supabase/functions/_shared/ghl-push-context.ts",
+        "kind": "sources"
+      },
+      {
+        "from": "domain.crm",
+        "to": "supabase/functions/_shared/ghl-field-mapping.ts",
+        "kind": "sources"
+      },
+      {
+        "from": "domain.crm",
+        "to": "apps/web/src/components/settings/GhlReconcileCard.tsx",
+        "kind": "sources"
+      },
+      {
+        "from": "domain.crm",
         "to": "domain.contacts",
+        "kind": "links"
+      },
+      {
+        "from": "domain.crm",
+        "to": "domain.shifts",
+        "kind": "links"
+      },
+      {
+        "from": "domain.crm",
+        "to": "domain.dialer",
+        "kind": "links"
+      },
+      {
+        "from": "domain.crm",
+        "to": "domain.dispositions",
         "kind": "links"
       },
       {
@@ -1794,6 +1899,176 @@
         "from": "domain.dispositions",
         "to": "apps/web/src/lib/api.ts",
         "kind": "sources"
+      },
+      {
+        "from": "domain.dispositions",
+        "to": "supabase/migrations/20261019201849_call_top_objection.sql",
+        "kind": "sources"
+      },
+      {
+        "from": "domain.dispositions",
+        "to": "apps/web/src/components/dialer/WrapUpModal.tsx",
+        "kind": "sources"
+      },
+      {
+        "from": "domain.dispositions",
+        "to": "supabase/functions/_shared/call-objection.ts",
+        "kind": "sources"
+      },
+      {
+        "from": "domain.shifts",
+        "to": "domain.auth",
+        "kind": "related"
+      },
+      {
+        "from": "domain.shifts",
+        "to": "domain.dialer",
+        "kind": "related"
+      },
+      {
+        "from": "domain.shifts",
+        "to": "domain.crm",
+        "kind": "related"
+      },
+      {
+        "from": "domain.shifts",
+        "to": "domain.analytics",
+        "kind": "related"
+      },
+      {
+        "from": "domain.shifts",
+        "to": "docs/design/shifts.md",
+        "kind": "sources"
+      },
+      {
+        "from": "domain.shifts",
+        "to": "docs/design/shifts-build-spec.txt",
+        "kind": "sources"
+      },
+      {
+        "from": "domain.shifts",
+        "to": "supabase/migrations/20261006114226_shifts_schema.sql",
+        "kind": "sources"
+      },
+      {
+        "from": "domain.shifts",
+        "to": "supabase/migrations/20261006120116_shifts_intern_rpcs.sql",
+        "kind": "sources"
+      },
+      {
+        "from": "domain.shifts",
+        "to": "supabase/migrations/20261006124500_shifts_ghl_outbox_rpcs.sql",
+        "kind": "sources"
+      },
+      {
+        "from": "domain.shifts",
+        "to": "supabase/migrations/20261006130000_shifts_admin_rpcs.sql",
+        "kind": "sources"
+      },
+      {
+        "from": "domain.shifts",
+        "to": "supabase/migrations/20261006131500_shifts_ghl_hardening.sql",
+        "kind": "sources"
+      },
+      {
+        "from": "domain.shifts",
+        "to": "supabase/migrations/20261006143000_shifts_admin_followups.sql",
+        "kind": "sources"
+      },
+      {
+        "from": "domain.shifts",
+        "to": "supabase/migrations/20261006144500_shifts_open_hours_scope.sql",
+        "kind": "sources"
+      },
+      {
+        "from": "domain.shifts",
+        "to": "supabase/migrations/20261006140000_shifts_kpi_jobs.sql",
+        "kind": "sources"
+      },
+      {
+        "from": "domain.shifts",
+        "to": "supabase/migrations/20261006140100_shifts_cron.sql",
+        "kind": "sources"
+      },
+      {
+        "from": "domain.shifts",
+        "to": "supabase/migrations/20261019195842_shifts_signups_metric.sql",
+        "kind": "sources"
+      },
+      {
+        "from": "domain.shifts",
+        "to": "supabase/migrations/20261019200743_shifts_push_v2.sql",
+        "kind": "sources"
+      },
+      {
+        "from": "domain.shifts",
+        "to": "supabase/migrations/20261019201136_shifts_threshold_week_flag.sql",
+        "kind": "sources"
+      },
+      {
+        "from": "domain.shifts",
+        "to": "supabase/migrations/20261019201422_shifts_push_at_end_shift.sql",
+        "kind": "sources"
+      },
+      {
+        "from": "domain.shifts",
+        "to": "supabase/functions/_shared/shifts-core.ts",
+        "kind": "sources"
+      },
+      {
+        "from": "domain.shifts",
+        "to": "supabase/functions/_shared/shifts-io.ts",
+        "kind": "sources"
+      },
+      {
+        "from": "domain.shifts",
+        "to": "supabase/functions/_shared/shifts-admin.ts",
+        "kind": "sources"
+      },
+      {
+        "from": "domain.shifts",
+        "to": "supabase/functions/_shared/shift-ghl.ts",
+        "kind": "sources"
+      },
+      {
+        "from": "domain.shifts",
+        "to": "supabase/functions/_shared/shift-kpi-core.ts",
+        "kind": "sources"
+      },
+      {
+        "from": "domain.shifts",
+        "to": "apps/web/src/lib/api.ts",
+        "kind": "sources"
+      },
+      {
+        "from": "domain.shifts",
+        "to": "apps/web/src/components/Shifts.tsx",
+        "kind": "sources"
+      },
+      {
+        "from": "domain.shifts",
+        "to": "apps/web/src/components/TeamShifts.tsx",
+        "kind": "sources"
+      },
+      {
+        "from": "domain.shifts",
+        "to": "apps/web/src/contexts/ShiftsContext.tsx",
+        "kind": "sources"
+      },
+      {
+        "from": "domain.shifts",
+        "to": "apps/web/src/dev/ShiftsHarness.tsx",
+        "kind": "sources"
+      },
+      {
+        "from": "domain.shifts",
+        "to": "mem.known-issues",
+        "kind": "links"
+      },
+      {
+        "from": "domain.shifts",
+        "to": "mem.decisions",
+        "kind": "links"
       },
       {
         "from": "domain.telephony",
@@ -2067,6 +2342,16 @@
       },
       {
         "from": "mem.decisions",
+        "to": "domain.crm",
+        "kind": "links"
+      },
+      {
+        "from": "mem.decisions",
+        "to": "domain.shifts",
+        "kind": "links"
+      },
+      {
+        "from": "mem.decisions",
         "to": "domain.analytics",
         "kind": "links"
       },
@@ -2123,6 +2408,11 @@
       {
         "from": "mem.known-issues",
         "to": "arch.service-map",
+        "kind": "links"
+      },
+      {
+        "from": "mem.known-issues",
+        "to": "domain.shifts",
         "kind": "links"
       },
       {
@@ -2308,7 +2598,14 @@
       {
         "question": "how are in-app notifications listed, counted and marked read",
         "id": "domain.analytics",
-        "tokens_est": 6553,
+        "tokens_est": 6795,
+        "kind": "document",
+        "anchor": null
+      },
+      {
+        "question": "how are shift KPIs and Power weeks computed",
+        "id": "domain.shifts",
+        "tokens_est": 3745,
         "kind": "document",
         "anchor": null
       },
@@ -2397,6 +2694,20 @@
         "anchor": null
       },
       {
+        "question": "how do Shifts work",
+        "id": "domain.shifts",
+        "tokens_est": 3745,
+        "kind": "document",
+        "anchor": null
+      },
+      {
+        "question": "how do shifts get into GoHighLevel",
+        "id": "domain.shifts",
+        "tokens_est": 3745,
+        "kind": "document",
+        "anchor": null
+      },
+      {
         "question": "how do team broadcasts work, who can post one, and how does an agent dismiss it",
         "id": "domain.auth",
         "tokens_est": 13159,
@@ -2406,28 +2717,35 @@
       {
         "question": "how does Import from GHL dedupe, and what happens if you run it twice",
         "id": "domain.crm",
-        "tokens_est": 3645,
+        "tokens_est": 5295,
         "kind": "document",
         "anchor": null
       },
       {
         "question": "how does a disposition affect a lead",
         "id": "domain.dispositions",
-        "tokens_est": 2170,
+        "tokens_est": 2496,
         "kind": "document",
         "anchor": null
       },
       {
         "question": "how does a disposition reach GHL",
         "id": "domain.dispositions",
-        "tokens_est": 2170,
+        "tokens_est": 2496,
         "kind": "document",
         "anchor": null
       },
       {
         "question": "how does a disposition reach GHL, and what runs the worker that pushes it",
         "id": "domain.crm",
-        "tokens_est": 3645,
+        "tokens_est": 5295,
+        "kind": "document",
+        "anchor": null
+      },
+      {
+        "question": "how does a request to move, drop, add or lighten a week get approved",
+        "id": "domain.shifts",
+        "tokens_est": 3745,
         "kind": "document",
         "anchor": null
       },
@@ -2441,14 +2759,14 @@
       {
         "question": "how does an org connect its GHL sub-account",
         "id": "domain.crm",
-        "tokens_est": 3645,
+        "tokens_est": 5295,
         "kind": "document",
         "anchor": null
       },
       {
         "question": "how does an org set its own timezone, and what uses it",
         "id": "domain.analytics",
-        "tokens_est": 6553,
+        "tokens_est": 6795,
         "kind": "document",
         "anchor": null
       },
@@ -2525,7 +2843,7 @@
       {
         "question": "how is a retried sync job kept from double-posting a note; what makes a GHL-tagged contact do-not-call or paused",
         "id": "domain.crm",
-        "tokens_est": 3645,
+        "tokens_est": 5295,
         "kind": "document",
         "anchor": null
       },
@@ -2539,7 +2857,7 @@
       {
         "question": "how is live conversations per agent-hour computed",
         "id": "domain.analytics",
-        "tokens_est": 6553,
+        "tokens_est": 6795,
         "kind": "document",
         "anchor": null
       },
@@ -2553,7 +2871,7 @@
       {
         "question": "how is the weekly summary notification created and when",
         "id": "domain.analytics",
-        "tokens_est": 6553,
+        "tokens_est": 6795,
         "kind": "document",
         "anchor": null
       },
@@ -2588,14 +2906,14 @@
       {
         "question": "is the Analytics screen real data or a mock",
         "id": "domain.analytics",
-        "tokens_est": 6553,
+        "tokens_est": 6795,
         "kind": "document",
         "anchor": null
       },
       {
         "question": "is the analytics screen real",
         "id": "mem.known-issues",
-        "tokens_est": 29785,
+        "tokens_est": 31960,
         "kind": "document",
         "anchor": null
       },
@@ -2616,7 +2934,7 @@
       {
         "question": "was Y considered",
         "id": "mem.decisions",
-        "tokens_est": 40396,
+        "tokens_est": 42163,
         "kind": "document",
         "anchor": null
       },
@@ -2672,7 +2990,7 @@
       {
         "question": "what are the known issues",
         "id": "mem.known-issues",
-        "tokens_est": 29785,
+        "tokens_est": 31960,
         "kind": "document",
         "anchor": null
       },
@@ -2700,7 +3018,7 @@
       {
         "question": "what business domains exist",
         "id": "meta.domains-readme",
-        "tokens_est": 959,
+        "tokens_est": 1024,
         "kind": "document",
         "anchor": null
       },
@@ -2728,7 +3046,14 @@
       {
         "question": "what counts as a conversation",
         "id": "domain.analytics",
-        "tokens_est": 6553,
+        "tokens_est": 6795,
+        "kind": "document",
+        "anchor": null
+      },
+      {
+        "question": "what counts toward the weekly hours",
+        "id": "domain.shifts",
+        "tokens_est": 3745,
         "kind": "document",
         "anchor": null
       },
@@ -2812,7 +3137,7 @@
       {
         "question": "what endpoints exist",
         "id": "arch.service-map",
-        "tokens_est": 3785,
+        "tokens_est": 4478,
         "kind": "document",
         "anchor": null
       },
@@ -2840,7 +3165,7 @@
       {
         "question": "what external services does this use",
         "id": "tool.integrations",
-        "tokens_est": 2197,
+        "tokens_est": 2256,
         "kind": "document",
         "anchor": null
       },
@@ -2868,7 +3193,7 @@
       {
         "question": "what happens if Redis goes down",
         "id": "tool.integrations",
-        "tokens_est": 2197,
+        "tokens_est": 2256,
         "kind": "document",
         "anchor": null
       },
@@ -2910,7 +3235,7 @@
       {
         "question": "what is broken",
         "id": "mem.known-issues",
-        "tokens_est": 29785,
+        "tokens_est": 31960,
         "kind": "document",
         "anchor": null
       },
@@ -2925,6 +3250,13 @@
         "question": "what is in this directory",
         "id": "map.repository",
         "tokens_est": 1488,
+        "kind": "document",
+        "anchor": null
+      },
+      {
+        "question": "what is still unverified live for Shifts",
+        "id": "domain.shifts",
+        "tokens_est": 3745,
         "kind": "document",
         "anchor": null
       },
@@ -2945,7 +3277,7 @@
       {
         "question": "what is the .brain directory",
         "id": "meta.brain-readme",
-        "tokens_est": 2029,
+        "tokens_est": 2062,
         "kind": "document",
         "anchor": null
       },
@@ -2978,6 +3310,13 @@
         "anchor": null
       },
       {
+        "question": "what is the weekly minimum and the pick deadline",
+        "id": "domain.shifts",
+        "tokens_est": 3745,
+        "kind": "document",
+        "anchor": null
+      },
+      {
         "question": "what legacy Telnyx env var names are still honoured",
         "id": "domain.telephony",
         "tokens_est": 5847,
@@ -2994,7 +3333,7 @@
       {
         "question": "what payload shape does enqueue_crm_job expect for a disposition job",
         "id": "domain.crm",
-        "tokens_est": 3645,
+        "tokens_est": 5295,
         "kind": "document",
         "anchor": null
       },
@@ -3008,7 +3347,7 @@
       {
         "question": "what should I not trust",
         "id": "mem.known-issues",
-        "tokens_est": 29785,
+        "tokens_est": 31960,
         "kind": "document",
         "anchor": null
       },
@@ -3022,7 +3361,7 @@
       {
         "question": "what third-party accounts do I need",
         "id": "tool.integrations",
-        "tokens_est": 2197,
+        "tokens_est": 2256,
         "kind": "document",
         "anchor": null
       },
@@ -3085,14 +3424,14 @@
       {
         "question": "where do I add a new endpoint",
         "id": "arch.service-map",
-        "tokens_est": 3785,
+        "tokens_est": 4478,
         "kind": "document",
         "anchor": null
       },
       {
         "question": "where do I configure Telnyx",
         "id": "tool.integrations",
-        "tokens_est": 2197,
+        "tokens_est": 2256,
         "kind": "document",
         "anchor": null
       },
@@ -3106,14 +3445,14 @@
       {
         "question": "where do dispositions get seeded for a new org",
         "id": "domain.dispositions",
-        "tokens_est": 2170,
+        "tokens_est": 2496,
         "kind": "document",
         "anchor": null
       },
       {
         "question": "where do the Dashboard's Calls Today / Connect Rate / Talk Time / Conversations-per-hr numbers come from",
         "id": "domain.analytics",
-        "tokens_est": 6553,
+        "tokens_est": 6795,
         "kind": "document",
         "anchor": null
       },
@@ -3141,21 +3480,21 @@
       {
         "question": "where does knowledge live",
         "id": "meta.brain-readme",
-        "tokens_est": 2029,
+        "tokens_est": 2062,
         "kind": "document",
         "anchor": null
       },
       {
         "question": "where does the Team page's Attendance tab / Fairness metric / My stats self-view get its data",
         "id": "domain.analytics",
-        "tokens_est": 6553,
+        "tokens_est": 6795,
         "kind": "document",
         "anchor": null
       },
       {
         "question": "where does the manager Team page's live board / per-intern daily table get its data",
         "id": "domain.analytics",
-        "tokens_est": 6553,
+        "tokens_est": 6795,
         "kind": "document",
         "anchor": null
       },
@@ -3190,14 +3529,21 @@
       {
         "question": "where is the GHL Private Integration Token stored",
         "id": "domain.crm",
-        "tokens_est": 3645,
+        "tokens_est": 5295,
+        "kind": "document",
+        "anchor": null
+      },
+      {
+        "question": "where is the Shifts UI and how do I test it without a backend",
+        "id": "domain.shifts",
+        "tokens_est": 3745,
         "kind": "document",
         "anchor": null
       },
       {
         "question": "where is the Telnyx API reference",
         "id": "tool.integrations",
-        "tokens_est": 2197,
+        "tokens_est": 2256,
         "kind": "document",
         "anchor": null
       },
@@ -3225,7 +3571,14 @@
       {
         "question": "which domain owns X",
         "id": "meta.domains-readme",
-        "tokens_est": 959,
+        "tokens_est": 1024,
+        "kind": "document",
+        "anchor": null
+      },
+      {
+        "question": "which edge functions and cron jobs belong to Shifts",
+        "id": "domain.shifts",
+        "tokens_est": 3745,
         "kind": "document",
         "anchor": null
       },
@@ -3239,21 +3592,21 @@
       {
         "question": "which function handles X",
         "id": "arch.service-map",
-        "tokens_est": 3785,
+        "tokens_est": 4478,
         "kind": "document",
         "anchor": null
       },
       {
         "question": "which function is the biggest risk to change",
         "id": "arch.service-map",
-        "tokens_est": 3785,
+        "tokens_est": 4478,
         "kind": "document",
         "anchor": null
       },
       {
         "question": "which functions are authenticated",
         "id": "arch.service-map",
-        "tokens_est": 3785,
+        "tokens_est": 4478,
         "kind": "document",
         "anchor": null
       },
@@ -3274,7 +3627,14 @@
       {
         "question": "who can edit the disposition list",
         "id": "domain.dispositions",
-        "tokens_est": 2170,
+        "tokens_est": 2496,
+        "kind": "document",
+        "anchor": null
+      },
+      {
+        "question": "who can see or edit whose shifts (pod scope)",
+        "id": "domain.shifts",
+        "tokens_est": 3745,
         "kind": "document",
         "anchor": null
       },
@@ -3344,7 +3704,7 @@
       {
         "question": "why do we do it this way",
         "id": "mem.decisions",
-        "tokens_est": 40396,
+        "tokens_est": 42163,
         "kind": "document",
         "anchor": null
       },
@@ -3365,7 +3725,7 @@
       {
         "question": "why does tag-based import page every contact instead of filtering server-side",
         "id": "domain.crm",
-        "tokens_est": 3645,
+        "tokens_est": 5295,
         "kind": "document",
         "anchor": null
       },
@@ -3386,7 +3746,7 @@
       {
         "question": "why is components/ui not formatted",
         "id": "mem.decisions",
-        "tokens_est": 40396,
+        "tokens_est": 42163,
         "kind": "document",
         "anchor": null
       },
@@ -3400,14 +3760,14 @@
       {
         "question": "why is the webhook unauthenticated",
         "id": "mem.decisions",
-        "tokens_est": 40396,
+        "tokens_est": 42163,
         "kind": "document",
         "anchor": null
       },
       {
         "question": "why is there a Redis and a Postgres",
         "id": "mem.decisions",
-        "tokens_est": 40396,
+        "tokens_est": 42163,
         "kind": "document",
         "anchor": null
       },
@@ -3421,7 +3781,7 @@
       {
         "question": "why is this behaving strangely",
         "id": "mem.known-issues",
-        "tokens_est": 29785,
+        "tokens_est": 31960,
         "kind": "document",
         "anchor": null
       },
@@ -3435,14 +3795,14 @@
       {
         "question": "why was Talk Time always 0m",
         "id": "domain.analytics",
-        "tokens_est": 6553,
+        "tokens_est": 6795,
         "kind": "document",
         "anchor": null
       },
       {
         "question": "why was X chosen",
         "id": "mem.decisions",
-        "tokens_est": 40396,
+        "tokens_est": 42163,
         "kind": "document",
         "anchor": null
       }
@@ -3465,6 +3825,7 @@
         "domain.campaigns": 1,
         "domain.auth": 1,
         "domain.analytics": 1,
+        "domain.shifts": 1,
         "mem.decisions": 1,
         "mem.known-issues": 1,
         "mem.active-work": 1,
