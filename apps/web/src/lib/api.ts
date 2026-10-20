@@ -3740,9 +3740,6 @@ export async function updateGhlReconcileSettings(
   return callGhlReconcileSettings({ action: 'set', ...settings });
 }
 
-export async function connectGhl(
-  token: string,
-  locationId: string
 // --- GHL field coverage (TASK-G17) ---
 
 export type GhlFieldCoverageStatus = 'ready' | 'missing_in_ghl' | 'not_mapped' | 'missing';
@@ -3789,6 +3786,9 @@ export async function getGhlFieldCoverage(): Promise<GhlFieldCoverage> {
   return data as GhlFieldCoverage;
 }
 
+export async function connectGhl(
+  token: string,
+  locationId: string
 ): Promise<{ locationId: string; locationName: string }> {
   const orgId = await getActiveOrgId();
   const res = await fetch(`${getFunctionsUrl()}/ghl-connect`, {
