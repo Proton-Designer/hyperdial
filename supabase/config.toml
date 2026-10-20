@@ -435,6 +435,10 @@ verify_jwt = false
 # TASK-G08: triggered by pg_net with only X-Cron-Secret (its own GHL_RECONCILE_WORKER_SECRET), no
 # Supabase JWT -- same reason as ghl-pull-worker above; fails closed in code when the secret is unset.
 verify_jwt = false
+[functions.ghl-webhook]
+# TASK-G30: PUBLIC endpoint called by GoHighLevel, which sends no Supabase JWT. The function authenticates the
+# request itself (X-GHL-Signature Ed25519 or the per-org X-HyperDial-Webhook-Secret) and fails closed.
+verify_jwt = false
 
 # Parallel dialer (auth required except webhook)
 [functions.dialer-session-start]

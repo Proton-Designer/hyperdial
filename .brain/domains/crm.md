@@ -29,6 +29,12 @@ sources:
   - supabase/functions/_shared/ghl-reconcile-settings.ts
   - supabase/functions/ghl-reconcile-worker/index.ts
   - supabase/functions/ghl-reconcile-settings/index.ts
+  - supabase/migrations/20261019210311_ghl_webhook.sql
+  - supabase/functions/_shared/ghl-webhook.ts
+  - supabase/functions/_shared/ghl-webhook-run.ts
+  - supabase/functions/ghl-webhook/index.ts
+  - supabase/functions/ghl-webhook-settings/index.ts
+  - apps/web/src/components/settings/GhlWebhookCard.tsx
   - supabase/functions/_shared/ghl-push-context.ts
   - supabase/functions/_shared/ghl-field-mapping.ts
   - apps/web/src/components/settings/GhlReconcileCard.tsx

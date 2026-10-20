@@ -40,6 +40,7 @@ import { GhlReconcileCard } from '@/components/settings/GhlReconcileCard';
 import { GhlTagPicker } from '@/components/settings/GhlTagPicker';
 import { describeTagSync } from '@/components/settings/ghlTagSync';
 import { GhlFieldCoverageCard } from '@/components/settings/GhlFieldCoverageCard';
+import { GhlWebhookCard } from '@/components/settings/GhlWebhookCard';
 import { PurchaseNumbersModal } from '@/components/settings/PurchaseNumbersModal';
 import { PageHeader } from '@/components/app/PageHeader';
 import { EmptyState } from '@/components/app/EmptyState';
@@ -2030,6 +2031,7 @@ function IntegrationsTab() {
         <GhlPullSettingsCard status={status} onSaved={load} />
       )}
       {isConnected && (isOwner || role === 'admin') && <GhlReconcileCard />}
+      {isConnected && (isOwner || role === 'admin') && <GhlWebhookCard />}
       {isConnected && (isOwner || role === 'admin') && <GhlFieldCoverageCard />}
       {isConnected && (isOwner || role === 'admin') && <GhlCampaignMappingsEditor />}
       {isConnected && <SyncStatusList />}
