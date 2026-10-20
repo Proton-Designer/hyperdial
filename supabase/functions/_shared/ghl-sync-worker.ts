@@ -11,6 +11,7 @@
  * stubbed fetch and no Supabase client at all.
  */
 import type { GhlClient } from './ghl-client.ts';
+import { topObjectionLabel } from './call-objection.ts';
 
 export interface JobProgress {
   upserted?: boolean;
@@ -90,6 +91,8 @@ export function buildPushCustomFields(
     calledBy?: string | null;
     calledByGhlUserId?: string | null;
     leadList?: string | null;
+    /** TASK-G13: the GHL dropdown LABEL (see call-objection.ts), not the stored key. */
+    topObjection?: string | null;
   }
 ): { id: string; fieldValue: string }[] {
   if (!mapping) return [];
@@ -119,6 +122,7 @@ export function buildPushCustomFields(
   push('called_by', values.calledBy);
   push('called_by_ghl_user_id', values.calledByGhlUserId);
   push('lead_list', values.leadList);
+  push('top_objection', values.topObjection);
   return out;
 }
 
@@ -150,6 +154,9 @@ export interface DispositionPayload {
    *  'dnc' -- matching a literal key string would silently stop setting DND the moment an org's
    *  key differs from whatever was hardcoded here. */
   is_dnc: boolean;
+  /** TASK-G13: the call's optional top objection KEY (one of the six); absent on jobs enqueued
+   *  before the migration and on old payloads. */
+  top_objection?: string | null;
 }
 
 /** TASK-G02 (spec §1: "Do not log every no-answer as a separate note"): dispositions whose only
@@ -298,6 +305,7 @@ export async function processDispositionJob(
         calledBy: args.pushTimeContext?.callerName ?? args.payload.agent_name,
         calledByGhlUserId: args.pushTimeContext?.callerGhlUserId,
         leadList: args.pushTimeContext?.leadList,
+        topObjection: topObjectionLabel(args.payload.top_objection),
       });
       if (fields.length > 0) {
         await args.client.updateContactCustomFields(ghlContactId, fields);

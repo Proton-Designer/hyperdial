@@ -1,3 +1,4 @@
+import { parseTopObjection } from '../_shared/call-objection.ts';
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { corsHeaders, corsPreflightResponse } from '../_shared/cors.ts';
 import { requireTelnyxOrgRole } from '../_shared/telnyx-org-context.ts';
@@ -43,6 +44,8 @@ interface SubmitDispositionBody {
    *  `required_fields` names them -- submit_disposition itself validates that, not this layer. */
   licenseNumber?: string;
   zips?: string[];
+  /** TASK-G13: optional per-call top objection; one of the six shift-survey keys. */
+  topObjection?: string;
 }
 
 function jsonResponse(status: number, payload: Record<string, unknown>): Response {
@@ -87,6 +90,11 @@ Deno.serve(async (req) => {
       Array.isArray(body.zips) && body.zips.length > 0
         ? body.zips.map((z) => z.trim()).filter(Boolean)
         : null;
+
+    const topObjection = parseTopObjection(body.topObjection);
+    if (!topObjection.ok) {
+      return jsonResponse(400, { error: 'topObjection is not a valid objection' });
+    }
 
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL')!,
@@ -152,6 +160,7 @@ Deno.serve(async (req) => {
         p_callback_at: callbackAt,
         p_license_number: licenseNumber,
         p_zips: zips,
+        p_top_objection: topObjection.value,
       })
       .single();
     if (rpcError) {

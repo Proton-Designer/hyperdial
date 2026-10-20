@@ -44,6 +44,7 @@ export const GHL_FIELD_MAPPING_TARGET_KEYS = [
   'called_by',
   'called_by_ghl_user_id',
   'lead_list',
+  'top_objection',
 ] as const;
 
 /** TASK-T1 (GHL-6): `business_name`/`website`/`rating`/`review_count` already have DEDICATED,
@@ -78,6 +79,7 @@ const TARGET_KEY_SYNONYMS: Record<string, string[]> = {
   recording_url: ['recording link', 'recording url', 'recording'],
   called_by: ['called by', 'caller', 'intern'],
   called_by_ghl_user_id: ['called by user id', 'called by ghl user id'],
+  top_objection: ['top objection', 'objection'],
   lead_list: ['lead list', 'lead list / batch id', 'batch id', 'list name'],
 };
 

@@ -9,8 +9,10 @@ import {
   type Disposition,
   type SubmitDispositionResult,
   type ContactDispositionHistoryEntry,
+  type TopObjection,
 } from '@/lib/api';
 import { Button } from '@/components/ui/button';
+import { OBJECTION_LABEL, OBJECTION_ORDER } from '@/components/shifts/clockModel';
 
 /** TASK-F-T2 (REC-5): the recording may still be processing when this modal opens (the
  *  call.recording.saved webhook lands seconds after hangup, independently of this modal's own
@@ -242,6 +244,7 @@ export function WrapUpModal({
   const [callbackLocal, setCallbackLocal] = useState('');
   const [licenseNumber, setLicenseNumber] = useState('');
   const [zipsRaw, setZipsRaw] = useState('');
+  const [topObjection, setTopObjection] = useState<TopObjection | ''>('');
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
@@ -333,6 +336,7 @@ export function WrapUpModal({
         callbackAt: freshCallbackIso,
         licenseNumber: needsLicenseNumber ? licenseNumber.trim() : undefined,
         zips: needsZips ? zipsList : undefined,
+        topObjection: topObjection || undefined,
       });
       onSubmitted(result);
       // Deliberately do not reset local state here: the parent unmounts this component once
@@ -413,6 +417,7 @@ export function WrapUpModal({
     callbackIso,
     licenseNumber,
     zipsRaw,
+    topObjection,
   ]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return createPortal(
@@ -553,6 +558,25 @@ export function WrapUpModal({
               <p className="text-xs text-text-muted mt-1">Comma-separated.</p>
             </div>
           )}
+
+          <div>
+            <label htmlFor="wrapup-objection" className="block text-meta text-text-secondary mb-1">
+              Top objection (optional)
+            </label>
+            <select
+              id="wrapup-objection"
+              value={topObjection}
+              onChange={(e) => setTopObjection(e.target.value as TopObjection | '')}
+              className="w-full bg-surface-2 border border-border-subtle rounded-app-md px-4 py-3 text-text-primary focus:outline-none focus:border-accent-to"
+            >
+              <option value="">None / not raised</option>
+              {OBJECTION_ORDER.map((k) => (
+                <option key={k} value={k}>
+                  {OBJECTION_LABEL[k]}
+                </option>
+              ))}
+            </select>
+          </div>
 
           <div>
             <div className="flex items-center justify-between mb-1">

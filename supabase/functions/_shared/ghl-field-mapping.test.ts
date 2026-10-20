@@ -84,3 +84,9 @@ Deno.test(
     assertEquals(result, { called_by: 'f1', lead_list: 'f2' });
   }
 );
+
+Deno.test('suggestGhlFieldMapping: TASK-G13 top_objection matches "Top Objection"', () => {
+  assertEquals(suggestGhlFieldMapping([{ id: 'f1', name: 'Top Objection' }]), {
+    top_objection: 'f1',
+  });
+});

@@ -1503,3 +1503,47 @@ Deno.test(
     }
   }
 );
+
+// ---------------------------------------------------------------------------
+// TASK-G13 (spec §1): top_objection per call
+// ---------------------------------------------------------------------------
+
+Deno.test('buildPushCustomFields: TASK-G13 top_objection (mapped only, label text)', () => {
+  assertEquals(buildPushCustomFields({ top_objection: 'f-obj' }, { topObjection: 'Fees' }), [
+    { id: 'f-obj', fieldValue: 'Fees' },
+  ]);
+  assertEquals(buildPushCustomFields({}, { topObjection: 'Fees' }), []);
+  assertEquals(buildPushCustomFields({ top_objection: 'f-obj' }, { topObjection: null }), []);
+});
+
+Deno.test(
+  'processDispositionJob: TASK-G13 pushes the objection LABEL; no objection / old payload -> nothing',
+  async () => {
+    const puts: unknown[] = [];
+    const restore = stubFetch((_url, init) => {
+      if (init?.method === 'PUT') puts.push(JSON.parse(String(init.body)));
+      return Response.json({ id: 'ok' });
+    });
+    try {
+      const run = (payload: DispositionPayload) =>
+        processDispositionJob({
+          client: createGhlClient('tok'),
+          locationId: 'loc-1',
+          ghlContactId: 'ghl-1',
+          contactFields: { firstName: 'A', lastName: 'B', phone: '+14155552671' },
+          payload,
+          progress: {},
+          pushConfig: { pushFieldMapping: { top_objection: 'f-obj' } },
+        });
+      await run({ ...PAYLOAD, top_objection: 'dont_trust_apps' });
+      assertEquals(puts, [{ customFields: [{ id: 'f-obj', field_value: 'Does not trust apps' }] }]);
+      puts.length = 0;
+      await run({ ...PAYLOAD, top_objection: null });
+      await run(PAYLOAD); // payload enqueued before the migration has no key at all
+      await run({ ...PAYLOAD, top_objection: 'bogus' }); // never invent a label
+      assertEquals(puts, []);
+    } finally {
+      restore();
+    }
+  }
+);

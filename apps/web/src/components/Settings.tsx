@@ -2221,6 +2221,7 @@ const GHL_FIELD_MAPPING_TARGET_KEYS = [
   'called_by',
   'called_by_ghl_user_id',
   'lead_list',
+  'top_objection',
 ] as const;
 
 const GHL_FIELD_MAPPING_LABELS: Record<(typeof GHL_FIELD_MAPPING_TARGET_KEYS)[number], string> = {
@@ -2241,6 +2242,7 @@ const GHL_FIELD_MAPPING_LABELS: Record<(typeof GHL_FIELD_MAPPING_TARGET_KEYS)[nu
   called_by: 'Called by',
   called_by_ghl_user_id: 'Called by (GHL user id)',
   lead_list: 'Lead list / batch',
+  top_objection: 'Top objection',
 };
 
 /** MISSION-4 TASK-T1 (GHL-5/6): the 5-minute auto-pull toggle (disabled by default) + last-run
