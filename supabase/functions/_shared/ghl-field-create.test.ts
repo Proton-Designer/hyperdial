@@ -513,3 +513,40 @@ Deno.test(
     assertEquals([r.created.length, r.stopped], [1, null]);
   }
 );
+
+Deno.test(
+  'createMissingFields (G36): a prefix-less or different-case fieldKey answer is NOT a mismatch; a truly different key is',
+  async () => {
+    const answers: Record<string, string> = {
+      last_call_at: 'last_call_at', // no prefix
+      week_dials: 'Contact.Week_Dials', // different case
+      week_connects: 'contact.week_connects_2', // really different
+    };
+    const { fetchImpl } = fakeFetch((c) =>
+      c.method === 'GET'
+        ? folderOk()
+        : Response.json(
+            {
+              field: {
+                id: `id-${c.body?.name}`,
+                fieldKey: answers[String(c.body?.fieldKey).replace('contact.', '')],
+              },
+            },
+            { status: 201 }
+          )
+    );
+    const r = await createMissingFields(io(fetchImpl), {
+      toCreate: [
+        { group: 'provider', spec: spec('last_call_at') },
+        { group: 'intern', spec: spec('week_dials') },
+        { group: 'intern', spec: spec('week_connects') },
+      ],
+      toMap: [],
+    });
+    assertEquals(r.created.length, 3);
+    assertEquals(
+      r.keyMismatch.map((m) => m.key),
+      ['week_connects']
+    );
+  }
+);

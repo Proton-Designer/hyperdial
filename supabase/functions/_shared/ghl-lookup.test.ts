@@ -1,6 +1,10 @@
 import { assertEquals, assertRejects } from 'jsr:@std/assert@1';
 import type { GhlClient, GhlContact } from './ghl-client.ts';
-import { lookupUnlinkedContacts, matchGhlContactsByPhone } from './ghl-lookup.ts';
+import {
+  LOOKUP_PAGE_LIMIT,
+  lookupUnlinkedContacts,
+  matchGhlContactsByPhone,
+} from './ghl-lookup.ts';
 
 const gc = (id: string, phone: string | undefined): GhlContact => ({ id, phone });
 
@@ -241,5 +245,47 @@ Deno.test(
     const bad = fakeSupabase({ claim: [row('c1', 'not a number')] });
     const out = await lookupUnlinkedContacts(bad.sb, ghlWith({}, calls), ARGS);
     assertEquals([out.result.noMatch, calls.length], [1, 0]);
+  }
+);
+
+Deno.test(
+  'lookup (G36): a FULL page of hits with exactly one exact match is NOT linked (a second match may be on the next page)',
+  async () => {
+    const hits = [gc('g1', '(415) 555-2671')];
+    for (let i = 0; i < LOOKUP_PAGE_LIMIT - 1; i++)
+      hits.push(gc(`f${i}`, `+1212555${String(1000 + i)}`));
+    const { sb, rpcs } = fakeSupabase({ claim: [row('c1', '+14155552671')] });
+    const out = await lookupUnlinkedContacts(sb, ghlWith({ '+14155552671': hits }), ARGS);
+    assertEquals(hits.length, LOOKUP_PAGE_LIMIT);
+    assertEquals([out.result.ambiguous, out.result.linked, out.linked.length], [1, 0, 0]);
+    assertEquals(
+      rpcs.some((r) => r.fn === 'link_ghl_contacts'),
+      false
+    );
+    // positive control: one hit fewer than a full page links
+    const { sb: sb2 } = fakeSupabase({ claim: [row('c1', '+14155552671')] });
+    const ok = await lookupUnlinkedContacts(
+      sb2,
+      ghlWith({ '+14155552671': hits.slice(0, LOOKUP_PAGE_LIMIT - 1) }),
+      ARGS
+    );
+    assertEquals(ok.result.linked, 1);
+  }
+);
+
+Deno.test(
+  'lookup (G36): hits without a phone are counted, so a first live run shows whether GHL returns it',
+  async () => {
+    const noPhone = { id: 'gx' } as unknown as GhlContact;
+    const { sb } = fakeSupabase({ claim: [row('c1', '+14155552671')] });
+    const out = await lookupUnlinkedContacts(
+      sb,
+      ghlWith({
+        '+14155552671': [noPhone, gc('g1', '+14155552671'), { id: 'gy', phone: '' } as GhlContact],
+      }),
+      ARGS
+    );
+    assertEquals([out.result.hitsSeen, out.result.hitsWithoutPhone], [3, 2]);
+    assertEquals(out.result.linked, 1);
   }
 );

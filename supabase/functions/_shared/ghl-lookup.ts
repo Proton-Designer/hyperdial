@@ -24,6 +24,9 @@ import { isTransientReadError, transientReleaseCap } from './ghl-reconcile.ts';
 // deno-lint-ignore no-explicit-any
 type SupabaseAny = any;
 
+/** Search page size: a result of this many hits may be cut off, so it is never trusted to be the whole answer. */
+export const LOOKUP_PAGE_LIMIT = 20;
+
 /** GHL contacts of a search result whose own phone is `e164` (compared after normalising both sides). */
 export function matchGhlContactsByPhone(contacts: GhlContact[], e164: string): GhlContact[] {
   const seen = new Set<string>();
@@ -44,8 +47,13 @@ export interface LookupResult {
   /** contacts newly linked to a GHL contact this tick */
   linked: number;
   noMatch: number;
-  /** several GHL contacts share the phone: not linked */
+  /** several GHL contacts share the phone, or the search returned a full page (more could exist): not linked */
   ambiguous: number;
+  /** search hits that carried no `phone` at all (`phone` is not documented in the raw spec's ContactsSearchSchema, so a
+   *  first live run shows here whether GHL returns it; all hits without one = the lookup can never link) */
+  hitsWithoutPhone: number;
+  /** all search hits looked at (denominator for hitsWithoutPhone) */
+  hitsSeen: number;
   /** the matching GHL contact is already linked to another HyperDial contact */
   conflicts: number;
   errors: number;
@@ -71,6 +79,8 @@ export const emptyLookupResult = (): LookupResult => ({
   linked: 0,
   noMatch: 0,
   ambiguous: 0,
+  hitsWithoutPhone: 0,
+  hitsSeen: 0,
   conflicts: 0,
   errors: 0,
   released: 0,
@@ -129,10 +139,20 @@ export async function lookupUnlinkedContacts(
       const res = await client.searchContacts({
         locationId: args.locationId,
         query: e164,
-        limit: 20,
+        limit: LOOKUP_PAGE_LIMIT,
       });
+      result.hitsSeen += res.contacts.length;
+      result.hitsWithoutPhone += res.contacts.filter(
+        (c) => !c || typeof c.phone !== 'string' || !c.phone
+      ).length;
       const matches = matchGhlContactsByPhone(res.contacts, e164);
-      if (matches.length === 1)
+      if (res.contacts.length >= LOOKUP_PAGE_LIMIT && matches.length > 0) {
+        // a full page may hide a second exact match on the next page: not safe to link
+        result.ambiguous++;
+        console.warn(
+          `[ghl-lookup] full page (${res.contacts.length}) for contact ${row.contact_id} (org ${args.orgId}): not linked`
+        );
+      } else if (matches.length === 1)
         toLink.push({ contact_id: row.contact_id, ghl_contact_id: matches[0].id });
       else if (matches.length === 0) result.noMatch++;
       else {

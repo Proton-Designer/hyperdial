@@ -63,6 +63,10 @@ export interface CreatePlan {
 
 const fieldKeyFor = (key: string) => `contact.${key}`;
 
+/** Same comparison as classifyFieldCoverage: the `contact.` prefix is optional and case does not matter. */
+export const sameFieldKey = (a: string, b: string) =>
+  a.replace(/^contact\./i, '').toLowerCase() === b.replace(/^contact\./i, '').toLowerCase();
+
 /** What is missing, from a coverage result and the location's current definitions. */
 export function planCreateMissing(coverage: FieldCoverage, defs: CoverageDef[]): CreatePlan {
   const byKey = new Map(defs.map((d) => [d.fieldKey.replace(/^contact\./, ''), d]));
@@ -302,7 +306,7 @@ export async function createMissingFields(
       result.created.push({ key: spec.key, label: spec.label, id: field.id });
       // the 201 body carries the key GHL really stored; a different one is reported (and mapped by id for provider fields)
       const requested = fieldKeyFor(spec.key);
-      if (typeof field.fieldKey === 'string' && field.fieldKey !== requested) {
+      if (typeof field.fieldKey === 'string' && !sameFieldKey(field.fieldKey, requested)) {
         result.keyMismatch.push({
           key: spec.key,
           label: spec.label,
