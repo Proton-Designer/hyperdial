@@ -108,6 +108,8 @@ export interface ReconcileOrgArgs {
 
 export interface ReconcileOrgResult {
   claimed: number;
+  /** G19: claimed contacts whose lease stamp was handed back (unread at the deadline / apply failed). */
+  released: number;
   checked: number;
   readErrors: number;
   stageErrors: number;
@@ -117,6 +119,12 @@ export interface ReconcileOrgResult {
   applied: Record<string, number> | null;
   /** G15: counts from apply_ghl_owner_routing (null when no read carried an owner). */
   ownerRouting: Record<string, number> | null;
+}
+
+interface ClaimedRow {
+  contact_id: string;
+  ghl_contact_id: string;
+  prev_reconciled_at?: string | null;
 }
 
 const chunks = <T>(a: T[], n: number): T[][] => {
@@ -132,6 +140,7 @@ export async function reconcileOrg(
 ): Promise<ReconcileOrgResult> {
   const result: ReconcileOrgResult = {
     claimed: 0,
+    released: 0,
     checked: 0,
     readErrors: 0,
     stageErrors: 0,
@@ -185,18 +194,42 @@ export async function reconcileOrg(
     }
   }
 
-  // 3. bounded batch of the oldest-checked linked contacts, one GHL read each
-  const { data: claimed, error: claimError } = await supabase.rpc('claim_ghl_reconcile_batch', {
-    p_org: args.orgId,
-    p_limit: args.batchSize,
-  });
-  if (claimError) throw new Error(`claim_ghl_reconcile_batch failed: ${claimError.message}`);
-  const batch = (claimed ?? []) as { contact_id: string; ghl_contact_id: string }[];
+  // 3. bounded batch of the oldest-checked linked contacts, one GHL read each. The claim stamps
+  // ghl_reconciled_at BEFORE the reads, so (G19) never claim with no time left, and hand the stamp
+  // back for every contact we did not read -- an unread contact must not look freshly checked.
+  const batch: ClaimedRow[] = [];
+  if (args.deadlineMs !== undefined && Date.now() > args.deadlineMs) {
+    result.deadlineHit = true;
+  } else {
+    const { data: claimed, error: claimError } = await supabase.rpc('claim_ghl_reconcile_batch', {
+      p_org: args.orgId,
+      p_limit: args.batchSize,
+    });
+    if (claimError) throw new Error(`claim_ghl_reconcile_batch failed: ${claimError.message}`);
+    batch.push(...((claimed ?? []) as ClaimedRow[]));
+  }
   result.claimed = batch.length;
 
-  for (const row of batch) {
+  const release = async (rows: ClaimedRow[]) => {
+    if (rows.length === 0) return;
+    result.released += rows.length;
+    for (const part of chunks(rows, 200)) {
+      const { error } = await supabase.rpc('release_ghl_reconcile_leases', {
+        p_org: args.orgId,
+        p_items: part.map((r) => ({
+          contact_id: r.contact_id,
+          prev_reconciled_at: r.prev_reconciled_at ?? null,
+        })),
+      });
+      if (error) console.warn(`[ghl-reconcile] lease release failed: ${error.message}`);
+    }
+  };
+
+  for (let i = 0; i < batch.length; i++) {
+    const row = batch[i];
     if (args.deadlineMs !== undefined && Date.now() > args.deadlineMs) {
       result.deadlineHit = true;
+      await release(batch.slice(i));
       break;
     }
     try {
@@ -219,18 +252,24 @@ export async function reconcileOrg(
     }
   }
 
-  // 4. apply atomically (chunked)
+  // 4. apply atomically (chunked). If a chunk fails, the decisions read this tick are lost, so hand
+  // the stamps back for the whole batch (applied contacts are no longer claimable anyway).
   if (items.length > 0) {
     const applied: Record<string, number> = {};
-    for (const part of chunks(items, 200)) {
-      const { data, error } = await supabase.rpc('apply_ghl_reconcile', {
-        p_org: args.orgId,
-        p_items: part,
-      });
-      if (error) throw new Error(`apply_ghl_reconcile failed: ${error.message}`);
-      for (const [k, v] of Object.entries((data ?? {}) as Record<string, number>)) {
-        applied[k] = (applied[k] ?? 0) + v;
+    try {
+      for (const part of chunks(items, 200)) {
+        const { data, error } = await supabase.rpc('apply_ghl_reconcile', {
+          p_org: args.orgId,
+          p_items: part,
+        });
+        if (error) throw new Error(`apply_ghl_reconcile failed: ${error.message}`);
+        for (const [k, v] of Object.entries((data ?? {}) as Record<string, number>)) {
+          applied[k] = (applied[k] ?? 0) + v;
+        }
       }
+    } catch (err) {
+      await release(batch);
+      throw err;
     }
     result.applied = applied;
   }

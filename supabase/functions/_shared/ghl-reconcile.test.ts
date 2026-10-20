@@ -85,7 +85,8 @@ Deno.test(
 
 /** Fake supabase: records rpc calls, canned data for the one contacts select + claim. */
 function fakeSupabase(opts: {
-  claim: { contact_id: string; ghl_contact_id: string }[];
+  claim: { contact_id: string; ghl_contact_id: string; prev_reconciled_at?: string | null }[];
+  applyError?: string;
   stageContacts?: { id: string; ghl_contact_id: string }[];
 }) {
   const rpcs: { fn: string; args: Record<string, unknown> }[] = [];
@@ -116,6 +117,8 @@ function fakeSupabase(opts: {
       rpcs.push({ fn, args });
       if (fn === 'claim_ghl_reconcile_batch')
         return Promise.resolve({ data: opts.claim, error: null });
+      if (fn === 'apply_ghl_reconcile' && opts.applyError)
+        return Promise.resolve({ data: null, error: { message: opts.applyError } });
       if (fn === 'apply_ghl_reconcile')
         return Promise.resolve({ data: { leads_moved: 3 }, error: null });
       return Promise.resolve({ data: null, error: null });
@@ -326,10 +329,9 @@ Deno.test(
       assertEquals(r.deadlineHit, true);
       assertEquals(calls, []);
       assertEquals(r.checked, 0);
-      assertEquals(
-        rpcs.map((x) => x.fn),
-        ['claim_ghl_reconcile_batch']
-      );
+      // G19: no time left -> nothing is claimed, so nothing gets a lease stamp without a read
+      assertEquals(r.claimed, 0);
+      assertEquals(rpcs, []);
       assertEquals(selects, []); // no stages configured -> no contact lookup
       assertEquals(ins, []);
     } finally {
@@ -337,3 +339,99 @@ Deno.test(
     }
   }
 );
+
+const orgArgs = {
+  orgId: 'org-1',
+  locationId: 'loc-1',
+  dncTags: null,
+  pausedTags: null,
+  excludeTags: null,
+  excludeStageIds: null,
+  batchSize: 10,
+};
+
+Deno.test(
+  'reconcileOrg (G19): deadline mid-batch hands back the stamp of every UNREAD contact only',
+  async () => {
+    const restore = stubFetch(() => {
+      const until = Date.now() + 80; // the first read eats the whole budget
+      while (Date.now() < until);
+      return Response.json({ contact: { id: 'x', dnd: true } });
+    });
+    const { sb, rpcs } = fakeSupabase({
+      claim: [
+        { contact_id: 'c1', ghl_contact_id: 'g-1', prev_reconciled_at: '2026-10-01T00:00:00Z' },
+        { contact_id: 'c2', ghl_contact_id: 'g-2', prev_reconciled_at: '2026-10-02T00:00:00Z' },
+        { contact_id: 'c3', ghl_contact_id: 'g-3', prev_reconciled_at: null },
+      ],
+    });
+    try {
+      const r = await reconcileOrg(sb, createGhlClient('tok'), {
+        ...orgArgs,
+        deadlineMs: Date.now() + 40,
+      });
+      assertEquals([r.checked, r.deadlineHit, r.released], [1, true, 2]);
+      const rel = rpcs.filter((x) => x.fn === 'release_ghl_reconcile_leases');
+      assertEquals(rel.length, 1);
+      assertEquals(rel[0].args, {
+        p_org: 'org-1',
+        p_items: [
+          { contact_id: 'c2', prev_reconciled_at: '2026-10-02T00:00:00Z' },
+          { contact_id: 'c3', prev_reconciled_at: null },
+        ],
+      });
+      // the one read contact's decision is still applied
+      assertEquals(
+        rpcs.some((x) => x.fn === 'apply_ghl_reconcile'),
+        true
+      );
+    } finally {
+      restore();
+    }
+  }
+);
+
+Deno.test(
+  'reconcileOrg (G19): a failed apply hands the whole batch back, then rethrows',
+  async () => {
+    const restore = stubFetch(() => Response.json({ contact: { id: 'x', dnd: true } }));
+    const { sb, rpcs } = fakeSupabase({
+      claim: [{ contact_id: 'c1', ghl_contact_id: 'g-1', prev_reconciled_at: null }],
+      applyError: 'boom',
+    });
+    try {
+      let msg = '';
+      try {
+        await reconcileOrg(sb, createGhlClient('tok'), orgArgs);
+      } catch (e) {
+        msg = (e as Error).message;
+      }
+      assertEquals(msg, 'apply_ghl_reconcile failed: boom');
+      const rel = rpcs.find((x) => x.fn === 'release_ghl_reconcile_leases');
+      assertEquals(rel?.args, {
+        p_org: 'org-1',
+        p_items: [{ contact_id: 'c1', prev_reconciled_at: null }],
+      });
+    } finally {
+      restore();
+    }
+  }
+);
+
+Deno.test('reconcileOrg (G19): no deadline pressure -> no release call', async () => {
+  const restore = stubFetch(() => Response.json({ contact: { id: 'x' } }));
+  const { sb, rpcs } = fakeSupabase({ claim: [{ contact_id: 'c1', ghl_contact_id: 'g-1' }] });
+  try {
+    const r = await reconcileOrg(sb, createGhlClient('tok'), {
+      ...orgArgs,
+      deadlineMs: Date.now() + 60_000,
+    });
+    assertEquals([r.released, r.deadlineHit], [0, false]);
+    assertEquals(
+      rpcs.some((x) => x.fn === 'release_ghl_reconcile_leases'),
+      false
+    );
+  } finally {
+    restore();
+  }
+});
