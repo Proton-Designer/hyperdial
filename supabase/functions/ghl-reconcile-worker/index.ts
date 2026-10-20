@@ -16,8 +16,11 @@ import {
   GHL_PULL_RATE_LIMIT_MAX_PER_WINDOW,
 } from '../_shared/ghl-rate-limit.ts';
 import { reconcileOrg } from '../_shared/ghl-reconcile.ts';
+import { lookupUnlinkedContacts } from '../_shared/ghl-lookup.ts';
 
 const TIME_BUDGET_MS = 100_000;
+/** TASK-G32: the phone lookup of unlinked contacts may use at most this long per org before the main reads start. */
+const LOOKUP_BUDGET_MS = 15_000;
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -41,6 +44,14 @@ function secretsMatch(a: string, b: string): boolean {
 function batchSize(): number {
   const n = Number(Deno.env.get('GHL_RECONCILE_BATCH'));
   return Number.isFinite(n) && n >= 1 ? Math.min(Math.floor(n), 300) : 100;
+}
+
+/** GHL_LOOKUP_BATCH: unlinked contacts looked up in GHL per org per tick (default 25, max 100, 0 turns the lookup off). */
+function lookupBatchSize(): number {
+  const raw = Deno.env.get('GHL_LOOKUP_BATCH');
+  if (raw === undefined || raw === '') return 25;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? Math.min(Math.floor(n), 100) : 25;
 }
 
 interface ReconcileOrgRow {
@@ -93,7 +104,21 @@ Deno.serve(async (req: Request) => {
         createGhlClient(token as string, { apiBase: Deno.env.get('GHL_API_BASE') || undefined }),
         createGhlRateLimiter({ maxPerWindow: GHL_PULL_RATE_LIMIT_MAX_PER_WINDOW })
       );
-      const r = await reconcileOrg(supabase, client, {
+      // TASK-G32: link CSV-imported contacts to GHL by phone first; a failure here never stops the main reconcile
+      let lookup: Awaited<ReturnType<typeof lookupUnlinkedContacts>> | null = null;
+      let lookupError: string | null = null;
+      try {
+        lookup = await lookupUnlinkedContacts(supabase, client, {
+          orgId: org.org_id,
+          locationId: org.location_id,
+          batchSize: lookupBatchSize(),
+          deadlineMs: Math.min(started + TIME_BUDGET_MS, Date.now() + LOOKUP_BUDGET_MS),
+        });
+      } catch (err) {
+        lookupError = err instanceof Error ? err.message : String(err);
+        console.error(`[ghl-reconcile-worker] org ${org.org_id} lookup failed`, lookupError);
+      }
+      const r0 = await reconcileOrg(supabase, client, {
         orgId: org.org_id,
         locationId: org.location_id,
         dncTags: org.ghl_dnc_tags,
@@ -102,7 +127,9 @@ Deno.serve(async (req: Request) => {
         excludeStageIds: org.ghl_exclude_stage_ids,
         batchSize: batchSize(),
         deadlineMs: started + TIME_BUDGET_MS,
+        extraRows: lookup?.linked ?? [],
       });
+      const r = { ...r0, lookup: lookup?.result ?? { error: lookupError } };
       await supabase.rpc('record_ghl_reconcile_result', { p_org: org.org_id, p_counts: r });
       results.push({ orgId: org.org_id, ...r });
     } catch (err) {

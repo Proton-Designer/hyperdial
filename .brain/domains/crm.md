@@ -28,6 +28,8 @@ sources:
   - supabase/functions/_shared/ghl-reconcile.ts
   - supabase/functions/_shared/ghl-reconcile-settings.ts
   - supabase/functions/ghl-reconcile-worker/index.ts
+  - supabase/functions/_shared/ghl-lookup.ts
+  - supabase/migrations/20261019211305_ghl_lookup_unlinked.sql
   - supabase/functions/ghl-reconcile-settings/index.ts
   - supabase/migrations/20261019210311_ghl_webhook.sql
   - supabase/functions/_shared/ghl-webhook.ts

@@ -566,3 +566,24 @@ Deno.test(
     }
   }
 );
+
+Deno.test(
+  'reconcileOrg (G32): contacts linked by the phone lookup are read and decided in the same tick',
+  async () => {
+    const restore = stubFetch(() => Response.json({ contact: { id: 'g-new', dnd: true } }));
+    const { sb, rpcs } = fakeSupabase({ claim: [] });
+    try {
+      const r = await reconcileOrg(sb, createGhlClient('tok'), {
+        ...orgArgs,
+        extraRows: [{ contact_id: 'c-new', ghl_contact_id: 'g-new', prev_reconciled_at: null }],
+      });
+      assertEquals(r.claimed, 1);
+      assertEquals(r.checked, 1);
+      assertEquals(r.decisions.dnc, 1);
+      const apply = rpcs.find((x) => x.fn === 'apply_ghl_reconcile');
+      assertEquals(apply?.args.p_items, [{ contact_id: 'c-new', action: 'dnc', reason: 'dnd' }]);
+    } finally {
+      restore();
+    }
+  }
+);

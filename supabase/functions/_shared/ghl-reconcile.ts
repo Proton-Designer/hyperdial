@@ -119,6 +119,8 @@ export interface ReconcileOrgArgs {
   batchSize: number;
   /** G16: absolute epoch ms; the per-contact read loop stops once passed (decisions so far still apply). */
   deadlineMs?: number;
+  /** G32: contacts just linked to GHL by the phone lookup; read and decided in this same tick (stamp already fresh). */
+  extraRows?: { contact_id: string; ghl_contact_id: string; prev_reconciled_at: null }[];
 }
 
 export interface ReconcileOrgResult {
@@ -223,6 +225,7 @@ export async function reconcileOrg(
     if (claimError) throw new Error(`claim_ghl_reconcile_batch failed: ${claimError.message}`);
     batch.push(...((claimed ?? []) as ClaimedRow[]));
   }
+  batch.push(...(args.extraRows ?? []));
   result.claimed = batch.length;
 
   const releasedIds = new Set<string>();
