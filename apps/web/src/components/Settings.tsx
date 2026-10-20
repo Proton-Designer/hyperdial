@@ -37,7 +37,10 @@ import { NumberHealthPanel } from '@/components/settings/NumberHealthPanel';
 import { SystemHealthPanel } from '@/components/settings/SystemHealthPanel';
 import { CollapsibleSection } from '@/components/settings/CollapsibleSection';
 import { GhlReconcileCard } from '@/components/settings/GhlReconcileCard';
+import { GhlTagPicker } from '@/components/settings/GhlTagPicker';
+import { describeTagSync } from '@/components/settings/ghlTagSync';
 import { GhlFieldCoverageCard } from '@/components/settings/GhlFieldCoverageCard';
+import { GhlWebhookCard } from '@/components/settings/GhlWebhookCard';
 import { PurchaseNumbersModal } from '@/components/settings/PurchaseNumbersModal';
 import { PageHeader } from '@/components/app/PageHeader';
 import { EmptyState } from '@/components/app/EmptyState';
@@ -1861,6 +1864,7 @@ function IntegrationsTab() {
   const [locationId, setLocationId] = useState('');
   const [connecting, setConnecting] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
+  const [connectNote, setConnectNote] = useState<ReturnType<typeof describeTagSync>>(null);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -1879,7 +1883,8 @@ function IntegrationsTab() {
     setConnecting(true);
     setError(null);
     try {
-      await connectGhl(token.trim(), locationId.trim());
+      const res = await connectGhl(token.trim(), locationId.trim());
+      setConnectNote(describeTagSync(res.tagSync));
       setToken('');
       setLocationId('');
       load();
@@ -1915,6 +1920,18 @@ function IntegrationsTab() {
       {error && (
         <div className="mb-6 p-4 rounded-app-md bg-danger/10 border border-danger/30 text-danger text-sm">
           {error}
+        </div>
+      )}
+
+      {connectNote && (
+        <div
+          className={`mb-6 p-4 rounded-app-md border text-sm ${
+            connectNote.tone === 'ok'
+              ? 'bg-success/10 border-success/30 text-success'
+              : 'bg-yellow-500/10 border-yellow-500/30 text-yellow-400'
+          }`}
+        >
+          {connectNote.text}
         </div>
       )}
 
@@ -2014,6 +2031,7 @@ function IntegrationsTab() {
         <GhlPullSettingsCard status={status} onSaved={load} />
       )}
       {isConnected && (isOwner || role === 'admin') && <GhlReconcileCard />}
+      {isConnected && (isOwner || role === 'admin') && <GhlWebhookCard />}
       {isConnected && (isOwner || role === 'admin') && <GhlFieldCoverageCard />}
       {isConnected && (isOwner || role === 'admin') && <GhlCampaignMappingsEditor />}
       {isConnected && <SyncStatusList />}
@@ -2025,7 +2043,7 @@ function IntegrationsTab() {
  *  this org. Both lists start from `status`'s current values (the DB's own defaults the first
  *  time an org connects) and are edited as a simple add/remove chip list -- no reason for
  *  anything fancier for a handful of short tag strings. */
-function GhlBlockedTagsEditor({
+export function GhlBlockedTagsEditor({
   status,
   onSaved,
   isAdmin,
@@ -2036,8 +2054,7 @@ function GhlBlockedTagsEditor({
 }) {
   const [dncTags, setDncTags] = useState<string[]>(status?.ghl_dnc_tags ?? []);
   const [pausedTags, setPausedTags] = useState<string[]>(status?.ghl_paused_tags ?? []);
-  const [dncDraft, setDncDraft] = useState('');
-  const [pausedDraft, setPausedDraft] = useState('');
+  const [tagNote, setTagNote] = useState<ReturnType<typeof describeTagSync>>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
@@ -2047,23 +2064,15 @@ function GhlBlockedTagsEditor({
     setPausedTags(status?.ghl_paused_tags ?? []);
   }, [status]);
 
-  const addTag = (
-    list: string[],
-    setList: (v: string[]) => void,
-    draft: string,
-    setDraft: (v: string) => void
-  ) => {
-    const trimmed = draft.trim();
-    if (!trimmed) return;
-    if (list.some((t) => t.toLowerCase() === trimmed.toLowerCase())) {
-      setDraft('');
-      return;
-    }
+  const addTag = (list: string[], setList: (v: string[]) => void, tag: string) => {
+    const trimmed = tag.trim();
+    if (!trimmed || list.some((t) => t.toLowerCase() === trimmed.toLowerCase())) return;
+    setTagNote(null);
     setList([...list, trimmed]);
-    setDraft('');
   };
 
   const removeTag = (list: string[], setList: (v: string[]) => void, tag: string) => {
+    setTagNote(null);
     setList(list.filter((t) => t !== tag));
   };
 
@@ -2079,8 +2088,10 @@ function GhlBlockedTagsEditor({
     setSaving(true);
     setError(null);
     setSaved(false);
+    setTagNote(null);
     try {
-      await updateGhlBlockedTags(dncTags, pausedTags);
+      const res = await updateGhlBlockedTags(dncTags, pausedTags);
+      setTagNote(describeTagSync(res.tagSync));
       setSaved(true);
       onSaved();
     } catch (e) {
@@ -2095,8 +2106,6 @@ function GhlBlockedTagsEditor({
     hint: string,
     list: string[],
     setList: (v: string[]) => void,
-    draft: string,
-    setDraft: (v: string) => void,
     inputId: string
   ) => (
     <div>
@@ -2125,29 +2134,11 @@ function GhlBlockedTagsEditor({
         ))}
       </div>
       {isAdmin && (
-        <div className="flex gap-2">
-          <input
-            id={inputId}
-            type="text"
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                e.preventDefault();
-                addTag(list, setList, draft, setDraft);
-              }
-            }}
-            className="flex-1 bg-surface-2 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-accent-to"
-            placeholder="Add a tag"
-          />
-          <button
-            type="button"
-            onClick={() => addTag(list, setList, draft, setDraft)}
-            className="px-3 py-2 bg-surface-2 border border-white/10 rounded-lg text-sm text-white hover:bg-surface-3"
-          >
-            Add
-          </button>
-        </div>
+        <GhlTagPicker
+          selected={list}
+          onAdd={(tag) => addTag(list, setList, tag)}
+          inputId={inputId}
+        />
       )}
     </div>
   );
@@ -2172,8 +2163,6 @@ function GhlBlockedTagsEditor({
         'A contact with one of these tags is marked do-not-call and added to the org-wide DNC list.',
         dncTags,
         setDncTags,
-        dncDraft,
-        setDncDraft,
         'ghl-dnc-tags-input'
       )}
 
@@ -2182,8 +2171,6 @@ function GhlBlockedTagsEditor({
         "A contact with one of these tags is skipped by new imports and pulled off any campaign it's already queued in, until the tag is removed and you re-queue it yourself.",
         pausedTags,
         setPausedTags,
-        pausedDraft,
-        setPausedDraft,
         'ghl-paused-tags-input'
       )}
 
@@ -2197,6 +2184,11 @@ function GhlBlockedTagsEditor({
           {saving && <Loader2 className="w-4 h-4 animate-spin" />}
           {saved && !dirty ? 'Saved' : 'Save changes'}
         </button>
+      )}
+      {tagNote && (
+        <p className={`text-xs ${tagNote.tone === 'ok' ? 'text-success' : 'text-yellow-400'}`}>
+          {tagNote.text}
+        </p>
       )}
     </div>
   );

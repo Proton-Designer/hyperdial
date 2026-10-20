@@ -1,3 +1,5 @@
+import { GhlTagPicker } from '@/components/settings/GhlTagPicker';
+import { describeTagSync } from '@/components/settings/ghlTagSync';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Loader2, X } from 'lucide-react';
 import {
@@ -38,7 +40,7 @@ export function GhlReconcileCard() {
   const [enabled, setEnabled] = useState(false);
   const [tags, setTags] = useState<string[]>([]);
   const [stageIds, setStageIds] = useState<string[]>([]);
-  const [tagDraft, setTagDraft] = useState('');
+  const [tagNote, setTagNote] = useState<ReturnType<typeof describeTagSync>>(null);
   const [stages, setStages] = useState<GhlPipelineStageOption[] | null>(null);
   const [stagesError, setStagesError] = useState<string | null>(null);
   const [loadingStages, setLoadingStages] = useState(false);
@@ -85,10 +87,8 @@ export function GhlReconcileCard() {
     }
   };
 
-  const addTag = () => {
-    const t = tagDraft.trim();
+  const addTag = (t: string) => {
     if (t && !tags.some((x) => x.toLowerCase() === t.toLowerCase())) setTags([...tags, t]);
-    setTagDraft('');
   };
 
   const dirty =
@@ -101,10 +101,15 @@ export function GhlReconcileCard() {
     setSaving(true);
     setSaveError(null);
     setJustSaved(false);
+    setTagNote(null);
     try {
-      apply(
-        await updateGhlReconcileSettings({ enabled, excludeTags: tags, excludeStageIds: stageIds })
-      );
+      const res = await updateGhlReconcileSettings({
+        enabled,
+        excludeTags: tags,
+        excludeStageIds: stageIds,
+      });
+      apply(res);
+      setTagNote(describeTagSync(res.tagSync));
       setJustSaved(true);
     } catch (e) {
       setSaveError(e instanceof Error ? e.message : 'Failed to save');
@@ -177,30 +182,7 @@ export function GhlReconcileCard() {
               ))}
               {tags.length === 0 && <span className="text-xs text-text-muted">None</span>}
             </div>
-            <div className="flex gap-2">
-              <input
-                id="ghl-exclude-tag"
-                type="text"
-                value={tagDraft}
-                maxLength={100}
-                onChange={(e) => setTagDraft(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    e.preventDefault();
-                    addTag();
-                  }
-                }}
-                placeholder="e.g. signed up"
-                className="flex-1 min-w-0 px-3 py-2 bg-surface-2 border border-white/10 rounded-app text-sm text-white"
-              />
-              <button
-                type="button"
-                onClick={addTag}
-                className="px-3 py-2 rounded-app text-sm bg-surface-2 border border-white/10 text-white"
-              >
-                Add
-              </button>
-            </div>
+            <GhlTagPicker selected={tags} onAdd={addTag} inputId="ghl-exclude-tag" />
           </div>
 
           <div className="mb-4">
@@ -299,6 +281,13 @@ export function GhlReconcileCard() {
               Save
             </button>
             {justSaved && !dirty && <span className="text-xs text-success">Saved</span>}
+            {justSaved && !dirty && tagNote && (
+              <span
+                className={`text-xs ${tagNote.tone === 'ok' ? 'text-success' : 'text-yellow-400'}`}
+              >
+                {tagNote.text}
+              </span>
+            )}
           </div>
         </>
       )}
