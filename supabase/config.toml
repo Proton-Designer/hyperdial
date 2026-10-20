@@ -431,6 +431,10 @@ verify_jwt = false
 # without this the gateway 401s every tick before the function's own secret check ever runs
 # (MISSION-4 TASK-T1, review fix-forward -- audit/T1/review-eng2.md #1, BLOCKER).
 verify_jwt = false
+[functions.ghl-reconcile-worker]
+# TASK-G08: triggered by pg_net with only X-Cron-Secret (its own GHL_RECONCILE_WORKER_SECRET), no
+# Supabase JWT -- same reason as ghl-pull-worker above; fails closed in code when the secret is unset.
+verify_jwt = false
 
 # Parallel dialer (auth required except webhook)
 [functions.dialer-session-start]
