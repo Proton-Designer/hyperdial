@@ -178,11 +178,10 @@ export interface GhlImportPlan {
    *  already-active campaign_leads rows to a non-dialable status. */
   pausedGhlContactIds: Set<string>;
   /** ghl_contact_id -> the dnc_numbers.note text the caller should use when writing that
-   *  contact's number into `dnc_numbers` (source 'import'). Only present for contacts marked DNC
-   *  by a tag match this run -- a contact marked DNC only via GHL's own `dnd` flag (no matching
-   *  tag) is NOT in this map, since there's no "GHL tag: <tag>" to cite and `dnc_numbers` is only
-   *  written for the tag-driven case per the task spec (dnd already flows into contacts.dnc and
-   *  the org-wide dnc_numbers-vs-dnc-flag reconciliation is out of scope for this planner). */
+   *  contact's number into `dnc_numbers` (source 'import'). Present for every contact
+   *  marked DNC this run: `GHL tag: <tag>` for a tag match, else `GHL do-not-disturb` for GHL's own
+   *  `dnd` flag (TASK-G25 / G23 F5: before, a dnd-only contact had no dnc_numbers row, so the
+   *  contacts.dnc flag alone kept it blocked and an agent clearing it re-enabled dialing). */
   dncTagNoteByGhlContactId: Map<string, string>;
   /** Contacts that were paused as of their last import (per their stored `ghl_tags`, see
    *  ExistingContactRow) but no longer carry a paused tag this run -- i.e. the paused tag was
@@ -370,6 +369,10 @@ export function planGhlImport(args: PlanGhlImportArgs): GhlImportPlan {
 
     if (matchedDncTag !== undefined) {
       dncTagNoteByGhlContactId.set(gc.id, `GHL tag: ${matchedDncTag}`);
+    } else if (gc.dnd === true) {
+      // TASK-G25 (G23 F5): a DND-only contact needs its dnc_numbers row too, otherwise clearing the
+      // contacts.dnc flag alone would make it dialable again while GHL still has DND on.
+      dncTagNoteByGhlContactId.set(gc.id, 'GHL do-not-disturb');
     }
     if (isPausedNow) {
       pausedGhlContactIds.add(gc.id);

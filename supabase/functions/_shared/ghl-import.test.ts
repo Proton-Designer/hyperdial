@@ -384,15 +384,19 @@ Deno.test('planGhlImport: matching is exact after trim+lowercase, not a substrin
 });
 
 Deno.test(
-  'planGhlImport: dncTagNoteByGhlContactId cites the exact matched tag (original casing) for the dnc_numbers note, and is absent for a dnd-only DNC',
+  'planGhlImport: dncTagNoteByGhlContactId cites the exact matched tag (original casing) for the dnc_numbers note; a dnd-only DNC gets the do-not-disturb note, a clean contact none (TASK-G25)',
   () => {
     const contacts: GhlContact[] = [
       ghlContact('g1', '2026-01-01', { phone: '+14155552671', tags: ['Do-Not-Call'] }),
       ghlContact('g2', '2026-01-01', { phone: '+14155552672', dnd: true }),
+      ghlContact('g3', '2026-01-01', { phone: '+14155552673', dnd: true, tags: ['dnc'] }),
+      ghlContact('g4', '2026-01-01', { phone: '+14155552674' }),
     ];
     const plan = planGhlImport({ mode: 'search', value: '', ghlContacts: contacts, existing: [] });
     assertEquals(plan.dncTagNoteByGhlContactId.get('g1'), 'GHL tag: Do-Not-Call');
-    assertEquals(plan.dncTagNoteByGhlContactId.has('g2'), false);
+    assertEquals(plan.dncTagNoteByGhlContactId.get('g2'), 'GHL do-not-disturb');
+    assertEquals(plan.dncTagNoteByGhlContactId.get('g3'), 'GHL tag: dnc'); // the tag wins when both
+    assertEquals(plan.dncTagNoteByGhlContactId.has('g4'), false);
   }
 );
 
