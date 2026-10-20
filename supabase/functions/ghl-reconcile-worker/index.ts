@@ -101,6 +101,7 @@ Deno.serve(async (req: Request) => {
         excludeTags: org.ghl_exclude_tags,
         excludeStageIds: org.ghl_exclude_stage_ids,
         batchSize: batchSize(),
+        deadlineMs: started + TIME_BUDGET_MS,
       });
       await supabase.rpc('record_ghl_reconcile_result', { p_org: org.org_id, p_counts: r });
       results.push({ orgId: org.org_id, ...r });

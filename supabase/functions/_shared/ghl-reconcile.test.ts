@@ -89,16 +89,26 @@ function fakeSupabase(opts: {
   stageContacts?: { id: string; ghl_contact_id: string }[];
 }) {
   const rpcs: { fn: string; args: Record<string, unknown> }[] = [];
+  const selects: string[] = [];
+  const ins: string[] = [];
   const sb = {
     from(table: string) {
       const q = {
-        select: () => q,
+        select: (cols: string) => {
+          selects.push(cols);
+          return q;
+        },
         eq: () => q,
-        in: () =>
+        in: (col: string) => {
+          ins.push(col);
+          return q;
+        },
+        // awaiting the builder resolves it, like supabase-js
+        then: (ok: (v: unknown) => unknown) =>
           Promise.resolve({
             data: table === 'contacts' ? (opts.stageContacts ?? []) : [],
             error: null,
-          }),
+          }).then(ok),
       };
       return q;
     },
@@ -111,7 +121,7 @@ function fakeSupabase(opts: {
       return Promise.resolve({ data: null, error: null });
     },
   };
-  return { sb, rpcs };
+  return { sb, rpcs, selects, ins };
 }
 
 Deno.test(
@@ -208,7 +218,7 @@ Deno.test(
       calls.push(new URL(url).pathname);
       return Response.json({ opportunities: [{ id: 'o1', contactId: 'g-in-stage' }] });
     });
-    const { sb, rpcs } = fakeSupabase({
+    const { sb, rpcs, selects, ins } = fakeSupabase({
       claim: [],
       stageContacts: [{ id: 'c9', ghl_contact_id: 'g-in-stage' }],
     });
@@ -224,6 +234,9 @@ Deno.test(
       });
       assertEquals(calls, ['/opportunities/search']);
       assertEquals(r.decisions.exclude, 1);
+      // G16: only contacts that still have a queued/callback lead
+      assertEquals(selects, ['id, ghl_contact_id, campaign_leads!inner(id)']);
+      assertEquals(ins, ['ghl_contact_id', 'campaign_leads.status']);
       assertEquals(rpcs[1].args.p_items, [
         { contact_id: 'c9', action: 'exclude', reason: 'stage' },
       ]);
@@ -278,6 +291,47 @@ Deno.test(
         ['claim_ghl_reconcile_batch']
       );
       assertEquals(r2.ownerRouting, null);
+    } finally {
+      restore();
+    }
+  }
+);
+
+Deno.test(
+  'reconcileOrg (G16): deadline stops the read loop, stage lookup needs a live lead',
+  async () => {
+    const calls: string[] = [];
+    const restore = stubFetch((url) => {
+      calls.push(new URL(url).pathname);
+      return Response.json({ contact: { id: 'x', dnd: true } });
+    });
+    const { sb, rpcs, selects, ins } = fakeSupabase({
+      claim: [
+        { contact_id: 'c1', ghl_contact_id: 'g-1' },
+        { contact_id: 'c2', ghl_contact_id: 'g-2' },
+      ],
+      stageContacts: [],
+    });
+    try {
+      const r = await reconcileOrg(sb, createGhlClient('tok'), {
+        orgId: 'org-1',
+        locationId: 'loc-1',
+        dncTags: null,
+        pausedTags: null,
+        excludeTags: null,
+        excludeStageIds: [],
+        batchSize: 10,
+        deadlineMs: Date.now() - 1,
+      });
+      assertEquals(r.deadlineHit, true);
+      assertEquals(calls, []);
+      assertEquals(r.checked, 0);
+      assertEquals(
+        rpcs.map((x) => x.fn),
+        ['claim_ghl_reconcile_batch']
+      );
+      assertEquals(selects, []); // no stages configured -> no contact lookup
+      assertEquals(ins, []);
     } finally {
       restore();
     }

@@ -102,6 +102,8 @@ export interface ReconcileOrgArgs {
   excludeTags: string[] | null;
   excludeStageIds: string[] | null;
   batchSize: number;
+  /** G16: absolute epoch ms; the per-contact read loop stops once passed (decisions so far still apply). */
+  deadlineMs?: number;
 }
 
 export interface ReconcileOrgResult {
@@ -109,6 +111,8 @@ export interface ReconcileOrgResult {
   checked: number;
   readErrors: number;
   stageErrors: number;
+  /** G16: true when the deadline cut the read loop short. */
+  deadlineHit: boolean;
   decisions: { dnc: number; exclude: number; paused: number };
   applied: Record<string, number> | null;
   /** G15: counts from apply_ghl_owner_routing (null when no read carried an owner). */
@@ -131,6 +135,7 @@ export async function reconcileOrg(
     checked: 0,
     readErrors: 0,
     stageErrors: 0,
+    deadlineHit: false,
     decisions: { dnc: 0, exclude: 0, paused: 0 },
     applied: null,
     ownerRouting: null,
@@ -162,14 +167,15 @@ export async function reconcileOrg(
   const decided = new Set<string>();
   const owners: { contact_id: string; ghl_user_id: string }[] = [];
 
-  // 2. stage matches among OUR linked contacts (no per-contact GHL read needed)
+  // 2. stage matches among OUR linked contacts that still have a queued/callback lead (no per-contact GHL read)
   if (excludeStageContactIds.size > 0) {
     for (const batch of chunks([...excludeStageContactIds], 200)) {
       const { data, error } = await supabase
         .from('contacts')
-        .select('id, ghl_contact_id')
+        .select('id, ghl_contact_id, campaign_leads!inner(id)')
         .eq('org_id', args.orgId)
-        .in('ghl_contact_id', batch);
+        .in('ghl_contact_id', batch)
+        .in('campaign_leads.status', ['queued', 'callback']);
       if (error) throw new Error(`contacts by ghl id failed: ${error.message}`);
       for (const row of (data ?? []) as { id: string; ghl_contact_id: string }[]) {
         items.push({ contact_id: row.id, action: 'exclude', reason: 'stage' });
@@ -189,6 +195,10 @@ export async function reconcileOrg(
   result.claimed = batch.length;
 
   for (const row of batch) {
+    if (args.deadlineMs !== undefined && Date.now() > args.deadlineMs) {
+      result.deadlineHit = true;
+      break;
+    }
     try {
       const gc = await client.getContact(row.ghl_contact_id);
       result.checked++;
