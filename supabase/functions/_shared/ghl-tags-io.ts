@@ -75,13 +75,23 @@ export async function getOrgGhlAccess(
   return { token: token as string, locationId: integration.location_id as string };
 }
 
-/** Same as syncOrgTagsToGhl, looking the token/location up first. null = GHL not connected. */
+/** Same as syncOrgTagsToGhl, looking the token/location up first. null = GHL not connected.
+ *  Never throws (a save has already happened when this runs): a failure comes back as `listError`. */
 export async function syncOrgTagsForOrg(
   supabase: SupabaseAny,
   orgId: string,
   apiBase?: string
 ): Promise<EnsureTagsResult | null> {
-  const access = await getOrgGhlAccess(supabase, orgId);
-  if (!access) return null;
-  return syncOrgTagsToGhl(supabase, { orgId, ...access, apiBase });
+  try {
+    const access = await getOrgGhlAccess(supabase, orgId);
+    if (!access) return null;
+    return await syncOrgTagsToGhl(supabase, { orgId, ...access, apiBase });
+  } catch (err) {
+    return {
+      existing: [],
+      created: [],
+      failed: [],
+      listError: err instanceof Error ? err.message : String(err),
+    };
+  }
 }
