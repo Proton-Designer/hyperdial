@@ -18,7 +18,7 @@ answers:
   - "why is components/ui not formatted"
 covers: "Decisions made, alternatives considered, what superseded what"
 excludes: "Work in progress (see mem.active-work), currently-broken behaviour (see mem.known-issues)"
-tokens_est: 42163
+tokens_est: 42227
 ---
 
 # Decisions
@@ -46,7 +46,8 @@ Run `run-20261019-1905` implemented Kareem's `ghl-data-sync` spec (setup guide: 
 - **DNC HyperDial → GHL:** guarded triggers on `contacts.dnc` and `dnc_numbers` enqueue one `dnc_flag` job per change, only for contacts already linked to GHL. **No backfill** of existing DNC contacts (would be a historical flood).
 - **GHL → HyperDial: a 5-minute sweep, not a webhook** (no new unauthenticated endpoint). Off by default per org, owner/admin switch in Settings; only `queued`/`callback` leads move; GHL-origin DNC is not echoed back. The lead enables it per org as a live step once the org has chosen its signed-up/active tags and stages.
 - **Owner routing (TASK-G15):** the GHL owner (read by the same reconcile call, no extra GHL request) re-assigns a contact's waiting CALLBACK leads to the mapped, active, on-roster member; GHL wins over the callback's HyperDial assignee; HyperDial never writes the GHL owner.
-- **Not built, deliberately:** imported-list id, instant webhook, backfills.
+- **Lead list (TASK-G18):** the import's list name is stored on the LEAD (`campaign_leads.list_name`, what was dialed; a contact can be in several lists) with `contacts.import_list` (first import) as fallback, then the campaign name. No backfill.
+- **Not built, deliberately:** instant webhook, backfills.
 
 ## 2026-10-06 — Shifts: reuse the org model, `agent_state_events` and the org's GHL connection instead of the spec's own tables and secrets
 

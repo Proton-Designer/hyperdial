@@ -2,10 +2,10 @@
   "meta": {
     "artifact": "doc-index",
     "version": "1.0",
-    "generated_at": "2026-10-20T01:28:02.571Z",
+    "generated_at": "2026-10-20T01:33:18.877Z",
     "target": "/Users/aymanmohammed/Desktop/Softdial",
     "git": {
-      "commit": "0b43099",
+      "commit": "15b3783",
       "branch": "feat/stage-1",
       "dirty": true
     },
@@ -18,7 +18,7 @@
     "token_estimate_method": "heuristic-v1",
     "totals": {
       "documents": 34,
-      "tokens_est": 183501,
+      "tokens_est": 183809,
       "always_loaded_tokens_est": 2530
     },
     "documents": [
@@ -75,8 +75,8 @@
         "lines": 131,
         "budget": 250,
         "tokens_est": 1626,
-        "source_hash": "41d602305e9ff623ed0ab126fd244bb0c838b9798274305c9dd84d93a94869df",
-        "drift_suspect": false
+        "source_hash": "051b47fc2a70303b1e477047de28643bc90b5bc0114ac9b6343ccbcd16a0fc46",
+        "drift_suspect": true
       },
       {
         "id": "arch.service-map",
@@ -89,8 +89,8 @@
         "lines": 218,
         "budget": 250,
         "tokens_est": 4478,
-        "source_hash": "dfc2a572726c08561607220448cb23548ccf3e80b5aef97910d956fad3f9d1d0",
-        "drift_suspect": false
+        "source_hash": "949432a3fd28fe646c95080a2a85dc94bd1ab2c7352a3e4397471719af731985",
+        "drift_suspect": true
       },
       {
         "id": "arch.system-overview",
@@ -103,8 +103,8 @@
         "lines": 156,
         "budget": 250,
         "tokens_est": 2079,
-        "source_hash": "8b9afb91d0490e4627024ac5cd106970ef70b7fea7503d86045355f8bb0b4739",
-        "drift_suspect": false
+        "source_hash": "6a0f290538be6f64928ea6708a11695135c60fa9061b55172add09f9d3c9149a",
+        "drift_suspect": true
       },
       {
         "id": "archive.csv-import-build-spec",
@@ -159,8 +159,8 @@
         "lines": 156,
         "budget": 150,
         "tokens_est": 6795,
-        "source_hash": "ad1df443285e98847f145fb368d226dd30e6672ef1eb8f505c233845da8c7cd9",
-        "drift_suspect": false
+        "source_hash": "01185a5f0839e07adc1f315ce3aa79e3a817ccecdf1058f369cbdaacccadad20",
+        "drift_suspect": true
       },
       {
         "id": "domain.auth",
@@ -173,8 +173,8 @@
         "lines": 391,
         "budget": 150,
         "tokens_est": 13159,
-        "source_hash": "e2086039a6179663b284a8bf52b21d03f85b582694d1da8222f388d9b0500452",
-        "drift_suspect": false
+        "source_hash": "220672154f46d016c4749662c98f73bb667ec32d1a6ab696e471bb3438db3ca7",
+        "drift_suspect": true
       },
       {
         "id": "domain.campaigns",
@@ -187,8 +187,8 @@
         "lines": 157,
         "budget": 150,
         "tokens_est": 4740,
-        "source_hash": "8c0219c4bf6e4b6cccfa2421dcb6da37375cb39d7b912a100c91a9f9d13ba91f",
-        "drift_suspect": false
+        "source_hash": "bf6ab70de0615bc3f1ebd03111f697c7211e2a2a933fa470d6611dad79deca47",
+        "drift_suspect": true
       },
       {
         "id": "domain.contacts",
@@ -198,11 +198,11 @@
         "status": "canonical",
         "owner": "maintainer",
         "updated": "2026-09-24",
-        "lines": 227,
+        "lines": 228,
         "budget": 150,
-        "tokens_est": 5430,
-        "source_hash": "18df886c8a709f31e40a4506eaccb24c3a0b58a4cd3f8949ed4537ba6a2733b6",
-        "drift_suspect": false
+        "tokens_est": 5523,
+        "source_hash": "67a4d6e95beda29c5919f910f1fc30013b50c8ef6fc5c765b381b811cef33d38",
+        "drift_suspect": true
       },
       {
         "id": "domain.crm",
@@ -214,9 +214,9 @@
         "updated": "2026-10-19",
         "lines": 185,
         "budget": 150,
-        "tokens_est": 5295,
-        "source_hash": "8c708dd7f9ab2f0d8c4551dd6f1ae02fb2a5b22c19a64a6f018ebbe0d3bfb6a2",
-        "drift_suspect": false
+        "tokens_est": 5398,
+        "source_hash": "072f2b537381afcb7a511c16cffb67dc8f187bda8a89d11dcc0f39e5f5f20837",
+        "drift_suspect": true
       },
       {
         "id": "domain.dialer",
@@ -229,8 +229,8 @@
         "lines": 851,
         "budget": 150,
         "tokens_est": 21528,
-        "source_hash": "2040bb85830fbfb3925db76a69e242ddbbc7271fae02d07f4804eac4441ca77f",
-        "drift_suspect": false
+        "source_hash": "6fdfb0e2231588d52613125e6a22ea6af0212112130b4a3fcbc9aa41fea5c629",
+        "drift_suspect": true
       },
       {
         "id": "domain.dispositions",
@@ -243,8 +243,8 @@
         "lines": 132,
         "budget": 150,
         "tokens_est": 2496,
-        "source_hash": "11b2138b18430995cb291cfeb735fb1c209431095064da588fd4d752c41938ba",
-        "drift_suspect": false
+        "source_hash": "9d5bcc29cfc0db5ddfc802f96f95d0414eee51e0d8ee1973d7d590c3360f3a5b",
+        "drift_suspect": true
       },
       {
         "id": "domain.shifts",
@@ -257,8 +257,8 @@
         "lines": 132,
         "budget": 150,
         "tokens_est": 3745,
-        "source_hash": "98473a067c67470b9548b68be7c1b25b2d6e4b860a9c163d086b129ae85cbb28",
-        "drift_suspect": false
+        "source_hash": "a5d80f6a661db8805417f047ab90473c8a457fbb9a69eb55ef77ace489f10bea",
+        "drift_suspect": true
       },
       {
         "id": "domain.telephony",
@@ -380,9 +380,9 @@
         "status": "canonical",
         "owner": "maintainer",
         "updated": "2026-10-19",
-        "lines": 1960,
+        "lines": 1961,
         "budget": 300,
-        "tokens_est": 42163,
+        "tokens_est": 42227,
         "source_hash": null,
         "drift_suspect": false
       },
@@ -396,7 +396,7 @@
         "updated": "2026-10-19",
         "lines": 1426,
         "budget": 200,
-        "tokens_est": 31960,
+        "tokens_est": 32008,
         "source_hash": null,
         "drift_suspect": false
       },
@@ -425,8 +425,8 @@
         "lines": 169,
         "budget": 150,
         "tokens_est": 2256,
-        "source_hash": "152d257dd043397c5c77848423d7208e9baba55d9934425f8af878c2782b460f",
-        "drift_suspect": false
+        "source_hash": "6d121b2ba1c20b26f6683c2625333dcd01d191eb8b97d1dab2ce3b81415f68a4",
+        "drift_suspect": true
       },
       {
         "id": "tool.mcp-registry",

@@ -2,10 +2,10 @@
   "meta": {
     "artifact": "symbol-index",
     "version": "1.0",
-    "generated_at": "2026-10-20T01:28:02.571Z",
+    "generated_at": "2026-10-20T01:33:18.877Z",
     "target": "/Users/aymanmohammed/Desktop/Softdial",
     "git": {
-      "commit": "0b43099",
+      "commit": "15b3783",
       "branch": "feat/stage-1",
       "dirty": true
     },
@@ -430,7 +430,7 @@
         "name": "ProfileTab",
         "kind": "function",
         "file": "apps/web/src/components/Settings.tsx",
-        "line": 187,
+        "line": 188,
         "exported": false,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -439,7 +439,7 @@
         "name": "SettingsSection",
         "kind": "type",
         "file": "apps/web/src/components/Settings.tsx",
-        "line": 349,
+        "line": 350,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -448,7 +448,7 @@
         "name": "TeamTab",
         "kind": "function",
         "file": "apps/web/src/components/Settings.tsx",
-        "line": 351,
+        "line": 352,
         "exported": false,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -457,7 +457,7 @@
         "name": "SupervisorAlertSettingsCard",
         "kind": "function",
         "file": "apps/web/src/components/Settings.tsx",
-        "line": 1268,
+        "line": 1269,
         "exported": false,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -466,7 +466,7 @@
         "name": "CallTakeoverSettingsCard",
         "kind": "function",
         "file": "apps/web/src/components/Settings.tsx",
-        "line": 1390,
+        "line": 1391,
         "exported": false,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -475,7 +475,7 @@
         "name": "NotificationPreferencesCard",
         "kind": "function",
         "file": "apps/web/src/components/Settings.tsx",
-        "line": 1461,
+        "line": 1462,
         "exported": false,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -484,7 +484,7 @@
         "name": "restorableLabel",
         "kind": "function",
         "file": "apps/web/src/components/Settings.tsx",
-        "line": 1560,
+        "line": 1561,
         "exported": false,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -493,7 +493,7 @@
         "name": "OffboardWizardModal",
         "kind": "function",
         "file": "apps/web/src/components/Settings.tsx",
-        "line": 1578,
+        "line": 1579,
         "exported": false,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -502,7 +502,7 @@
         "name": "GhlMemberMappingSection",
         "kind": "function",
         "file": "apps/web/src/components/Settings.tsx",
-        "line": 1780,
+        "line": 1781,
         "exported": false,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -511,7 +511,7 @@
         "name": "IntegrationsTab",
         "kind": "function",
         "file": "apps/web/src/components/Settings.tsx",
-        "line": 1851,
+        "line": 1852,
         "exported": false,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -520,7 +520,7 @@
         "name": "GhlBlockedTagsEditor",
         "kind": "function",
         "file": "apps/web/src/components/Settings.tsx",
-        "line": 2026,
+        "line": 2028,
         "exported": false,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -529,7 +529,7 @@
         "name": "GHL_FIELD_MAPPING_TARGET_KEYS",
         "kind": "const",
         "file": "apps/web/src/components/Settings.tsx",
-        "line": 2206,
+        "line": 2208,
         "exported": false,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -538,7 +538,7 @@
         "name": "GhlPullSettingsCard",
         "kind": "function",
         "file": "apps/web/src/components/Settings.tsx",
-        "line": 2253,
+        "line": 2255,
         "exported": false,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -547,7 +547,7 @@
         "name": "GhlCampaignMappingsEditor",
         "kind": "function",
         "file": "apps/web/src/components/Settings.tsx",
-        "line": 2389,
+        "line": 2391,
         "exported": false,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -556,7 +556,7 @@
         "name": "SyncStatusList",
         "kind": "function",
         "file": "apps/web/src/components/Settings.tsx",
-        "line": 2568,
+        "line": 2570,
         "exported": false,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -565,7 +565,7 @@
         "name": "DispositionsTab",
         "kind": "function",
         "file": "apps/web/src/components/Settings.tsx",
-        "line": 2635,
+        "line": 2637,
         "exported": false,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -574,7 +574,7 @@
         "name": "QualityRulesEditor",
         "kind": "function",
         "file": "apps/web/src/components/Settings.tsx",
-        "line": 3206,
+        "line": 3208,
         "exported": false,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -583,7 +583,7 @@
         "name": "RecordingSettingsCard",
         "kind": "function",
         "file": "apps/web/src/components/Settings.tsx",
-        "line": 3358,
+        "line": 3360,
         "exported": false,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -592,7 +592,7 @@
         "name": "ExternalTransferSettingsCard",
         "kind": "function",
         "file": "apps/web/src/components/Settings.tsx",
-        "line": 3541,
+        "line": 3543,
         "exported": false,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -601,7 +601,7 @@
         "name": "VoicemailDropSubCard",
         "kind": "function",
         "file": "apps/web/src/components/Settings.tsx",
-        "line": 3604,
+        "line": 3606,
         "exported": false,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -610,7 +610,7 @@
         "name": "VoicemailDropCard",
         "kind": "function",
         "file": "apps/web/src/components/Settings.tsx",
-        "line": 3675,
+        "line": 3677,
         "exported": false,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -619,7 +619,7 @@
         "name": "AutoResumeSettingsCard",
         "kind": "function",
         "file": "apps/web/src/components/Settings.tsx",
-        "line": 3720,
+        "line": 3722,
         "exported": false,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -628,7 +628,7 @@
         "name": "ACTIVITY_PAGE_SIZE",
         "kind": "const",
         "file": "apps/web/src/components/Settings.tsx",
-        "line": 3787,
+        "line": 3789,
         "exported": false,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -637,7 +637,7 @@
         "name": "ACTIVITY_EXPORT_LIMIT",
         "kind": "const",
         "file": "apps/web/src/components/Settings.tsx",
-        "line": 3788,
+        "line": 3790,
         "exported": false,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -646,7 +646,7 @@
         "name": "humanizeActionKey",
         "kind": "function",
         "file": "apps/web/src/components/Settings.tsx",
-        "line": 3864,
+        "line": 3866,
         "exported": false,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -655,7 +655,7 @@
         "name": "ActivityTab",
         "kind": "function",
         "file": "apps/web/src/components/Settings.tsx",
-        "line": 3868,
+        "line": 3870,
         "exported": false,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -664,7 +664,7 @@
         "name": "DncTab",
         "kind": "function",
         "file": "apps/web/src/components/Settings.tsx",
-        "line": 4098,
+        "line": 4100,
         "exported": false,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -673,7 +673,7 @@
         "name": "DistributionSettingsTab",
         "kind": "function",
         "file": "apps/web/src/components/Settings.tsx",
-        "line": 4256,
+        "line": 4258,
         "exported": false,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -682,7 +682,7 @@
         "name": "NumberPoolCard",
         "kind": "function",
         "file": "apps/web/src/components/Settings.tsx",
-        "line": 4399,
+        "line": 4401,
         "exported": false,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -691,7 +691,7 @@
         "name": "ADD_FUNDS_PRESETS_USD",
         "kind": "const",
         "file": "apps/web/src/components/Settings.tsx",
-        "line": 4608,
+        "line": 4610,
         "exported": false,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -700,7 +700,7 @@
         "name": "MIN_ADD_FUNDS_USD",
         "kind": "const",
         "file": "apps/web/src/components/Settings.tsx",
-        "line": 4609,
+        "line": 4611,
         "exported": false,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -709,7 +709,7 @@
         "name": "MAX_ADD_FUNDS_USD",
         "kind": "const",
         "file": "apps/web/src/components/Settings.tsx",
-        "line": 4612,
+        "line": 4614,
         "exported": false,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -718,7 +718,7 @@
         "name": "PRE_CHARGE_ADD_FUNDS_ERROR_CODES",
         "kind": "const",
         "file": "apps/web/src/components/Settings.tsx",
-        "line": 4619,
+        "line": 4621,
         "exported": false,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -727,7 +727,7 @@
         "name": "AddFundsDialog",
         "kind": "function",
         "file": "apps/web/src/components/Settings.tsx",
-        "line": 4635,
+        "line": 4637,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -736,7 +736,7 @@
         "name": "AutoRechargeSection",
         "kind": "function",
         "file": "apps/web/src/components/Settings.tsx",
-        "line": 4861,
+        "line": 4863,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -745,7 +745,7 @@
         "name": "RecentBillingActivity",
         "kind": "function",
         "file": "apps/web/src/components/Settings.tsx",
-        "line": 5013,
+        "line": 5015,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -754,7 +754,7 @@
         "name": "SpendSettingsCard",
         "kind": "function",
         "file": "apps/web/src/components/Settings.tsx",
-        "line": 5070,
+        "line": 5072,
         "exported": false,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -763,7 +763,7 @@
         "name": "InboundSettingsCard",
         "kind": "function",
         "file": "apps/web/src/components/Settings.tsx",
-        "line": 5241,
+        "line": 5243,
         "exported": false,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -772,7 +772,7 @@
         "name": "Settings",
         "kind": "function",
         "file": "apps/web/src/components/Settings.tsx",
-        "line": 5319,
+        "line": 5321,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -2249,6 +2249,42 @@
         "kind": "function",
         "file": "apps/web/src/components/settings/CollapsibleSection.tsx",
         "line": 23,
+        "exported": true,
+        "service": "web",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "statusText",
+        "kind": "function",
+        "file": "apps/web/src/components/settings/GhlFieldCoverageCard.tsx",
+        "line": 18,
+        "exported": false,
+        "service": "web",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "Row",
+        "kind": "function",
+        "file": "apps/web/src/components/settings/GhlFieldCoverageCard.tsx",
+        "line": 31,
+        "exported": false,
+        "service": "web",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "Section",
+        "kind": "function",
+        "file": "apps/web/src/components/settings/GhlFieldCoverageCard.tsx",
+        "line": 59,
+        "exported": false,
+        "service": "web",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "GhlFieldCoverageCard",
+        "kind": "function",
+        "file": "apps/web/src/components/settings/GhlFieldCoverageCard.tsx",
+        "line": 93,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -6774,6 +6810,51 @@
       {
         "name": "ORG",
         "kind": "const",
+        "file": "apps/web/src/dev/GhlFieldCoverageHarness.tsx",
+        "line": 14,
+        "exported": false,
+        "service": "web",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "item",
+        "kind": "const",
+        "file": "apps/web/src/dev/GhlFieldCoverageHarness.tsx",
+        "line": 16,
+        "exported": false,
+        "service": "web",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "fixture",
+        "kind": "function",
+        "file": "apps/web/src/dev/GhlFieldCoverageHarness.tsx",
+        "line": 34,
+        "exported": false,
+        "service": "web",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "useStubs",
+        "kind": "function",
+        "file": "apps/web/src/dev/GhlFieldCoverageHarness.tsx",
+        "line": 80,
+        "exported": false,
+        "service": "web",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "GhlFieldCoverageHarness",
+        "kind": "function",
+        "file": "apps/web/src/dev/GhlFieldCoverageHarness.tsx",
+        "line": 113,
+        "exported": true,
+        "service": "web",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "ORG",
+        "kind": "const",
         "file": "apps/web/src/dev/GhlReconcileHarness.tsx",
         "line": 16,
         "exported": false,
@@ -8953,7 +9034,7 @@
         "name": "listContacts",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 2254,
+        "line": 2257,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -8962,7 +9043,7 @@
         "name": "CreateContactInput",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 2263,
+        "line": 2266,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -8971,7 +9052,7 @@
         "name": "normalizeContactPhoneFields",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 2287,
+        "line": 2290,
         "exported": false,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -8980,7 +9061,7 @@
         "name": "createContact",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 2306,
+        "line": 2309,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -8989,7 +9070,7 @@
         "name": "UpdateContactInput",
         "kind": "type",
         "file": "apps/web/src/lib/api.ts",
-        "line": 2350,
+        "line": 2353,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -8998,7 +9079,7 @@
         "name": "updateContact",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 2352,
+        "line": 2355,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9007,7 +9088,7 @@
         "name": "deleteContact",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 2389,
+        "line": 2392,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9016,7 +9097,7 @@
         "name": "deleteContacts",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 2397,
+        "line": 2400,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9025,7 +9106,7 @@
         "name": "ContactNote",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 2406,
+        "line": 2409,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9034,7 +9115,7 @@
         "name": "fromContactNoteRow",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 2434,
+        "line": 2437,
         "exported": false,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9043,7 +9124,7 @@
         "name": "listContactNotes",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 2451,
+        "line": 2454,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9052,7 +9133,7 @@
         "name": "addContactNote",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 2465,
+        "line": 2468,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9061,7 +9142,7 @@
         "name": "editContactNote",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 2482,
+        "line": 2485,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9070,7 +9151,7 @@
         "name": "deleteContactNote",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 2494,
+        "line": 2497,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9079,7 +9160,7 @@
         "name": "ContactChangeHistoryEntry",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 2508,
+        "line": 2511,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9088,7 +9169,7 @@
         "name": "listContactChangeHistory",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 2529,
+        "line": 2532,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9097,7 +9178,7 @@
         "name": "Campaign",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 2550,
+        "line": 2553,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9106,7 +9187,7 @@
         "name": "CampaignWithStats",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 2598,
+        "line": 2601,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9115,7 +9196,7 @@
         "name": "CampaignLeadPriority",
         "kind": "type",
         "file": "apps/web/src/lib/api.ts",
-        "line": 2605,
+        "line": 2608,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9124,7 +9205,7 @@
         "name": "CampaignLead",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 2607,
+        "line": 2610,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9133,7 +9214,7 @@
         "name": "listCampaigns",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 2618,
+        "line": 2621,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9142,7 +9223,7 @@
         "name": "createCampaign",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 2654,
+        "line": 2657,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9151,7 +9232,7 @@
         "name": "getCampaign",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 2675,
+        "line": 2678,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9160,7 +9241,7 @@
         "name": "updateCampaignStatus",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 2685,
+        "line": 2688,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9169,7 +9250,7 @@
         "name": "CampaignSettingsInput",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 2696,
+        "line": 2699,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9178,7 +9259,7 @@
         "name": "updateCampaignSettings",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 2721,
+        "line": 2724,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9187,7 +9268,7 @@
         "name": "deleteCampaign",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 2742,
+        "line": 2745,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9196,7 +9277,7 @@
         "name": "listCampaignAgentIds",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 2752,
+        "line": 2755,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9205,7 +9286,7 @@
         "name": "setCampaignAgents",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 2763,
+        "line": 2766,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9214,7 +9295,7 @@
         "name": "listCampaignLeads",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 2786,
+        "line": 2789,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9223,7 +9304,7 @@
         "name": "AssignLeadsFilter",
         "kind": "type",
         "file": "apps/web/src/lib/api.ts",
-        "line": 2829,
+        "line": 2832,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9232,7 +9313,7 @@
         "name": "assignCampaignLeads",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 2840,
+        "line": 2843,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9241,7 +9322,7 @@
         "name": "countLeadsAssignedToOthers",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 2864,
+        "line": 2867,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9250,7 +9331,7 @@
         "name": "TerritoryRule",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 2880,
+        "line": 2883,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9259,7 +9340,7 @@
         "name": "listTerritoryRules",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 2895,
+        "line": 2898,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9268,7 +9349,7 @@
         "name": "TerritoryRuleInput",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 2904,
+        "line": 2907,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9277,7 +9358,7 @@
         "name": "createTerritoryRule",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 2912,
+        "line": 2915,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9286,7 +9367,7 @@
         "name": "updateTerritoryRule",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 2926,
+        "line": 2929,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9295,7 +9376,7 @@
         "name": "deleteTerritoryRule",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 2943,
+        "line": 2946,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9304,7 +9385,7 @@
         "name": "reorderTerritoryRules",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 2953,
+        "line": 2956,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9313,7 +9394,7 @@
         "name": "TerritoryPreviewRow",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 2966,
+        "line": 2969,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9322,7 +9403,7 @@
         "name": "previewTerritoryRules",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 2973,
+        "line": 2976,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9331,7 +9412,7 @@
         "name": "countTerritoryReassignImpact",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 2991,
+        "line": 2994,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9340,7 +9421,7 @@
         "name": "TerritoryApplyResult",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 3003,
+        "line": 3006,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9349,7 +9430,7 @@
         "name": "applyTerritoryRules",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 3009,
+        "line": 3012,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9358,7 +9439,7 @@
         "name": "setCampaignDistributionMode",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 3024,
+        "line": 3027,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9367,7 +9448,7 @@
         "name": "rebalanceCampaignDistribution",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 3038,
+        "line": 3041,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9376,7 +9457,7 @@
         "name": "setCampaignLeadPriority",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 3049,
+        "line": 3052,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9385,7 +9466,7 @@
         "name": "SKIP_LEAD_DELAY_MINUTES",
         "kind": "const",
         "file": "apps/web/src/lib/api.ts",
-        "line": 3064,
+        "line": 3067,
         "exported": false,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9394,7 +9475,7 @@
         "name": "skipCampaignLead",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 3066,
+        "line": 3069,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9403,7 +9484,7 @@
         "name": "chunk",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 3079,
+        "line": 3082,
         "exported": false,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9412,7 +9493,7 @@
         "name": "AddLeadsToCampaignResult",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 3085,
+        "line": 3088,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9421,7 +9502,7 @@
         "name": "addLeadsToCampaign",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 3100,
+        "line": 3103,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9430,7 +9511,7 @@
         "name": "removeLeadFromCampaign",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 3173,
+        "line": 3176,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9439,7 +9520,7 @@
         "name": "removeLeadsFromCampaign",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 3182,
+        "line": 3185,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9448,7 +9529,7 @@
         "name": "getWebrtcCredentials",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 3195,
+        "line": 3198,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9457,7 +9538,7 @@
         "name": "DialSessionState",
         "kind": "type",
         "file": "apps/web/src/lib/api.ts",
-        "line": 3216,
+        "line": 3219,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9466,7 +9547,7 @@
         "name": "CallLegState",
         "kind": "type",
         "file": "apps/web/src/lib/api.ts",
-        "line": 3228,
+        "line": 3231,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9475,7 +9556,7 @@
         "name": "CallLegOutcome",
         "kind": "type",
         "file": "apps/web/src/lib/api.ts",
-        "line": 3240,
+        "line": 3243,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9484,7 +9565,7 @@
         "name": "DialSessionRecord",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 3250,
+        "line": 3253,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9493,7 +9574,7 @@
         "name": "CallLegRecord",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 3283,
+        "line": 3286,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9502,7 +9583,7 @@
         "name": "ContactHistoryEntry",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 3334,
+        "line": 3337,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9511,7 +9592,7 @@
         "name": "CampaignScriptInfo",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 3348,
+        "line": 3351,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9520,7 +9601,7 @@
         "name": "ActiveTransfer",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 3356,
+        "line": 3359,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9529,7 +9610,7 @@
         "name": "InboundCallInfo",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 3369,
+        "line": 3372,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9538,7 +9619,7 @@
         "name": "ActiveSessionExistsError",
         "kind": "class",
         "file": "apps/web/src/lib/api.ts",
-        "line": 3383,
+        "line": 3386,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9547,7 +9628,7 @@
         "name": "ReconnectAlreadyInFlightError",
         "kind": "class",
         "file": "apps/web/src/lib/api.ts",
-        "line": 3397,
+        "line": 3400,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9556,7 +9637,7 @@
         "name": "LiveCallInProgressError",
         "kind": "class",
         "file": "apps/web/src/lib/api.ts",
-        "line": 3409,
+        "line": 3412,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9565,7 +9646,7 @@
         "name": "SpendWarning",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 3419,
+        "line": 3422,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9574,7 +9655,7 @@
         "name": "startDialerSession",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 3424,
+        "line": 3427,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9583,7 +9664,7 @@
         "name": "stopDialerSession",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 3463,
+        "line": 3466,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9592,7 +9673,7 @@
         "name": "pauseDialerSession",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 3488,
+        "line": 3491,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9601,7 +9682,7 @@
         "name": "reconnectDialerSession",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 3504,
+        "line": 3507,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9610,7 +9691,7 @@
         "name": "resumeDialerSession",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 3525,
+        "line": 3528,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9619,7 +9700,7 @@
         "name": "hangupLiveCall",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 3538,
+        "line": 3541,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9628,7 +9709,7 @@
         "name": "setRaisedHand",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 3552,
+        "line": 3555,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9637,7 +9718,7 @@
         "name": "setSessionRecordingPaused",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 3568,
+        "line": 3571,
         "exported": false,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9646,7 +9727,7 @@
         "name": "pauseSessionRecording",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 3580,
+        "line": 3583,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9655,7 +9736,7 @@
         "name": "resumeSessionRecording",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 3584,
+        "line": 3587,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9664,7 +9745,7 @@
         "name": "getDialerSession",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 3588,
+        "line": 3591,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9673,7 +9754,7 @@
         "name": "getActiveDialerSession",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 3635,
+        "line": 3638,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9682,7 +9763,7 @@
         "name": "GhlIntegrationStatus",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 3654,
+        "line": 3657,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9691,7 +9772,7 @@
         "name": "getGhlIntegrationStatus",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 3673,
+        "line": 3676,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9700,7 +9781,7 @@
         "name": "updateGhlBlockedTags",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 3689,
+        "line": 3692,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9709,7 +9790,7 @@
         "name": "GhlReconcileSettings",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 3705,
+        "line": 3708,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9718,7 +9799,7 @@
         "name": "callGhlReconcileSettings",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 3717,
+        "line": 3720,
         "exported": false,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9727,7 +9808,7 @@
         "name": "getGhlReconcileSettings",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 3729,
+        "line": 3732,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9736,7 +9817,52 @@
         "name": "updateGhlReconcileSettings",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 3734,
+        "line": 3737,
+        "exported": true,
+        "service": "web",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "GhlFieldCoverageStatus",
+        "kind": "type",
+        "file": "apps/web/src/lib/api.ts",
+        "line": 3745,
+        "exported": true,
+        "service": "web",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "GhlFieldCoverageItem",
+        "kind": "interface",
+        "file": "apps/web/src/lib/api.ts",
+        "line": 3747,
+        "exported": true,
+        "service": "web",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "GhlFieldCoverageGroup",
+        "kind": "interface",
+        "file": "apps/web/src/lib/api.ts",
+        "line": 3764,
+        "exported": true,
+        "service": "web",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "GhlFieldCoverage",
+        "kind": "interface",
+        "file": "apps/web/src/lib/api.ts",
+        "line": 3770,
+        "exported": true,
+        "service": "web",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "getGhlFieldCoverage",
+        "kind": "function",
+        "file": "apps/web/src/lib/api.ts",
+        "line": 3778,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9745,7 +9871,7 @@
         "name": "connectGhl",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 3740,
+        "line": 3789,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9754,7 +9880,7 @@
         "name": "disconnectGhl",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 3755,
+        "line": 3804,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9763,7 +9889,7 @@
         "name": "updateGhlPullSettings",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 3771,
+        "line": 3820,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9772,7 +9898,7 @@
         "name": "GhlFieldSuggestions",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 3785,
+        "line": 3834,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9781,7 +9907,7 @@
         "name": "getGhlFieldSuggestions",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 3794,
+        "line": 3843,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9790,7 +9916,7 @@
         "name": "GhlCampaignMapping",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 3806,
+        "line": 3855,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9799,7 +9925,7 @@
         "name": "listGhlCampaignMappings",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 3818,
+        "line": 3867,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9808,7 +9934,7 @@
         "name": "createGhlTagCampaignMapping",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 3829,
+        "line": 3878,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9817,7 +9943,7 @@
         "name": "createGhlStageCampaignMapping",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 3843,
+        "line": 3892,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9826,7 +9952,7 @@
         "name": "deleteGhlCampaignMapping",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 3864,
+        "line": 3913,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9835,7 +9961,7 @@
         "name": "GhlPipelineStageOption",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 3871,
+        "line": 3920,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9844,7 +9970,7 @@
         "name": "listGhlPipelineStages",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 3880,
+        "line": 3929,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9853,7 +9979,7 @@
         "name": "GhlSyncNowResult",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 3892,
+        "line": 3941,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9862,7 +9988,7 @@
         "name": "syncGhlNow",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 3900,
+        "line": 3949,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9871,7 +9997,7 @@
         "name": "ImportFromGhlInput",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 3912,
+        "line": 3961,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9880,7 +10006,7 @@
         "name": "ImportFromGhlResult",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 3922,
+        "line": 3973,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9889,7 +10015,7 @@
         "name": "importFromGhl",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 3953,
+        "line": 4004,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9898,7 +10024,7 @@
         "name": "CrmSyncJob",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 3966,
+        "line": 4022,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9907,7 +10033,7 @@
         "name": "listCrmSyncJobs",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 3982,
+        "line": 4038,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9916,7 +10042,7 @@
         "name": "DispositionLeadEffect",
         "kind": "type",
         "file": "apps/web/src/lib/api.ts",
-        "line": 3996,
+        "line": 4052,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9925,7 +10051,7 @@
         "name": "Disposition",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 3998,
+        "line": 4054,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9934,7 +10060,7 @@
         "name": "listDispositions",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 4026,
+        "line": 4082,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9943,7 +10069,7 @@
         "name": "CreateDispositionInput",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 4039,
+        "line": 4095,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9952,7 +10078,7 @@
         "name": "createDisposition",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 4052,
+        "line": 4108,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9961,7 +10087,7 @@
         "name": "UpdateDispositionInput",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 4075,
+        "line": 4131,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9970,7 +10096,7 @@
         "name": "updateDisposition",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 4092,
+        "line": 4148,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9979,7 +10105,7 @@
         "name": "deleteDisposition",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 4097,
+        "line": 4153,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9988,7 +10114,7 @@
         "name": "getOrgQualityChecksEnabled",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 4109,
+        "line": 4165,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -9997,7 +10123,7 @@
         "name": "setOrgQualityChecksEnabled",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 4120,
+        "line": 4176,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10006,7 +10132,7 @@
         "name": "QualityRuleType",
         "kind": "type",
         "file": "apps/web/src/lib/api.ts",
-        "line": 4129,
+        "line": 4185,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10015,7 +10141,7 @@
         "name": "DispositionQualityRule",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 4131,
+        "line": 4187,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10024,7 +10150,7 @@
         "name": "listDispositionQualityRules",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 4141,
+        "line": 4197,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10033,7 +10159,7 @@
         "name": "setDispositionQualityRule",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 4156,
+        "line": 4212,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10042,7 +10168,7 @@
         "name": "QualityFlagStatus",
         "kind": "type",
         "file": "apps/web/src/lib/api.ts",
-        "line": 4174,
+        "line": 4230,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10051,7 +10177,7 @@
         "name": "DispositionQualityFlag",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 4176,
+        "line": 4232,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10060,7 +10186,7 @@
         "name": "DispositionQualityFlagFilters",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 4196,
+        "line": 4252,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10069,7 +10195,7 @@
         "name": "listDispositionQualityFlags",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 4206,
+        "line": 4262,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10078,7 +10204,7 @@
         "name": "setQualityFlagStatus",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 4223,
+        "line": 4279,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10087,7 +10213,7 @@
         "name": "getQualityFlagOpenCounts",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 4238,
+        "line": 4294,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10096,7 +10222,7 @@
         "name": "DispositionRateOutlier",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 4249,
+        "line": 4305,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10105,7 +10231,7 @@
         "name": "getDispositionRateOutliers",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 4264,
+        "line": 4320,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10114,7 +10240,7 @@
         "name": "SubmitDispositionInput",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 4271,
+        "line": 4327,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10123,7 +10249,7 @@
         "name": "SubmitDispositionResult",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 4286,
+        "line": 4342,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10132,7 +10258,7 @@
         "name": "submitDisposition",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 4295,
+        "line": 4351,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10141,7 +10267,7 @@
         "name": "ContactDispositionHistoryEntry",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 4316,
+        "line": 4372,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10150,7 +10276,7 @@
         "name": "listContactDispositionHistory",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 4330,
+        "line": 4386,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10159,7 +10285,7 @@
         "name": "DncNumber",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 4342,
+        "line": 4398,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10168,7 +10294,7 @@
         "name": "listDncNumbers",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 4354,
+        "line": 4410,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10177,7 +10303,7 @@
         "name": "addDncNumber",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 4368,
+        "line": 4424,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10186,7 +10312,7 @@
         "name": "removeDncNumber",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 4388,
+        "line": 4444,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10195,7 +10321,7 @@
         "name": "RetryRuleAction",
         "kind": "type",
         "file": "apps/web/src/lib/api.ts",
-        "line": 4395,
+        "line": 4451,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10204,7 +10330,7 @@
         "name": "CampaignRetryRule",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 4397,
+        "line": 4453,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10213,7 +10339,7 @@
         "name": "listCampaignRetryRules",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 4409,
+        "line": 4465,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10222,7 +10348,7 @@
         "name": "UpsertCampaignRetryRuleInput",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 4418,
+        "line": 4474,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10231,7 +10357,7 @@
         "name": "upsertCampaignRetryRules",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 4429,
+        "line": 4485,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10240,7 +10366,7 @@
         "name": "getRecordingEnabled",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 4446,
+        "line": 4502,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10249,7 +10375,7 @@
         "name": "setRecordingEnabled",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 4457,
+        "line": 4513,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10258,7 +10384,7 @@
         "name": "AnnounceRecordingMode",
         "kind": "type",
         "file": "apps/web/src/lib/api.ts",
-        "line": 4468,
+        "line": 4524,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10267,7 +10393,7 @@
         "name": "RecordingConsentSettings",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 4470,
+        "line": 4526,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10276,7 +10402,7 @@
         "name": "DEFAULT_ALL_PARTY_CONSENT_STATES",
         "kind": "const",
         "file": "apps/web/src/lib/api.ts",
-        "line": 4479,
+        "line": 4535,
         "exported": false,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10285,7 +10411,7 @@
         "name": "getRecordingConsentSettings",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 4496,
+        "line": 4552,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10294,7 +10420,7 @@
         "name": "setRecordingConsentSettings",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 4512,
+        "line": 4568,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10303,7 +10429,7 @@
         "name": "RecordingUrlResult",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 4526,
+        "line": 4582,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10312,7 +10438,7 @@
         "name": "getRecordingUrl",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 4534,
+        "line": 4590,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10321,7 +10447,7 @@
         "name": "VoicemailDropInfo",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 4547,
+        "line": 4603,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10330,7 +10456,7 @@
         "name": "fetchVoicemailDrop",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 4553,
+        "line": 4609,
         "exported": false,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10339,7 +10465,7 @@
         "name": "getMyVoicemailDrop",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 4565,
+        "line": 4621,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10348,7 +10474,7 @@
         "name": "getOrgDefaultVoicemailDrop",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 4570,
+        "line": 4626,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10357,7 +10483,7 @@
         "name": "uploadVoicemailDrop",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 4574,
+        "line": 4630,
         "exported": false,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10366,7 +10492,7 @@
         "name": "uploadMyVoicemailDrop",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 4587,
+        "line": 4643,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10375,7 +10501,7 @@
         "name": "uploadOrgDefaultVoicemailDrop",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 4592,
+        "line": 4648,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10384,7 +10510,7 @@
         "name": "RecordingSearchRow",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 4600,
+        "line": 4656,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10393,7 +10519,7 @@
         "name": "RecordingSearchFilters",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 4616,
+        "line": 4672,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10402,7 +10528,7 @@
         "name": "searchRecordings",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 4634,
+        "line": 4690,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10411,7 +10537,7 @@
         "name": "RecordingFlag",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 4655,
+        "line": 4711,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10420,7 +10546,7 @@
         "name": "getRecordingFlag",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 4662,
+        "line": 4718,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10429,7 +10555,7 @@
         "name": "flagRecording",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 4675,
+        "line": 4731,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10438,7 +10564,7 @@
         "name": "unflagRecording",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 4683,
+        "line": 4739,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10447,7 +10573,7 @@
         "name": "RecordingComment",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 4688,
+        "line": 4744,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10456,7 +10582,7 @@
         "name": "listRecordingComments",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 4698,
+        "line": 4754,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10465,7 +10591,7 @@
         "name": "addRecordingComment",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 4717,
+        "line": 4773,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10474,7 +10600,7 @@
         "name": "ScorecardCriterionKind",
         "kind": "type",
         "file": "apps/web/src/lib/api.ts",
-        "line": 4737,
+        "line": 4793,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10483,7 +10609,7 @@
         "name": "ScorecardRubricCriterion",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 4739,
+        "line": 4795,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10492,7 +10618,7 @@
         "name": "ScorecardRubric",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 4746,
+        "line": 4802,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10501,7 +10627,7 @@
         "name": "listScorecardRubrics",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 4755,
+        "line": 4811,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10510,7 +10636,7 @@
         "name": "ScorecardScoreInput",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 4788,
+        "line": 4844,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10519,7 +10645,7 @@
         "name": "setCallScorecard",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 4797,
+        "line": 4853,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10528,7 +10654,7 @@
         "name": "CallScorecardScore",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 4817,
+        "line": 4873,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10537,7 +10663,7 @@
         "name": "CallScorecardView",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 4825,
+        "line": 4881,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10546,7 +10672,7 @@
         "name": "getCallScorecard",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 4836,
+        "line": 4892,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10555,7 +10681,7 @@
         "name": "ScorecardTrendPoint",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 4878,
+        "line": 4934,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10564,7 +10690,7 @@
         "name": "getMyScorecardTrend",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 4886,
+        "line": 4942,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10573,7 +10699,7 @@
         "name": "OrgGoal",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 4897,
+        "line": 4953,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10582,7 +10708,7 @@
         "name": "listOrgGoals",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 4912,
+        "line": 4968,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10591,7 +10717,7 @@
         "name": "AgentOnboardingChecklistRow",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 4934,
+        "line": 4990,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10600,7 +10726,7 @@
         "name": "getAgentOnboardingChecklist",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 4946,
+        "line": 5002,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10609,7 +10735,7 @@
         "name": "AgentScheduleShift",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 4971,
+        "line": 5027,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10618,7 +10744,7 @@
         "name": "AgentScheduleRow",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 4977,
+        "line": 5033,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10627,7 +10753,7 @@
         "name": "listAgentSchedules",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 4986,
+        "line": 5042,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10636,7 +10762,7 @@
         "name": "setAgentScheduleDay",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 5015,
+        "line": 5071,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10645,7 +10771,7 @@
         "name": "setAgentTimezone",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 5034,
+        "line": 5090,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10654,7 +10780,7 @@
         "name": "AgentScheduleLiveStatusRow",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 5044,
+        "line": 5100,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10663,7 +10789,7 @@
         "name": "getAgentScheduleLiveStatus",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 5056,
+        "line": 5112,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10672,7 +10798,7 @@
         "name": "AgentScheduleAttendanceSignalRow",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 5069,
+        "line": 5125,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10681,7 +10807,7 @@
         "name": "getAgentScheduleAttendanceSignal",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 5082,
+        "line": 5138,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10690,7 +10816,7 @@
         "name": "getCallTakeoverSettings",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 5114,
+        "line": 5170,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10699,7 +10825,7 @@
         "name": "updateCallTakeoverSettings",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 5126,
+        "line": 5182,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10708,7 +10834,7 @@
         "name": "CampaignScriptField",
         "kind": "type",
         "file": "apps/web/src/lib/api.ts",
-        "line": 5136,
+        "line": 5192,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10717,7 +10843,7 @@
         "name": "CampaignScriptVersion",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 5138,
+        "line": 5194,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10726,7 +10852,7 @@
         "name": "listCampaignScriptVersions",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 5151,
+        "line": 5207,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10735,7 +10861,7 @@
         "name": "restoreCampaignScriptVersion",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 5187,
+        "line": 5243,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10744,7 +10870,7 @@
         "name": "InboxItemStatus",
         "kind": "type",
         "file": "apps/web/src/lib/api.ts",
-        "line": 5198,
+        "line": 5254,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10753,7 +10879,7 @@
         "name": "InboxItem",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 5200,
+        "line": 5256,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10762,7 +10888,7 @@
         "name": "SharedInboxSettings",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 5220,
+        "line": 5276,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10771,7 +10897,7 @@
         "name": "mapInboxItemRow",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 5225,
+        "line": 5281,
         "exported": false,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10780,7 +10906,7 @@
         "name": "listInboxItems",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 5268,
+        "line": 5324,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10789,7 +10915,7 @@
         "name": "reopenStaleInboxClaims",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 5281,
+        "line": 5337,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10798,7 +10924,7 @@
         "name": "claimInboxItem",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 5289,
+        "line": 5345,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10807,7 +10933,7 @@
         "name": "unclaimInboxItem",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 5296,
+        "line": 5352,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10816,7 +10942,7 @@
         "name": "markInboxItemDone",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 5303,
+        "line": 5359,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10825,7 +10951,7 @@
         "name": "dismissInboxItem",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 5314,
+        "line": 5370,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10834,7 +10960,7 @@
         "name": "getSharedInboxSettings",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 5321,
+        "line": 5377,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10843,7 +10969,7 @@
         "name": "setSharedInboxSettings",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 5337,
+        "line": 5393,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10852,7 +10978,7 @@
         "name": "PowerHourScope",
         "kind": "type",
         "file": "apps/web/src/lib/api.ts",
-        "line": 5349,
+        "line": 5405,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10861,7 +10987,7 @@
         "name": "PowerHourMetric",
         "kind": "type",
         "file": "apps/web/src/lib/api.ts",
-        "line": 5350,
+        "line": 5406,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10870,7 +10996,7 @@
         "name": "PowerHour",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 5352,
+        "line": 5408,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10879,7 +11005,7 @@
         "name": "PowerHourStatus",
         "kind": "type",
         "file": "apps/web/src/lib/api.ts",
-        "line": 5367,
+        "line": 5423,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10888,7 +11014,7 @@
         "name": "powerHourStatus",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 5371,
+        "line": 5427,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10897,7 +11023,7 @@
         "name": "mapPowerHourRow",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 5379,
+        "line": 5435,
         "exported": false,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10906,7 +11032,7 @@
         "name": "listPowerHours",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 5414,
+        "line": 5470,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10915,7 +11041,7 @@
         "name": "createPowerHour",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 5424,
+        "line": 5480,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10924,7 +11050,7 @@
         "name": "cancelPowerHour",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 5448,
+        "line": 5504,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10933,7 +11059,7 @@
         "name": "PowerHourBoardRow",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 5454,
+        "line": 5510,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10942,7 +11068,7 @@
         "name": "getPowerHourBoard",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 5465,
+        "line": 5521,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10951,7 +11077,7 @@
         "name": "TriggerFailureSource",
         "kind": "type",
         "file": "apps/web/src/lib/api.ts",
-        "line": 5493,
+        "line": 5549,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10960,7 +11086,7 @@
         "name": "TriggerFailure",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 5496,
+        "line": 5552,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10969,7 +11095,7 @@
         "name": "listTriggerFailures",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 5507,
+        "line": 5563,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10978,7 +11104,7 @@
         "name": "acknowledgeTriggerFailure",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 5534,
+        "line": 5590,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10987,7 +11113,7 @@
         "name": "ShiftActivity",
         "kind": "type",
         "file": "apps/web/src/lib/api.ts",
-        "line": 5544,
+        "line": 5600,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -10996,7 +11122,7 @@
         "name": "ShiftStatus",
         "kind": "type",
         "file": "apps/web/src/lib/api.ts",
-        "line": 5545,
+        "line": 5601,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -11005,7 +11131,7 @@
         "name": "ShiftSettings",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 5547,
+        "line": 5603,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -11014,7 +11140,7 @@
         "name": "ShiftOpenHours",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 5566,
+        "line": 5622,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -11023,7 +11149,7 @@
         "name": "ShiftPowerWindow",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 5573,
+        "line": 5629,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -11032,7 +11158,7 @@
         "name": "Shift",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 5582,
+        "line": 5638,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -11041,7 +11167,7 @@
         "name": "TopObjection",
         "kind": "type",
         "file": "apps/web/src/lib/api.ts",
-        "line": 5602,
+        "line": 5658,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -11050,7 +11176,7 @@
         "name": "SlowedBy",
         "kind": "type",
         "file": "apps/web/src/lib/api.ts",
-        "line": 5604,
+        "line": 5660,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -11059,7 +11185,7 @@
         "name": "ShiftSurveyInput",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 5607,
+        "line": 5663,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -11068,7 +11194,7 @@
         "name": "ShiftSurvey",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 5616,
+        "line": 5672,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -11077,7 +11203,7 @@
         "name": "ShiftSurveySummary",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 5620,
+        "line": 5676,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -11086,7 +11212,7 @@
         "name": "ShiftRosterEntry",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 5627,
+        "line": 5683,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -11095,7 +11221,7 @@
         "name": "ShiftWeekCommitment",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 5637,
+        "line": 5693,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -11104,7 +11230,7 @@
         "name": "ShiftKpi",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 5648,
+        "line": 5704,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -11113,7 +11239,7 @@
         "name": "ShiftRequestType",
         "kind": "type",
         "file": "apps/web/src/lib/api.ts",
-        "line": 5681,
+        "line": 5737,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -11122,7 +11248,7 @@
         "name": "ShiftRequestStatus",
         "kind": "type",
         "file": "apps/web/src/lib/api.ts",
-        "line": 5682,
+        "line": 5738,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -11131,7 +11257,7 @@
         "name": "ShiftRequest",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 5684,
+        "line": 5740,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -11140,7 +11266,7 @@
         "name": "ShiftWeekInfo",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 5709,
+        "line": 5765,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -11149,7 +11275,7 @@
         "name": "ShiftsWeekResponse",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 5722,
+        "line": 5778,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -11158,7 +11284,7 @@
         "name": "ShiftBlockInput",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 5739,
+        "line": 5795,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -11167,7 +11293,7 @@
         "name": "CreateShiftRequestInput",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 5748,
+        "line": 5804,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -11176,7 +11302,7 @@
         "name": "AdminShiftMember",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 5759,
+        "line": 5815,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -11185,7 +11311,7 @@
         "name": "AdminShiftRollupRow",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 5770,
+        "line": 5826,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -11194,7 +11320,7 @@
         "name": "AdminShiftSyncRow",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 5784,
+        "line": 5840,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -11203,7 +11329,7 @@
         "name": "AdminShiftsOverview",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 5794,
+        "line": 5850,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -11212,7 +11338,7 @@
         "name": "AdminShiftUpdateInput",
         "kind": "interface",
         "file": "apps/web/src/lib/api.ts",
-        "line": 5819,
+        "line": 5875,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -11221,7 +11347,7 @@
         "name": "ShiftsApiError",
         "kind": "class",
         "file": "apps/web/src/lib/api.ts",
-        "line": 5832,
+        "line": 5888,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -11230,7 +11356,7 @@
         "name": "callShiftsFunction",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 5845,
+        "line": 5901,
         "exported": false,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -11239,7 +11365,7 @@
         "name": "getShiftsWeek",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 5878,
+        "line": 5934,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -11248,7 +11374,7 @@
         "name": "submitShiftsWeek",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 5882,
+        "line": 5938,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -11257,7 +11383,7 @@
         "name": "createShiftRequest",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 5889,
+        "line": 5945,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -11266,7 +11392,7 @@
         "name": "withdrawShiftRequest",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 5895,
+        "line": 5951,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -11275,7 +11401,7 @@
         "name": "computeShiftKpi",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 5900,
+        "line": 5956,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -11284,7 +11410,7 @@
         "name": "clockShift",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 5907,
+        "line": 5963,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -11293,7 +11419,7 @@
         "name": "getAdminShiftsOverview",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 5917,
+        "line": 5973,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -11302,7 +11428,7 @@
         "name": "reviewShiftRequest",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 5921,
+        "line": 5977,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -11311,7 +11437,7 @@
         "name": "adminUpdateShift",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 5930,
+        "line": 5986,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -11320,7 +11446,7 @@
         "name": "upsertPowerWindow",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 5934,
+        "line": 5990,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -11329,7 +11455,7 @@
         "name": "upsertOpenHours",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 5942,
+        "line": 5998,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -11338,7 +11464,7 @@
         "name": "updateShiftSettings",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 5949,
+        "line": 6005,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -11347,7 +11473,7 @@
         "name": "upsertShiftMember",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 5955,
+        "line": 6011,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -11356,7 +11482,7 @@
         "name": "findGhlContact",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 5963,
+        "line": 6019,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -11365,7 +11491,7 @@
         "name": "retryShiftGhl",
         "kind": "function",
         "file": "apps/web/src/lib/api.ts",
-        "line": 5970,
+        "line": 6026,
         "exported": true,
         "service": "web",
         "doc": "arch.dependency-graph"
@@ -12508,7 +12634,7 @@
         "name": "insertDncNumbersFromGhlTags",
         "kind": "function",
         "file": "supabase/functions/_shared/campaign-queue-io.ts",
-        "line": 120,
+        "line": 129,
         "exported": true,
         "service": "supabase",
         "doc": "arch.dependency-graph"
@@ -12517,7 +12643,7 @@
         "name": "setCampaignLeadsStatusForContacts",
         "kind": "function",
         "file": "supabase/functions/_shared/campaign-queue-io.ts",
-        "line": 141,
+        "line": 150,
         "exported": true,
         "service": "supabase",
         "doc": "arch.dependency-graph"
@@ -14440,6 +14566,222 @@
         "doc": "arch.dependency-graph"
       },
       {
+        "name": "CALL_OBJECTION_LABELS",
+        "kind": "const",
+        "file": "supabase/functions/_shared/ghl-field-catalog.ts",
+        "line": 15,
+        "exported": false,
+        "service": "supabase",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "GhlDataType",
+        "kind": "type",
+        "file": "supabase/functions/_shared/ghl-field-catalog.ts",
+        "line": 18,
+        "exported": true,
+        "service": "supabase",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "FieldSpec",
+        "kind": "interface",
+        "file": "supabase/functions/_shared/ghl-field-catalog.ts",
+        "line": 20,
+        "exported": true,
+        "service": "supabase",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "PROVIDER_PUSH_FIELDS",
+        "kind": "const",
+        "file": "supabase/functions/_shared/ghl-field-catalog.ts",
+        "line": 31,
+        "exported": true,
+        "service": "supabase",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "YES_NO",
+        "kind": "const",
+        "file": "supabase/functions/_shared/ghl-field-catalog.ts",
+        "line": 51,
+        "exported": false,
+        "service": "supabase",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "n",
+        "kind": "const",
+        "file": "supabase/functions/_shared/ghl-field-catalog.ts",
+        "line": 52,
+        "exported": false,
+        "service": "supabase",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "t",
+        "kind": "const",
+        "file": "supabase/functions/_shared/ghl-field-catalog.ts",
+        "line": 53,
+        "exported": false,
+        "service": "supabase",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "lt",
+        "kind": "const",
+        "file": "supabase/functions/_shared/ghl-field-catalog.ts",
+        "line": 54,
+        "exported": false,
+        "service": "supabase",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "dd",
+        "kind": "const",
+        "file": "supabase/functions/_shared/ghl-field-catalog.ts",
+        "line": 55,
+        "exported": false,
+        "service": "supabase",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "INTERN_SHIFT_FIELDS",
+        "kind": "const",
+        "file": "supabase/functions/_shared/ghl-field-catalog.ts",
+        "line": 63,
+        "exported": true,
+        "service": "supabase",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "def",
+        "kind": "const",
+        "file": "supabase/functions/_shared/ghl-field-coverage.test.ts",
+        "line": 11,
+        "exported": false,
+        "service": "supabase",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "GHL_DEFAULT_BASE",
+        "kind": "const",
+        "file": "supabase/functions/_shared/ghl-field-coverage.ts",
+        "line": 20,
+        "exported": false,
+        "service": "supabase",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "GHL_CONTACT_VERSION",
+        "kind": "const",
+        "file": "supabase/functions/_shared/ghl-field-coverage.ts",
+        "line": 21,
+        "exported": false,
+        "service": "supabase",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "CoverageDef",
+        "kind": "interface",
+        "file": "supabase/functions/_shared/ghl-field-coverage.ts",
+        "line": 23,
+        "exported": true,
+        "service": "supabase",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "CoverageStatus",
+        "kind": "type",
+        "file": "supabase/functions/_shared/ghl-field-coverage.ts",
+        "line": 32,
+        "exported": true,
+        "service": "supabase",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "CoverageIssue",
+        "kind": "type",
+        "file": "supabase/functions/_shared/ghl-field-coverage.ts",
+        "line": 33,
+        "exported": true,
+        "service": "supabase",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "CoverageItem",
+        "kind": "interface",
+        "file": "supabase/functions/_shared/ghl-field-coverage.ts",
+        "line": 35,
+        "exported": true,
+        "service": "supabase",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "CoverageGroup",
+        "kind": "interface",
+        "file": "supabase/functions/_shared/ghl-field-coverage.ts",
+        "line": 47,
+        "exported": true,
+        "service": "supabase",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "FieldCoverage",
+        "kind": "interface",
+        "file": "supabase/functions/_shared/ghl-field-coverage.ts",
+        "line": 53,
+        "exported": true,
+        "service": "supabase",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "check",
+        "kind": "function",
+        "file": "supabase/functions/_shared/ghl-field-coverage.ts",
+        "line": 69,
+        "exported": false,
+        "service": "supabase",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "item",
+        "kind": "function",
+        "file": "supabase/functions/_shared/ghl-field-coverage.ts",
+        "line": 81,
+        "exported": false,
+        "service": "supabase",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "group",
+        "kind": "const",
+        "file": "supabase/functions/_shared/ghl-field-coverage.ts",
+        "line": 95,
+        "exported": false,
+        "service": "supabase",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "classifyFieldCoverage",
+        "kind": "function",
+        "file": "supabase/functions/_shared/ghl-field-coverage.ts",
+        "line": 101,
+        "exported": true,
+        "service": "supabase",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "fetchCoverageDefs",
+        "kind": "function",
+        "file": "supabase/functions/_shared/ghl-field-coverage.ts",
+        "line": 130,
+        "exported": true,
+        "service": "supabase",
+        "doc": "arch.dependency-graph"
+      },
+      {
         "name": "GHL_FIELD_MAPPING_TARGET_KEYS",
         "kind": "const",
         "file": "supabase/functions/_shared/ghl-field-mapping.ts",
@@ -14848,7 +15190,7 @@
         "name": "SessionPushContext",
         "kind": "interface",
         "file": "supabase/functions/_shared/ghl-push-context.ts",
-        "line": 70,
+        "line": 85,
         "exported": true,
         "service": "supabase",
         "doc": "arch.dependency-graph"
@@ -14857,7 +15199,7 @@
         "name": "resolveSessionContext",
         "kind": "function",
         "file": "supabase/functions/_shared/ghl-push-context.ts",
-        "line": 80,
+        "line": 95,
         "exported": true,
         "service": "supabase",
         "doc": "arch.dependency-graph"
@@ -14866,7 +15208,7 @@
         "name": "resolveCallerGhlUserId",
         "kind": "function",
         "file": "supabase/functions/_shared/ghl-push-context.ts",
-        "line": 125,
+        "line": 140,
         "exported": true,
         "service": "supabase",
         "doc": "arch.dependency-graph"
@@ -15052,6 +15394,15 @@
         "doc": "arch.dependency-graph"
       },
       {
+        "name": "orgArgs",
+        "kind": "const",
+        "file": "supabase/functions/_shared/ghl-reconcile.test.ts",
+        "line": 343,
+        "exported": false,
+        "service": "supabase",
+        "doc": "arch.dependency-graph"
+      },
+      {
         "name": "ReconcileAction",
         "kind": "type",
         "file": "supabase/functions/_shared/ghl-reconcile.ts",
@@ -15163,7 +15514,7 @@
         "name": "chunks",
         "kind": "const",
         "file": "supabase/functions/_shared/ghl-reconcile.ts",
-        "line": 122,
+        "line": 130,
         "exported": false,
         "service": "supabase",
         "doc": "arch.dependency-graph"
@@ -15172,7 +15523,7 @@
         "name": "reconcileOrg",
         "kind": "function",
         "file": "supabase/functions/_shared/ghl-reconcile.ts",
-        "line": 128,
+        "line": 136,
         "exported": true,
         "service": "supabase",
         "doc": "arch.dependency-graph"
@@ -15920,6 +16271,33 @@
         "kind": "function",
         "file": "supabase/functions/_shared/invite-core.ts",
         "line": 74,
+        "exported": true,
+        "service": "supabase",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "LIST_NAME_MAX",
+        "kind": "const",
+        "file": "supabase/functions/_shared/list-name.ts",
+        "line": 6,
+        "exported": true,
+        "service": "supabase",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "normalizeListName",
+        "kind": "function",
+        "file": "supabase/functions/_shared/list-name.ts",
+        "line": 10,
+        "exported": true,
+        "service": "supabase",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "defaultGhlListName",
+        "kind": "function",
+        "file": "supabase/functions/_shared/list-name.ts",
+        "line": 22,
         "exported": true,
         "service": "supabase",
         "doc": "arch.dependency-graph"
@@ -19582,7 +19960,7 @@
         "name": "fetchAllContactRows",
         "kind": "function",
         "file": "supabase/functions/contacts-import/index.ts",
-        "line": 19,
+        "line": 20,
         "exported": false,
         "service": "supabase",
         "doc": "arch.dependency-graph"
@@ -19995,6 +20373,15 @@
       {
         "name": "jsonResponse",
         "kind": "function",
+        "file": "supabase/functions/ghl-field-coverage/index.ts",
+        "line": 14,
+        "exported": false,
+        "service": "supabase",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "jsonResponse",
+        "kind": "function",
         "file": "supabase/functions/ghl-field-suggestions/index.ts",
         "line": 15,
         "exported": false,
@@ -20014,7 +20401,7 @@
         "name": "jsonResponse",
         "kind": "function",
         "file": "supabase/functions/ghl-import/index.ts",
-        "line": 29,
+        "line": 30,
         "exported": false,
         "service": "supabase",
         "doc": "arch.dependency-graph"
@@ -20023,7 +20410,7 @@
         "name": "getSupabaseAdmin",
         "kind": "function",
         "file": "supabase/functions/ghl-import/index.ts",
-        "line": 36,
+        "line": 37,
         "exported": false,
         "service": "supabase",
         "doc": "arch.dependency-graph"

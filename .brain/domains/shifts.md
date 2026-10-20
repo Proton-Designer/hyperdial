@@ -51,7 +51,7 @@ answers:
 covers: "The Shifts subsystem end to end: roles and pod scope, the week/deadline/minimum rules, change requests, tables and RPCs, the edge functions and cron jobs, shift KPIs, the GHL outbox, and the two frontend surfaces with their dev harness."
 excludes: "The exact request/response JSON (docs/design/shifts.md section 3 is the contract; apps/web/src/lib/api.ts is its hand-synced client copy). The dial loop (.brain/domains/dialer.md). The generic GHL push/pull sync (.brain/domains/crm.md). Pod and role administration (.brain/domains/auth.md)."
 tokens_est: 3745
-source_hash: 98473a067c67470b9548b68be7c1b25b2d6e4b860a9c163d086b129ae85cbb28
+source_hash: a5d80f6a661db8805417f047ab90473c8a457fbb9a69eb55ef77ace489f10bea
 ---
 
 # Shifts

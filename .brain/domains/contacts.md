@@ -35,8 +35,8 @@ answers:
   - "who can edit a contact, and who can only mark it DNC"
 covers: "The contacts table, two-step CSV import, strict E.164 phone normalisation, area-code timezone derivation, per-org de-duplication, real contact editing, org-wide DNC, and the category/contact_status labels."
 excludes: "Per-call state (call_status, call_count, last_called_at) written by the dial loop — see domain.dialer. Campaign membership — see domain.campaigns."
-tokens_est: 5430
-source_hash: 18df886c8a709f31e40a4506eaccb24c3a0b58a4cd3f8949ed4537ba6a2733b6
+tokens_est: 5523
+source_hash: 67a4d6e95beda29c5919f910f1fc30013b50c8ef6fc5c765b381b811cef33d38
 ---
 
 # Contacts
@@ -57,6 +57,7 @@ E.164 validation (TASK-P2-P1, design §7).
 | `phone_number` vs `phone_raw` | `phone_number` is always strict E.164 (or null) — the dial target `dialer-engine.ts` reads directly. `phone_raw` preserves what was actually typed/imported, never overwritten to a normalized form. |
 | `timezone` / `dnc` | IANA zone derived from the phone's NANP area code (overridable); an org-wide do-not-call flag any role, including agent, may set. `claim_next_leads` skips `dnc` rows. |
 | Duplicate | A row whose digits-only phone already exists for this **org** — in the table, or earlier in the same CSV. A DB-level unique index backs this up when the org's existing data has no conflicting duplicates already (see Dedupe below). |
+| `import_list` / `campaign_leads.list_name` | TASK-G18: name of the list an import came from (CSV: the "List name" field, default the file name; GHL import: `GHL import <date>`). `contacts.import_list` is set on insert only; `campaign_leads.list_name` when the import creates the lead. Pushed to GHL as `lead_list` (see domain.crm). |
 | `ghl_contact_id` | LeadConnector contact id (TASK-P3-P2), null unless the row was pulled from or linked to GHL. Unique per org, nullable. |
 
 ## Where the code lives

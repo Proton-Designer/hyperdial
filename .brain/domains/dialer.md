@@ -48,7 +48,7 @@ answers:
 covers: "The org-scoped dial engine (TASK-P2-E2): rolling-refill queueing over campaign_leads, single-winner claim resolution, AMD triage, conference bridging, wrap_up, and the webhook that drives it."
 excludes: "Telnyx API wrappers, number purchase/search and WebRTC credentials (domain.telephony); campaign and lead list construction (domain.campaigns); the agent's own WebRTC leg (E3, not built yet); dispositions (Phase 3, not built yet)."
 tokens_est: 21528
-source_hash: 2040bb85830fbfb3925db76a69e242ddbbc7271fae02d07f4804eac4441ca77f
+source_hash: 6fdfb0e2231588d52613125e6a22ea6af0212112130b4a3fcbc9aa41fea5c629
 ---
 
 # Parallel Dialer

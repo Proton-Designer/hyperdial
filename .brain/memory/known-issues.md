@@ -18,7 +18,7 @@ answers:
   - "what should I not trust"
 covers: "Known defects, traps, and behaviour that looks intentional but is not"
 excludes: "Planned work (see mem.active-work), deliberate design choices (see mem.decisions)"
-tokens_est: 31960
+tokens_est: 32008
 ---
 
 # Known Issues
@@ -1391,7 +1391,7 @@ Also: `useTelnyxCall.ts` used to swallow the hangup reason and silently reset to
 Written from the review SHOULDs of TASK-G01..G13 (the run's `audit/*/review-*.md` files, run folder `run-20261019-1905`, untracked). None blocks use; the setup guide is `docs/guides/ghl-data-sync-setup.md`.
 
 - **GHL value typing is unverified live.** Numbers are sent as text (`"142"`), times as ISO text, a cleared field as `""`. Whether GHL accepts them for NUMERICAL/DATE fields, and whether a dropdown rejects text that is not an exact option, has only been checked against the docs. Use Single Line for time fields until verified.
-- **`lead_list` is the campaign NAME**, not an imported-list id (renaming a campaign changes later pushes). A proper import-batch column is not built.
+- **`lead_list` (TASK-G18):** the list name is stored only for leads/contacts created by `contacts-import` and `ghl-import` after `20261019202929`; the scheduled GHL pull and the Contacts-screen "add to campaign" write no name (fallback: contact's first import list, then the campaign name). Old rows are not backfilled.
 - **Reconcile sweep limits (`ghl-reconcile-worker`):** (fixed in TASK-G16: the read loop now stops at the worker's 100 s deadline, and the stage step only looks at contacts with a queued/callback lead) a stage with more than 1000 opportunities is still truncated (`STAGE_MAX_PAGES` 10 × 100); contacts claimed but not read after a deadline hit wait for the next rotation; throughput is about 100 contacts per 5-minute tick (max 300), so a very long linked list takes hours per rotation; removal is one way (a lead set `completed` stays completed if the GHL tag is removed).
 - **DNC HyperDial → GHL gaps:** a DNC contact with no `ghl_contact_id` is never flagged (and is not flagged when linked later); un-DNC (true → false) is not propagated; a GHL pull import that lands many already-DND linked contacts enqueues one `dnc_flag` job (one GET) each; the dedupe against an already-queued `dnc_flag` is not race-proof (the worker is idempotent). No backfill of pre-existing DNC contacts.
 - **Skipped shift fields are only logged** (`shift-ghl-sync/index.ts:101-104`, `console.warn`); they are not persisted on the outbox row or shown under Setup → GoHighLevel sync, and a skipped key is not replayed after the field is created. Create the fields before the first finalized shift.

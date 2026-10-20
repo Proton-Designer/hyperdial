@@ -46,8 +46,8 @@ answers:
   - "how is a retried sync job kept from double-posting a note; what makes a GHL-tagged contact do-not-call or paused"
 covers: "GHL (GoHighLevel) connect/disconnect, the org_integrations token store, the crm_sync_jobs push outbox (worker included), the pull-import (contacts by tag/search) path, and the 2026-10-19 data sync (per-call fields, DNC push, GHL reconcile sweep)."
 excludes: "The disposition/wrap-up UI that calls enqueue_crm_job (see Not covered here)."
-tokens_est: 5295
-source_hash: 8c708dd7f9ab2f0d8c4551dd6f1ae02fb2a5b22c19a64a6f018ebbe0d3bfb6a2
+tokens_est: 5398
+source_hash: 072f2b537381afcb7a511c16cffb67dc8f187bda8a89d11dcc0f39e5f5f20837
 ---
 
 # CRM Sync (GHL)
@@ -144,7 +144,7 @@ backoff (`least(2^attempts, 60)` minutes, `dead` at 8) -- a retry never re-posts
 
 The run `run-20261019-1905` implemented Kareem's `ghl-data-sync` spec. What each piece does and where it lives:
 
-- **Per-call fields on the provider contact** (`ghl-sync-worker.ts` `buildPushCustomFields`, ~line 85-130): `last_call_at` (call `ended_at`, falls back to disposition time, then leg creation), `last_call_outcome`, `call_attempts`, `callback_at`, `call_duration`, `recording_url` (an in-app, login-gated link), `called_by`, `called_by_ghl_user_id`, `lead_list` (the **campaign name**, not an import-list id), `top_objection` (label text), plus the older `license_number`/`service_zips`. A key only goes out when the org mapped it in `ghl_field_mapping` (Settings -> Integrations -> Custom field mapping; target keys in `ghl-field-mapping.ts` `GHL_FIELD_MAPPING_TARGET_KEYS`). Push-time lookups (caller name, GHL user id, campaign) are in `_shared/ghl-push-context.ts`.
+- **Per-call fields on the provider contact** (`ghl-sync-worker.ts` `buildPushCustomFields`, ~line 85-130): `last_call_at` (call `ended_at`, falls back to disposition time, then leg creation), `last_call_outcome`, `call_attempts`, `callback_at`, `call_duration`, `recording_url` (an in-app, login-gated link), `called_by`, `called_by_ghl_user_id`, `lead_list` (TASK-G18: `campaign_leads.list_name` -> `contacts.import_list` -> campaign name; the name is typed on the CSV import screen (default the file name) or `GHL import <date>` for `ghl-import`; `_shared/list-name.ts`, resolved in `ghl-push-context.ts`), `top_objection` (label text), plus the older `license_number`/`service_zips`. A key only goes out when the org mapped it in `ghl_field_mapping` (Settings -> Integrations -> Custom field mapping; target keys in `ghl-field-mapping.ts` `GHL_FIELD_MAPPING_TARGET_KEYS`). Push-time lookups (caller name, GHL user id, campaign) are in `_shared/ghl-push-context.ts`.
 - **Note policy:** a `no_answer`/`voicemail_left`/`voicemail` disposition with empty notes adds no GHL note (`shouldSkipDispositionNote`) (TASK-G02, spec "do not log every no-answer as a note"). The callback GHL task is assigned to the calling intern's `org_members.ghl_user_id` when known; the contact's GHL owner is never written.
 - **Automatic no-answer / voicemail legs** (`voicemail_tag`/`no_answer_tag` jobs, `processTagJob`) also push `call_attempts` and `last_call_at`, still with no note (TASK-G03).
 - **DNC HyperDial -> GHL** (TASK-G05): guarded AFTER triggers on `contacts` (dnc set) and `dnc_numbers` insert enqueue ONE `dnc_flag` job per change, only for contacts that already have `ghl_contact_id` and orgs with a connected GHL. The worker reads the GHL contact first and skips DND/tag already present. Trigger failures are logged to `trigger_failures` (source `ghl_dnc_push`) and never block the write. **No backfill** of pre-existing DNC contacts.
@@ -155,7 +155,7 @@ The run `run-20261019-1905` implemented Kareem's `ghl-data-sync` spec. What each
 
 - **Owner routing** (TASK-G15, `20261019202452_ghl_owner_routing.sql`): the reconcile read's `assignedTo` goes to `apply_ghl_owner_routing(p_org, p_items)` (service_role only), which maps it through `org_members.ghl_user_id` (active members only), syncs the informational `contacts.assigned_user_id`, and sets `campaign_leads.assigned_agent_id` on that contact's `callback` leads when the member is on `campaign_agents` for the campaign. `claim_next_leads` already hands a callback only to its assigned agent. Runs after the DNC/exclude/paused decisions, same 5-minute tick, so it needs `ghl_reconcile_enabled`. GHL owner wins over the HyperDial-created callback assignee; a cleared owner changes nothing.
 
-Not built (verified absent): imported-list name/id, an instant GHL webhook receiver, a DNC backfill.
+Not built (verified absent): a list name on leads queued by the scheduled GHL pull (`ghl-pull-run.ts`) or by the Contacts-screen "add to campaign" upsert (they fall back to `contacts.import_list`, then the campaign name), an instant GHL webhook receiver, a DNC backfill.
 
 ## Integration points
 

@@ -2,10 +2,10 @@
   "meta": {
     "artifact": "knowledge-map",
     "version": "1.0",
-    "generated_at": "2026-10-20T01:28:02.571Z",
+    "generated_at": "2026-10-20T01:33:18.877Z",
     "target": "/Users/aymanmohammed/Desktop/Softdial",
     "git": {
-      "commit": "0b43099",
+      "commit": "15b3783",
       "branch": "feat/stage-1",
       "dirty": true
     },
@@ -216,7 +216,7 @@
         "type": "domain",
         "status": "canonical",
         "owner": "maintainer",
-        "tokens_est": 5430,
+        "tokens_est": 5523,
         "covers": "The contacts table, two-step CSV import, strict E.164 phone normalisation, area-code timezone derivation, per-org de-duplication, real contact editing, org-wide DNC, and the category/contact_status labels.",
         "excludes": "Per-call state (call_status, call_count, last_called_at) written by the dial loop — see domain.dialer. Campaign membership — see domain.campaigns.",
         "answers": [
@@ -239,7 +239,7 @@
         "type": "domain",
         "status": "canonical",
         "owner": "maintainer",
-        "tokens_est": 5295,
+        "tokens_est": 5398,
         "covers": "GHL (GoHighLevel) connect/disconnect, the org_integrations token store, the crm_sync_jobs push outbox (worker included), the pull-import (contacts by tag/search) path, and the 2026-10-19 data sync (per-call fields, DNC push, GHL reconcile sweep).",
         "excludes": "The disposition/wrap-up UI that calls enqueue_crm_job (see Not covered here).",
         "answers": [
@@ -476,7 +476,7 @@
         "type": "memory",
         "status": "canonical",
         "owner": "maintainer",
-        "tokens_est": 42163,
+        "tokens_est": 42227,
         "covers": "Decisions made, alternatives considered, what superseded what",
         "excludes": "Work in progress (see mem.active-work), currently-broken behaviour (see mem.known-issues)",
         "answers": [
@@ -497,7 +497,7 @@
         "type": "memory",
         "status": "canonical",
         "owner": "maintainer",
-        "tokens_est": 31960,
+        "tokens_est": 32008,
         "covers": "Known defects, traps, and behaviour that looks intentional but is not",
         "excludes": "Planned work (see mem.active-work), deliberate design choices (see mem.decisions)",
         "answers": [
@@ -2717,7 +2717,7 @@
       {
         "question": "how does Import from GHL dedupe, and what happens if you run it twice",
         "id": "domain.crm",
-        "tokens_est": 5295,
+        "tokens_est": 5398,
         "kind": "document",
         "anchor": null
       },
@@ -2738,7 +2738,7 @@
       {
         "question": "how does a disposition reach GHL, and what runs the worker that pushes it",
         "id": "domain.crm",
-        "tokens_est": 5295,
+        "tokens_est": 5398,
         "kind": "document",
         "anchor": null
       },
@@ -2759,7 +2759,7 @@
       {
         "question": "how does an org connect its GHL sub-account",
         "id": "domain.crm",
-        "tokens_est": 5295,
+        "tokens_est": 5398,
         "kind": "document",
         "anchor": null
       },
@@ -2836,14 +2836,14 @@
       {
         "question": "how is a phone number validated and where does its timezone come from",
         "id": "domain.contacts",
-        "tokens_est": 5430,
+        "tokens_est": 5523,
         "kind": "document",
         "anchor": null
       },
       {
         "question": "how is a retried sync job kept from double-posting a note; what makes a GHL-tagged contact do-not-call or paused",
         "id": "domain.crm",
-        "tokens_est": 5295,
+        "tokens_est": 5398,
         "kind": "document",
         "anchor": null
       },
@@ -2913,7 +2913,7 @@
       {
         "question": "is the analytics screen real",
         "id": "mem.known-issues",
-        "tokens_est": 31960,
+        "tokens_est": 32008,
         "kind": "document",
         "anchor": null
       },
@@ -2934,7 +2934,7 @@
       {
         "question": "was Y considered",
         "id": "mem.decisions",
-        "tokens_est": 42163,
+        "tokens_est": 42227,
         "kind": "document",
         "anchor": null
       },
@@ -2962,14 +2962,14 @@
       {
         "question": "what are the allowed values of category and contact_status",
         "id": "domain.contacts",
-        "tokens_est": 5430,
+        "tokens_est": 5523,
         "kind": "document",
         "anchor": null
       },
       {
         "question": "what are the canonical contact fields and which one is required",
         "id": "domain.contacts",
-        "tokens_est": 5430,
+        "tokens_est": 5523,
         "kind": "document",
         "anchor": null
       },
@@ -2990,7 +2990,7 @@
       {
         "question": "what are the known issues",
         "id": "mem.known-issues",
-        "tokens_est": 31960,
+        "tokens_est": 32008,
         "kind": "document",
         "anchor": null
       },
@@ -3151,7 +3151,7 @@
       {
         "question": "what exactly counts as a duplicate on import",
         "id": "domain.contacts",
-        "tokens_est": 5430,
+        "tokens_est": 5523,
         "kind": "document",
         "anchor": null
       },
@@ -3214,7 +3214,7 @@
       {
         "question": "what happens when part of an import fails",
         "id": "domain.contacts",
-        "tokens_est": 5430,
+        "tokens_est": 5523,
         "kind": "document",
         "anchor": null
       },
@@ -3235,7 +3235,7 @@
       {
         "question": "what is broken",
         "id": "mem.known-issues",
-        "tokens_est": 31960,
+        "tokens_est": 32008,
         "kind": "document",
         "anchor": null
       },
@@ -3333,7 +3333,7 @@
       {
         "question": "what payload shape does enqueue_crm_job expect for a disposition job",
         "id": "domain.crm",
-        "tokens_est": 5295,
+        "tokens_est": 5398,
         "kind": "document",
         "anchor": null
       },
@@ -3347,7 +3347,7 @@
       {
         "question": "what should I not trust",
         "id": "mem.known-issues",
-        "tokens_est": 31960,
+        "tokens_est": 32008,
         "kind": "document",
         "anchor": null
       },
@@ -3529,7 +3529,7 @@
       {
         "question": "where is the GHL Private Integration Token stored",
         "id": "domain.crm",
-        "tokens_est": 5295,
+        "tokens_est": 5398,
         "kind": "document",
         "anchor": null
       },
@@ -3620,7 +3620,7 @@
       {
         "question": "who can edit a contact, and who can only mark it DNC",
         "id": "domain.contacts",
-        "tokens_est": 5430,
+        "tokens_est": 5523,
         "kind": "document",
         "anchor": null
       },
@@ -3683,7 +3683,7 @@
       {
         "question": "why are CSV parse and import two separate requests",
         "id": "domain.contacts",
-        "tokens_est": 5430,
+        "tokens_est": 5523,
         "kind": "document",
         "anchor": null
       },
@@ -3704,7 +3704,7 @@
       {
         "question": "why do we do it this way",
         "id": "mem.decisions",
-        "tokens_est": 42163,
+        "tokens_est": 42227,
         "kind": "document",
         "anchor": null
       },
@@ -3725,7 +3725,7 @@
       {
         "question": "why does tag-based import page every contact instead of filtering server-side",
         "id": "domain.crm",
-        "tokens_est": 5295,
+        "tokens_est": 5398,
         "kind": "document",
         "anchor": null
       },
@@ -3739,14 +3739,14 @@
       {
         "question": "why does the 'Contacted' filter never match anything",
         "id": "domain.contacts",
-        "tokens_est": 5430,
+        "tokens_est": 5523,
         "kind": "document",
         "anchor": null
       },
       {
         "question": "why is components/ui not formatted",
         "id": "mem.decisions",
-        "tokens_est": 42163,
+        "tokens_est": 42227,
         "kind": "document",
         "anchor": null
       },
@@ -3760,14 +3760,14 @@
       {
         "question": "why is the webhook unauthenticated",
         "id": "mem.decisions",
-        "tokens_est": 42163,
+        "tokens_est": 42227,
         "kind": "document",
         "anchor": null
       },
       {
         "question": "why is there a Redis and a Postgres",
         "id": "mem.decisions",
-        "tokens_est": 42163,
+        "tokens_est": 42227,
         "kind": "document",
         "anchor": null
       },
@@ -3781,7 +3781,7 @@
       {
         "question": "why is this behaving strangely",
         "id": "mem.known-issues",
-        "tokens_est": 31960,
+        "tokens_est": 32008,
         "kind": "document",
         "anchor": null
       },
@@ -3802,7 +3802,7 @@
       {
         "question": "why was X chosen",
         "id": "mem.decisions",
-        "tokens_est": 42163,
+        "tokens_est": 42227,
         "kind": "document",
         "anchor": null
       }

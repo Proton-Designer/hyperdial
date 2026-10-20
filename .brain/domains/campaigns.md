@@ -31,7 +31,7 @@ answers:
 covers: "The campaigns and campaign_leads tables, the campaigns_with_stats view, the campaign CRUD surface in the web client, and the handoff from a campaign to a parallel dial session."
 excludes: "Contact records and CSV import mechanics (.brain/domains/contacts.md) and everything after the session row is inserted — batching, AMD, call_logs (.brain/domains/dialer.md)."
 tokens_est: 4740
-source_hash: 8c0219c4bf6e4b6cccfa2421dcb6da37375cb39d7b912a100c91a9f9d13ba91f
+source_hash: bf6ab70de0615bc3f1ebd03111f697c7211e2a2a933fa470d6611dad79deca47
 ---
 
 # Campaigns

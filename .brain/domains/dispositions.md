@@ -26,7 +26,7 @@ answers:
 covers: "The per-org disposition list, the submit_disposition RPC and its lead/DNC/GHL-outbox effects, and the Settings editor."
 excludes: "The wrap-up form UI internals (components/dialer/WrapUpModal.tsx) → domain.dialer. The GHL push worker's own step-by-step mechanics (upsert/note/tag/task/dnd, retry/backoff) → domain.crm. Recording/transcription (not built) → domain.dialer's Not covered."
 tokens_est: 2496
-source_hash: 11b2138b18430995cb291cfeb735fb1c209431095064da588fd4d752c41938ba
+source_hash: 9d5bcc29cfc0db5ddfc802f96f95d0414eee51e0d8ee1973d7d590c3360f3a5b
 ---
 
 # Dispositions
