@@ -21,7 +21,10 @@ import type { GhlCustomFieldDef } from './ghl-client.ts';
  *  in its natural stored direction for push, no separate mapping/migration needed. Unlike the
  *  first eight, these three are never read FROM a pulled GHL contact (there's no dedicated-column
  *  question for them), only ever WRITTEN to one at push time -- so they never appear in
- *  `GHL_FIELD_MAPPING_KNOWN_COLUMNS` below (that set is pull-direction only). */
+ *  `GHL_FIELD_MAPPING_KNOWN_COLUMNS` below (that set is pull-direction only).
+ *
+ *  TASK-G02 (spec §1): `callback_at`/`call_duration`/`recording_url` are three more push-only keys
+ *  (callback date/time, call duration in seconds, recording link). */
 export const GHL_FIELD_MAPPING_TARGET_KEYS = [
   'business_name',
   'website',
@@ -34,6 +37,9 @@ export const GHL_FIELD_MAPPING_TARGET_KEYS = [
   'last_call_at',
   'last_call_outcome',
   'call_attempts',
+  'callback_at',
+  'call_duration',
+  'recording_url',
 ] as const;
 
 /** TASK-T1 (GHL-6): `business_name`/`website`/`rating`/`review_count` already have DEDICATED,
@@ -63,6 +69,9 @@ const TARGET_KEY_SYNONYMS: Record<string, string[]> = {
   last_call_at: ['last call at', 'last call date', 'last call time', 'last called'],
   last_call_outcome: ['last call outcome', 'last outcome', 'last disposition', 'call outcome'],
   call_attempts: ['call attempts', 'attempts', 'attempt count', 'number of attempts'],
+  callback_at: ['callback date/time', 'callback date', 'callback time', 'callback at'],
+  call_duration: ['call duration', 'call duration (sec)', 'call length', 'duration'],
+  recording_url: ['recording link', 'recording url', 'recording'],
 };
 
 function normalize(s: string): string {

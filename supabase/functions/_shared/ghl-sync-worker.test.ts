@@ -9,6 +9,7 @@ import {
   processNurtureTagJob,
   processTagJob,
   processTransferNoteJob,
+  shouldSkipDispositionNote,
   type DispositionPayload,
   type InboundCallNotePayload,
   type TransferNotePayload,
@@ -1067,6 +1068,161 @@ Deno.test(
       });
       assertEquals(result.ok, false);
       assertEquals(calls, 0);
+    } finally {
+      restore();
+    }
+  }
+);
+
+// ---------------------------------------------------------------------------
+// TASK-G02 (spec §1): callback_at / call_duration / recording_url, no-answer note skip,
+// callback task assignedTo
+// ---------------------------------------------------------------------------
+
+Deno.test(
+  'buildPushCustomFields: TASK-G02 callback_at/call_duration/recording_url, mapped only',
+  () => {
+    const values = {
+      callbackAt: '2026-10-20T15:00:00.000Z',
+      callDurationSeconds: 142,
+      recordingUrl: 'https://example.com/rec/1',
+    };
+    assertEquals(
+      buildPushCustomFields(
+        { callback_at: 'f-cb', call_duration: 'f-dur', recording_url: 'f-rec' },
+        values
+      ),
+      [
+        { id: 'f-cb', fieldValue: '2026-10-20T15:00:00.000Z' },
+        { id: 'f-dur', fieldValue: '142' },
+        { id: 'f-rec', fieldValue: 'https://example.com/rec/1' },
+      ]
+    );
+    // an unmapped key is skipped, never an error
+    assertEquals(buildPushCustomFields({ call_duration: 'f-dur' }, values), [
+      { id: 'f-dur', fieldValue: '142' },
+    ]);
+    // 0 seconds is a real value; null callback/recording contribute nothing
+    assertEquals(
+      buildPushCustomFields(
+        { callback_at: 'f-cb', call_duration: 'f-dur', recording_url: 'f-rec' },
+        { callbackAt: null, callDurationSeconds: 0, recordingUrl: null }
+      ),
+      [{ id: 'f-dur', fieldValue: '0' }]
+    );
+  }
+);
+
+Deno.test('shouldSkipDispositionNote: only no-answer/voicemail with empty notes', () => {
+  const p = (disposition_key: string, notes: string | null): DispositionPayload => ({
+    ...PAYLOAD,
+    disposition_key,
+    notes,
+  });
+  assertEquals(shouldSkipDispositionNote(p('no_answer', null)), true);
+  assertEquals(shouldSkipDispositionNote(p('voicemail_left', '  ')), true);
+  assertEquals(shouldSkipDispositionNote(p('no_answer', 'left a message w/ gatekeeper')), false);
+  assertEquals(shouldSkipDispositionNote(p('callback', null)), false);
+  assertEquals(shouldSkipDispositionNote(p('not_interested', '')), false);
+});
+
+Deno.test(
+  'processDispositionJob: TASK-G02 no-answer with empty notes posts NO note but still tags',
+  async () => {
+    const calls: string[] = [];
+    const restore = stubFetch((url, init) => {
+      calls.push(`${init?.method ?? 'GET'} ${new URL(url).pathname}`);
+      return Response.json({ id: 'ok' });
+    });
+    try {
+      const result = await processDispositionJob({
+        client: createGhlClient('tok'),
+        locationId: 'loc-1',
+        ghlContactId: 'ghl-1',
+        contactFields: { firstName: 'A', lastName: 'B', phone: '+14155552671' },
+        payload: {
+          ...PAYLOAD,
+          disposition_key: 'no_answer',
+          disposition_label: 'No answer (manual)',
+          notes: null,
+          ghl_tag: 'call:no_answer',
+          creates_task: false,
+          callback_at: null,
+        },
+        progress: {},
+      });
+      assertEquals(result.ok, true);
+      assertEquals(result.progress.note_added, true);
+      assertEquals(calls, ['POST /contacts/ghl-1/tags']);
+    } finally {
+      restore();
+    }
+  }
+);
+
+Deno.test(
+  'processDispositionJob: TASK-G02 callback task body carries assignedTo = caller GHL user; custom fields carry callback/duration/recording',
+  async () => {
+    const bodies: Record<string, unknown> = {};
+    const restore = stubFetch((url, init) => {
+      const path = new URL(url).pathname;
+      if (init?.body) bodies[`${init.method} ${path}`] = JSON.parse(String(init.body));
+      return Response.json({ id: 'ok' });
+    });
+    try {
+      const result = await processDispositionJob({
+        client: createGhlClient('tok'),
+        locationId: 'loc-1',
+        ghlContactId: 'ghl-1',
+        contactFields: { firstName: 'A', lastName: 'B', phone: '+14155552671' },
+        payload: PAYLOAD,
+        progress: {},
+        pushConfig: {
+          pushFieldMapping: { callback_at: 'f-cb', call_duration: 'f-dur', recording_url: 'f-rec' },
+        },
+        pushTimeContext: { callerGhlUserId: 'ghl-user-7' },
+      });
+      assertEquals(result.ok, true);
+      assertEquals(bodies['POST /contacts/ghl-1/tasks'], {
+        title: 'Callback: Interested',
+        dueDate: '2026-10-01T15:00:00.000Z',
+        completed: false,
+        assignedTo: 'ghl-user-7',
+      });
+      assertEquals(bodies['PUT /contacts/ghl-1'], {
+        customFields: [
+          { id: 'f-cb', field_value: '2026-10-01T15:00:00.000Z' },
+          { id: 'f-dur', field_value: '142' },
+          { id: 'f-rec', field_value: 'https://example.com/rec/1' },
+        ],
+      });
+      // never touches the contact's own owner
+      assertEquals(JSON.stringify(bodies['PUT /contacts/ghl-1']).includes('assignedTo'), false);
+    } finally {
+      restore();
+    }
+  }
+);
+
+Deno.test(
+  'processDispositionJob: TASK-G02 task has no assignedTo key when the caller has no GHL user',
+  async () => {
+    let taskBody: Record<string, unknown> = {};
+    const restore = stubFetch((url, init) => {
+      if (url.endsWith('/tasks')) taskBody = JSON.parse(String(init?.body));
+      return Response.json({ id: 'ok' });
+    });
+    try {
+      await processDispositionJob({
+        client: createGhlClient('tok'),
+        locationId: 'loc-1',
+        ghlContactId: 'ghl-1',
+        contactFields: { firstName: 'A', lastName: 'B', phone: '+14155552671' },
+        payload: PAYLOAD,
+        progress: {},
+        pushTimeContext: { callerGhlUserId: null },
+      });
+      assertEquals('assignedTo' in taskBody, false);
     } finally {
       restore();
     }

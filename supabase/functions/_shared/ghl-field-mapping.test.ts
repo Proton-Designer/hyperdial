@@ -61,3 +61,15 @@ Deno.test(
     });
   }
 );
+
+Deno.test(
+  'suggestGhlFieldMapping: TASK-G02 push-direction keys (callback_at/call_duration/recording_url) match the spec §1 field names',
+  () => {
+    const result = suggestGhlFieldMapping([
+      { id: 'f1', name: 'Callback Date/Time' },
+      { id: 'f2', name: 'Call Duration' },
+      { id: 'f3', name: 'Recording Link' },
+    ]);
+    assertEquals(result, { callback_at: 'f1', call_duration: 'f2', recording_url: 'f3' });
+  }
+);

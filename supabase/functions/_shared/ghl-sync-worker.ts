@@ -54,6 +54,11 @@ export interface DispositionPushTimeContext {
    *  (`dispositions.ghl_pipeline_id`/`ghl_pipeline_stage_id`) -- absent/null means "unmapped,
    *  never move" per the task's own explicit requirement. */
   stageTarget?: { pipelineId: string; pipelineStageId: string } | null;
+  /** TASK-G02: the calling intern's GHL user id (`org_members.ghl_user_id` of the session's
+   *  agent), used only as the callback task's `assignedTo`. Absent/null when the agent has no
+   *  GHL user mapped -- the task is then created unassigned, as before. Never sent on the
+   *  contact itself (the contact's GHL owner is GHL-controlled, spec §4). */
+  callerGhlUserId?: string | null;
 }
 
 /** Builds the `{id, fieldValue}[]` array `updateContactCustomFields` needs from whichever of
@@ -70,6 +75,12 @@ export function buildPushCustomFields(
     callAttempts?: number | null;
     licenseNumber?: string | null;
     serviceZips?: string[] | null;
+    /** TASK-G02 (spec §1): ISO 8601 callback time, only for a disposition with a callback. */
+    callbackAt?: string | null;
+    /** TASK-G02: seconds; 0 is a real value (a hangup), only null/undefined is absent. */
+    callDurationSeconds?: number | null;
+    /** TASK-G02: link only, never the audio. */
+    recordingUrl?: string | null;
   }
 ): { id: string; fieldValue: string }[] {
   if (!mapping) return [];
@@ -88,6 +99,14 @@ export function buildPushCustomFields(
     'service_zips',
     values.serviceZips && values.serviceZips.length > 0 ? values.serviceZips.join(', ') : null
   );
+  push('callback_at', values.callbackAt);
+  push(
+    'call_duration',
+    values.callDurationSeconds === null || values.callDurationSeconds === undefined
+      ? null
+      : String(values.callDurationSeconds)
+  );
+  push('recording_url', values.recordingUrl);
   return out;
 }
 
@@ -119,6 +138,16 @@ export interface DispositionPayload {
    *  'dnc' -- matching a literal key string would silently stop setting DND the moment an org's
    *  key differs from whatever was hardcoded here. */
   is_dnc: boolean;
+}
+
+/** TASK-G02 (spec §1: "Do not log every no-answer as a separate note"): dispositions whose only
+ *  GHL record is the tag/attempt fields. A no-answer or voicemail with an EMPTY notes field gets no
+ *  note; if the intern typed notes the note is still posted. Matched on the seeded keys
+ *  (`no_answer`, `voicemail_left`) plus the legacy pre-F-P1 `voicemail`. */
+const NOTELESS_WHEN_EMPTY_DISPOSITION_KEYS = new Set(['no_answer', 'voicemail_left', 'voicemail']);
+
+export function shouldSkipDispositionNote(p: DispositionPayload): boolean {
+  return NOTELESS_WHEN_EMPTY_DISPOSITION_KEYS.has(p.disposition_key) && !(p.notes ?? '').trim();
 }
 
 /** `.brain/domains/crm.md`'s documented disposition-job note shape, condensed into GHL's
@@ -208,7 +237,9 @@ export async function processDispositionJob(
     }
 
     if (!progress.note_added) {
-      await args.client.addNote(ghlContactId, { body: buildDispositionNote(args.payload) });
+      if (!shouldSkipDispositionNote(args.payload)) {
+        await args.client.addNote(ghlContactId, { body: buildDispositionNote(args.payload) });
+      }
       progress.note_added = true;
     }
 
@@ -224,6 +255,9 @@ export async function processDispositionJob(
         await args.client.createTask(ghlContactId, {
           title: `Callback: ${args.payload.disposition_label}`,
           dueDate: args.payload.callback_at,
+          ...(args.pushTimeContext?.callerGhlUserId && {
+            assignedTo: args.pushTimeContext.callerGhlUserId,
+          }),
         });
       }
       progress.task_created = true;
@@ -246,6 +280,9 @@ export async function processDispositionJob(
         callAttempts: args.pushTimeContext?.callAttempts,
         licenseNumber: args.payload.license_number,
         serviceZips: args.payload.zips,
+        callbackAt: args.payload.callback_at,
+        callDurationSeconds: args.payload.duration_seconds,
+        recordingUrl: args.payload.recording_url,
       });
       if (fields.length > 0) {
         await args.client.updateContactCustomFields(ghlContactId, fields);
