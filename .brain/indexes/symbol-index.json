@@ -2,10 +2,10 @@
   "meta": {
     "artifact": "symbol-index",
     "version": "1.0",
-    "generated_at": "2026-10-20T01:33:18.877Z",
+    "generated_at": "2026-10-20T01:43:33.177Z",
     "target": "/Users/aymanmohammed/Desktop/Softdial",
     "git": {
-      "commit": "15b3783",
+      "commit": "a9dc894",
       "branch": "feat/stage-1",
       "dirty": true
     },
@@ -14596,7 +14596,7 @@
         "name": "PROVIDER_PUSH_FIELDS",
         "kind": "const",
         "file": "supabase/functions/_shared/ghl-field-catalog.ts",
-        "line": 31,
+        "line": 34,
         "exported": true,
         "service": "supabase",
         "doc": "arch.dependency-graph"
@@ -14605,7 +14605,7 @@
         "name": "YES_NO",
         "kind": "const",
         "file": "supabase/functions/_shared/ghl-field-catalog.ts",
-        "line": 51,
+        "line": 60,
         "exported": false,
         "service": "supabase",
         "doc": "arch.dependency-graph"
@@ -14614,7 +14614,7 @@
         "name": "n",
         "kind": "const",
         "file": "supabase/functions/_shared/ghl-field-catalog.ts",
-        "line": 52,
+        "line": 61,
         "exported": false,
         "service": "supabase",
         "doc": "arch.dependency-graph"
@@ -14623,7 +14623,7 @@
         "name": "t",
         "kind": "const",
         "file": "supabase/functions/_shared/ghl-field-catalog.ts",
-        "line": 53,
+        "line": 62,
         "exported": false,
         "service": "supabase",
         "doc": "arch.dependency-graph"
@@ -14632,7 +14632,7 @@
         "name": "lt",
         "kind": "const",
         "file": "supabase/functions/_shared/ghl-field-catalog.ts",
-        "line": 54,
+        "line": 63,
         "exported": false,
         "service": "supabase",
         "doc": "arch.dependency-graph"
@@ -14641,7 +14641,7 @@
         "name": "dd",
         "kind": "const",
         "file": "supabase/functions/_shared/ghl-field-catalog.ts",
-        "line": 55,
+        "line": 64,
         "exported": false,
         "service": "supabase",
         "doc": "arch.dependency-graph"
@@ -14650,7 +14650,7 @@
         "name": "INTERN_SHIFT_FIELDS",
         "kind": "const",
         "file": "supabase/functions/_shared/ghl-field-catalog.ts",
-        "line": 63,
+        "line": 72,
         "exported": true,
         "service": "supabase",
         "doc": "arch.dependency-graph"
@@ -14668,7 +14668,7 @@
         "name": "GHL_DEFAULT_BASE",
         "kind": "const",
         "file": "supabase/functions/_shared/ghl-field-coverage.ts",
-        "line": 20,
+        "line": 21,
         "exported": false,
         "service": "supabase",
         "doc": "arch.dependency-graph"
@@ -14677,7 +14677,7 @@
         "name": "GHL_CONTACT_VERSION",
         "kind": "const",
         "file": "supabase/functions/_shared/ghl-field-coverage.ts",
-        "line": 21,
+        "line": 22,
         "exported": false,
         "service": "supabase",
         "doc": "arch.dependency-graph"
@@ -14686,7 +14686,7 @@
         "name": "CoverageDef",
         "kind": "interface",
         "file": "supabase/functions/_shared/ghl-field-coverage.ts",
-        "line": 23,
+        "line": 24,
         "exported": true,
         "service": "supabase",
         "doc": "arch.dependency-graph"
@@ -14695,7 +14695,7 @@
         "name": "CoverageStatus",
         "kind": "type",
         "file": "supabase/functions/_shared/ghl-field-coverage.ts",
-        "line": 32,
+        "line": 33,
         "exported": true,
         "service": "supabase",
         "doc": "arch.dependency-graph"
@@ -14704,7 +14704,7 @@
         "name": "CoverageIssue",
         "kind": "type",
         "file": "supabase/functions/_shared/ghl-field-coverage.ts",
-        "line": 33,
+        "line": 34,
         "exported": true,
         "service": "supabase",
         "doc": "arch.dependency-graph"
@@ -14713,7 +14713,7 @@
         "name": "CoverageItem",
         "kind": "interface",
         "file": "supabase/functions/_shared/ghl-field-coverage.ts",
-        "line": 35,
+        "line": 36,
         "exported": true,
         "service": "supabase",
         "doc": "arch.dependency-graph"
@@ -14722,7 +14722,7 @@
         "name": "CoverageGroup",
         "kind": "interface",
         "file": "supabase/functions/_shared/ghl-field-coverage.ts",
-        "line": 47,
+        "line": 48,
         "exported": true,
         "service": "supabase",
         "doc": "arch.dependency-graph"
@@ -14731,7 +14731,7 @@
         "name": "FieldCoverage",
         "kind": "interface",
         "file": "supabase/functions/_shared/ghl-field-coverage.ts",
-        "line": 53,
+        "line": 54,
         "exported": true,
         "service": "supabase",
         "doc": "arch.dependency-graph"
@@ -14740,7 +14740,7 @@
         "name": "check",
         "kind": "function",
         "file": "supabase/functions/_shared/ghl-field-coverage.ts",
-        "line": 69,
+        "line": 70,
         "exported": false,
         "service": "supabase",
         "doc": "arch.dependency-graph"
@@ -14749,7 +14749,7 @@
         "name": "item",
         "kind": "function",
         "file": "supabase/functions/_shared/ghl-field-coverage.ts",
-        "line": 81,
+        "line": 87,
         "exported": false,
         "service": "supabase",
         "doc": "arch.dependency-graph"
@@ -14758,7 +14758,7 @@
         "name": "group",
         "kind": "const",
         "file": "supabase/functions/_shared/ghl-field-coverage.ts",
-        "line": 95,
+        "line": 101,
         "exported": false,
         "service": "supabase",
         "doc": "arch.dependency-graph"
@@ -14767,7 +14767,7 @@
         "name": "classifyFieldCoverage",
         "kind": "function",
         "file": "supabase/functions/_shared/ghl-field-coverage.ts",
-        "line": 101,
+        "line": 107,
         "exported": true,
         "service": "supabase",
         "doc": "arch.dependency-graph"
@@ -14776,7 +14776,7 @@
         "name": "fetchCoverageDefs",
         "kind": "function",
         "file": "supabase/functions/_shared/ghl-field-coverage.ts",
-        "line": 130,
+        "line": 136,
         "exported": true,
         "service": "supabase",
         "doc": "arch.dependency-graph"
@@ -15532,7 +15532,7 @@
         "name": "stubFetch",
         "kind": "function",
         "file": "supabase/functions/_shared/ghl-sync-worker.test.ts",
-        "line": 19,
+        "line": 20,
         "exported": false,
         "service": "supabase",
         "doc": "arch.dependency-graph"
@@ -15541,7 +15541,7 @@
         "name": "dncStub",
         "kind": "function",
         "file": "supabase/functions/_shared/ghl-sync-worker.test.ts",
-        "line": 1316,
+        "line": 1317,
         "exported": false,
         "service": "supabase",
         "doc": "arch.dependency-graph"
@@ -15754,7 +15754,7 @@
         "doc": "arch.dependency-graph"
       },
       {
-        "name": "ProcessContactUpsertJobArgs",
+        "name": "ProcessObjectionFieldJobArgs",
         "kind": "interface",
         "file": "supabase/functions/_shared/ghl-sync-worker.ts",
         "line": 640,
@@ -15763,10 +15763,28 @@
         "doc": "arch.dependency-graph"
       },
       {
+        "name": "processObjectionFieldJob",
+        "kind": "function",
+        "file": "supabase/functions/_shared/ghl-sync-worker.ts",
+        "line": 652,
+        "exported": true,
+        "service": "supabase",
+        "doc": "arch.dependency-graph"
+      },
+      {
+        "name": "ProcessContactUpsertJobArgs",
+        "kind": "interface",
+        "file": "supabase/functions/_shared/ghl-sync-worker.ts",
+        "line": 677,
+        "exported": true,
+        "service": "supabase",
+        "doc": "arch.dependency-graph"
+      },
+      {
         "name": "processContactUpsertJob",
         "kind": "function",
         "file": "supabase/functions/_shared/ghl-sync-worker.ts",
-        "line": 650,
+        "line": 687,
         "exported": true,
         "service": "supabase",
         "doc": "arch.dependency-graph"
@@ -15775,7 +15793,7 @@
         "name": "TransferNotePayload",
         "kind": "interface",
         "file": "supabase/functions/_shared/ghl-sync-worker.ts",
-        "line": 691,
+        "line": 728,
         "exported": true,
         "service": "supabase",
         "doc": "arch.dependency-graph"
@@ -15784,7 +15802,7 @@
         "name": "ProcessTransferNoteJobArgs",
         "kind": "interface",
         "file": "supabase/functions/_shared/ghl-sync-worker.ts",
-        "line": 697,
+        "line": 734,
         "exported": true,
         "service": "supabase",
         "doc": "arch.dependency-graph"
@@ -15793,7 +15811,7 @@
         "name": "processTransferNoteJob",
         "kind": "function",
         "file": "supabase/functions/_shared/ghl-sync-worker.ts",
-        "line": 710,
+        "line": 747,
         "exported": true,
         "service": "supabase",
         "doc": "arch.dependency-graph"
@@ -16297,7 +16315,7 @@
         "name": "defaultGhlListName",
         "kind": "function",
         "file": "supabase/functions/_shared/list-name.ts",
-        "line": 22,
+        "line": 23,
         "exported": true,
         "service": "supabase",
         "doc": "arch.dependency-graph"
@@ -20374,7 +20392,7 @@
         "name": "jsonResponse",
         "kind": "function",
         "file": "supabase/functions/ghl-field-coverage/index.ts",
-        "line": 14,
+        "line": 18,
         "exported": false,
         "service": "supabase",
         "doc": "arch.dependency-graph"
@@ -20572,7 +20590,7 @@
         "name": "CLAIM_BATCH_SIZE",
         "kind": "const",
         "file": "supabase/functions/ghl-sync-worker/index.ts",
-        "line": 40,
+        "line": 41,
         "exported": false,
         "service": "supabase",
         "doc": "arch.dependency-graph"
@@ -20581,7 +20599,7 @@
         "name": "jsonResponse",
         "kind": "function",
         "file": "supabase/functions/ghl-sync-worker/index.ts",
-        "line": 42,
+        "line": 43,
         "exported": false,
         "service": "supabase",
         "doc": "arch.dependency-graph"
@@ -20590,7 +20608,7 @@
         "name": "getSupabaseAdmin",
         "kind": "function",
         "file": "supabase/functions/ghl-sync-worker/index.ts",
-        "line": 49,
+        "line": 50,
         "exported": false,
         "service": "supabase",
         "doc": "arch.dependency-graph"
@@ -20599,7 +20617,7 @@
         "name": "secretsMatch",
         "kind": "function",
         "file": "supabase/functions/ghl-sync-worker/index.ts",
-        "line": 57,
+        "line": 58,
         "exported": false,
         "service": "supabase",
         "doc": "arch.dependency-graph"
@@ -20608,7 +20626,7 @@
         "name": "resolveOrgGhlContext",
         "kind": "function",
         "file": "supabase/functions/ghl-sync-worker/index.ts",
-        "line": 95,
+        "line": 97,
         "exported": false,
         "service": "supabase",
         "doc": "arch.dependency-graph"
@@ -20617,7 +20635,7 @@
         "name": "resolveStageTarget",
         "kind": "function",
         "file": "supabase/functions/ghl-sync-worker/index.ts",
-        "line": 145,
+        "line": 147,
         "exported": false,
         "service": "supabase",
         "doc": "arch.dependency-graph"
@@ -20626,7 +20644,7 @@
         "name": "resolveDncTag",
         "kind": "function",
         "file": "supabase/functions/ghl-sync-worker/index.ts",
-        "line": 163,
+        "line": 165,
         "exported": false,
         "service": "supabase",
         "doc": "arch.dependency-graph"
@@ -20635,7 +20653,7 @@
         "name": "loadContactFields",
         "kind": "function",
         "file": "supabase/functions/ghl-sync-worker/index.ts",
-        "line": 177,
+        "line": 179,
         "exported": false,
         "service": "supabase",
         "doc": "arch.dependency-graph"
@@ -20644,7 +20662,7 @@
         "name": "persistGhlContactId",
         "kind": "function",
         "file": "supabase/functions/ghl-sync-worker/index.ts",
-        "line": 193,
+        "line": 195,
         "exported": false,
         "service": "supabase",
         "doc": "arch.dependency-graph"
@@ -20653,7 +20671,7 @@
         "name": "processJob",
         "kind": "function",
         "file": "supabase/functions/ghl-sync-worker/index.ts",
-        "line": 205,
+        "line": 207,
         "exported": false,
         "service": "supabase",
         "doc": "arch.dependency-graph"

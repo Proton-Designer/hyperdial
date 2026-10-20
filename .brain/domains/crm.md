@@ -47,7 +47,7 @@ answers:
 covers: "GHL (GoHighLevel) connect/disconnect, the org_integrations token store, the crm_sync_jobs push outbox (worker included), the pull-import (contacts by tag/search) path, and the 2026-10-19 data sync (per-call fields, DNC push, GHL reconcile sweep)."
 excludes: "The disposition/wrap-up UI that calls enqueue_crm_job (see Not covered here)."
 tokens_est: 5398
-source_hash: 072f2b537381afcb7a511c16cffb67dc8f187bda8a89d11dcc0f39e5f5f20837
+source_hash: cb3f047756eded64f18f0c71bcd88037271adb947b79fce3348552e4e0d122ed
 ---
 
 # CRM Sync (GHL)

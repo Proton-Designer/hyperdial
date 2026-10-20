@@ -53,7 +53,7 @@ answers:
 covers: "Supabase auth, session handling, the two-layer Edge Function authorization model, service-role usage, org tenancy, the per-table RLS inventory, member offboarding (disable/remove/restore), the manager role's server-enforced pod scope, daily goals + team broadcasts, and the call review library's access model."
 excludes: "Telnyx webhook signature mechanics (domain.telephony); dial-loop ownership checks (domain.dialer)."
 tokens_est: 13159
-source_hash: 220672154f46d016c4749662c98f73bb667ec32d1a6ab696e471bb3438db3ca7
+source_hash: 1a1b30a07b935bbbbdc83b5ae544853ec88a382b215d248ca3f4cd0aad9c4574
 ---
 
 # Auth & Access Control

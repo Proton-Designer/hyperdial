@@ -85,6 +85,8 @@ export const INTERN_SHIFT_FIELDS: FieldSpec[] = [
   n('last_shift_sign_ups', 'Last shift sign-ups'),
   n('last_shift_connect_rate_pct', 'Last shift connect rate %'),
   n('last_shift_conversion_rate_pct', 'Last shift conversion rate %'),
+  t('last_shift_scheduled_start', 'Last shift scheduled start'),
+  t('last_shift_scheduled_end', 'Last shift scheduled end'),
   t('last_shift_clock_in_at', 'Last shift clock-in at'),
   t('last_shift_clock_out_at', 'Last shift clock-out at'),
   n('last_shift_clock_in_late_minutes', 'Last shift clock-in late minutes'),
