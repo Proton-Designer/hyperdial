@@ -3873,6 +3873,10 @@ export interface GhlCreateFieldsResult {
   /** provider fields that already existed in GHL under the expected key and were only mapped */
   mapped: { key: string; label: string; id: string }[];
   failed: { key: string; label: string; error: string }[];
+  /** created, but GHL stored them under a different key than requested (rename it in GHL, or it shows as missing again) */
+  keyMismatch: { key: string; label: string; id: string; actualKey: string }[];
+  /** not created: a GHL field with this name already exists under another key (map/rename it in GHL) */
+  nameClash: { key: string; label: string; id: string; actualKey: string }[];
   /** not tried because the run stopped early */
   notAttempted: number;
   /** plain-words reason the run stopped early (e.g. the token lacks the Custom Fields write permission) */

@@ -30,6 +30,10 @@ export const MAX_FIELDS_PER_RUN = 120;
 export const PERMISSION_MESSAGE =
   'GoHighLevel refused to create fields: the Private Integration token needs the Custom Fields write permission ' +
   '(in GoHighLevel: Settings -> Private Integrations -> your integration -> Scopes -> Custom Fields: view and edit).';
+export const NOT_FINISHED_MESSAGE =
+  'Not finished: press the button again; it only creates what is still missing.';
+/** Overall budget of one create run (the Edge Function wall time is longer). */
+export const CREATE_RUN_BUDGET_MS = 90_000;
 export const RATE_LIMIT_MESSAGE =
   'GoHighLevel is rate limiting requests. Wait a minute and press the button again; fields already created are kept.';
 
@@ -42,10 +46,19 @@ export interface PlannedMapping {
   label: string;
   id: string;
 }
+export interface NameClash {
+  key: string;
+  label: string;
+  id: string;
+  /** the GHL field's own key, e.g. `contact.some_other_key` */
+  actualKey: string;
+}
 export interface CreatePlan {
   toCreate: PlannedField[];
   /** provider keys whose GHL field already exists under `contact.<key>`: just map them */
   toMap: PlannedMapping[];
+  /** fields NOT created because a GHL field with the same name already exists under another key (TASK-G29.1) */
+  nameClash?: NameClash[];
 }
 
 const fieldKeyFor = (key: string) => `contact.${key}`;
@@ -53,7 +66,27 @@ const fieldKeyFor = (key: string) => `contact.${key}`;
 /** What is missing, from a coverage result and the location's current definitions. */
 export function planCreateMissing(coverage: FieldCoverage, defs: CoverageDef[]): CreatePlan {
   const byKey = new Map(defs.map((d) => [d.fieldKey.replace(/^contact\./, ''), d]));
-  const plan: CreatePlan = { toCreate: [], toMap: [] };
+  const plan: Required<CreatePlan> = { toCreate: [], toMap: [], nameClash: [] };
+  // TASK-G29.1: a field with the catalog's NAME but another key (GHL renamed our key, or someone made it by hand) must not be
+  // created a second time on a re-press. The folder is not part of CoverageDef, so the whole location is searched.
+  const byName = new Map<string, CoverageDef>();
+  for (const d of defs) {
+    const n = d.name.trim().toLowerCase();
+    if (n && !byName.has(n)) byName.set(n, d);
+  }
+  const planCreate = (group: 'provider' | 'intern', spec: FieldSpec) => {
+    const clash = byName.get(spec.label.trim().toLowerCase());
+    if (clash) {
+      plan.nameClash.push({
+        key: spec.key,
+        label: spec.label,
+        id: clash.id,
+        actualKey: clash.fieldKey,
+      });
+    } else {
+      plan.toCreate.push({ group, spec });
+    }
+  };
   const providerSpecs = new Map(PROVIDER_PUSH_FIELDS.map((s) => [s.key as string, s]));
   const internSpecs = new Map(INTERN_SHIFT_FIELDS.map((s) => [s.key, s]));
   for (const it of coverage.provider.items) {
@@ -62,12 +95,12 @@ export function planCreateMissing(coverage: FieldCoverage, defs: CoverageDef[]):
     if (!spec) continue;
     const existing = byKey.get(spec.key);
     if (existing) plan.toMap.push({ key: spec.key, label: spec.label, id: existing.id });
-    else plan.toCreate.push({ group: 'provider', spec });
+    else planCreate('provider', spec);
   }
   for (const it of coverage.intern.items) {
     if (it.status !== 'missing') continue;
     const spec = internSpecs.get(it.key);
-    if (spec) plan.toCreate.push({ group: 'intern', spec });
+    if (spec) planCreate('intern', spec);
   }
   return plan;
 }
@@ -123,6 +156,8 @@ export interface CreateIo {
   apiBase?: string;
   fetchImpl?: typeof fetch;
   limiter?: GhlRateLimiter;
+  /** absolute epoch ms: no new field is created after it (TASK-G29.1) */
+  deadlineMs?: number;
 }
 
 async function call(
@@ -192,6 +227,11 @@ export interface CreateMissingResult {
   /** provider fields that already existed in GHL and were only mapped */
   mapped: CreateFieldResult[];
   failed: { key: string; label: string; error: string }[];
+  /** created, but GHL stored them under a different key than requested (`actualKey`): the intern sync matches by key, so
+   *  such a field will keep showing as missing until it is renamed in GHL (TASK-G29.1) */
+  keyMismatch: { key: string; label: string; id: string; actualKey: string }[];
+  /** not created: a GHL field with this name already exists under another key (map/rename it in GHL) */
+  nameClash: NameClash[];
   /** fields not tried because the run stopped (permission / rate limit / cap) */
   notAttempted: number;
   /** plain-words reason the run stopped early, else null */
@@ -208,6 +248,8 @@ export async function createMissingFields(
     created: [],
     mapped: [],
     failed: [],
+    keyMismatch: [],
+    nameClash: plan.nameClash ?? [],
     notAttempted: 0,
     stopped: null,
     mappingAdditions: {},
@@ -244,6 +286,10 @@ export async function createMissingFields(
 
   for (let i = 0; i < todo.length; i++) {
     const { group, spec } = todo[i];
+    if (io.deadlineMs !== undefined && Date.now() > io.deadlineMs) {
+      stopWith(NOT_FINISHED_MESSAGE, i);
+      return result;
+    }
     try {
       const res = await call(
         io,
@@ -254,6 +300,16 @@ export async function createMissingFields(
       const field = (res.field ?? res.customField ?? res) as Record<string, unknown>;
       if (typeof field.id !== 'string') throw new Error('GHL answered without a field id');
       result.created.push({ key: spec.key, label: spec.label, id: field.id });
+      // the 201 body carries the key GHL really stored; a different one is reported (and mapped by id for provider fields)
+      const requested = fieldKeyFor(spec.key);
+      if (typeof field.fieldKey === 'string' && field.fieldKey !== requested) {
+        result.keyMismatch.push({
+          key: spec.key,
+          label: spec.label,
+          id: field.id,
+          actualKey: field.fieldKey,
+        });
+      }
       if (group === 'provider') result.mappingAdditions[spec.key] = field.id;
     } catch (err) {
       if (err instanceof GhlFieldHttpError && (err.status === 401 || err.status === 403)) {

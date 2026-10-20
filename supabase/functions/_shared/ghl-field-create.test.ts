@@ -4,6 +4,7 @@ import { classifyFieldCoverage, type CoverageDef } from './ghl-field-coverage.ts
 import {
   buildCreateFieldBody,
   createMissingFields,
+  NOT_FINISHED_MESSAGE,
   optionKeys,
   PERMISSION_MESSAGE,
   planCreateMissing,
@@ -317,3 +318,198 @@ Deno.test('runCreateMissing: a mapping save failure is reported, fields stay cre
   assertEquals(out.mappingError, 'db down');
   assertEquals(out.result.created.length > 0, true);
 });
+
+const folderOk = () => Response.json({ fields: [], folders: [{ id: 'f1', name: 'HyperDial' }] });
+
+Deno.test(
+  'createMissingFields (G29.1): a key GHL changed is reported as created-with-a-different-key; provider fields still map by id',
+  async () => {
+    const { fetchImpl } = fakeFetch((c) =>
+      c.method === 'GET'
+        ? folderOk()
+        : Response.json(
+            { field: { id: `id-${c.body?.name}`, fieldKey: `${String(c.body?.fieldKey)}_2` } },
+            { status: 201 }
+          )
+    );
+    const r = await createMissingFields(io(fetchImpl), {
+      toCreate: [
+        { group: 'provider', spec: spec('last_call_at') },
+        { group: 'intern', spec: spec('week_dials') },
+      ],
+      toMap: [],
+    });
+    assertEquals(r.created.length, 2);
+    assertEquals(
+      r.keyMismatch.map((m) => [m.key, m.actualKey]),
+      [
+        ['last_call_at', 'contact.last_call_at_2'],
+        ['week_dials', 'contact.week_dials_2'],
+      ]
+    );
+    assertEquals(Object.keys(r.mappingAdditions), ['last_call_at']);
+  }
+);
+
+Deno.test(
+  'createMissingFields (G29.1): a matching key is NOT reported as a mismatch (positive control)',
+  async () => {
+    const { fetchImpl } = fakeFetch((c) =>
+      c.method === 'GET'
+        ? folderOk()
+        : Response.json({ field: { id: 'z', fieldKey: c.body?.fieldKey } }, { status: 201 })
+    );
+    const r = await createMissingFields(io(fetchImpl), {
+      toCreate: [{ group: 'intern', spec: spec('week_dials') }],
+      toMap: [],
+    });
+    assertEquals([r.created.length, r.keyMismatch.length], [1, 0]);
+  }
+);
+
+Deno.test(
+  'runCreateMissing (G29.1): re-pressing after a key mismatch POSTs nothing for that field (no duplicate)',
+  async () => {
+    const store: CoverageDef[] = [];
+    const mismatched = spec('week_dials');
+    const { fetchImpl, calls } = fakeFetch((c) => {
+      if (c.method === 'GET')
+        return Response.json({ fields: [], folders: [{ id: 'f1', name: 'HyperDial' }] });
+      const id = `new-${store.length + 1}`;
+      const requested = String(c.body?.fieldKey);
+      const stored = c.body?.name === mismatched.label ? `${requested}_2` : requested;
+      store.push({
+        id,
+        name: String(c.body?.name),
+        fieldKey: stored,
+        dataType: String(c.body?.dataType),
+        options: ((c.body?.options as { label: string }[] | undefined) ?? []).map((o) => o.label),
+      });
+      return Response.json({ field: { id, fieldKey: stored } }, { status: 201 });
+    });
+    let mapping: Record<string, string> = {};
+    const deps = () => ({
+      mapping,
+      loadDefs: () => Promise.resolve([...store]),
+      io: io(fetchImpl),
+      saveMapping: (m: Record<string, string>) => {
+        mapping = m;
+        return Promise.resolve();
+      },
+    });
+    const first = await runCreateMissing(deps());
+    assertEquals(
+      first.result.keyMismatch.map((m) => m.key),
+      ['week_dials']
+    );
+    const postsFor = () =>
+      calls.filter((c) => c.method === 'POST' && c.body?.name === mismatched.label).length;
+    assertEquals(postsFor(), 1);
+
+    const second = await runCreateMissing(deps());
+    assertEquals(postsFor(), 1); // the second press did not create it again
+    assertEquals(second.result.created.length, 0);
+    assertEquals(
+      second.result.nameClash.map((n) => [n.key, n.actualKey]),
+      [['week_dials', 'contact.week_dials_2']]
+    );
+  }
+);
+
+Deno.test(
+  'planCreateMissing (G29.1): same name under another key is a clash, not a create; unrelated names still create',
+  () => {
+    const defs: CoverageDef[] = [
+      {
+        id: 'x1',
+        name: ` ${spec('week_dials').label.toUpperCase()} `,
+        fieldKey: 'contact.custom_dials',
+        dataType: 'NUMERICAL',
+        options: [],
+      },
+    ];
+    const plan = planCreateMissing(classifyFieldCoverage({}, defs), defs);
+    assertEquals(plan.nameClash, [
+      {
+        key: 'week_dials',
+        label: spec('week_dials').label,
+        id: 'x1',
+        actualKey: 'contact.custom_dials',
+      },
+    ]);
+    assertEquals(
+      plan.toCreate.some((c) => c.spec.key === 'week_dials'),
+      false
+    );
+    assertEquals(
+      plan.toCreate.some((c) => c.spec.key === 'week_connects'),
+      true
+    );
+  }
+);
+
+Deno.test(
+  'createMissingFields (G29.1): a deadline already passed creates nothing and says to press again',
+  async () => {
+    const { fetchImpl, calls } = fakeFetch((c) =>
+      c.method === 'GET' ? folderOk() : Response.json({ field: { id: 'z' } }, { status: 201 })
+    );
+    const r = await createMissingFields(
+      { ...io(fetchImpl), deadlineMs: Date.now() - 1 },
+      {
+        toCreate: ['week_dials', 'week_connects', 'week_sign_ups'].map((k) => ({
+          group: 'intern' as const,
+          spec: spec(k),
+        })),
+        toMap: [],
+      }
+    );
+    assertEquals(r.stopped, NOT_FINISHED_MESSAGE);
+    assertEquals([r.created.length, r.notAttempted], [0, 3]);
+    assertEquals(calls.filter((c) => c.method === 'POST').length, 0);
+  }
+);
+
+Deno.test(
+  'createMissingFields (G29.1): a deadline hit mid-run keeps what was created and counts the rest',
+  async () => {
+    const calls: Call[] = [];
+    const fetchImpl = (async (url: string | URL | Request, init?: RequestInit) => {
+      const c: Call = {
+        method: init?.method ?? 'GET',
+        url: String(url),
+        body: init?.body ? JSON.parse(String(init.body)) : null,
+      };
+      calls.push(c);
+      if (c.method === 'GET') return folderOk();
+      await new Promise((r) => setTimeout(r, 60)); // each create outlives the 30 ms budget
+      return Response.json({ field: { id: 'z' } }, { status: 201 });
+    }) as typeof fetch;
+    const r = await createMissingFields(
+      { ...io(fetchImpl), deadlineMs: Date.now() + 30 },
+      {
+        toCreate: ['week_dials', 'week_connects', 'week_sign_ups'].map((k) => ({
+          group: 'intern' as const,
+          spec: spec(k),
+        })),
+        toMap: [],
+      }
+    );
+    assertEquals(r.created.length, 1);
+    assertEquals([r.stopped, r.notAttempted], [NOT_FINISHED_MESSAGE, 2]);
+  }
+);
+
+Deno.test(
+  'createMissingFields (G29.1): no deadline = unchanged behaviour (positive control)',
+  async () => {
+    const { fetchImpl } = fakeFetch((c) =>
+      c.method === 'GET' ? folderOk() : Response.json({ field: { id: 'z' } }, { status: 201 })
+    );
+    const r = await createMissingFields(io(fetchImpl), {
+      toCreate: [{ group: 'intern', spec: spec('week_dials') }],
+      toMap: [],
+    });
+    assertEquals([r.created.length, r.stopped], [1, null]);
+  }
+);

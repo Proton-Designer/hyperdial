@@ -17,7 +17,7 @@ import {
   GHL_PULL_RATE_LIMIT_MAX_PER_WINDOW,
 } from '../_shared/ghl-rate-limit.ts';
 import { classifyFieldCoverage, fetchCoverageDefs } from '../_shared/ghl-field-coverage.ts';
-import { runCreateMissing } from '../_shared/ghl-field-create.ts';
+import { CREATE_RUN_BUDGET_MS, runCreateMissing } from '../_shared/ghl-field-create.ts';
 import { logOrgAction } from '../_shared/audit.ts';
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -84,7 +84,10 @@ Deno.serve(async (req: Request) => {
             locationId: integration.location_id as string,
             apiBase,
             limiter,
+            deadlineMs: Date.now() + CREATE_RUN_BUDGET_MS,
           },
+          // note: ghl_pull_enabled is the value read at the start of this request; a pull toggle saved by another admin
+          // during the run would be overwritten (tiny window, accepted)
           saveMapping: async (mapping) => {
             const { error } = await supabase.rpc('set_org_ghl_pull_settings', {
               p_org: orgId,
@@ -109,6 +112,8 @@ Deno.serve(async (req: Request) => {
           created: out.result.created.map((c) => c.key),
           mapped: out.result.mapped.map((c) => c.key),
           failed: out.result.failed.map((f) => f.key),
+          keyMismatch: out.result.keyMismatch.map((f) => f.key),
+          nameClash: out.result.nameClash.map((f) => f.key),
           stopped: out.result.stopped,
         },
       });

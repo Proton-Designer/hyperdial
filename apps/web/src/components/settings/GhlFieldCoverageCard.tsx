@@ -122,6 +122,39 @@ function CreateResult({
           again to map them.
         </p>
       )}
+      {result.keyMismatch.length > 0 && (
+        <div>
+          <p className="text-warning">
+            Created, but GoHighLevel saved {result.keyMismatch.length === 1 ? 'it' : 'them'} under a
+            different key. Rename the key in GoHighLevel to the one shown, or it will keep showing
+            as missing:
+          </p>
+          <ul className="list-disc pl-5 text-xs text-text-secondary">
+            {result.keyMismatch.map((f) => (
+              <li key={f.key} className="break-words">
+                {f.label}: GoHighLevel key is <code>{f.actualKey}</code>, expected{' '}
+                <code>{`contact.${f.key}`}</code>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {result.nameClash.length > 0 && (
+        <div>
+          <p className="text-warning">
+            Not created, a field with the same name already exists under another key. Rename its key
+            in GoHighLevel (or map it) instead of creating a copy:
+          </p>
+          <ul className="list-disc pl-5 text-xs text-text-secondary">
+            {result.nameClash.map((f) => (
+              <li key={f.key} className="break-words">
+                {f.label}: exists as <code>{f.actualKey}</code>, expected{' '}
+                <code>{`contact.${f.key}`}</code>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
       {result.failed.length > 0 && (
         <div>
           <p className="text-danger">Could not create {result.failed.length}:</p>

@@ -11,7 +11,8 @@ import { GhlFieldCoverageCard } from '../components/settings/GhlFieldCoverageCar
  *   error      the endpoint answers 502
  *   slow       the call takes 2.5 s
  *   TASK-G29, press "Create N missing fields": (default) all created, coverage becomes ready; `perm` the token lacks
- *   the Custom Fields write permission; `partial` one field fails; `create_error` the call answers 502
+ *   the Custom Fields write permission; `partial` one field fails; `create_error` the call answers 502;
+ *   TASK-G29.1: `mismatch` created under another key, `clash` not created (same name exists), `notfinished` deadline hit
  */
 const ORG = 'dev-fixture-org';
 
@@ -117,10 +118,16 @@ function useStubs(scenario: string) {
         );
         const perm = scenario === 'perm';
         const partial = scenario === 'partial';
-        const made = perm ? [] : partial ? missing.slice(1) : missing;
+        const made = perm
+          ? []
+          : partial
+            ? missing.slice(1)
+            : scenario === 'notfinished'
+              ? missing.slice(0, 2)
+              : missing;
         return new Response(
           JSON.stringify({
-            coverage: fixture(perm || partial ? 'default' : 'all'),
+            coverage: fixture(perm || partial || scenario === 'notfinished' ? 'default' : 'all'),
             result: {
               created: made.map((m) => ({ key: m.key, label: m.label, id: `new-${m.key}` })),
               mapped: [],
@@ -133,10 +140,35 @@ function useStubs(scenario: string) {
                     },
                   ]
                 : [],
-              notAttempted: perm ? missing.length : 0,
-              stopped: perm
-                ? 'GoHighLevel refused to create fields: the Private Integration token needs the Custom Fields write permission (in GoHighLevel: Settings -> Private Integrations -> your integration -> Scopes -> Custom Fields: view and edit).'
-                : null,
+              keyMismatch:
+                scenario === 'mismatch'
+                  ? [
+                      {
+                        key: missing[0].key,
+                        label: missing[0].label,
+                        id: `new-${missing[0].key}`,
+                        actualKey: `contact.${missing[0].key}_2`,
+                      },
+                    ]
+                  : [],
+              nameClash:
+                scenario === 'clash'
+                  ? [
+                      {
+                        key: missing[0].key,
+                        label: missing[0].label,
+                        id: 'old-1',
+                        actualKey: 'contact.hand_made_copy',
+                      },
+                    ]
+                  : [],
+              notAttempted: perm ? missing.length : scenario === 'notfinished' ? 4 : 0,
+              stopped:
+                scenario === 'notfinished'
+                  ? 'Not finished: press the button again; it only creates what is still missing.'
+                  : perm
+                    ? 'GoHighLevel refused to create fields: the Private Integration token needs the Custom Fields write permission (in GoHighLevel: Settings -> Private Integrations -> your integration -> Scopes -> Custom Fields: view and edit).'
+                    : null,
             },
             mappingError: null,
           }),
