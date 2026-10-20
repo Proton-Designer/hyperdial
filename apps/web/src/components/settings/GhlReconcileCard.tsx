@@ -127,7 +127,7 @@ export function GhlReconcileCard() {
         Every 5 minutes HyperDial checks the GoHighLevel contacts of leads still waiting to be
         called. A contact marked Do Not Disturb (calls) or carrying one of your do-not-call tags
         becomes do-not-call here and drops off the list. Contacts with a signed-up or active tag or
-        stage below are marked completed. Off by default.
+        stage below are marked completed. On by default for a newly connected account.
       </p>
 
       {!saved && !loadError && (
