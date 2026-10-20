@@ -4023,7 +4023,17 @@ export interface CrmSyncJob {
   id: string;
   org_id: string;
   provider: string;
-  kind: 'disposition' | 'contact_upsert';
+  /** crm_sync_jobs_kind_check as of 20261019203749 (TASK-G21). */
+  kind:
+    | 'disposition'
+    | 'contact_upsert'
+    | 'nurture_tag'
+    | 'voicemail_tag'
+    | 'no_answer_tag'
+    | 'inbound_call_note'
+    | 'transfer_note'
+    | 'dnc_flag'
+    | 'objection_field';
   contact_id: string | null;
   status: 'queued' | 'running' | 'done' | 'failed' | 'dead';
   attempts: number;

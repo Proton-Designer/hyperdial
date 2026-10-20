@@ -2596,7 +2596,7 @@ function SyncStatusList() {
               className="flex items-center justify-between gap-3 py-2 border-b border-border-subtle last:border-0"
             >
               <div className="min-w-0">
-                <div className="text-sm text-white capitalize">{job.kind.replace('_', ' ')}</div>
+                <div className="text-sm text-white capitalize">{job.kind.replace(/_/g, ' ')}</div>
                 {job.status === 'dead' && job.last_error && (
                   <div className="text-xs text-danger truncate" title={job.last_error}>
                     {job.last_error}
