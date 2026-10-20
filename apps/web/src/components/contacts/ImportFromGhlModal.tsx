@@ -44,6 +44,7 @@ export function ImportFromGhlModal({
   const [mode, setMode] = useState<'tag' | 'search'>(initialInput?.mode ?? 'tag');
   const [value, setValue] = useState(initialInput?.value ?? '');
   const [campaignId, setCampaignId] = useState<string>(initialInput?.campaignId ?? NO_CAMPAIGN);
+  const [listName, setListName] = useState(initialInput?.listName ?? '');
   const [campaigns, setCampaigns] = useState<CampaignWithStats[]>([]);
   const [ghlConnected, setGhlConnected] = useState<boolean | null>(null);
   const [loading, setLoading] = useState(false);
@@ -56,6 +57,7 @@ export function ImportFromGhlModal({
     setMode(initialInput?.mode ?? 'tag');
     setValue(initialInput?.value ?? '');
     setCampaignId(initialInput?.campaignId ?? NO_CAMPAIGN);
+    setListName(initialInput?.listName ?? '');
     setError(null);
     setResult(null);
     hasAutoSubmitted.current = false;
@@ -105,6 +107,7 @@ export function ImportFromGhlModal({
       mode,
       value: trimmed,
       campaignId: campaignId === NO_CAMPAIGN ? undefined : campaignId,
+      listName: listName.trim() || undefined,
     });
   };
 
@@ -321,6 +324,23 @@ export function ImportFromGhlModal({
                       ))}
                     </SelectContent>
                   </Select>
+                </div>
+
+                <div>
+                  <label className="text-sm text-text-secondary block mb-1">
+                    List name (optional)
+                  </label>
+                  <input
+                    type="text"
+                    value={listName}
+                    maxLength={120}
+                    onChange={(e) => setListName(e.target.value)}
+                    placeholder="GHL import <date>"
+                    className="w-full bg-surface-2 border border-white/10 rounded-xl px-4 py-3 text-white placeholder-text-muted focus:outline-none focus:border-accent-to transition-colors"
+                  />
+                  <p className="text-xs text-text-secondary mt-1">
+                    Shown as the lead list in GHL. Left empty, it is "GHL import" plus today's date.
+                  </p>
                 </div>
 
                 <button
