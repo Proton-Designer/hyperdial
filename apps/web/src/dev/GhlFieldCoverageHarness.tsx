@@ -10,6 +10,8 @@ import { GhlFieldCoverageCard } from '../components/settings/GhlFieldCoverageCar
  *   all        everything ready
  *   error      the endpoint answers 502
  *   slow       the call takes 2.5 s
+ *   TASK-G29, press "Create N missing fields": (default) all created, coverage becomes ready; `perm` the token lacks
+ *   the Custom Fields write permission; `partial` one field fails; `create_error` the call answers 502
  */
 const ORG = 'dev-fixture-org';
 
@@ -103,6 +105,44 @@ function useStubs(scenario: string) {
       if (!String(url).includes('/ghl-field-coverage'))
         return originalFetch(url as RequestInfo, init);
       await new Promise((r) => setTimeout(r, scenario === 'slow' ? 2500 : 120));
+      const body = init?.body ? JSON.parse(String(init.body)) : {};
+      if (body.action === 'create_missing') {
+        if (scenario === 'create_error')
+          return new Response(JSON.stringify({ error: 'GHL request failed: timeout' }), {
+            status: 502,
+          });
+        const f = fixture('default');
+        const missing = [...f.provider.items, ...f.intern.items].filter(
+          (i) => i.status !== 'ready'
+        );
+        const perm = scenario === 'perm';
+        const partial = scenario === 'partial';
+        const made = perm ? [] : partial ? missing.slice(1) : missing;
+        return new Response(
+          JSON.stringify({
+            coverage: fixture(perm || partial ? 'default' : 'all'),
+            result: {
+              created: made.map((m) => ({ key: m.key, label: m.label, id: `new-${m.key}` })),
+              mapped: [],
+              failed: partial
+                ? [
+                    {
+                      key: missing[0].key,
+                      label: missing[0].label,
+                      error: 'GHL POST /custom-fields/ failed (400): fieldKey already exists',
+                    },
+                  ]
+                : [],
+              notAttempted: perm ? missing.length : 0,
+              stopped: perm
+                ? 'GoHighLevel refused to create fields: the Private Integration token needs the Custom Fields write permission (in GoHighLevel: Settings -> Private Integrations -> your integration -> Scopes -> Custom Fields: view and edit).'
+                : null,
+            },
+            mappingError: null,
+          }),
+          { status: 200 }
+        );
+      }
       return scenario === 'error'
         ? new Response(JSON.stringify({ error: 'GHL request failed: timeout' }), { status: 502 })
         : new Response(JSON.stringify(fixture(scenario)), { status: 200 });

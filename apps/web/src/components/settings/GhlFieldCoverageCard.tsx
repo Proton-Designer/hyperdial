@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import { AlertTriangle, CheckCircle2, Circle, Loader2 } from 'lucide-react';
 import {
+  createMissingGhlFields,
   getGhlFieldCoverage,
+  type GhlCreateFieldsResult,
   type GhlFieldCoverage,
   type GhlFieldCoverageGroup,
   type GhlFieldCoverageItem,
@@ -85,15 +87,87 @@ function Section({
   );
 }
 
+/** Fields the "Create missing" button would create or map: anything not ready (a warning on a ready field is not). */
+function missingCount(d: GhlFieldCoverage): number {
+  return [...d.provider.items, ...d.intern.items].filter((i) => i.status !== 'ready').length;
+}
+
+function CreateResult({
+  result,
+  mappingError,
+}: {
+  result: GhlCreateFieldsResult;
+  mappingError: string | null;
+}) {
+  return (
+    <div
+      className="mb-3 rounded-app border border-white/10 bg-surface-2 p-3 text-sm space-y-1"
+      role="status"
+    >
+      <p className="text-white">
+        {result.created.length > 0
+          ? `Created ${result.created.length} field${result.created.length === 1 ? '' : 's'} in GoHighLevel.`
+          : 'Nothing was created.'}
+        {result.mapped.length > 0 && ` Mapped ${result.mapped.length} that already existed.`}
+      </p>
+      {result.stopped && <p className="text-warning">{result.stopped}</p>}
+      {result.notAttempted > 0 && (
+        <p className="text-text-secondary">
+          {result.notAttempted} not tried. Press the button again after fixing this.
+        </p>
+      )}
+      {mappingError && (
+        <p className="text-danger">
+          The fields exist in GoHighLevel but could not be mapped ({mappingError}). Press the button
+          again to map them.
+        </p>
+      )}
+      {result.failed.length > 0 && (
+        <div>
+          <p className="text-danger">Could not create {result.failed.length}:</p>
+          <ul className="list-disc pl-5 text-xs text-text-secondary">
+            {result.failed.map((f) => (
+              <li key={f.key} className="break-words">
+                {f.label}: {f.error}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /**
  * TASK-G17: Settings -> GoHighLevel -> "Field coverage". Owner/admin only (the parent renders it only
- * for them; the endpoint enforces it too). A read-only checklist of every field HyperDial pushes and
- * whether it exists in this org's GoHighLevel.
+ * for them; the endpoint enforces it too). A checklist of every field HyperDial pushes and whether it
+ * exists in this org's GoHighLevel. TASK-G29: "Create N missing fields" makes them (and maps the call
+ * fields) in one press.
  */
 export function GhlFieldCoverageCard() {
   const [data, setData] = useState<GhlFieldCoverage | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [creating, setCreating] = useState(false);
+  const [created, setCreated] = useState<{
+    result: GhlCreateFieldsResult;
+    mappingError: string | null;
+  } | null>(null);
+
+  const create = async () => {
+    setCreating(true);
+    setError(null);
+    setCreated(null);
+    try {
+      const out = await createMissingGhlFields();
+      setData(out.coverage);
+      setCreated({ result: out.result, mappingError: out.mappingError });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to create the GHL fields');
+    } finally {
+      setCreating(false);
+    }
+  };
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -116,8 +190,8 @@ export function GhlFieldCoverageCard() {
       <h3 className="text-white font-medium mb-1">Field coverage</h3>
       <p className="text-sm text-text-secondary mb-4">
         HyperDial skips any field that does not exist in GoHighLevel yet — nothing breaks, the data
-        just is not sent. This checks which of the fields it sends are set up. It only reads; create
-        missing fields in GoHighLevel.
+        just is not sent. This checks which of the fields it sends are set up, and can create the
+        missing ones for you (in a "HyperDial" folder, with the exact dropdown options).
       </p>
 
       {loading && (
@@ -147,6 +221,20 @@ export function GhlFieldCoverageCard() {
               Check again
             </button>
           </p>
+          {missingCount(data) > 0 && (
+            <button
+              type="button"
+              onClick={create}
+              disabled={creating}
+              className="mb-3 w-full sm:w-auto px-4 py-2 bg-gradient-to-r from-accent-from to-accent-to rounded-app-md text-white text-sm font-medium disabled:opacity-50 flex items-center justify-center gap-2"
+            >
+              {creating && <Loader2 className="w-4 h-4 animate-spin" />}
+              {creating
+                ? 'Creating in GoHighLevel...'
+                : `Create ${missingCount(data)} missing field${missingCount(data) === 1 ? '' : 's'} in GoHighLevel`}
+            </button>
+          )}
+          {created && <CreateResult result={created.result} mappingError={created.mappingError} />}
           {data.total === 0 ? (
             <p className="text-sm text-text-secondary">No fields to check.</p>
           ) : (

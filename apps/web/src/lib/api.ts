@@ -3854,7 +3854,8 @@ export interface GhlFieldCoverage {
   total: number;
 }
 
-/** Owner/admin only. Read-only: lists the GHL location's contact fields once; creates nothing. */
+/** Owner/admin only. Read-only: lists the GHL location's contact fields once; creates nothing
+ *  (see createMissingGhlFields for that). */
 export async function getGhlFieldCoverage(): Promise<GhlFieldCoverage> {
   const res = await fetch(`${getFunctionsUrl()}/ghl-field-coverage`, {
     method: 'POST',
@@ -3864,6 +3865,35 @@ export async function getGhlFieldCoverage(): Promise<GhlFieldCoverage> {
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || 'Failed to check GHL fields');
   return data as GhlFieldCoverage;
+}
+
+/** TASK-G29: outcome of "Create missing fields in GHL". */
+export interface GhlCreateFieldsResult {
+  created: { key: string; label: string; id: string }[];
+  /** provider fields that already existed in GHL under the expected key and were only mapped */
+  mapped: { key: string; label: string; id: string }[];
+  failed: { key: string; label: string; error: string }[];
+  /** not tried because the run stopped early */
+  notAttempted: number;
+  /** plain-words reason the run stopped early (e.g. the token lacks the Custom Fields write permission) */
+  stopped: string | null;
+}
+
+/** Owner/admin only. Creates every missing field in GHL (dropdowns with their exact options), maps the provider
+ *  ones, and returns the fresh coverage. Safe to press again: it only creates what is still missing. */
+export async function createMissingGhlFields(): Promise<{
+  coverage: GhlFieldCoverage;
+  result: GhlCreateFieldsResult;
+  mappingError: string | null;
+}> {
+  const res = await fetch(`${getFunctionsUrl()}/ghl-field-coverage`, {
+    method: 'POST',
+    headers: await getEdgeFunctionHeaders(),
+    body: JSON.stringify({ action: 'create_missing' }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Failed to create the GHL fields');
+  return data;
 }
 
 export async function connectGhl(
