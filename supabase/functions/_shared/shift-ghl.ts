@@ -51,7 +51,7 @@ export interface FieldDef {
 /** What happened to one outbox row. `release` = not attempted (held, deferred, or batch stopped):
  *  the lease is dropped without counting an attempt. */
 export type RowResult =
-  | { id: number; outcome: 'done'; appointmentId?: string }
+  | { id: number; outcome: 'done'; appointmentId?: string; skippedFields?: string[] }
   | { id: number; outcome: 'retry'; error: string }
   | { id: number; outcome: 'error'; error: string }
   | { id: number; outcome: 'release'; error?: string; delaySeconds?: number };
@@ -391,14 +391,17 @@ export async function processOutbox(rows: OutboxRow[], deps: ProcessDeps): Promi
       if (!contactId) {
         throw new ShiftGhlError('intern has no GHL contact id', 0, false);
       }
-      const appointmentId = await processRow(row, contactId, deps, apptIds, async () => {
+      const done = await processRow(row, contactId, deps, apptIds, async () => {
         defs ??= await deps.loadFieldDefs();
         return defs;
       });
       await finish({
         id: row.id,
         outcome: 'done',
-        ...(appointmentId ? { appointmentId } : {}),
+        ...(done.appointmentId ? { appointmentId: done.appointmentId } : {}),
+        ...(done.skippedFields && done.skippedFields.length > 0
+          ? { skippedFields: done.skippedFields }
+          : {}),
       });
     } catch (e) {
       const err = e instanceof ShiftGhlError ? e : new ShiftGhlError(String(e), 0, true);
@@ -438,7 +441,7 @@ async function processRow(
   deps: ProcessDeps,
   apptIds: Map<string, string>,
   getDefs: () => Promise<FieldDef[]>
-): Promise<string | undefined> {
+): Promise<{ appointmentId?: string; skippedFields?: string[] }> {
   const { http, settings } = deps;
   switch (row.kind) {
     case 'appointment_upsert':
@@ -456,11 +459,11 @@ async function processRow(
         shift.status === 'excused';
       if (cancelled) {
         // Never created in GHL: nothing to cancel.
-        if (!apptId) return undefined;
+        if (!apptId) return {};
         await http.request('PUT', `/calendars/events/appointments/${apptId}`, GHL_APPT_VERSION, {
           appointmentStatus: 'cancelled',
         });
-        return undefined;
+        return {};
       }
       if (!settings.calendarId) {
         throw new ShiftGhlError('no GHL calendar is set in Shift settings', 0, false);
@@ -477,7 +480,7 @@ async function processRow(
         await http.request('PUT', `/calendars/events/appointments/${apptId}`, GHL_APPT_VERSION, {
           appointmentStatus: status,
         });
-        return undefined;
+        return {};
       }
       if (!apptId) {
         const res = await http.request(
@@ -495,7 +498,7 @@ async function processRow(
           throw new ShiftGhlError('GHL did not return an appointment id', 0, false);
         }
         apptIds.set(shift.id, id);
-        return id;
+        return { appointmentId: id };
       }
       await http.request(
         'PUT',
@@ -503,37 +506,37 @@ async function processRow(
         GHL_APPT_VERSION,
         editAppointmentBody(shift, { settings })
       );
-      return undefined;
+      return {};
     }
     case 'contact_fields': {
       const fields = (row.payload.fields ?? {}) as Record<string, unknown>;
       const { items, missing } = buildCustomFields(fields, await getDefs());
-      if (missing.length > 0) {
-        throw new ShiftGhlError(`GHL custom fields missing: ${missing.join(', ')}`, 0, false);
+      // A key with no definition in the location (the field is not created in GHL yet) is skipped and
+      // reported, never an error: the defined keys of the same event still go out (TASK-G07).
+      if (items.length > 0) {
+        await http.request('PUT', `/contacts/${contactId}`, GHL_CONTACT_VERSION, {
+          customFields: items,
+        });
       }
-      if (items.length === 0) return undefined;
-      await http.request('PUT', `/contacts/${contactId}`, GHL_CONTACT_VERSION, {
-        customFields: items,
-      });
-      return undefined;
+      return { skippedFields: missing };
     }
     case 'contact_note': {
       const body = String(row.payload.body ?? '');
-      if (!body) return undefined;
+      if (!body) return {};
       await http.request('POST', `/contacts/${contactId}/notes`, GHL_CONTACT_VERSION, { body });
-      return undefined;
+      return {};
     }
     case 'contact_tags_remove':
     case 'contact_tags_add': {
       const tags = ((row.payload.tags ?? []) as unknown[]).map(String).filter(Boolean);
-      if (tags.length === 0) return undefined;
+      if (tags.length === 0) return {};
       await http.request(
         row.kind === 'contact_tags_remove' ? 'DELETE' : 'POST',
         `/contacts/${contactId}/tags`,
         GHL_CONTACT_VERSION,
         { tags }
       );
-      return undefined;
+      return {};
     }
   }
 }

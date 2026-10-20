@@ -98,6 +98,11 @@ async function recordResult(supabase: SupabaseClient, r: RowResult): Promise<voi
     if (error) console.error(`[shift-ghl-sync] ${name} failed for row ${r.id}:`, error.message);
   };
   if (r.outcome === 'done') {
+    if (r.skippedFields?.length) {
+      console.warn(
+        `[shift-ghl-sync] row ${r.id}: GHL custom fields not defined, skipped: ${r.skippedFields.join(', ')}`
+      );
+    }
     const { error } = await supabase.rpc('complete_shift_outbox', {
       p_id: r.id,
       p_appointment_id: r.appointmentId ?? null,

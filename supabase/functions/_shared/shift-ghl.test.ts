@@ -341,33 +341,58 @@ Deno.test(
 );
 
 Deno.test(
-  'missing custom-field definitions -> permanent error naming them; later note/tags of that event are skipped',
+  'G07: keys without a GHL definition are skipped and reported; the defined keys are still pushed, later steps run',
   async () => {
     const { http, calls } = fakeHttp();
     const { d, recorded } = deps(http);
     await processOutbox(
       [
-        row({ kind: 'contact_fields', payload: { fields: { nope_field: 'x' } } }),
+        row({
+          kind: 'contact_fields',
+          payload: {
+            fields: { nope_field: 'x', shift_week_submitted: 'Yes', last_shift_sign_ups: 3 },
+          },
+        }),
         row({ kind: 'contact_note', payload: { body: 'n' } }),
         row({ kind: 'contact_tags_remove', payload: { tags: ['a'] } }),
         row({ kind: 'contact_tags_add', payload: { tags: ['b'] } }),
-        row({
-          kind: 'contact_note',
-          event: 'Other',
-          payload: { body: 'later event' },
-        }),
       ],
       d
     );
     assertEquals(
       recorded.map((r) => r.outcome),
-      ['error', 'error', 'error', 'error', 'done']
+      ['done', 'done', 'done', 'done']
     );
-    assertStringIncludes((recorded[0] as { error: string }).error, 'nope_field');
-    assertEquals((recorded[1] as { error: string }).error, 'skipped: earlier step failed');
-    assertEquals(calls.length, 1); // only the later event's note
+    assertEquals((recorded[0] as { skippedFields?: string[] }).skippedFields, [
+      'nope_field',
+      'last_shift_sign_ups',
+    ]);
+    assertEquals(calls.length, 4);
+    assertEquals(calls[0].body, { customFields: [{ id: 'f1', field_value: 'Yes' }] });
   }
 );
+
+Deno.test('G07: every key undefined in GHL -> no PUT, row done, all keys reported', async () => {
+  const { http, calls } = fakeHttp();
+  const { d, recorded } = deps(http);
+  await processOutbox(
+    [row({ kind: 'contact_fields', payload: { fields: { a_new: 1, b_new: 'x' } } })],
+    d
+  );
+  assertEquals(calls.length, 0);
+  assertEquals(recorded[0].outcome, 'done');
+  assertEquals((recorded[0] as { skippedFields?: string[] }).skippedFields, ['a_new', 'b_new']);
+});
+
+Deno.test('G07: a fully defined payload reports nothing skipped', async () => {
+  const { http } = fakeHttp();
+  const { d, recorded } = deps(http);
+  await processOutbox(
+    [row({ kind: 'contact_fields', payload: { fields: { shift_week_submitted: 'Yes' } } })],
+    d
+  );
+  assertEquals((recorded[0] as { skippedFields?: string[] }).skippedFields, undefined);
+});
 
 Deno.test('note and tags: URLs and body keys; tags DELETE before POST', async () => {
   const { http, calls } = fakeHttp();
