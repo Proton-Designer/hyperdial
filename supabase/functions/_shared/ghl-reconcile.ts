@@ -63,6 +63,21 @@ export function decideReconcile(c: GhlContact, cfg: ReconcileConfig): ReconcileD
   return null;
 }
 
+/** Permanent per-contact GHL read failures (the contact is gone / the request can never succeed). Anything else
+ *  -- 429, 5xx, 401/403 (token), timeouts, network errors -- is transient. ghlRequest's message is
+ *  `GHL API GET /path failed (<status>): ...`. */
+export function isTransientReadError(err: unknown): boolean {
+  const m = /\((\d{3})\)/.exec(err instanceof Error ? err.message : String(err));
+  if (!m) return true;
+  return ![400, 404, 410, 422].includes(Number(m[1]));
+}
+
+/** At most this many transient-error contacts are handed back per tick unless most of the tick failed
+ *  (a GHL outage, not a bad contact): a contact that keeps erroring can then hold at most this many slots. */
+export function transientReleaseCap(batchSize: number): number {
+  return Math.max(10, Math.floor(batchSize / 4));
+}
+
 const STAGE_PAGE_LIMIT = 100;
 const STAGE_MAX_PAGES = 10;
 
@@ -225,6 +240,7 @@ export async function reconcileOrg(
     }
   };
 
+  const transientErrors: ClaimedRow[] = [];
   for (let i = 0; i < batch.length; i++) {
     const row = batch[i];
     if (args.deadlineMs !== undefined && Date.now() > args.deadlineMs) {
@@ -246,10 +262,22 @@ export async function reconcileOrg(
         result.decisions[d.action]++;
       }
     } catch (err) {
-      // a deleted/unreachable GHL contact is left alone this round (already lease-stamped)
+      // permanent (deleted contact, bad request): keep the lease stamp so it cannot starve the queue.
+      // transient (429/5xx/network/token): handed back after the loop (TASK-G25 / G23 F4).
       result.readErrors++;
+      if (isTransientReadError(err)) transientErrors.push(row);
       console.warn(`[ghl-reconcile] read ${row.ghl_contact_id} failed`, err);
     }
+  }
+
+  // G25 / G23 F4: transient read failures must not cost the contact a whole rotation. Hand back the stamp
+  // of all of them when most of the tick failed (outage), else at most transientReleaseCap(batch) of them.
+  if (transientErrors.length > 0) {
+    const attempted = result.checked + result.readErrors;
+    const outage = transientErrors.length * 2 >= attempted;
+    await release(
+      outage ? transientErrors : transientErrors.slice(0, transientReleaseCap(args.batchSize))
+    );
   }
 
   // 4. apply atomically (chunked). If a chunk fails, the decisions read this tick are lost, so hand

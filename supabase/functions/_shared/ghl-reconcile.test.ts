@@ -4,7 +4,9 @@ import {
   decideReconcile,
   fetchContactIdsInStage,
   ghlBlocksCalls,
+  isTransientReadError,
   reconcileOrg,
+  transientReleaseCap,
   type ReconcileConfig,
 } from './ghl-reconcile.ts';
 
@@ -435,3 +437,105 @@ Deno.test('reconcileOrg (G19): no deadline pressure -> no release call', async (
     restore();
   }
 });
+
+Deno.test(
+  'isTransientReadError: only deleted/bad-request statuses are permanent (TASK-G25)',
+  () => {
+    for (const code of [400, 404, 410, 422])
+      assertEquals(
+        isTransientReadError(new Error(`GHL API GET /contacts/x failed (${code}): {}`)),
+        false
+      );
+    for (const code of [401, 403, 429, 500, 502, 503])
+      assertEquals(
+        isTransientReadError(new Error(`GHL API GET /contacts/x failed (${code}): {}`)),
+        true
+      );
+    assertEquals(isTransientReadError(new TypeError('network down')), true); // no status at all
+  }
+);
+
+Deno.test('transientReleaseCap: a quarter of the batch, at least 10', () => {
+  assertEquals(
+    [transientReleaseCap(100), transientReleaseCap(300), transientReleaseCap(20)],
+    [25, 75, 10]
+  );
+});
+
+function statusStub(byId: Record<string, number>) {
+  return stubFetch((url) => {
+    const id = new URL(url).pathname.split('/').pop()!;
+    const status = byId[id] ?? 200;
+    return status === 200 ? Response.json({ contact: { id } }) : new Response('err', { status });
+  });
+}
+
+Deno.test(
+  'reconcileOrg (G25): transient read errors are handed back, permanent ones keep the stamp',
+  async () => {
+    const restore = statusStub({ 'g-gone': 404, 'g-limited': 429, 'g-5xx': 503 });
+    const { sb, rpcs } = fakeSupabase({
+      claim: [
+        { contact_id: 'c1', ghl_contact_id: 'g-ok', prev_reconciled_at: '2026-10-01T00:00:00Z' },
+        { contact_id: 'c2', ghl_contact_id: 'g-gone', prev_reconciled_at: '2026-10-02T00:00:00Z' },
+        {
+          contact_id: 'c3',
+          ghl_contact_id: 'g-limited',
+          prev_reconciled_at: '2026-10-03T00:00:00Z',
+        },
+        { contact_id: 'c4', ghl_contact_id: 'g-ok2', prev_reconciled_at: null },
+        { contact_id: 'c5', ghl_contact_id: 'g-ok3', prev_reconciled_at: null },
+        { contact_id: 'c6', ghl_contact_id: 'g-ok4', prev_reconciled_at: null },
+      ],
+    });
+    try {
+      const r = await reconcileOrg(sb, createGhlClient('tok'), orgArgs);
+      assertEquals([r.checked, r.readErrors, r.released], [4, 2, 1]);
+      const rel = rpcs.filter((x) => x.fn === 'release_ghl_reconcile_leases');
+      assertEquals(rel.length, 1);
+      // only the 429 contact is handed back (the 404 keeps its stamp), with its previous value
+      assertEquals(rel[0].args.p_items, [
+        { contact_id: 'c3', prev_reconciled_at: '2026-10-03T00:00:00Z' },
+      ]);
+    } finally {
+      restore();
+    }
+  }
+);
+
+Deno.test(
+  'reconcileOrg (G25): when most of a tick fails transiently (outage) all of them are handed back; isolated ones are capped',
+  async () => {
+    // outage: 3 of 3 reads fail with 503 -> all released
+    let restore = statusStub({ 'g-1': 503, 'g-2': 503, 'g-3': 503 });
+    let t = fakeSupabase({
+      claim: ['1', '2', '3'].map((n) => ({
+        contact_id: `c${n}`,
+        ghl_contact_id: `g-${n}`,
+        prev_reconciled_at: null,
+      })),
+    });
+    try {
+      const r = await reconcileOrg(t.sb, createGhlClient('tok'), orgArgs);
+      assertEquals(r.released, 3);
+    } finally {
+      restore();
+    }
+    // isolated: 12 transient failures among 100 reads (< half) with batch 40 -> cap = max(10, 10) = 10 released
+    const failing: Record<string, number> = {};
+    const claim = Array.from({ length: 100 }, (_, i) => ({
+      contact_id: `c${i}`,
+      ghl_contact_id: `g-${i}`,
+      prev_reconciled_at: null,
+    }));
+    for (let i = 0; i < 12; i++) failing[`g-${i}`] = 500;
+    restore = statusStub(failing);
+    t = fakeSupabase({ claim });
+    try {
+      const r = await reconcileOrg(t.sb, createGhlClient('tok'), { ...orgArgs, batchSize: 40 });
+      assertEquals([r.readErrors, r.released], [12, 10]);
+    } finally {
+      restore();
+    }
+  }
+);
