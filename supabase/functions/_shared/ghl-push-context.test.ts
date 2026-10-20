@@ -1,6 +1,10 @@
 import { assertEquals } from 'jsr:@std/assert@1';
 import type { SupabaseClient } from 'npm:@supabase/supabase-js@2';
-import { resolveCallerGhlUserId, resolveDispositionPushTimeContext } from './ghl-push-context.ts';
+import {
+  resolveCallerGhlUserId,
+  resolveDispositionPushTimeContext,
+  resolveSessionContext,
+} from './ghl-push-context.ts';
 
 type Row = Record<string, unknown>;
 
@@ -46,7 +50,9 @@ const TABLES = {
     },
   ],
   campaign_leads: [{ id: 'lead-1', attempts: 4 }],
-  dial_sessions: [{ id: 'sess-1', agent_id: 'agent-1' }],
+  dial_sessions: [{ id: 'sess-1', agent_id: 'agent-1', campaign_id: 'camp-1' }],
+  profiles: [{ user_id: 'agent-1', first_name: 'Jane', last_name: 'Intern' }],
+  campaigns: [{ id: 'camp-1', name: 'Austin HVAC batch 3' }],
   org_members: [
     { org_id: 'org-1', user_id: 'agent-1', ghl_user_id: 'ghl-u-9' },
     { org_id: 'org-2', user_id: 'agent-1', ghl_user_id: 'other-org-user' },
@@ -61,6 +67,8 @@ Deno.test(
       lastCallAt: '2026-10-19T20:00:00Z',
       callAttempts: 4,
       callerGhlUserId: 'ghl-u-9',
+      callerName: 'Jane Intern',
+      leadList: 'Austin HVAC batch 3',
     });
   }
 );
@@ -73,6 +81,8 @@ Deno.test(
       lastCallAt: '2026-10-19T21:00:00Z',
       callAttempts: null,
       callerGhlUserId: null,
+      callerName: null,
+      leadList: null,
     });
   }
 );
@@ -81,7 +91,13 @@ Deno.test(
   'resolveDispositionPushTimeContext: no leg id / unknown leg -> all null, no further queries',
   async () => {
     const log: string[] = [];
-    const nulls = { lastCallAt: null, callAttempts: null, callerGhlUserId: null };
+    const nulls = {
+      lastCallAt: null,
+      callAttempts: null,
+      callerGhlUserId: null,
+      callerName: null,
+      leadList: null,
+    };
     assertEquals(
       await resolveDispositionPushTimeContext(stubSupabase(TABLES, log), 'org-1', null),
       nulls
@@ -90,7 +106,7 @@ Deno.test(
       await resolveDispositionPushTimeContext(stubSupabase(TABLES, log), 'org-1', 'nope'),
       nulls
     );
-    assertEquals(log, ['call_legs:dispositioned_at, ended_at, lead_id, session_id']);
+    assertEquals(log, ['call_legs:dispositioned_at, ended_at, created_at, lead_id, session_id']);
   }
 );
 
@@ -110,3 +126,48 @@ Deno.test('resolveCallerGhlUserId: member without ghl_user_id -> null', async ()
   });
   assertEquals(await resolveCallerGhlUserId(sb, 'org-1', 'sess-1'), null);
 });
+
+Deno.test(
+  'resolveDispositionPushTimeContext: TASK-G11 last resort created_at when ended_at and dispositioned_at are null',
+  async () => {
+    const sb = stubSupabase({
+      ...TABLES,
+      call_legs: [
+        {
+          id: 'leg-3',
+          ended_at: null,
+          dispositioned_at: null,
+          created_at: '2026-10-19T19:00:00Z',
+          lead_id: null,
+          session_id: null,
+        },
+      ],
+    });
+    const ctx = await resolveDispositionPushTimeContext(sb, 'org-1', 'leg-3');
+    assertEquals(ctx.lastCallAt, '2026-10-19T19:00:00Z');
+  }
+);
+
+Deno.test(
+  'resolveSessionContext: TASK-G11 caller name (first + last, blanks dropped) and campaign name',
+  async () => {
+    assertEquals(await resolveSessionContext(stubSupabase(TABLES), 'org-1', 'sess-1'), {
+      callerGhlUserId: 'ghl-u-9',
+      callerName: 'Jane Intern',
+      leadList: 'Austin HVAC batch 3',
+    });
+    const noLast = stubSupabase({
+      ...TABLES,
+      profiles: [{ user_id: 'agent-1', first_name: 'Jane', last_name: ' ' }],
+    });
+    assertEquals((await resolveSessionContext(noLast, 'org-1', 'sess-1')).callerName, 'Jane');
+    const noProfile = stubSupabase({ ...TABLES, profiles: [], campaigns: [] });
+    const r = await resolveSessionContext(noProfile, 'org-1', 'sess-1');
+    assertEquals([r.callerName, r.leadList, r.callerGhlUserId], [null, null, 'ghl-u-9']);
+    assertEquals(await resolveSessionContext(stubSupabase(TABLES), 'org-1', null), {
+      callerGhlUserId: null,
+      callerName: null,
+      leadList: null,
+    });
+  }
+);

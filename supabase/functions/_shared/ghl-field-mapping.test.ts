@@ -73,3 +73,14 @@ Deno.test(
     assertEquals(result, { callback_at: 'f1', call_duration: 'f2', recording_url: 'f3' });
   }
 );
+
+Deno.test(
+  'suggestGhlFieldMapping: TASK-G11 called_by / lead_list match the spec §1 field names',
+  () => {
+    const result = suggestGhlFieldMapping([
+      { id: 'f1', name: 'Called By' },
+      { id: 'f2', name: 'Lead List / Batch ID' },
+    ]);
+    assertEquals(result, { called_by: 'f1', lead_list: 'f2' });
+  }
+);

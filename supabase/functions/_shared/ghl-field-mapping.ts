@@ -24,7 +24,8 @@ import type { GhlCustomFieldDef } from './ghl-client.ts';
  *  `GHL_FIELD_MAPPING_KNOWN_COLUMNS` below (that set is pull-direction only).
  *
  *  TASK-G02 (spec §1): `callback_at`/`call_duration`/`recording_url` are three more push-only keys
- *  (callback date/time, call duration in seconds, recording link). */
+ *  (callback date/time, call duration in seconds, recording link). TASK-G11 adds `called_by`
+ *  (intern display name), `called_by_ghl_user_id` and `lead_list` (campaign name). */
 export const GHL_FIELD_MAPPING_TARGET_KEYS = [
   'business_name',
   'website',
@@ -40,6 +41,9 @@ export const GHL_FIELD_MAPPING_TARGET_KEYS = [
   'callback_at',
   'call_duration',
   'recording_url',
+  'called_by',
+  'called_by_ghl_user_id',
+  'lead_list',
 ] as const;
 
 /** TASK-T1 (GHL-6): `business_name`/`website`/`rating`/`review_count` already have DEDICATED,
@@ -72,6 +76,9 @@ const TARGET_KEY_SYNONYMS: Record<string, string[]> = {
   callback_at: ['callback date/time', 'callback date', 'callback time', 'callback at'],
   call_duration: ['call duration', 'call duration (sec)', 'call length', 'duration'],
   recording_url: ['recording link', 'recording url', 'recording'],
+  called_by: ['called by', 'caller', 'intern'],
+  called_by_ghl_user_id: ['called by user id', 'called by ghl user id'],
+  lead_list: ['lead list', 'lead list / batch id', 'batch id', 'list name'],
 };
 
 function normalize(s: string): string {

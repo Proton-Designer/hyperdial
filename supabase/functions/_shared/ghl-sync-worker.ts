@@ -59,6 +59,11 @@ export interface DispositionPushTimeContext {
    *  GHL user mapped -- the task is then created unassigned, as before. Never sent on the
    *  contact itself (the contact's GHL owner is GHL-controlled, spec §4). */
   callerGhlUserId?: string | null;
+  /** TASK-G11 (spec §1 "Called by"): the calling intern's display name, pushed to the `called_by`
+   *  custom field. A custom field, never the contact's GHL owner. */
+  callerName?: string | null;
+  /** TASK-G11 (spec §1 "Lead list / batch ID"): the dial session's campaign name (`lead_list`). */
+  leadList?: string | null;
 }
 
 /** Builds the `{id, fieldValue}[]` array `updateContactCustomFields` needs from whichever of
@@ -81,6 +86,10 @@ export function buildPushCustomFields(
     callDurationSeconds?: number | null;
     /** TASK-G02: link only, never the audio. */
     recordingUrl?: string | null;
+    /** TASK-G11 */
+    calledBy?: string | null;
+    calledByGhlUserId?: string | null;
+    leadList?: string | null;
   }
 ): { id: string; fieldValue: string }[] {
   if (!mapping) return [];
@@ -107,6 +116,9 @@ export function buildPushCustomFields(
       : String(values.callDurationSeconds)
   );
   push('recording_url', values.recordingUrl);
+  push('called_by', values.calledBy);
+  push('called_by_ghl_user_id', values.calledByGhlUserId);
+  push('lead_list', values.leadList);
   return out;
 }
 
@@ -283,6 +295,9 @@ export async function processDispositionJob(
         callbackAt: args.payload.callback_at,
         callDurationSeconds: args.payload.duration_seconds,
         recordingUrl: args.payload.recording_url,
+        calledBy: args.pushTimeContext?.callerName ?? args.payload.agent_name,
+        calledByGhlUserId: args.pushTimeContext?.callerGhlUserId,
+        leadList: args.pushTimeContext?.leadList,
       });
       if (fields.length > 0) {
         await args.client.updateContactCustomFields(ghlContactId, fields);
@@ -503,7 +518,10 @@ export interface ProcessTagJobArgs {
   pushConfig?: GhlPushConfig;
   /** TASK-G03: only `lastCallAt`/`callAttempts` are used -- an automated no-answer/voicemail has no
    *  callback, duration worth a field, recording or stage move. */
-  pushTimeContext?: Pick<DispositionPushTimeContext, 'lastCallAt' | 'callAttempts'>;
+  pushTimeContext?: Pick<
+    DispositionPushTimeContext,
+    'lastCallAt' | 'callAttempts' | 'callerName' | 'callerGhlUserId' | 'leadList'
+  >;
 }
 
 /** TASK-F-T3 (VMD-3, GHL-9 overlap): "voicemail_tag"/"no_answer_tag" job kinds -- an automated
@@ -547,6 +565,9 @@ export async function processTagJob(args: ProcessTagJobArgs): Promise<ProcessJob
       const fields = buildPushCustomFields(args.pushConfig?.pushFieldMapping, {
         lastCallAt: args.pushTimeContext?.lastCallAt,
         callAttempts: args.pushTimeContext?.callAttempts,
+        calledBy: args.pushTimeContext?.callerName,
+        calledByGhlUserId: args.pushTimeContext?.callerGhlUserId,
+        leadList: args.pushTimeContext?.leadList,
       });
       if (fields.length > 0) {
         await args.client.updateContactCustomFields(ghlContactId, fields);

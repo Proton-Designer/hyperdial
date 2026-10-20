@@ -1399,3 +1399,107 @@ Deno.test('processDncFlagJob: retry after DND step skips it; no GHL id fails', a
     s.restore();
   }
 });
+
+// ---------------------------------------------------------------------------
+// TASK-G11 (spec §1): called_by / called_by_ghl_user_id / lead_list
+// ---------------------------------------------------------------------------
+
+Deno.test(
+  'buildPushCustomFields: TASK-G11 called_by, called_by_ghl_user_id, lead_list (mapped only)',
+  () => {
+    const mapping = { called_by: 'f-by', called_by_ghl_user_id: 'f-byid', lead_list: 'f-list' };
+    const values = {
+      calledBy: 'Jane Intern',
+      calledByGhlUserId: 'ghl-u-9',
+      leadList: 'Austin HVAC batch 3',
+    };
+    assertEquals(buildPushCustomFields(mapping, values), [
+      { id: 'f-by', fieldValue: 'Jane Intern' },
+      { id: 'f-byid', fieldValue: 'ghl-u-9' },
+      { id: 'f-list', fieldValue: 'Austin HVAC batch 3' },
+    ]);
+    assertEquals(buildPushCustomFields({ lead_list: 'f-list' }, values), [
+      { id: 'f-list', fieldValue: 'Austin HVAC batch 3' },
+    ]);
+    assertEquals(buildPushCustomFields(mapping, { calledBy: null, leadList: '' }), []);
+  }
+);
+
+Deno.test(
+  'processDispositionJob: TASK-G11 pushes called_by (context name beats payload agent_name), lead_list; never the contact owner',
+  async () => {
+    const bodies: Record<string, unknown> = {};
+    const restore = stubFetch((url, init) => {
+      if (init?.body)
+        bodies[`${init.method} ${new URL(url).pathname}`] = JSON.parse(String(init.body));
+      return Response.json({ id: 'ok' });
+    });
+    try {
+      const run = (ctx: Record<string, unknown>) =>
+        processDispositionJob({
+          client: createGhlClient('tok'),
+          locationId: 'loc-1',
+          ghlContactId: 'ghl-1',
+          contactFields: { firstName: 'A', lastName: 'B', phone: '+14155552671' },
+          payload: PAYLOAD,
+          progress: {},
+          pushConfig: {
+            pushFieldMapping: {
+              called_by: 'f-by',
+              called_by_ghl_user_id: 'f-byid',
+              lead_list: 'f-list',
+            },
+          },
+          pushTimeContext: ctx,
+        });
+      await run({ callerName: 'Jane Intern', callerGhlUserId: 'ghl-u-9', leadList: 'Batch 3' });
+      assertEquals(bodies['PUT /contacts/ghl-1'], {
+        customFields: [
+          { id: 'f-by', field_value: 'Jane Intern' },
+          { id: 'f-byid', field_value: 'ghl-u-9' },
+          { id: 'f-list', field_value: 'Batch 3' },
+        ],
+      });
+      assertEquals(JSON.stringify(bodies['PUT /contacts/ghl-1']).includes('assignedTo'), false);
+      // no session context -> falls back to the payload's agent_name
+      await run({});
+      assertEquals(bodies['PUT /contacts/ghl-1'], {
+        customFields: [{ id: 'f-by', field_value: 'Jane Agent' }],
+      });
+    } finally {
+      restore();
+    }
+  }
+);
+
+Deno.test(
+  'processTagJob: TASK-G11 automated no-answer/voicemail also pushes called_by + lead_list',
+  async () => {
+    let putBody: unknown = null;
+    const restore = stubFetch((_url, init) => {
+      if (init?.method === 'PUT') putBody = JSON.parse(String(init.body));
+      return Response.json({ id: 'ok' });
+    });
+    try {
+      const r = await processTagJob({
+        client: createGhlClient('tok'),
+        locationId: 'loc-1',
+        ghlContactId: 'ghl-1',
+        contactFields: { firstName: 'A', lastName: 'B', phone: '+14155552671' },
+        tag: 'call:no-answer-2',
+        progress: { upserted: true, tag_added: true },
+        pushConfig: { pushFieldMapping: { called_by: 'f-by', lead_list: 'f-list' } },
+        pushTimeContext: { callerName: 'Jane Intern', leadList: 'Batch 3' },
+      });
+      assertEquals(r.ok, true);
+      assertEquals(putBody, {
+        customFields: [
+          { id: 'f-by', field_value: 'Jane Intern' },
+          { id: 'f-list', field_value: 'Batch 3' },
+        ],
+      });
+    } finally {
+      restore();
+    }
+  }
+);

@@ -10,7 +10,19 @@ export interface CallLegPushContext {
   lastCallAt: string | null;
   callAttempts: number | null;
   callerGhlUserId: string | null;
+  /** TASK-G11: the calling intern's display name (profiles first + last), null if unknown. */
+  callerName: string | null;
+  /** TASK-G11: the dial session's campaign name -- the "lead list" the call came from. */
+  leadList: string | null;
 }
+
+const NO_CONTEXT: CallLegPushContext = {
+  lastCallAt: null,
+  callAttempts: null,
+  callerGhlUserId: null,
+  callerName: null,
+  leadList: null,
+};
 
 /** MISSION-4 TASK-T2 (GHL-11): resolves last_call_at (the leg's own ended_at, falling back to
  *  dispositioned_at -- TASK-G02: the call time, not when the wrap-up form was submitted; never
@@ -23,16 +35,24 @@ export async function resolveDispositionPushTimeContext(
   orgId: string,
   callLegId: string | null
 ): Promise<CallLegPushContext> {
-  if (!callLegId) return { lastCallAt: null, callAttempts: null, callerGhlUserId: null };
+  if (!callLegId) return { ...NO_CONTEXT };
   const { data: leg } = await supabase
     .from('call_legs')
-    .select('dispositioned_at, ended_at, lead_id, session_id')
+    .select('dispositioned_at, ended_at, created_at, lead_id, session_id')
     .eq('id', callLegId)
     .maybeSingle();
-  if (!leg) return { lastCallAt: null, callAttempts: null, callerGhlUserId: null };
-  const lastCallAt = (leg.ended_at as string | null) ?? (leg.dispositioned_at as string | null);
-  const callerGhlUserId = await resolveCallerGhlUserId(supabase, orgId, leg.session_id);
-  if (!leg.lead_id) return { lastCallAt, callAttempts: null, callerGhlUserId };
+  if (!leg) return { ...NO_CONTEXT };
+  // TASK-G11 (G03 review SHOULD): ended_at is written by the same transition_leg call that sets the
+  // outcome (dialer-engine.ts), i.e. before apply_leg_outcome enqueues the tag job, so it is not
+  // expected to be null here; created_at is a last-resort fallback so the field is never silently skipped.
+  const lastCallAt =
+    (leg.ended_at as string | null) ??
+    (leg.dispositioned_at as string | null) ??
+    (leg.created_at as string | null);
+  const session = await resolveSessionContext(supabase, orgId, leg.session_id);
+  const { callerGhlUserId, callerName, leadList } = session;
+  if (!leg.lead_id)
+    return { lastCallAt, callAttempts: null, callerGhlUserId, callerName, leadList };
   const { data: lead } = await supabase
     .from('campaign_leads')
     .select('attempts')
@@ -42,29 +62,70 @@ export async function resolveDispositionPushTimeContext(
     lastCallAt,
     callAttempts: (lead?.attempts as number | undefined) ?? null,
     callerGhlUserId,
+    callerName,
+    leadList,
   };
 }
 
-/** TASK-G02: the calling intern = the dial session's agent (not `dispositioned_by`, which can be
- *  an admin submitting on the agent's behalf) -> their `org_members.ghl_user_id`. Null when the
- *  leg has no session or the agent has no GHL user mapped. */
+export interface SessionPushContext {
+  callerGhlUserId: string | null;
+  callerName: string | null;
+  leadList: string | null;
+}
+
+/** TASK-G02/G11: everything the dial session of a leg tells us -- the calling intern = the session's
+ *  agent (not `dispositioned_by`, which can be an admin submitting on the agent's behalf): their
+ *  `org_members.ghl_user_id` and display name, and the session's campaign name as the lead list.
+ *  Each part is null when it cannot be resolved (no session, agent without a GHL user, ...). */
+export async function resolveSessionContext(
+  supabase: SupabaseClient,
+  orgId: string,
+  sessionId: string | null
+): Promise<SessionPushContext> {
+  const none: SessionPushContext = { callerGhlUserId: null, callerName: null, leadList: null };
+  if (!sessionId) return none;
+  const { data: session } = await supabase
+    .from('dial_sessions')
+    .select('agent_id, campaign_id')
+    .eq('id', sessionId)
+    .maybeSingle();
+  if (!session) return none;
+  const out = { ...none };
+  if (session.agent_id) {
+    const { data: member } = await supabase
+      .from('org_members')
+      .select('ghl_user_id')
+      .eq('org_id', orgId)
+      .eq('user_id', session.agent_id)
+      .maybeSingle();
+    out.callerGhlUserId = (member?.ghl_user_id as string | null | undefined) ?? null;
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('first_name, last_name')
+      .eq('user_id', session.agent_id)
+      .maybeSingle();
+    const name = [profile?.first_name, profile?.last_name]
+      .filter((p): p is string => typeof p === 'string' && p.trim() !== '')
+      .join(' ')
+      .trim();
+    out.callerName = name || null;
+  }
+  if (session.campaign_id) {
+    const { data: campaign } = await supabase
+      .from('campaigns')
+      .select('name')
+      .eq('id', session.campaign_id)
+      .maybeSingle();
+    out.leadList = (campaign?.name as string | null | undefined) || null;
+  }
+  return out;
+}
+
+/** TASK-G02: kept for its own callers/tests; delegates to resolveSessionContext. */
 export async function resolveCallerGhlUserId(
   supabase: SupabaseClient,
   orgId: string,
   sessionId: string | null
 ): Promise<string | null> {
-  if (!sessionId) return null;
-  const { data: session } = await supabase
-    .from('dial_sessions')
-    .select('agent_id')
-    .eq('id', sessionId)
-    .maybeSingle();
-  if (!session?.agent_id) return null;
-  const { data: member } = await supabase
-    .from('org_members')
-    .select('ghl_user_id')
-    .eq('org_id', orgId)
-    .eq('user_id', session.agent_id)
-    .maybeSingle();
-  return (member?.ghl_user_id as string | null | undefined) ?? null;
+  return (await resolveSessionContext(supabase, orgId, sessionId)).callerGhlUserId;
 }

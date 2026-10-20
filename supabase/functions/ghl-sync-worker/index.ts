@@ -270,11 +270,8 @@ async function processJob(
       });
       return;
     }
-    const { lastCallAt, callAttempts } = await resolveDispositionPushTimeContext(
-      supabase,
-      job.org_id,
-      job.call_leg_id
-    );
+    const { lastCallAt, callAttempts, callerName, callerGhlUserId, leadList } =
+      await resolveDispositionPushTimeContext(supabase, job.org_id, job.call_leg_id);
     result = await processTagJob({
       client: ctx.client,
       locationId: ctx.locationId,
@@ -283,7 +280,7 @@ async function processJob(
       tag,
       progress: job.progress ?? {},
       pushConfig: ctx.pushConfig,
-      pushTimeContext: { lastCallAt, callAttempts },
+      pushTimeContext: { lastCallAt, callAttempts, callerName, callerGhlUserId, leadList },
     });
   } else if (job.kind === 'dnc_flag') {
     // TASK-G05: contact became DNC in HyperDial outside the DNC disposition (trigger-enqueued).
