@@ -471,6 +471,33 @@ function statusStub(byId: Record<string, number>) {
 }
 
 Deno.test(
+  'reconcileOrg (G27): a failed apply does not hand back a transient-error row a second time',
+  async () => {
+    const restore = stubFetch((url) =>
+      new URL(url).pathname.endsWith('/g-5xx')
+        ? new Response('err', { status: 503 })
+        : Response.json({ contact: { id: 'x', dnd: true } })
+    );
+    const { sb, rpcs } = fakeSupabase({
+      claim: [
+        { contact_id: 'c1', ghl_contact_id: 'g-5xx', prev_reconciled_at: null },
+        { contact_id: 'c2', ghl_contact_id: 'g-ok', prev_reconciled_at: null },
+      ],
+      applyError: 'boom',
+    });
+    try {
+      await reconcileOrg(sb, createGhlClient('tok'), orgArgs).catch(() => {});
+      const ids = rpcs
+        .filter((x) => x.fn === 'release_ghl_reconcile_leases')
+        .flatMap((x) => (x.args.p_items as { contact_id: string }[]).map((i) => i.contact_id));
+      assertEquals(ids.sort(), ['c1', 'c2']);
+    } finally {
+      restore();
+    }
+  }
+);
+
+Deno.test(
   'reconcileOrg (G25): transient read errors are handed back, permanent ones keep the stamp',
   async () => {
     const restore = statusStub({ 'g-gone': 404, 'g-limited': 429, 'g-5xx': 503 });

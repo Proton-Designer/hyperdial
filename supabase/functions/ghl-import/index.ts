@@ -263,9 +263,9 @@ Deno.serve(async (req: Request) => {
     }
   }
 
-  // TASK-G7 (GHL-7): dnc_numbers row for every contact whose DNC-ness came from a matched GHL tag
-  // this run (not from GHL's own dnd flag alone, and not from the org's pre-existing dnc_numbers
-  // list -- neither of those has a "GHL tag: <tag>" to cite). Then retroactively pull every
+  // TASK-G7 (GHL-7) / TASK-G25: dnc_numbers row for every contact marked DNC this run -- from a matched
+  // GHL tag ("GHL tag: <tag>") or from GHL's own dnd flag ("GHL do-not-disturb"); not for the org's
+  // pre-existing dnc_numbers list (nothing to cite). Then retroactively pull every
   // DNC/paused contact touched this run off any campaign it's currently active in, org-wide --
   // see setCampaignLeadsStatusForContacts's header for why this isn't scoped to just `campaignId`.
   try {

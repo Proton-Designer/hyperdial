@@ -225,8 +225,12 @@ export async function reconcileOrg(
   }
   result.claimed = batch.length;
 
-  const release = async (rows: ClaimedRow[]) => {
+  const releasedIds = new Set<string>();
+  const release = async (all: ClaimedRow[]) => {
+    // a row handed back earlier this tick (transient read error) is not released or counted twice
+    const rows = all.filter((r) => !releasedIds.has(r.contact_id));
     if (rows.length === 0) return;
+    for (const r of rows) releasedIds.add(r.contact_id);
     result.released += rows.length;
     for (const part of chunks(rows, 200)) {
       const { error } = await supabase.rpc('release_ghl_reconcile_leases', {
