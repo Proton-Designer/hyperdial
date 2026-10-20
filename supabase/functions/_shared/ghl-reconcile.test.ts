@@ -232,3 +232,54 @@ Deno.test(
     }
   }
 );
+
+Deno.test(
+  'reconcileOrg (G15): sends each read contact owner to apply_ghl_owner_routing; no owner -> no call',
+  async () => {
+    const restore = stubFetch((url) => {
+      const id = new URL(url).pathname.split('/').pop()!;
+      const bodies: Record<string, unknown> = {
+        'g-owned': { id: 'g-owned', assignedTo: 'ghl-user-1' },
+        'g-blank': { id: 'g-blank', assignedTo: '  ' },
+        'g-none': { id: 'g-none' },
+      };
+      return Response.json({ contact: bodies[id] });
+    });
+    const args = {
+      orgId: 'org-1',
+      locationId: 'loc-1',
+      dncTags: null,
+      pausedTags: null,
+      excludeTags: null,
+      excludeStageIds: null,
+      batchSize: 10,
+    };
+    try {
+      const a = fakeSupabase({
+        claim: [
+          { contact_id: 'c1', ghl_contact_id: 'g-owned' },
+          { contact_id: 'c2', ghl_contact_id: 'g-blank' },
+          { contact_id: 'c3', ghl_contact_id: 'g-none' },
+        ],
+      });
+      const r = await reconcileOrg(a.sb, createGhlClient('tok'), args);
+      const routing = a.rpcs.filter((x) => x.fn === 'apply_ghl_owner_routing');
+      assertEquals(routing.length, 1);
+      assertEquals(routing[0].args, {
+        p_org: 'org-1',
+        p_items: [{ contact_id: 'c1', ghl_user_id: 'ghl-user-1' }],
+      });
+      assertEquals(r.ownerRouting, {});
+
+      const b = fakeSupabase({ claim: [{ contact_id: 'c3', ghl_contact_id: 'g-none' }] });
+      const r2 = await reconcileOrg(b.sb, createGhlClient('tok'), args);
+      assertEquals(
+        b.rpcs.map((x) => x.fn),
+        ['claim_ghl_reconcile_batch']
+      );
+      assertEquals(r2.ownerRouting, null);
+    } finally {
+      restore();
+    }
+  }
+);

@@ -111,6 +111,8 @@ export interface ReconcileOrgResult {
   stageErrors: number;
   decisions: { dnc: number; exclude: number; paused: number };
   applied: Record<string, number> | null;
+  /** G15: counts from apply_ghl_owner_routing (null when no read carried an owner). */
+  ownerRouting: Record<string, number> | null;
 }
 
 const chunks = <T>(a: T[], n: number): T[][] => {
@@ -131,6 +133,7 @@ export async function reconcileOrg(
     stageErrors: 0,
     decisions: { dnc: 0, exclude: 0, paused: 0 },
     applied: null,
+    ownerRouting: null,
   };
 
   // 1. stage membership: one search per configured stage, a failed stage is skipped (not fatal)
@@ -157,6 +160,7 @@ export async function reconcileOrg(
 
   const items: { contact_id: string; action: ReconcileAction; reason: string }[] = [];
   const decided = new Set<string>();
+  const owners: { contact_id: string; ghl_user_id: string }[] = [];
 
   // 2. stage matches among OUR linked contacts (no per-contact GHL read needed)
   if (excludeStageContactIds.size > 0) {
@@ -188,6 +192,10 @@ export async function reconcileOrg(
     try {
       const gc = await client.getContact(row.ghl_contact_id);
       result.checked++;
+      // G15: reuse this read for owner routing (callbacks go back to the GHL owner's intern)
+      if (typeof gc.assignedTo === 'string' && gc.assignedTo.trim() !== '') {
+        owners.push({ contact_id: row.contact_id, ghl_user_id: gc.assignedTo });
+      }
       const d = decideReconcile(gc, cfg);
       // a stage match was already queued in step 2; a DNC/paused read of the same contact still counts
       if (d && !(decided.has(row.contact_id) && d.action === 'exclude')) {
@@ -215,6 +223,22 @@ export async function reconcileOrg(
       }
     }
     result.applied = applied;
+  }
+
+  // 5. owner routing (after the decisions, so a lead just moved off 'callback' is not re-assigned)
+  if (owners.length > 0) {
+    const routed: Record<string, number> = {};
+    for (const part of chunks(owners, 200)) {
+      const { data, error } = await supabase.rpc('apply_ghl_owner_routing', {
+        p_org: args.orgId,
+        p_items: part,
+      });
+      if (error) throw new Error(`apply_ghl_owner_routing failed: ${error.message}`);
+      for (const [k, v] of Object.entries((data ?? {}) as Record<string, number>)) {
+        routed[k] = (routed[k] ?? 0) + v;
+      }
+    }
+    result.ownerRouting = routed;
   }
   return result;
 }
