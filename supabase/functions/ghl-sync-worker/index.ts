@@ -22,6 +22,7 @@ import {
 import {
   processContactUpsertJob,
   processDispositionJob,
+  processDncFlagJob,
   processInboundCallNoteJob,
   processNurtureTagJob,
   processTagJob,
@@ -72,7 +73,8 @@ interface CrmSyncJobRow {
     | 'voicemail_tag'
     | 'no_answer_tag'
     | 'inbound_call_note'
-    | 'transfer_note';
+    | 'transfer_note'
+    | 'dnc_flag';
   contact_id: string | null;
   call_leg_id: string | null;
   payload: Record<string, unknown>;
@@ -154,6 +156,22 @@ async function resolveStageTarget(
   const row = data as DispositionRow | null;
   if (!row?.ghl_pipeline_id || !row?.ghl_pipeline_stage_id) return null;
   return { pipelineId: row.ghl_pipeline_id, pipelineStageId: row.ghl_pipeline_stage_id };
+}
+
+/** TASK-G05: the tag the org's DNC disposition applies (`dispositions.ghl_tag` of its active
+ *  lead_effect='dnc' disposition), falling back to the seeded default 'DNC'. */
+async function resolveDncTag(supabase: SupabaseClient, orgId: string): Promise<string> {
+  const { data } = await supabase
+    .from('dispositions')
+    .select('ghl_tag')
+    .eq('org_id', orgId)
+    .eq('lead_effect', 'dnc')
+    .eq('active', true)
+    .not('ghl_tag', 'is', null)
+    .order('sort', { ascending: true })
+    .limit(1)
+    .maybeSingle();
+  return (data?.ghl_tag as string | null | undefined) || 'DNC';
 }
 
 async function loadContactFields(
@@ -266,6 +284,14 @@ async function processJob(
       progress: job.progress ?? {},
       pushConfig: ctx.pushConfig,
       pushTimeContext: { lastCallAt, callAttempts },
+    });
+  } else if (job.kind === 'dnc_flag') {
+    // TASK-G05: contact became DNC in HyperDial outside the DNC disposition (trigger-enqueued).
+    result = await processDncFlagJob({
+      client: ctx.client,
+      ghlContactId: contact.ghlContactId,
+      dncTag: await resolveDncTag(supabase, job.org_id),
+      progress: job.progress ?? {},
     });
   } else if (job.kind === 'transfer_note') {
     // Lead follow-up to TASK-T2's own fix-forward: same missing-required-field shape as the

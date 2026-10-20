@@ -5,6 +5,7 @@ import {
   buildPushCustomFields,
   processContactUpsertJob,
   processDispositionJob,
+  processDncFlagJob,
   processInboundCallNoteJob,
   processNurtureTagJob,
   processTagJob,
@@ -1307,3 +1308,94 @@ Deno.test(
     }
   }
 );
+
+// ---------------------------------------------------------------------------
+// TASK-G05 (spec section 4): dnc_flag job -- HyperDial DNC -> GHL DND + tag
+// ---------------------------------------------------------------------------
+
+function dncStub(ghlContact: Record<string, unknown>) {
+  const calls: string[] = [];
+  const bodies: Record<string, unknown> = {};
+  const restore = stubFetch((url, init) => {
+    const key = `${init?.method ?? 'GET'} ${new URL(url).pathname}`;
+    calls.push(key);
+    if (init?.body) bodies[key] = JSON.parse(String(init.body));
+    if (key === 'GET /contacts/ghl-1')
+      return Response.json({ contact: { id: 'ghl-1', ...ghlContact } });
+    return Response.json({});
+  });
+  return { calls, bodies, restore };
+}
+
+Deno.test('processDncFlagJob: sets DND and adds the DNC tag when GHL has neither', async () => {
+  const s = dncStub({ dnd: false, tags: ['lead'] });
+  try {
+    const r = await processDncFlagJob({
+      client: createGhlClient('tok'),
+      ghlContactId: 'ghl-1',
+      dncTag: 'DNC',
+      progress: {},
+    });
+    assertEquals(r.ok, true);
+    assertEquals(s.calls, [
+      'GET /contacts/ghl-1',
+      'PUT /contacts/ghl-1',
+      'POST /contacts/ghl-1/tags',
+    ]);
+    assertEquals(s.bodies['PUT /contacts/ghl-1'], { dnd: true });
+    assertEquals(s.bodies['POST /contacts/ghl-1/tags'], { tags: ['DNC'] });
+    assertEquals(r.progress, { dnd_set: true, tag_added: true });
+  } finally {
+    s.restore();
+  }
+});
+
+Deno.test(
+  'processDncFlagJob: DNC that already exists in GHL (came from GHL) is not echoed back',
+  async () => {
+    const s = dncStub({ dnd: true, tags: ['dnc'] }); // tag match is case-insensitive
+    try {
+      const r = await processDncFlagJob({
+        client: createGhlClient('tok'),
+        ghlContactId: 'ghl-1',
+        dncTag: 'DNC',
+        progress: {},
+      });
+      assertEquals(r.ok, true);
+      assertEquals(s.calls, ['GET /contacts/ghl-1']);
+    } finally {
+      s.restore();
+    }
+  }
+);
+
+Deno.test('processDncFlagJob: retry after DND step skips it; no GHL id fails', async () => {
+  const s = dncStub({ dnd: true, tags: [] });
+  try {
+    const r = await processDncFlagJob({
+      client: createGhlClient('tok'),
+      ghlContactId: 'ghl-1',
+      dncTag: 'Do Not Call',
+      progress: { dnd_set: true },
+    });
+    assertEquals(r.ok, true);
+    assertEquals(s.calls, ['GET /contacts/ghl-1', 'POST /contacts/ghl-1/tags']);
+    const done = await processDncFlagJob({
+      client: createGhlClient('tok'),
+      ghlContactId: 'ghl-1',
+      dncTag: 'DNC',
+      progress: { dnd_set: true, tag_added: true },
+    });
+    assertEquals(done.ok, true);
+    assertEquals(s.calls.length, 2); // nothing more
+    const bad = await processDncFlagJob({
+      client: createGhlClient('tok'),
+      ghlContactId: null,
+      dncTag: 'DNC',
+      progress: {},
+    });
+    assertEquals(bad.ok, false);
+  } finally {
+    s.restore();
+  }
+});

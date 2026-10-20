@@ -565,6 +565,49 @@ export async function processTagJob(args: ProcessTagJobArgs): Promise<ProcessJob
   }
 }
 
+export interface ProcessDncFlagJobArgs {
+  client: GhlClient;
+  /** The contact's GHL id -- a dnc_flag job only exists for a contact already linked to GHL. */
+  ghlContactId: string | null;
+  /** The org's DNC tag (its lead_effect='dnc' disposition's `ghl_tag`, default 'DNC'). */
+  dncTag: string;
+  progress: JobProgress;
+}
+
+/** TASK-G05 (spec section 4): a contact became DNC in HyperDial by some route other than the DNC
+ *  disposition -> set GHL DND and add the DNC tag. Reads the GHL contact first and skips what is
+ *  already there (DNC that came FROM GHL via pull import is not echoed back; a disposition job's own
+ *  DND for the same change is not repeated). Steps are progress-flagged like every other job. */
+export async function processDncFlagJob(args: ProcessDncFlagJobArgs): Promise<ProcessJobResult> {
+  const progress: JobProgress = { ...args.progress };
+  const ghlContactId = args.ghlContactId;
+  try {
+    if (!ghlContactId) throw new Error('dnc_flag job: contact has no GHL contact id');
+    if (!progress.dnd_set || !progress.tag_added) {
+      const ghl = await args.client.getContact(ghlContactId);
+      if (!progress.dnd_set) {
+        if (ghl.dnd !== true) await args.client.setDnd(ghlContactId, true);
+        progress.dnd_set = true;
+      }
+      if (!progress.tag_added) {
+        const have = (ghl.tags ?? []).some(
+          (t) => t.trim().toLowerCase() === args.dncTag.trim().toLowerCase()
+        );
+        if (!have) await args.client.addTags(ghlContactId, [args.dncTag]);
+        progress.tag_added = true;
+      }
+    }
+    return { ok: true, progress, resolvedGhlContactId: ghlContactId };
+  } catch (err) {
+    return {
+      ok: false,
+      progress,
+      resolvedGhlContactId: ghlContactId,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
 export interface ProcessContactUpsertJobArgs {
   client: GhlClient;
   locationId: string;
