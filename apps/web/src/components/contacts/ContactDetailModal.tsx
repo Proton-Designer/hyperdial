@@ -167,8 +167,12 @@ export function ContactDetailModal({ contact, open, onClose, onUpdated }: Contac
     }
   };
 
+  // TASK-G31: marking do-not-call is open to every role that can see the contact; clearing it is owner/admin only
+  // (the contacts_agent_update_scope trigger enforces it, this just says so up front).
+  const dncLocked = c.dnc && !canEditFields;
+
   const toggleDnc = async () => {
-    if (dncSaving) return;
+    if (dncSaving || dncLocked) return;
     setDncSaving(true);
     setError(null);
     try {
@@ -227,11 +231,12 @@ export function ContactDetailModal({ contact, open, onClose, onUpdated }: Contac
             </div>
           )}
 
-          {/* Do-not-call: every role that can see this contact may toggle it (design §2). */}
+          {/* Do-not-call: every role that can see this contact may mark it; only owner/admin may clear it (TASK-G31). */}
           <button
             type="button"
             onClick={toggleDnc}
-            disabled={dncSaving}
+            disabled={dncSaving || dncLocked}
+            title={dncLocked ? 'Only an owner or admin can clear do-not-call' : undefined}
             className={`w-full flex items-center justify-between gap-2 rounded-xl border p-3 text-sm font-medium transition-colors disabled:opacity-50 ${
               c.dnc
                 ? 'bg-danger/10 border-danger/30 text-danger'
@@ -242,8 +247,16 @@ export function ContactDetailModal({ contact, open, onClose, onUpdated }: Contac
               <ShieldOff className="w-4 h-4" />
               Do not call
             </span>
-            <span>{c.dnc ? 'On — click to clear' : 'Off — click to mark'}</span>
+            <span>
+              {c.dnc ? (dncLocked ? 'On' : 'On — click to clear') : 'Off — click to mark'}
+            </span>
           </button>
+          {dncLocked && (
+            <p className="text-xs text-text-secondary -mt-2">
+              Only an owner or admin can clear do-not-call. Ask one of them if this was marked by
+              mistake.
+            </p>
+          )}
 
           {!editing && (
             <div className="flex gap-1 border-b border-white/10">

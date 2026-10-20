@@ -63,6 +63,11 @@ if (devHarness?.has('dev_wrapup')) {
   import('./dev/GhlWebhookHarness.tsx').then(({ GhlWebhookHarness }) => {
     root.render(<GhlWebhookHarness />);
   });
+} else if (devHarness?.has('dev_contact_dnc')) {
+  // TASK-G31: the contact modal's do-not-call control per role. `?dev_contact_dnc=1&role=agent|admin|owner&dnc=1|0`.
+  import('./dev/ContactDncHarness.tsx').then(({ ContactDncHarness }) => {
+    root.render(<ContactDncHarness />);
+  });
 } else if (devHarness?.has('dev_shifts')) {
   // TASK-F01: the intern Shifts screen against fixture data, no live backend.
   // `?dev_shifts=1&scenario=default|unsubmitted|under_minimum|deadline_passed|power_week|empty|
