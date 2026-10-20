@@ -22,3 +22,20 @@ Deno.test('normalizeListName: capped at 120 characters (matches the column check
 Deno.test('defaultGhlListName: "GHL import <UTC date>"', () => {
   assertEquals(defaultGhlListName(new Date('2026-10-19T23:30:00Z')), 'GHL import 2026-10-19');
 });
+
+Deno.test(
+  'defaultGhlListName: uses the org time zone date (evening US import is not tomorrow)',
+  () => {
+    const t = new Date('2026-10-20T02:30:00Z'); // 21:30 on the 19th in Chicago (CDT)
+    assertEquals(defaultGhlListName(t, 'America/Chicago'), 'GHL import 2026-10-19');
+    assertEquals(defaultGhlListName(t, 'UTC'), 'GHL import 2026-10-20');
+    assertEquals(defaultGhlListName(t, 'Pacific/Auckland'), 'GHL import 2026-10-20');
+  }
+);
+
+Deno.test('defaultGhlListName: invalid or missing zone falls back to the UTC date', () => {
+  const t = new Date('2026-10-20T02:30:00Z');
+  assertEquals(defaultGhlListName(t, 'Not/AZone'), 'GHL import 2026-10-20');
+  assertEquals(defaultGhlListName(t, null), 'GHL import 2026-10-20');
+  assertEquals(defaultGhlListName(t), 'GHL import 2026-10-20');
+});

@@ -57,7 +57,7 @@ Deno.serve(async (req: Request) => {
   const value = body.value?.trim();
   const campaignId = body.campaignId?.trim() || null;
   // TASK-G18: the list name recorded on new contacts / queued leads (pushed to GHL as lead_list).
-  const listName = normalizeListName(body.listName) ?? defaultGhlListName();
+  const requestedListName = normalizeListName(body.listName);
   if (mode !== 'tag' && mode !== 'search') {
     return jsonResponse({ error: 'mode must be "tag" or "search"' }, 400);
   }
@@ -66,6 +66,20 @@ Deno.serve(async (req: Request) => {
   }
 
   const supabase = getSupabaseAdmin();
+  // TASK-G21: the default name carries the date in the ORG's time zone (org_timezone_settings, the same
+  // source the shift code uses), not UTC.
+  let listName = requestedListName;
+  if (!listName) {
+    const { data: tzRow } = await supabase
+      .from('org_timezone_settings')
+      .select('timezone')
+      .eq('org_id', orgId)
+      .maybeSingle();
+    listName = defaultGhlListName(
+      new Date(),
+      (tzRow?.timezone as string | undefined) ?? 'America/Chicago'
+    );
+  }
 
   const { data: integration, error: integrationError } = await supabase
     .from('org_integrations')

@@ -18,7 +18,17 @@ export function normalizeListName(raw: unknown): string | null {
   return cleaned.slice(0, LIST_NAME_MAX).trim();
 }
 
-/** Default for a GHL pull import that was not given a name: "GHL import 2026-10-19" (UTC date). */
-export function defaultGhlListName(now: Date = new Date()): string {
-  return `GHL import ${now.toISOString().slice(0, 10)}`;
+/** Default for a GHL pull import that was not given a name: "GHL import 2026-10-19", the date in the
+ *  org's time zone (`org_timezone_settings.timezone`; an invalid/absent zone falls back to UTC). */
+export function defaultGhlListName(now: Date = new Date(), timeZone?: string | null): string {
+  let date = now.toISOString().slice(0, 10);
+  if (timeZone) {
+    try {
+      // en-CA formats as YYYY-MM-DD
+      date = new Intl.DateTimeFormat('en-CA', { timeZone }).format(now);
+    } catch {
+      // unknown zone: keep the UTC date
+    }
+  }
+  return `GHL import ${date}`;
 }
