@@ -180,3 +180,32 @@ export function parseGhlWebhookEvent(
       : (asId(o.id) ?? asId(o.contactId) ?? asId(o.contact_id) ?? asId(contact?.id));
   return { ok: true, event: { type, locationId, contactId } };
 }
+
+/** Reads a request body as text, stopping as soon as more than `maxBytes` have arrived (so a chunked or lying
+ *  Content-Length body is never buffered in full before auth). Returns null when the limit was exceeded. */
+export async function readBodyCapped(
+  req: { body: ReadableStream<Uint8Array> | null },
+  maxBytes: number
+): Promise<string | null> {
+  if (!req.body) return '';
+  const reader = req.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      await reader.cancel().catch(() => {});
+      return null;
+    }
+    chunks.push(value);
+  }
+  const all = new Uint8Array(total);
+  let offset = 0;
+  for (const c of chunks) {
+    all.set(c, offset);
+    offset += c.byteLength;
+  }
+  return new TextDecoder().decode(all);
+}

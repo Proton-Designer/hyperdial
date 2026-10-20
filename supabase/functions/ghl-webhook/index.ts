@@ -17,7 +17,7 @@ import {
   GHL_PULL_RATE_LIMIT_MAX_PER_WINDOW,
 } from '../_shared/ghl-rate-limit.ts';
 import { handleGhlWebhook } from '../_shared/ghl-webhook-run.ts';
-import { MAX_WEBHOOK_BODY_BYTES } from '../_shared/ghl-webhook.ts';
+import { MAX_WEBHOOK_BODY_BYTES, readBodyCapped } from '../_shared/ghl-webhook.ts';
 
 function json(body: unknown, status: number): Response {
   return new Response(JSON.stringify(body), {
@@ -32,12 +32,14 @@ Deno.serve(async (req: Request) => {
   if (Number.isFinite(declared) && declared > MAX_WEBHOOK_BODY_BYTES) {
     return json({ error: 'Payload too large' }, 413);
   }
-  let rawBody: string;
+  // streamed with a byte cap: a chunked body or a lying Content-Length is cut off, never buffered in full
+  let rawBody: string | null;
   try {
-    rawBody = await req.text();
+    rawBody = await readBodyCapped(req, MAX_WEBHOOK_BODY_BYTES);
   } catch {
     return json({ error: 'Invalid body' }, 400);
   }
+  if (rawBody === null) return json({ error: 'Payload too large' }, 413);
   const supabase = createClient(
     Deno.env.get('SUPABASE_URL')!,
     Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!

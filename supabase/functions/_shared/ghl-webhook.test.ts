@@ -4,6 +4,7 @@ import {
   generateWebhookSecret,
   isWellFormedWebhookSecret,
   parseGhlWebhookEvent,
+  readBodyCapped,
   sha256Hex,
   verifyGhlSignature,
 } from './ghl-webhook.ts';
@@ -171,3 +172,46 @@ Deno.test('parseGhlWebhookEvent: bad JSON, non-object and unsafe ids', () => {
   assertEquals(r.event.contactId, null);
   assertEquals(r.event.locationId, null);
 });
+
+function chunkedRequest(chunks: string[]): Request {
+  const enc = new TextEncoder();
+  const stream = new ReadableStream<Uint8Array>({
+    start(c) {
+      for (const ch of chunks) c.enqueue(enc.encode(ch));
+      c.close();
+    },
+  });
+  // a streamed body has no Content-Length: the cap must hold without it
+  return new Request('http://localhost/x', {
+    method: 'POST',
+    body: stream,
+    // @ts-ignore duplex is required by the spec for a streamed request body
+    duplex: 'half',
+  });
+}
+
+Deno.test(
+  'readBodyCapped: a body within the limit is returned in full (positive control)',
+  async () => {
+    const r = chunkedRequest(['{"a":', '"b"}']);
+    assertEquals(r.headers.get('content-length'), null);
+    assertEquals(await readBodyCapped(r, 100), '{"a":"b"}');
+  }
+);
+
+Deno.test(
+  'readBodyCapped: a streamed body over the limit is cut off (null) without Content-Length',
+  async () => {
+    const r = chunkedRequest(['x'.repeat(60), 'x'.repeat(60)]);
+    assertEquals(await readBodyCapped(r, 100), null);
+  }
+);
+
+Deno.test(
+  'readBodyCapped: exactly the limit passes, one byte more does not; empty body is empty text',
+  async () => {
+    assertEquals((await readBodyCapped(chunkedRequest(['x'.repeat(100)]), 100))?.length, 100);
+    assertEquals(await readBodyCapped(chunkedRequest(['x'.repeat(101)]), 100), null);
+    assertEquals(await readBodyCapped({ body: null }, 100), '');
+  }
+);

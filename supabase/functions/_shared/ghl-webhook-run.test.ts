@@ -358,3 +358,31 @@ Deno.test(
     assertEquals(f.calls.length, 0);
   }
 );
+
+Deno.test(
+  'webhook (secret): unknown or missing secret is 401 even when the body is not JSON; a valid secret + bad JSON is 400',
+  async () => {
+    const secret = generateWebhookSecret();
+    const hash = await sha256Hex(secret);
+    const mk = () => fake({ stateBySecretHash: { [hash]: 'org-1' } });
+    const junk = 'this is not json';
+    const unknown = await handleGhlWebhook(
+      deps(mk(), ghl({})),
+      req({ 'x-hyperdial-webhook-secret': generateWebhookSecret() }, junk)
+    );
+    assertEquals(unknown.status, 401);
+    const missing = await handleGhlWebhook(deps(mk(), ghl({})), req({}, junk));
+    assertEquals(missing.status, 401);
+    const malformed = await handleGhlWebhook(
+      deps(mk(), ghl({})),
+      req({ 'x-hyperdial-webhook-secret': 'nope' }, junk)
+    );
+    assertEquals(malformed.status, 401);
+    // positive control: the same junk body with the RIGHT secret reaches the parser
+    const good = await handleGhlWebhook(
+      deps(mk(), ghl({})),
+      req({ 'x-hyperdial-webhook-secret': secret }, junk)
+    );
+    assertEquals(good.status, 400);
+  }
+);

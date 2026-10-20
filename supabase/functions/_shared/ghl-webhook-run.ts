@@ -240,11 +240,8 @@ export async function handleGhlWebhook(
     return res(401, { error: 'Unauthorized' });
   }
 
-  // ---- 2. payload + organisation ------------------------------------------------------------------
-  const parsed = parseGhlWebhookEvent(req.rawBody);
-  if (!parsed.ok) return res(400, { error: 'Invalid payload' });
-  const event: GhlWebhookEvent = parsed.event;
-
+  // ---- 2. organisation + payload ------------------------------------------------------------------
+  // Secret mode looks the secret up BEFORE the body is parsed, so an unknown/missing secret is a 401 whatever the body is.
   let org: OrgRow | null = null;
   if (mode === 'secret') {
     const found = await orgBySecret(supabase, secretHash!);
@@ -257,8 +254,15 @@ export async function handleGhlWebhook(
       return res(401, { error: 'Unauthorized' });
     }
     org = found.row;
+  }
+
+  const parsed = parseGhlWebhookEvent(req.rawBody);
+  if (!parsed.ok) return res(400, { error: 'Invalid payload' });
+  const event: GhlWebhookEvent = parsed.event;
+
+  if (mode === 'secret') {
     // a workflow body may name its location; if it does it must be this org's
-    if (event.locationId && event.locationId !== org.location_id) {
+    if (event.locationId && event.locationId !== org!.location_id) {
       return ignored('location_mismatch');
     }
   } else {
@@ -280,6 +284,7 @@ export async function handleGhlWebhook(
       return ignored('unsupported_event');
     }
   }
+  if (!org) return res(401, { error: 'Unauthorized' });
 
   // ---- 3. gates (cheap, before any GHL call) -------------------------------------------------------
   if (org.ghl_reconcile_enabled !== true) return ignored('reconcile_off');
