@@ -5,7 +5,7 @@ layer: L2
 type: memory
 status: canonical
 owner: maintainer
-updated: 2026-10-19
+updated: 2026-10-20
 related:
   - arch.system-overview
   - mem.known-issues
@@ -18,7 +18,7 @@ answers:
   - "why is components/ui not formatted"
 covers: "Decisions made, alternatives considered, what superseded what"
 excludes: "Work in progress (see mem.active-work), currently-broken behaviour (see mem.known-issues)"
-tokens_est: 42227
+tokens_est: 42527
 ---
 
 # Decisions
@@ -1958,3 +1958,6 @@ only shape that fires exactly once per real disposition and, as a side effect, "
 path" for free -- `submit_disposition` is the sole function that ever sets `dispositioned_at`, so
 one trigger there covers the ordinary agent path, a re-submit/retry, and N1's own supervisor-
 takeover disposition path, with no separate wiring needed for any of them.
+
+## 2026-10-20 — GHL tags: 'signed up' + 'active' by default, created in GHL (TASK-G28)
+User order: include "signed up" and "active" tags, connect them to GHL, let users create them. New `org_integrations` rows default to `ghl_exclude_tags = {signed up, active}` and `ghl_reconcile_enabled = true` (migration 20261019210213; existing rows untouched; no org was connected yet). The win disposition (`yes_build_profile`) tag changed from `Interested` to `signed up` in the seed (`private.seed_default_dispositions`) and for orgs still on the old default; `dispositions.ghl_tag` is the single source. `ghl-connect` and every tag save (`ghl-reconcile-settings` set, `ghl-update-blocked-tags`) call `syncOrgTagsToGhl` (`_shared/ghl-tags-io.ts`): GET then POST `/locations/{id}/tags`, rate-limited, never blocking, result returned as `tagSync`. Owner/admin picker endpoint `ghl-tags` (list/create). Trade-off: reconcile on by default is a compliance feature (DND/DNC removal) but also removes any lead carrying `active`; an org that uses `active` for something else must edit the list.

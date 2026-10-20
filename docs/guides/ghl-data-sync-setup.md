@@ -116,7 +116,7 @@ Folder: `Intern Shifts`. Create these with the exact key (GHL shows it as `conta
 
 ## 3. Hours, sign-ups and the "Yes - Build Profile" outcome
 
-- A **sign-up** is a call whose outcome is a "win" outcome. Out of the box that is `Yes - Build Profile` (the "Interested" tag). If you want a separate "Signed up" outcome later, tell the HyperDial team: it changes what counts as a sign-up in the shift numbers.
+- A **sign-up** is a call whose outcome is a "win" outcome. Out of the box that is `Yes - Build Profile` (it adds the `signed up` tag in GHL). If you want a separate "Signed up" outcome later, tell the HyperDial team: it changes what counts as a sign-up in the shift numbers.
 - A **conversation** is a connected call of at least 30 seconds by default.
 - **Hours versus the 8-hour minimum**: two checks exist. The Sunday check (after the pick deadline) looks at **scheduled** hours and adds `shift-evt-under-minimum`. The new Week closed check looks at **actual dialing hours** and fills `week_hours_vs_min` and `week_under_minimum`. Use `week_under_minimum = Yes` in your Monday workflow for the coaching flag.
 
@@ -139,7 +139,7 @@ The intern fields (section 2b) need no mapping. Connect Team Shifts as described
 
 | Tag                                                                        | When                                                      |
 | -------------------------------------------------------------------------- | --------------------------------------------------------- |
-| `Interested`                                                               | Outcome `Yes - Build Profile`                             |
+| `signed up`                                                                | Outcome `Yes - Build Profile`                             |
 | `Callback`, `Not Interested`, `Already On Platform`, `Wrong Number`, `DNC` | The matching outcome                                      |
 | `call:gatekeeper`, `call:voicemail_left`, `call:no_answer`                 | Those outcomes                                            |
 | `call:no-answer-N`, `call:voicemail-N`                                     | Automatic no-answer or voicemail call, N = running count  |
@@ -172,13 +172,26 @@ The Do Not Call tags and paused tags are in **Settings → Integrations → Bloc
 
 **Turn it on** (owner or admin): **Settings → Integrations → Remove from call lists**.
 
-1. Tick **Remove these contacts from call lists**.
-2. Add your **Signed-up / active tags** (for example `signed up`, `active`) and pick the **Signed-up / active stages** from the list read from your GHL pipelines.
+1. **Remove these contacts from call lists** is already ticked for a newly connected GHL account, with the **Signed-up / active tags** `signed up` and `active`. Untick it if you do not want leads removed.
+2. Change the tags if your GHL uses other names, and pick the **Signed-up / active stages** from the list read from your GHL pipelines.
 3. Save. The card then shows the last run (how many were checked and how many leads removed).
 
-It is **off by default** and does nothing until ticked. A call that is already in progress is never touched, only leads waiting in the queue. Removal is one way: if you later remove the tag in GHL, the lead stays completed.
+**Tags are created in GHL for you.** When you connect, and every time you save tags here or under **Blocked tags**, HyperDial creates any of these tags that do not exist yet in your GHL account (the exclude tags, the Do Not Call and paused tags, and the tag of each outcome). In both tag boxes you can search the tags that already exist in GHL, or type a new one and choose **Create in GHL**. If the token has no Tags permission, the page says which tags could not be created; they are then created in GHL the first time they are used on a contact. Give the token the **Tags** read and write permission to avoid this.
+
+It is **on by default for a newly connected account** (accounts that were connected before keep their setting) and removes leads only while it is ticked. A call that is already in progress is never touched, only leads waiting in the queue. Removal is one way: if you later remove the tag in GHL, the lead stays completed.
 
 The existing 5-minute pull (importing contacts by tag) is separate and also off by default; it is controlled in the same Integrations tab.
+
+### Instant updates (webhook)
+
+The 5-minute check can take a while to come around on a long list. **Settings → Integrations → Instant updates from GoHighLevel** (owner or admin) lets GHL tell HyperDial the moment a contact's Do Not Disturb, tags, pipeline stage or owner changes. HyperDial never believes the message itself: it only uses it as a nudge, reads that one contact from GHL and applies exactly the same rules as the 5-minute check. The 5-minute check keeps running as the safety net, and the webhook does nothing while **Remove from call lists** is off. Contacts that are not linked to GHL yet are ignored.
+
+Two ways to connect it (use either):
+
+- **Workflow webhook** (works with the Integration token you already use): on the card press **Create secret** (shown once, copy it), then in GHL create a workflow per trigger (Contact DND, Contact Tag added/removed, Pipeline Stage Changed) with the action **Custom Webhook**: POST to the Webhook URL on the card, header `X-HyperDial-Webhook-Secret` = the secret, custom data `contact_id` = `{{contact.id}}` and `location_id` = `{{location.id}}`. Replacing or deleting the secret on the card stops the old one immediately.
+- **Marketplace app** (signed by GHL, no secret): create a private app, install it on the location, set its webhook URL to the Webhook URL on the card and subscribe to ContactDndUpdate, ContactTagUpdate, ContactUpdate and OpportunityStageUpdate. It is not known yet whether a plain Integration token can receive these events; the workflow route avoids the question.
+
+Limits: duplicate deliveries within 10 minutes are ignored, and at most 60 events per minute per org are acted on (the rest wait for the 5-minute check). The card shows when the last update arrived.
 
 ## 7. Checks to run once it is live
 
@@ -189,6 +202,7 @@ The existing 5-minute pull (importing contacts by tag) is separate and also off 
 - [ ] Mark a test contact Do Not Call in HyperDial; within about a minute it has Do Not Disturb on and the DNC tag.
 - [ ] Give a test contact a GHL Owner that matches an intern's GHL user id, with a waiting callback on a campaign that intern is on; within about 5 minutes the callback is assigned to that intern.
 - [ ] Turn on Do Not Disturb for a test contact in GHL that is on a call list; within about 5 minutes (after turning on Remove from call lists) the card's last run shows a lead removed and the lead is gone from the queue.
+- [ ] With Instant updates set up (Settings → Integrations), turn on Do Not Disturb for a linked test contact in GHL; within a few seconds the contact is Do Not Call in HyperDial and **Last update received** on the card moves. A request with a wrong or missing secret is refused (401) and changes nothing.
 - [ ] Press End shift on a test intern; within about a minute the clock-in and clock-out fields, survey fields and counts are on the intern contact.
 - [ ] After the shift is finalized, `shift-evt-completed` (and `shift-evt-late-start` for a late one) appear.
 - [ ] Close a test week; `week_hours_vs_min` and `week_under_minimum` are set.
@@ -196,7 +210,7 @@ The existing 5-minute pull (importing contacts by tag) is separate and also off 
 ## 8. What is not built yet
 
 - **List name on old leads.** Leads and contacts imported before the list name existed (2026-10-19) carry no list name, so `Lead List / Batch ID` shows the campaign name for them. Contacts added to a campaign later from the Contacts screen use the list name of the contact's first import. The scheduled GHL pull (by tag or stage) does not record a list name yet.
-- **Instant removal.** Do Not Disturb and tag changes in GHL are picked up by the 5-minute check, not by a GHL webhook, so removal is not immediate. No public webhook address was added, on purpose.
+- **Instant removal needs a one-time GHL setup.** Do Not Disturb and tag changes are instant only after you connect a workflow webhook or Marketplace app (see _Instant updates_ in section 6); otherwise they wait for the 5-minute check. The webhook was not tested against a live GHL account: whether GHL signs the raw body or the re-serialised body, and whether an Integration token can receive Marketplace events, are still to be confirmed on first use.
 - **Backfills.** Contacts that were already Do Not Call in HyperDial before this release were not pushed to GHL, and shifts finalized before the sign-up counting went live show 0 sign-ups. Both can be done as a one-off on request.
 - **Unlinked contacts.** A contact that has no GHL contact id yet is not created in GHL just to carry a Do Not Call flag.
 - **Skipped fields are only logged.** If an intern field does not exist in GHL it is skipped and noted in the function logs; the screen under Team Shifts → Setup does not list skipped fields yet.
