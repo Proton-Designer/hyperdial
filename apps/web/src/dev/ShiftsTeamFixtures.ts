@@ -293,6 +293,8 @@ function kpiFor(s: TeamShift, i: number): ShiftKpi {
     talkMinutes: Math.round(active * 0.22),
     dialsPerActiveHour: Math.round((dials / (active / 60)) * 10) / 10,
     connectRatePct: 31,
+    signUps: Math.round(dials * 0.12 * 0.3),
+    conversionRatePct: dials * 0.12 >= 0.5 ? 30 : null,
     dispositions: {},
     flags: flagged ? ['late_start', 'long_idle'] : [],
   };

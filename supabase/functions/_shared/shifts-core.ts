@@ -103,6 +103,9 @@ export interface KpiRow {
   talk_minutes: number;
   dials_per_active_hour: number | string | null;
   connect_rate_pct: number | string | null;
+  /** TASK-G01 columns: absent on a database that has not applied 20261019195842 yet. */
+  sign_ups?: number | null;
+  conversion_rate_pct?: number | string | null;
   dispositions: Record<string, number> | null;
   flags: string[] | null;
   clocked_in_at?: string | null;
@@ -369,6 +372,8 @@ export const mapKpi = (r: KpiRow) => ({
   talkMinutes: r.talk_minutes,
   dialsPerActiveHour: num(r.dials_per_active_hour),
   connectRatePct: num(r.connect_rate_pct),
+  signUps: r.sign_ups ?? 0,
+  conversionRatePct: num(r.conversion_rate_pct ?? null),
   dispositions: r.dispositions ?? {},
   flags: r.flags ?? [],
   clockedInAt: isoz(r.clocked_in_at ?? null),

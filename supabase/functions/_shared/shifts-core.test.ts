@@ -605,3 +605,38 @@ Deno.test('clock error codes: statuses and the detail keys that reach the client
     { field: 'listQuality' }
   );
 });
+
+Deno.test(
+  'G04: mapKpi carries sign-ups + conversion rate; absent columns (pre-migration) map to 0 / null',
+  () => {
+    const base = {
+      shift_id: 's1',
+      user_id: 'u1',
+      final: true,
+      computed_at: '2026-10-13T14:00:00Z',
+      scheduled_minutes: 120,
+      active_dial_minutes: 100,
+      power_active_minutes: 0,
+      adherence_pct: 83,
+      first_dial_at: null,
+      last_call_end_at: null,
+      late_start_minutes: 0,
+      early_end_minutes: 0,
+      longest_idle_minutes: 0,
+      dials: 10,
+      connects: 4,
+      conversations: 3,
+      voicemails: 0,
+      no_answers: 0,
+      talk_minutes: 5,
+      dials_per_active_hour: null,
+      connect_rate_pct: null,
+      dispositions: null,
+      flags: null,
+    };
+    const withCols = mapKpi({ ...base, sign_ups: 2, conversion_rate_pct: '66.7' });
+    assertEquals([withCols.signUps, withCols.conversionRatePct], [2, 66.7]);
+    const before = mapKpi(base);
+    assertEquals([before.signUps, before.conversionRatePct], [0, null]);
+  }
+);

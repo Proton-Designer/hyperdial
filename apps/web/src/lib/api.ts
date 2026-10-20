@@ -5627,6 +5627,10 @@ export interface ShiftKpi {
   talkMinutes: number;
   dialsPerActiveHour: number | null;
   connectRatePct: number | null;
+  /** Legs whose disposition is a win. */
+  signUps: number;
+  /** signUps / conversations, null when there were no conversations. */
+  conversionRatePct: number | null;
   dispositions: Record<string, number>;
   flags: string[];
   clockedInAt?: string | null;

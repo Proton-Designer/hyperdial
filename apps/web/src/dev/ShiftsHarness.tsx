@@ -186,6 +186,8 @@ function kpi(s: Shift, over: Partial<ShiftKpi>): ShiftKpi {
     talkMinutes: 38,
     dialsPerActiveHour: 82,
     connectRatePct: 13.4,
+    signUps: 2,
+    conversionRatePct: 28.6,
     dispositions: {},
     flags: [],
     ...over,

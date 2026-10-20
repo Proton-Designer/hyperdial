@@ -260,6 +260,8 @@ export function ShiftKpiTable({ overview, onRefreshed }: Props) {
                       <Th>Dials</Th>
                       <Th>Connects</Th>
                       <Th>Convos</Th>
+                      <Th>Sign-ups</Th>
+                      <Th>Conversion</Th>
                       <Th>Dials / hr</Th>
                       <Th>Connect rate</Th>
                       <Th left>Flags</Th>
@@ -338,6 +340,8 @@ export function ShiftKpiTable({ overview, onRefreshed }: Props) {
                             <Td>{k.dials}</Td>
                             <Td>{k.connects}</Td>
                             <Td>{k.conversations}</Td>
+                            <Td>{k.signUps}</Td>
+                            <Td>{pct(k.conversionRatePct)}</Td>
                             <Td>{dash(k.dialsPerActiveHour)}</Td>
                             <Td>{pct(k.connectRatePct)}</Td>
                             <td className="px-3 py-2">
