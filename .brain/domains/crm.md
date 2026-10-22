@@ -88,9 +88,9 @@ every source, and a GHL -> HyperDial reconcile sweep; see "Data sync (2026-10-19
 |---|---|---|
 | Token storage + outbox schema | `supabase/migrations/20260924000900_ghl_integration_outbox.sql` | `org_integrations`, `crm_sync_jobs`, `enqueue_crm_job` |
 | Vault-naming + dedupe fix | `supabase/migrations/20260924001200_ghl_integration_fixes.sql` | See Constraints below |
-| Connect / disconnect functions | `supabase/functions/ghl-connect/`, `supabase/functions/ghl-disconnect/` | Owner-only, same shape as `telnyx-connect`/`telnyx-disconnect` |
+| Connect / disconnect functions | `supabase/functions/ghl-connect/`, `supabase/functions/ghl-disconnect/` | Owner or admin (owner-only until 2026-10-21), same shape as `telnyx-connect`/`telnyx-disconnect` |
 | Typed LeadConnector client | `supabase/functions/_shared/ghl-client.ts` | contacts upsert/search, notes, tags, tasks, DND. Deno-tested (`ghl-client.test.ts`) with a stubbed `fetch`, no live GHL calls |
-| Settings UI | `apps/web/src/components/Settings.tsx` (`IntegrationsTab`) | Connect form + status card + `SyncStatusList` (last 20 jobs), owner-only controls |
+| Settings UI | `apps/web/src/components/Settings.tsx` (`IntegrationsTab`) | Connect form + status card + `SyncStatusList` (last 20 jobs), owner/admin controls |
 | Push worker | `supabase/functions/_shared/ghl-sync-worker.ts` (pure per-step processors, deno-tested), `ghl-sync-worker/index.ts` (claim + dispatch) | `20260924002000_ghl_push_worker.sql`: claim/complete/fail/progress RPCs + pg_cron |
 | Client wrappers | `apps/web/src/lib/api.ts` | `getGhlIntegrationStatus`, `connectGhl`, `disconnectGhl`, `importFromGhl`, `listCrmSyncJobs` |
 | Pull import + blocked tags (TASK-P3-P2, TASK-G7) | `_shared/ghl-import.ts`/`ghl-import/index.ts`; blocked tags: `org_integrations.ghl_dnc_tags`/`ghl_paused_tags` (`20260925080000`), `ghl-update-blocked-tags/`, `Settings.tsx`'s `GhlBlockedTagsEditor` | `Contacts.tsx`'s "Import from GHL"/"Re-sync"; contacts detail → `.brain/domains/contacts.md`. Tag lists owner/admin-editable via `set_org_ghl_blocked_tags` RPC (service-role only, same wrapper as `set_org_ghl_token`) |
@@ -98,11 +98,11 @@ every source, and a GHL -> HyperDial reconcile sweep; see "Data sync (2026-10-19
 ## How it works
 
 1. Owner pastes a Private Integration Token + location id into Settings → Integrations (`IntegrationsTab`).
-2. `ghl-connect` (owner-only, checked directly against `org_members` like `telnyx-connect`) calls `GET /locations/{locationId}` through `_shared/ghl-client.ts` to confirm the token is live and actually resolves to that location.
+2. `ghl-connect` (owner or admin, checked directly against `org_members` like `telnyx-connect`) calls `GET /locations/{locationId}` through `_shared/ghl-client.ts` to confirm the token is live and actually resolves to that location.
 3. On success, `set_org_ghl_token` (public wrapper → `private.set_org_ghl_token`) stores the token in Vault and upserts `org_integrations` (`status='connected'`, `token_last4`, `location_id`, `connected_at`).
 4. The client never reads the base `org_integrations` table (zero client policies, same pattern as `org_telephony`) -- only the `org_integrations_status` view, scoped by `private.is_org_member`.
 5. Once connected, a service-role caller (a future dispositions Edge Function) calls `enqueue_crm_job(org, kind, contact_id, call_leg_id, payload)`. It no-ops (returns `null`, writes nothing) when the org has no `status='connected'` row.
-6. `ghl-disconnect` (owner-only) only flips `status` to `'disconnected'` -- it does not delete the row or the Vault secret, so reconnecting reuses the same secret via `set_org_ghl_token`'s existing-secret path.
+6. `ghl-disconnect` (owner or admin) only flips `status` to `'disconnected'` -- it does not delete the row or the Vault secret, so reconnecting reuses the same secret via `set_org_ghl_token`'s existing-secret path.
 
 ### Disposition job payload shape
 

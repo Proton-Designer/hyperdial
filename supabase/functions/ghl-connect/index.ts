@@ -1,5 +1,5 @@
 /**
- * "Connect GHL" (design §6), owner-only. Validates the org's GHL Private Integration
+ * "Connect GHL" (design §6), owner or admin. Validates the org's GHL Private Integration
  * Token against the LeadConnector API by fetching the location it claims (confirms both
  * that the token is live and that it actually resolves to the locationId the owner
  * pasted in), and only then persists anything: the token goes into Vault via
@@ -7,8 +7,9 @@
  * A bad token or a locationId/token mismatch leaves no partial state.
  *
  * Not wired through `_shared/auth.ts`'s `requireOrgRole`, same reasoning as
- * `telnyx-connect`: this function does its own minimal owner check directly against
- * `org_members` rather than depend on TASK-P1-02's scope.
+ * `telnyx-connect`: this function does its own minimal role check directly against
+ * `org_members` rather than depend on TASK-P1-02's scope. Owners and admins may connect (user order
+ * 2026-10-21; it was owner-only).
  */
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { corsHeaders, corsPreflightResponse } from '../_shared/cors.ts';
@@ -28,7 +29,7 @@ function getSupabaseAdmin() {
   return createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
 }
 
-async function assertOrgOwner(
+async function assertOrgOwnerOrAdmin(
   supabase: ReturnType<typeof getSupabaseAdmin>,
   orgId: string,
   userId: string
@@ -44,7 +45,7 @@ async function assertOrgOwner(
     console.error('[ghl-connect] org_members lookup failed', error.message);
     return false;
   }
-  return data?.role === 'owner';
+  return data?.role === 'owner' || data?.role === 'admin';
 }
 
 Deno.serve(async (req: Request) => {
@@ -68,9 +69,9 @@ Deno.serve(async (req: Request) => {
 
   const supabase = getSupabaseAdmin();
 
-  const isOwner = await assertOrgOwner(supabase, orgId, user.id);
-  if (!isOwner) {
-    return jsonResponse({ error: 'Only the org owner can connect GHL' }, 403);
+  const canConnect = await assertOrgOwnerOrAdmin(supabase, orgId, user.id);
+  if (!canConnect) {
+    return jsonResponse({ error: 'Only an owner or admin can connect GHL' }, 403);
   }
 
   const client = createGhlClient(token);
@@ -81,14 +82,19 @@ Deno.serve(async (req: Request) => {
     const message = err instanceof Error ? err.message : String(err);
     console.error('[ghl-connect] getLocation failed', message);
     const isBadToken = message.includes('(401)') || message.includes('(403)');
+    // GHL answers 401 "The token is not authorized for this scope." when the token is valid but the Private
+    // Integration lacks a permission; say which one instead of calling the token bad.
+    const isMissingScope = isBadToken && /not authorized for this scope/i.test(message);
     const isBadLocation = message.includes('(404)');
     return jsonResponse(
       {
-        error: isBadToken
-          ? 'GHL rejected this token'
-          : isBadLocation
-            ? 'GHL rejected this location id -- check it was copied from the correct sub-account'
-            : `GHL request failed: ${message}`,
+        error: isMissingScope
+          ? 'Your GHL token is missing the "View Locations" permission. In GoHighLevel open Settings → Private Integrations, edit this integration, add View Locations (plus View/Edit Contacts, Tags, Custom Fields and Opportunities, and View Users), save, then connect again.'
+          : isBadToken
+            ? 'GHL rejected this token'
+            : isBadLocation
+              ? 'GHL rejected this location id -- check it was copied from the correct sub-account'
+              : `GHL request failed: ${message}`,
       },
       isBadToken ? 401 : isBadLocation ? 400 : 502
     );

@@ -1968,9 +1968,9 @@ function IntegrationsTab() {
             </span>
           </div>
 
-          {!isOwner ? (
+          {!(isOwner || role === 'admin') ? (
             <p className="text-sm text-text-secondary">
-              Only the org owner can connect or disconnect GHL.
+              Only an owner or admin can connect or disconnect GHL.
             </p>
           ) : isConnected ? (
             <button

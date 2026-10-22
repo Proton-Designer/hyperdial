@@ -1,5 +1,5 @@
 /**
- * "Disconnect GHL" (design §6), owner-only. Marks the org disconnected without deleting
+ * "Disconnect GHL" (design §6), owner or admin (was owner-only until 2026-10-21). Marks the org disconnected without deleting
  * the stored token or the org_integrations row: reconnecting with a new (or the same)
  * token via `ghl-connect` reuses the same Vault secret id through `set_org_ghl_token`'s
  * existing-secret path, rather than leaving an orphaned secret behind. Same shape as
@@ -51,8 +51,8 @@ Deno.serve(async (req: Request) => {
     console.error('[ghl-disconnect] org_members lookup failed', membershipError.message);
     return jsonResponse({ error: 'Failed to verify ownership' }, 500);
   }
-  if (membership?.role !== 'owner') {
-    return jsonResponse({ error: 'Only the org owner can disconnect GHL' }, 403);
+  if (membership?.role !== 'owner' && membership?.role !== 'admin') {
+    return jsonResponse({ error: 'Only an owner or admin can disconnect GHL' }, 403);
   }
 
   const { error: updateError } = await supabase

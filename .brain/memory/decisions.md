@@ -1961,3 +1961,11 @@ takeover disposition path, with no separate wiring needed for any of them.
 
 ## 2026-10-20 — GHL tags: 'signed up' + 'active' by default, created in GHL (TASK-G28)
 User order: include "signed up" and "active" tags, connect them to GHL, let users create them. New `org_integrations` rows default to `ghl_exclude_tags = {signed up, active}` and `ghl_reconcile_enabled = true` (migration 20261019210213; existing rows untouched; no org was connected yet). The win disposition (`yes_build_profile`) tag changed from `Interested` to `signed up` in the seed (`private.seed_default_dispositions`) and for orgs still on the old default; `dispositions.ghl_tag` is the single source. `ghl-connect` and every tag save (`ghl-reconcile-settings` set, `ghl-update-blocked-tags`) call `syncOrgTagsToGhl` (`_shared/ghl-tags-io.ts`): GET then POST `/locations/{id}/tags`, rate-limited, never blocking, result returned as `tagSync`. Owner/admin picker endpoint `ghl-tags` (list/create). Trade-off: reconcile on by default is a compliance feature (DND/DNC removal) but also removes any lead carrying `active`; an org that uses `active` for something else must edit the list.
+
+## 2026-10-21 — GHL connect/disconnect: owner OR admin
+User order: "allow admins the ability to add tokens". `ghl-connect` and `ghl-disconnect` now accept an active `owner` or
+`admin` (both did their own `org_members` check, owner-only); the Integrations tab shows the connect form to admins too.
+Trade-off accepted: any admin can replace or remove the token the whole org syncs through (both actions are in
+`org_audit_log` as `ghl.connect` / `ghl.disconnect`). Telnyx connect stays owner-only. Same change: GHL's 401 "The token is
+not authorized for this scope." on `GET /locations/{id}` now says the token is missing the View Locations permission
+instead of "GHL rejected this token" (a valid token without that scope was misreported, 2026-10-21).
