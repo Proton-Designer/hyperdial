@@ -4,6 +4,9 @@
  * Team "Pending invites" table. POST is now action-based (`create` / `resend` / `revoke`), same
  * convention as `org-members`'s own POST.
  *
+ * Every new or resent invite is also emailed when Resend is configured (RESEND_API_KEY +
+ * INVITE_EMAIL_FROM, see _shared/invite-email.ts); `emailStatus` says whether it went out.
+ *
  * `create` is bulk: many emails in one call, one result per email (`sent` / `already_member` /
  * `already_invited` / `invalid`) -- never a single all-or-nothing failure for the whole paste.
  * Duplicate-email detection reuses `org_member_emails` (TASK-A2's own batched lookup, see its
@@ -14,6 +17,11 @@ import { corsHeaders, corsPreflightResponse } from '../_shared/cors.ts';
 import { requireOrgRole } from '../_shared/auth.ts';
 import { logOrgAction } from '../_shared/audit.ts';
 import { isInviteLive } from '../_shared/invite-core.ts';
+import {
+  sendInviteEmail,
+  type InviteEmailConfig,
+  type InviteEmailOutcome,
+} from '../_shared/invite-email.ts';
 
 const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const MAX_EMAILS_PER_BATCH = 100;
@@ -27,6 +35,30 @@ function jsonError(status: number, message: string): Response {
 
 function getSupabaseAdmin() {
   return createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
+}
+
+function inviteEmailConfig(): InviteEmailConfig {
+  return {
+    apiKey: Deno.env.get('RESEND_API_KEY'),
+    from: Deno.env.get('INVITE_EMAIL_FROM'),
+    appUrl: Deno.env.get('APP_URL') || 'https://hyperdial.myhomebasesolutions.com',
+  };
+}
+
+/** Org name + inviter's display name for the invite email, looked up once per request. */
+async function inviteEmailContext(
+  supabase: ReturnType<typeof getSupabaseAdmin>,
+  orgId: string,
+  userId: string
+): Promise<{ orgName: string | null; inviterName: string | null }> {
+  const [{ data: org }, { data: profile }] = await Promise.all([
+    supabase.from('orgs').select('name').eq('id', orgId).maybeSingle(),
+    supabase.from('profiles').select('first_name, last_name').eq('user_id', userId).maybeSingle(),
+  ]);
+  return {
+    orgName: (org?.name as string | undefined) ?? null,
+    inviterName: [profile?.first_name, profile?.last_name].filter(Boolean).join(' ') || null,
+  };
 }
 
 function generateToken(): string {
@@ -251,8 +283,23 @@ Deno.serve(async (req) => {
       details: { email: existing.email, oldInviteId: inviteId },
     });
 
+    const ctx = await inviteEmailContext(supabase, orgId, user.id);
+    const emailStatus = await sendInviteEmail(inviteEmailConfig(), {
+      to: existing.email,
+      token,
+      role: existing.role,
+      expiresAt: created.expires_at,
+      ...ctx,
+    });
+
     return new Response(
-      JSON.stringify({ inviteId: created.id, token, expiresAt: created.expires_at }),
+      JSON.stringify({
+        email: existing.email,
+        inviteId: created.id,
+        token,
+        expiresAt: created.expires_at,
+        emailStatus,
+      }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }
@@ -333,7 +380,11 @@ Deno.serve(async (req) => {
     inviteId?: string;
     token?: string;
     expiresAt?: string;
+    /** Only for 'sent': whether the invite email went out ('not_configured' = link only). */
+    emailStatus?: InviteEmailOutcome;
   }[] = [];
+  const emailConfig = inviteEmailConfig();
+  let emailCtx: { orgName: string | null; inviterName: string | null } | null = null;
 
   for (const email of emails) {
     const key = email.toLowerCase();
@@ -395,12 +446,21 @@ Deno.serve(async (req) => {
     }
 
     seenThisBatch.add(key);
+    emailCtx ??= await inviteEmailContext(supabase, orgId, user.id);
+    const emailStatus = await sendInviteEmail(emailConfig, {
+      to: key,
+      token,
+      role,
+      expiresAt: invite.expires_at,
+      ...emailCtx,
+    });
     results.push({
       email: key,
       status: 'sent',
       inviteId: invite.id,
       token,
       expiresAt: invite.expires_at,
+      emailStatus,
     });
     await logOrgAction(supabase, {
       orgId,

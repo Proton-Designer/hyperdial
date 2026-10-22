@@ -342,6 +342,10 @@ function ProfileTab() {
   );
 }
 
+function inviteUrl(token: string): string {
+  return `${window.location.origin}/?invite=${encodeURIComponent(token)}`;
+}
+
 const ROLE_LABEL: Record<string, string> = {
   owner: 'Owner',
   admin: 'Admin',
@@ -467,11 +471,11 @@ function TeamTab({ scrollTo }: { scrollTo?: SettingsSection }) {
 
   const handleCopyLink = async (token: string) => {
     try {
-      await navigator.clipboard.writeText(`${window.location.origin}/?invite=${token}`);
+      await navigator.clipboard.writeText(inviteUrl(token));
       setCopiedToken(token);
       setTimeout(() => setCopiedToken(null), 2000);
     } catch {
-      // Clipboard API unavailable -- the link is still visible as plain text.
+      // Clipboard API unavailable -- the link is still visible in the field next to the button.
     }
   };
 
@@ -558,6 +562,7 @@ function TeamTab({ scrollTo }: { scrollTo?: SettingsSection }) {
     try {
       const result = await resendOrgInvite(inviteId);
       setBulkResults([result]);
+      setShowInvite(true); // the result (link / emailed) renders inside the invite panel
       load();
     } catch (e) {
       setActionError(String(e));
@@ -974,36 +979,68 @@ function TeamTab({ scrollTo }: { scrollTo?: SettingsSection }) {
           </form>
 
           {bulkResults && (
-            <div className="mt-4 space-y-1.5">
-              {bulkResults.map((r, i) => (
-                <div
-                  key={`${r.email}-${i}`}
-                  className="flex flex-wrap items-center gap-2 text-meta"
-                >
-                  <span className="text-text-primary">{r.email || '(resent)'}</span>
-                  <span
-                    className={cn(
-                      'px-1.5 py-0.5 rounded-full text-[10px] uppercase',
-                      r.status === 'sent'
-                        ? 'bg-success/10 text-success'
-                        : r.status === 'invalid'
-                          ? 'bg-danger/10 text-danger'
-                          : 'bg-white/5 text-text-secondary'
+            <div className="mt-4 space-y-3">
+              {bulkResults.map((r, i) => {
+                // Every created invite shows its link in full: email delivery is optional
+                // (Resend, see _shared/invite-email.ts), and when it is off or fails the admin
+                // must be able to see and send the link themselves.
+                const link = r.status === 'sent' && r.token ? inviteUrl(r.token) : null;
+                const label =
+                  r.status !== 'sent'
+                    ? r.status.replace('_', ' ')
+                    : r.emailStatus === 'emailed'
+                      ? 'emailed'
+                      : r.emailStatus === 'failed'
+                        ? 'email failed'
+                        : 'link ready';
+                return (
+                  <div key={`${r.email}-${i}`} className="text-meta">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-text-primary">{r.email}</span>
+                      <span
+                        className={cn(
+                          'px-1.5 py-0.5 rounded-full text-[10px] uppercase',
+                          r.status === 'invalid' || r.emailStatus === 'failed'
+                            ? 'bg-danger/10 text-danger'
+                            : r.status === 'sent'
+                              ? 'bg-success/10 text-success'
+                              : 'bg-white/5 text-text-secondary'
+                        )}
+                      >
+                        {label}
+                      </span>
+                    </div>
+                    {link && (
+                      <>
+                        {r.emailStatus !== 'emailed' && (
+                          <p className="mt-1 text-text-secondary">
+                            {r.emailStatus === 'failed'
+                              ? 'The invite email could not be sent.'
+                              : 'Invite emails are not set up yet.'}{' '}
+                            Send this link to {r.email} yourself:
+                          </p>
+                        )}
+                        <div className="mt-1 flex items-center gap-2">
+                          <input
+                            readOnly
+                            value={link}
+                            onFocus={(e) => e.currentTarget.select()}
+                            aria-label={`Invite link for ${r.email}`}
+                            className="flex-1 min-w-0 bg-surface-2 border border-white/10 rounded-app-md px-3 py-1.5 text-text-primary font-mono text-xs"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => handleCopyLink(r.token!)}
+                            className="shrink-0 text-accent-to hover:underline"
+                          >
+                            {copiedToken === r.token ? 'Copied' : 'Copy link'}
+                          </button>
+                        </div>
+                      </>
                     )}
-                  >
-                    {r.status.replace('_', ' ')}
-                  </span>
-                  {r.status === 'sent' && r.token && (
-                    <button
-                      type="button"
-                      onClick={() => handleCopyLink(r.token!)}
-                      className="text-accent-to hover:underline"
-                    >
-                      {copiedToken === r.token ? 'Copied' : 'Copy link'}
-                    </button>
-                  )}
-                </div>
-              ))}
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>

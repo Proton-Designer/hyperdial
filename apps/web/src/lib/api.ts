@@ -1973,9 +1973,13 @@ export interface BulkInviteResult {
   status: 'sent' | 'already_member' | 'already_invited' | 'invalid';
   inviteId?: string;
   /** Only present for status 'sent' -- build the shareable link client-side (same shape as the
-   *  pre-A2 single-invite flow), since this app has no email-sending infra of its own. */
+   *  pre-A2 single-invite flow). */
   token?: string;
   expiresAt?: string;
+  /** Only for status 'sent': 'emailed' = the invite email went out; 'not_configured' = email
+   *  delivery isn't set up (RESEND_API_KEY / INVITE_EMAIL_FROM); 'failed' = Resend refused it.
+   *  In the last two cases the admin has to send the link themselves. */
+  emailStatus?: 'emailed' | 'not_configured' | 'failed';
 }
 
 export async function createOrgInvites(
