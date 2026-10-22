@@ -44,6 +44,28 @@ function escapeHtml(s: string): string {
     .replace(/'/g, '&#39;');
 }
 
+const MAX_NAME_LENGTH = 60;
+const URL_LIKE = /(https?:\/\/|www\.|\b[a-z0-9-]+\.(com|net|org|io|co|info|biz|xyz|link|app)\b)/i;
+const EMAIL_RE = /^[^\s@<>",;]+@[^\s@<>",;]+\.[^\s@<>",;]{2,}$/;
+
+/** Org and inviter names are set by the inviting admin and go into the subject and body, so an
+ *  invite must not become a way to mail arbitrary text from our domain: control characters and
+ *  newlines are collapsed, length is capped, and a name that looks like a link is dropped (the
+ *  caller then uses a generic fallback). */
+export function safeDisplayName(name: string | null): string | null {
+  // deno-lint-ignore no-control-regex
+  const clean = (name ?? '')
+    .replace(/[\u0000-\u001f\u007f]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!clean || URL_LIKE.test(clean)) return null;
+  return clean.length > MAX_NAME_LENGTH ? `${clean.slice(0, MAX_NAME_LENGTH - 1)}…` : clean;
+}
+
+export function isDeliverableAddress(email: string): boolean {
+  return email.length <= 254 && EMAIL_RE.test(email);
+}
+
 export function inviteLink(appUrl: string, token: string): string {
   return `${appUrl.replace(/\/+$/, '')}/?invite=${encodeURIComponent(token)}`;
 }
@@ -53,8 +75,8 @@ export function buildInviteEmail(
   appUrl: string
 ): { subject: string; html: string; text: string } {
   const link = inviteLink(appUrl, input.token);
-  const org = input.orgName?.trim() || 'their team';
-  const who = input.inviterName?.trim() || 'Your team';
+  const org = safeDisplayName(input.orgName) || 'their team';
+  const who = safeDisplayName(input.inviterName) || 'Your team';
   const role = ROLE_LABEL[input.role] ?? 'a member';
   const expires = new Date(input.expiresAt).toUTCString().replace(/ \d\d:\d\d:\d\d GMT$/, '');
   const subject = `${who} invited you to join ${org} on HyperDial`;
@@ -81,6 +103,7 @@ export async function sendInviteEmail(
   fetchImpl: typeof fetch = fetch
 ): Promise<InviteEmailOutcome> {
   if (!config.apiKey || !config.from) return 'not_configured';
+  if (!isDeliverableAddress(input.to)) return 'failed';
   const { subject, html, text } = buildInviteEmail(input, config.appUrl);
   try {
     const res = await fetchImpl('https://api.resend.com/emails', {

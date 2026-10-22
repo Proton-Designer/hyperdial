@@ -1,5 +1,11 @@
 import { assert, assertEquals } from 'jsr:@std/assert@1';
-import { buildInviteEmail, inviteLink, sendInviteEmail } from './invite-email.ts';
+import {
+  buildInviteEmail,
+  inviteLink,
+  isDeliverableAddress,
+  safeDisplayName,
+  sendInviteEmail,
+} from './invite-email.ts';
 
 const input = {
   to: 'jane@example.com',
@@ -76,4 +82,38 @@ Deno.test('sendInviteEmail: a non-2xx or a thrown fetch is failed, never thrown'
   const boom = (() => Promise.reject(new Error('net'))) as typeof fetch;
   assertEquals(await sendInviteEmail(cfg, input, bad), 'failed');
   assertEquals(await sendInviteEmail(cfg, input, boom), 'failed');
+});
+
+Deno.test(
+  'safeDisplayName: collapses newlines/control chars, caps length, drops link-like names',
+  () => {
+    assertEquals(safeDisplayName('Kareem\r\nBcc: x@y.z'), 'Kareem Bcc: x@y.z');
+    assertEquals(safeDisplayName('A'.repeat(100))!.length, 60);
+    assertEquals(safeDisplayName('Claim your prize at evil.com'), null);
+    assertEquals(safeDisplayName('https://phish.example/login'), null);
+    assertEquals(safeDisplayName('   '), null);
+    assertEquals(safeDisplayName('MyHomeBase Solutions'), 'MyHomeBase Solutions');
+  }
+);
+
+Deno.test('buildInviteEmail: a link-like inviter name falls back to the generic wording', () => {
+  const { subject } = buildInviteEmail({ ...input, inviterName: 'Visit www.win.biz now' }, appUrl);
+  assertEquals(subject, 'Your team invited you to join MyHomeBase <Solutions> on HyperDial');
+});
+
+Deno.test('sendInviteEmail: a malformed recipient is failed without calling Resend', async () => {
+  let calls = 0;
+  const f = (() => {
+    calls++;
+    return Promise.resolve(new Response('{}'));
+  }) as typeof fetch;
+  assertEquals(isDeliverableAddress('a@b'), false);
+  assertEquals(isDeliverableAddress('jane@example.com'), true);
+  const out = await sendInviteEmail(
+    { apiKey: 'k', from: 'a@b.c', appUrl },
+    { ...input, to: 'x@y, victim@z.com' },
+    f
+  );
+  assertEquals(out, 'failed');
+  assertEquals(calls, 0);
 });
