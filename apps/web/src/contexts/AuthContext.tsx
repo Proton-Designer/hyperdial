@@ -55,8 +55,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((event, session) => {
-      setSession(session);
-      setUser(session?.user ?? null);
+      // supabase-js re-emits SIGNED_IN with a freshly parsed copy of the SAME session every time
+      // the tab goes hidden -> visible (GoTrueClient._recoverAndRefresh). Swapping in that new
+      // object re-ran everything keyed on `user` (OrgContext's load -> loading=true, phone
+      // numbers, ...), so the whole app visibly reloaded on every tab switch. Keep the existing
+      // objects unless something actually changed.
+      setSession((prev) =>
+        prev && session && prev.access_token === session.access_token ? prev : session
+      );
+      setUser((prev) => {
+        const next = session?.user ?? null;
+        return prev && next && prev.id === next.id && prev.updated_at === next.updated_at
+          ? prev
+          : next;
+      });
       setLoading(false);
       // Supabase-js fires this when it parses a `type=recovery` link from the URL fragment on
       // load -- the session it creates is real, but the user hasn't chosen a new password yet

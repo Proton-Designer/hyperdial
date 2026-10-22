@@ -45,6 +45,9 @@ interface MembershipRow {
 
 export function OrgProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth();
+  // Keyed on the id, not the User object: a new object for the same user (token refresh, tab
+  // refocus) must not re-run the membership load and flip `loading`.
+  const userId = user?.id ?? null;
   const [loading, setLoading] = useState(true);
   const [orgId, setOrgId] = useState<string | null>(null);
   const [role, setRole] = useState<OrgRole | null>(null);
@@ -63,7 +66,7 @@ export function OrgProvider({ children }: { children: ReactNode }) {
 
   const load = useCallback(async () => {
     const seq = ++loadSeqRef.current;
-    if (!user) {
+    if (!userId) {
       if (seq !== loadSeqRef.current) return;
       setLoading(false);
       setOrgId(null);
@@ -76,12 +79,12 @@ export function OrgProvider({ children }: { children: ReactNode }) {
       supabase
         .from('profiles')
         .select('first_name, last_name, active_org_id')
-        .eq('user_id', user.id)
+        .eq('user_id', userId)
         .maybeSingle(),
       supabase
         .from('org_members')
         .select('org_id, role, orgs(name)')
-        .eq('user_id', user.id)
+        .eq('user_id', userId)
         .eq('status', 'active'),
     ]);
     if (seq !== loadSeqRef.current) return;
@@ -100,7 +103,7 @@ export function OrgProvider({ children }: { children: ReactNode }) {
     setOrgId(activeOrgId);
     setRole(list.find((m) => m.orgId === activeOrgId)?.role ?? null);
     setLoading(false);
-  }, [user]);
+  }, [userId]);
 
   useEffect(() => {
     load();
