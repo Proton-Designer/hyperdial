@@ -39,6 +39,8 @@ export function useVisibilityPacedPolling(
   useEffect(() => {
     if (!enabled) return;
     let timer: ReturnType<typeof setTimeout> | null = null;
+    // Mount counts as a fetch: every caller loads on mount itself.
+    let lastPollAt = Date.now();
 
     const schedule = () => {
       if (document.visibilityState === 'hidden') return;
@@ -50,6 +52,7 @@ export function useVisibilityPacedPolling(
     };
 
     const tick = () => {
+      lastPollAt = Date.now();
       pollRef.current();
       schedule();
     };
@@ -60,8 +63,11 @@ export function useVisibilityPacedPolling(
         timer = null;
       }
       if (document.visibilityState === 'visible') {
-        pollRef.current();
-        schedule();
+        // Only refetch on return if a tick actually came due while hidden -- flicking to another
+        // tab and straight back used to refire every poller on the page at once.
+        const dueIn = baseIntervalMs - (Date.now() - lastPollAt);
+        if (dueIn <= 0) tick();
+        else timer = setTimeout(tick, dueIn);
       }
     };
 
