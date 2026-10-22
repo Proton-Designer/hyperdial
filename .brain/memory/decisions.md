@@ -1969,3 +1969,17 @@ Trade-off accepted: any admin can replace or remove the token the whole org sync
 `org_audit_log` as `ghl.connect` / `ghl.disconnect`). Telnyx connect stays owner-only. Same change: GHL's 401 "The token is
 not authorized for this scope." on `GET /locations/{id}` now says the token is missing the View Locations permission
 instead of "GHL rejected this token" (a valid token without that scope was misreported, 2026-10-21).
+
+## 2026-10-22 — Invite emails: Resend HTTP API, opt-in, never blocks the invite
+
+HyperDial had no email sending: an invite reported "sent" but only created a link, and the
+results row hid the link behind a "Copy link" button, so admins thought invites went out.
+`org-invite-create` (create + resend) now calls `_shared/invite-email.ts`, which POSTs to
+Resend when `RESEND_API_KEY` and `INVITE_EMAIL_FROM` are set (optional `APP_URL`, default
+`https://hyperdial.myhomebasesolutions.com`). Each result carries `emailStatus`
+(`emailed` / `not_configured` / `failed`). A failed or unconfigured send never fails the invite,
+and the UI always shows the full link with a note when it was not emailed. Why Resend over SMTP:
+Supabase Edge Functions block outbound ports 25/587, and Resend is a single HTTP call.
+Supabase Auth's own mailer is not used: it has no custom SMTP configured here (default sender,
+2 emails/hour, team addresses only), and `inviteUserByEmail` would create the auth user before
+acceptance, bypassing the invite-only signup trigger.
