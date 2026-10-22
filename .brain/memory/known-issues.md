@@ -1423,3 +1423,12 @@ Written from the review SHOULDs of TASK-G01..G13 (the run's `audit/*/review-*.md
   has the new canonical key alongside it (e.g. `yes_build_profile`/`do_not_call`/`voicemail_left`)
   -- deliberately ADD-only, per the task's own instruction; an admin deactivates whichever set
   they don't want via the existing Settings editor → `mem.decisions`
+
+## 2026-10-22 — Returning to the tab rebuilt the app (FIXED ac5d76a)
+supabase-js re-emits `SIGNED_IN` with a new copy of the same session on every hidden→visible
+transition. Anything keyed on the `User` object re-ran, so OrgContext reloaded (`loading=true`)
+and Settings, which shows a skeleton while org loading, remounted everything. AuthContext now
+keeps the same objects for an unchanged session, and OrgContext keys on `user.id`. Rule: never
+put the `User`/`Session` object in a dependency array; use `user?.id`. Testing trap: a
+synthetic `visibilitychange` must be dispatched with `{ bubbles: true }`, because supabase-js
+listens on `window`, not `document`.
