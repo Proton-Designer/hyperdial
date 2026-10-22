@@ -367,6 +367,10 @@ function TeamTab({ scrollTo }: { scrollTo?: SettingsSection }) {
   const [busyInviteId, setBusyInviteId] = useState<string | null>(null);
 
   const [showInvite, setShowInvite] = useState(false);
+  const invitePanelRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (showInvite) invitePanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, [showInvite]);
   // TASK-A2: bulk -- paste many emails (comma/newline-separated), one role + one optional
   // campaign set for the whole batch (matches the task's own "choose role and optional campaigns"
   // wording -- per-email role/campaigns would need a much heavier per-row form for a rare need).
@@ -883,6 +887,128 @@ function TeamTab({ scrollTo }: { scrollTo?: SettingsSection }) {
         }
       />
 
+      {/* "Invite members" did nothing visible: this form rendered at the very bottom of the
+          page (below pods, the roster and three settings cards), far off-screen. It sits right
+          under the header now, and scrolls into view when opened. */}
+      {canManage && showInvite && (
+        <div
+          ref={invitePanelRef}
+          className="bg-gradient-to-r from-accent-from/10 to-accent-to/10 rounded-app-lg p-6 border border-accent-from/20 mb-6"
+        >
+          <h3 className="text-section-title text-text-primary mb-4">Invite teammates</h3>
+          <form onSubmit={handleCreateInvites} className="space-y-3">
+            <div>
+              <label className="block text-sm text-text-secondary mb-2">
+                Emails (comma or newline-separated)
+              </label>
+              <textarea
+                value={inviteEmailsText}
+                onChange={(e) => setInviteEmailsText(e.target.value)}
+                required
+                rows={3}
+                className="w-full bg-surface-2 border border-white/10 rounded-app-md px-4 py-3 text-white placeholder-text-muted focus:outline-none focus:border-accent-to"
+                placeholder={'jane@company.com\njohn@company.com'}
+              />
+            </div>
+            <div className="flex flex-wrap items-end gap-3">
+              <div>
+                <label className="block text-sm text-text-secondary mb-2">Role</label>
+                <select
+                  value={inviteRole}
+                  onChange={(e) => setInviteRole(e.target.value as 'admin' | 'agent' | 'manager')}
+                  className="bg-surface-2 border border-white/10 rounded-app-md px-4 py-3 text-white focus:outline-none focus:border-accent-to"
+                >
+                  <option value="agent">Agent</option>
+                  <option value="manager">Manager</option>
+                  <option value="admin">Admin</option>
+                </select>
+              </div>
+              {campaigns.length > 0 && (
+                <div className="flex-1 min-w-[220px]">
+                  <label className="block text-sm text-text-secondary mb-2">
+                    Join campaigns (optional)
+                  </label>
+                  <div className="flex flex-wrap gap-2">
+                    {campaigns.map((c) => {
+                      const checked = inviteCampaignIds.includes(c.id);
+                      return (
+                        <label
+                          key={c.id}
+                          className={cn(
+                            'px-2.5 py-1 rounded-full text-xs border cursor-pointer',
+                            checked
+                              ? 'bg-accent-to/20 border-accent-to/40 text-accent-to'
+                              : 'bg-surface-2 border-border-subtle text-text-secondary'
+                          )}
+                        >
+                          <input
+                            type="checkbox"
+                            className="hidden"
+                            checked={checked}
+                            onChange={() =>
+                              setInviteCampaignIds((prev) =>
+                                checked ? prev.filter((id) => id !== c.id) : [...prev, c.id]
+                              )
+                            }
+                          />
+                          {c.name}
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+              <button
+                type="submit"
+                disabled={inviteSubmitting}
+                className="px-6 py-3 bg-gradient-to-r from-accent-from to-accent-to rounded-app-md text-white font-semibold disabled:opacity-50 flex items-center gap-2"
+              >
+                {inviteSubmitting ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Mail className="w-4 h-4" />
+                )}
+                Send invites
+              </button>
+            </div>
+          </form>
+
+          {bulkResults && (
+            <div className="mt-4 space-y-1.5">
+              {bulkResults.map((r, i) => (
+                <div
+                  key={`${r.email}-${i}`}
+                  className="flex flex-wrap items-center gap-2 text-meta"
+                >
+                  <span className="text-text-primary">{r.email || '(resent)'}</span>
+                  <span
+                    className={cn(
+                      'px-1.5 py-0.5 rounded-full text-[10px] uppercase',
+                      r.status === 'sent'
+                        ? 'bg-success/10 text-success'
+                        : r.status === 'invalid'
+                          ? 'bg-danger/10 text-danger'
+                          : 'bg-white/5 text-text-secondary'
+                    )}
+                  >
+                    {r.status.replace('_', ' ')}
+                  </span>
+                  {r.status === 'sent' && r.token && (
+                    <button
+                      type="button"
+                      onClick={() => handleCopyLink(r.token!)}
+                      className="text-accent-to hover:underline"
+                    >
+                      {copiedToken === r.token ? 'Copied' : 'Copy link'}
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       {canManage && (
         <div className="flex flex-wrap items-center gap-4 mb-6 text-meta text-text-secondary">
           <span>
@@ -1069,122 +1195,6 @@ function TeamTab({ scrollTo }: { scrollTo?: SettingsSection }) {
           <CallTakeoverSettingsCard />
           <NotificationPreferencesCard members={members} />
         </>
-      )}
-
-      {canManage && showInvite && (
-        <div className="bg-gradient-to-r from-accent-from/10 to-accent-to/10 rounded-app-lg p-6 border border-accent-from/20 mb-6">
-          <h3 className="text-section-title text-text-primary mb-4">Invite teammates</h3>
-          <form onSubmit={handleCreateInvites} className="space-y-3">
-            <div>
-              <label className="block text-sm text-text-secondary mb-2">
-                Emails (comma or newline-separated)
-              </label>
-              <textarea
-                value={inviteEmailsText}
-                onChange={(e) => setInviteEmailsText(e.target.value)}
-                required
-                rows={3}
-                className="w-full bg-surface-2 border border-white/10 rounded-app-md px-4 py-3 text-white placeholder-text-muted focus:outline-none focus:border-accent-to"
-                placeholder={'jane@company.com\njohn@company.com'}
-              />
-            </div>
-            <div className="flex flex-wrap items-end gap-3">
-              <div>
-                <label className="block text-sm text-text-secondary mb-2">Role</label>
-                <select
-                  value={inviteRole}
-                  onChange={(e) => setInviteRole(e.target.value as 'admin' | 'agent' | 'manager')}
-                  className="bg-surface-2 border border-white/10 rounded-app-md px-4 py-3 text-white focus:outline-none focus:border-accent-to"
-                >
-                  <option value="agent">Agent</option>
-                  <option value="manager">Manager</option>
-                  <option value="admin">Admin</option>
-                </select>
-              </div>
-              {campaigns.length > 0 && (
-                <div className="flex-1 min-w-[220px]">
-                  <label className="block text-sm text-text-secondary mb-2">
-                    Join campaigns (optional)
-                  </label>
-                  <div className="flex flex-wrap gap-2">
-                    {campaigns.map((c) => {
-                      const checked = inviteCampaignIds.includes(c.id);
-                      return (
-                        <label
-                          key={c.id}
-                          className={cn(
-                            'px-2.5 py-1 rounded-full text-xs border cursor-pointer',
-                            checked
-                              ? 'bg-accent-to/20 border-accent-to/40 text-accent-to'
-                              : 'bg-surface-2 border-border-subtle text-text-secondary'
-                          )}
-                        >
-                          <input
-                            type="checkbox"
-                            className="hidden"
-                            checked={checked}
-                            onChange={() =>
-                              setInviteCampaignIds((prev) =>
-                                checked ? prev.filter((id) => id !== c.id) : [...prev, c.id]
-                              )
-                            }
-                          />
-                          {c.name}
-                        </label>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-              <button
-                type="submit"
-                disabled={inviteSubmitting}
-                className="px-6 py-3 bg-gradient-to-r from-accent-from to-accent-to rounded-app-md text-white font-semibold disabled:opacity-50 flex items-center gap-2"
-              >
-                {inviteSubmitting ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                ) : (
-                  <Mail className="w-4 h-4" />
-                )}
-                Send invites
-              </button>
-            </div>
-          </form>
-
-          {bulkResults && (
-            <div className="mt-4 space-y-1.5">
-              {bulkResults.map((r, i) => (
-                <div
-                  key={`${r.email}-${i}`}
-                  className="flex flex-wrap items-center gap-2 text-meta"
-                >
-                  <span className="text-text-primary">{r.email || '(resent)'}</span>
-                  <span
-                    className={cn(
-                      'px-1.5 py-0.5 rounded-full text-[10px] uppercase',
-                      r.status === 'sent'
-                        ? 'bg-success/10 text-success'
-                        : r.status === 'invalid'
-                          ? 'bg-danger/10 text-danger'
-                          : 'bg-white/5 text-text-secondary'
-                    )}
-                  >
-                    {r.status.replace('_', ' ')}
-                  </span>
-                  {r.status === 'sent' && r.token && (
-                    <button
-                      type="button"
-                      onClick={() => handleCopyLink(r.token!)}
-                      className="text-accent-to hover:underline"
-                    >
-                      {copiedToken === r.token ? 'Copied' : 'Copy link'}
-                    </button>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
       )}
 
       {canManage && pendingInvites.length > 0 && (
