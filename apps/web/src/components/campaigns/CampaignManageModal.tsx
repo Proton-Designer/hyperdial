@@ -35,11 +35,13 @@ import {
   setCampaignLeadPriority,
   skipCampaignLead,
   listContacts,
+  listCampaigns,
   listCampaignRetryRules,
   upsertCampaignRetryRules,
   setCampaignDistributionMode,
   rebalanceCampaignDistribution,
   type CampaignWithStats,
+  type BulkAddLeadsResult,
   type CampaignSettingsInput,
   type CampaignLead,
   type CampaignLeadPriority,
@@ -53,6 +55,8 @@ import { ScriptHistoryPanel } from './ScriptHistoryPanel';
 import { ImportContactsModal } from '../contacts/ImportContactsModal';
 import { AddContactModal } from '../contacts/AddContactModal';
 import { AssignLeadsModal } from './AssignLeadsModal';
+import { AddExistingContactsModal } from './AddExistingContactsModal';
+import { describeBulkAddResult } from './bulkAddMessage';
 import { TerritoryRulesModal } from './TerritoryRulesModal';
 import { usePhoneNumbers } from '../../contexts/PhoneNumbersContext';
 import { useOrg } from '../../contexts/OrgContext';
@@ -241,6 +245,7 @@ export function CampaignManageModal({
   const [addExistingOpen, setAddExistingOpen] = useState(false);
   const [addNewOpen, setAddNewOpen] = useState(false);
   const [contactsForPicker, setContactsForPicker] = useState<Contact[]>([]);
+  const [otherCampaigns, setOtherCampaigns] = useState<{ id: string; name: string }[]>([]);
   const [leadsPage, setLeadsPage] = useState(0);
   const [confirmRemoveContactId, setConfirmRemoveContactId] = useState<string | null>(null);
   const modalRef = useRef<HTMLDivElement>(null);
@@ -320,8 +325,15 @@ export function CampaignManageModal({
       listContacts()
         .then(setContactsForPicker)
         .catch(() => setContactsForPicker([]));
+      listCampaigns()
+        .then((all) =>
+          setOtherCampaigns(
+            all.filter((c) => c.id !== campaignId).map((c) => ({ id: c.id, name: c.name }))
+          )
+        )
+        .catch(() => setOtherCampaigns([]));
     }
-  }, [addExistingOpen]);
+  }, [addExistingOpen, campaignId]);
 
   const filteredLeads = leads.filter((lead) => {
     const cat = lead.contact?.category ?? '';
@@ -447,18 +459,16 @@ export function CampaignManageModal({
     }
   };
 
-  const handleAddExisting = async (selectedIds: string[]) => {
-    if (!campaignId || selectedIds.length === 0) return;
-    try {
-      const result = await addLeadsToCampaign(campaignId, selectedIds);
-      setAddExistingOpen(false);
-      reportAddLeadsResult(result);
-      fetchLeads();
-      fetchCampaign();
-      onRefreshList();
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Failed to add leads');
-    }
+  /** TASK-H02: the bulk modal already wrote through add_leads_to_campaign_bulk; report and refresh. */
+  const handleBulkAdded = (result: BulkAddLeadsResult) => {
+    setAddExistingOpen(false);
+    const message = describeBulkAddResult(result);
+    if (result.added === 0) toast.warning(message);
+    else if (message.includes('skipped') || result.capped) toast.warning(message);
+    else toast.success(message);
+    fetchLeads();
+    fetchCampaign();
+    onRefreshList();
   };
 
   const handleAddNewSuccess = (contact?: Contact) => {
@@ -1441,12 +1451,14 @@ export function CampaignManageModal({
 
       {/* Add existing contacts modal */}
       <AnimatePresence>
-        {addExistingOpen && (
+        {addExistingOpen && campaignId && (
           <AddExistingContactsModal
+            campaignId={campaignId}
             contacts={contactsForPicker}
             existingContactIds={new Set(leads.map((l) => l.contact_id))}
+            otherCampaigns={otherCampaigns}
             onClose={() => setAddExistingOpen(false)}
-            onConfirm={handleAddExisting}
+            onDone={handleBulkAdded}
           />
         )}
       </AnimatePresence>
@@ -1587,99 +1599,6 @@ export function CampaignManageModal({
           </motion.div>
         )}
       </AnimatePresence>
-    </div>,
-    document.body
-  );
-}
-
-interface AddExistingContactsModalProps {
-  contacts: Contact[];
-  existingContactIds: Set<string>;
-  onClose: () => void;
-  onConfirm: (selectedIds: string[]) => void;
-}
-
-function AddExistingContactsModal({
-  contacts,
-  existingContactIds,
-  onClose,
-  onConfirm,
-}: AddExistingContactsModalProps) {
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const modalRef = useRef<HTMLDivElement>(null);
-  useFocusTrap(modalRef, true);
-
-  const available = contacts.filter((c) => !existingContactIds.has(c.id));
-
-  const toggle = (id: string) => {
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
-
-  return createPortal(
-    <div className="fixed inset-0 flex items-center justify-center p-4" style={{ zIndex: 10000 }}>
-      <div className="absolute inset-0 bg-black/60" onClick={onClose} aria-hidden />
-      <motion.div
-        ref={modalRef}
-        tabIndex={-1}
-        initial={{ opacity: 0, scale: 0.95 }}
-        animate={{ opacity: 1, scale: 1 }}
-        className="relative z-[1] w-full max-w-lg max-h-[80vh] flex flex-col rounded-app-lg border border-white/10 bg-surface-1 shadow-xl outline-none"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between border-b border-white/10 p-4">
-          <h2 className="text-xl font-bold text-white">Add existing contacts</h2>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-lg p-2 text-text-secondary hover:bg-white/10 hover:text-white"
-          >
-            <X className="w-5 h-5" />
-          </button>
-        </div>
-        <div className="p-4 overflow-y-auto flex-1">
-          {available.length === 0 ? (
-            <p className="text-text-secondary">
-              No contacts available to add (all are already in this campaign).
-            </p>
-          ) : (
-            <ul className="space-y-2">
-              {available.map((c) => (
-                <li key={c.id} className="flex items-center gap-3 p-2 rounded-lg hover:bg-white/5">
-                  <input
-                    type="checkbox"
-                    checked={selectedIds.has(c.id)}
-                    onChange={() => toggle(c.id)}
-                  />
-                  <span className="text-white">{contactDisplayName(c)}</span>
-                  <span className="text-sm text-text-secondary">{c.phone_number ?? '—'}</span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-        <div className="flex justify-end gap-2 p-4 border-t border-white/10">
-          <button
-            type="button"
-            onClick={onClose}
-            className="px-4 py-2 rounded-lg bg-surface-2 text-white"
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            disabled={selectedIds.size === 0}
-            onClick={() => onConfirm(Array.from(selectedIds))}
-            className="px-4 py-2 rounded-lg bg-accent-from text-white disabled:opacity-50"
-          >
-            Add {selectedIds.size} contact(s)
-          </button>
-        </div>
-      </motion.div>
     </div>,
     document.body
   );

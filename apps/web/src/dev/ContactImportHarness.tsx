@@ -3,12 +3,14 @@ import { supabase } from '@/lib/supabase';
 import { AuthProvider } from '../contexts/AuthContext';
 import { OrgProvider } from '../contexts/OrgContext';
 import { ImportContactsModal } from '../components/contacts/ImportContactsModal';
+import { AddExistingContactsModal } from '../components/campaigns/AddExistingContactsModal';
 import { ContactDetailModal } from '../components/contacts/ContactDetailModal';
 import type { Contact } from '@/lib/api';
 
 /**
  * TASK-H01: the REAL ImportContactsModal / ContactDetailModal against fixtures, no live network/DB.
- * `?dev_contact_import=1`, plus `&view=import` (default) or `&view=detail`:
+ * `?dev_contact_import=1`, plus `&view=import` (default), `&view=detail` or (TASK-H02) `&view=bulk` (the bulk add-to-campaign modal; the stubbed
+ * RPC counts the fixture contacts, `&scenario=capped` makes it report the cap):
  *   import  upload any .csv; the stubbed parse call proposes City, Phone and Name columns and leaves the rest unmatched
  *           (they default to "New custom field"); `&scenario=capped` makes the stubbed import report columns skipped at the cap.
  *   detail  a contact with city + custom values, owner role.
@@ -78,6 +80,34 @@ function useStubs(scenario: string) {
       };
       return chain;
     };
+    supabaseAny.rpc = async (_fn: string, args: Record<string, unknown>) => {
+      await new Promise((r) => setTimeout(r, 300));
+      const dry = args.p_dry_run === true;
+      const n = args.p_mode === 'ids' ? (args.p_contact_ids as string[]).length : 240;
+      const capped = scenario === 'capped';
+      const eligible = capped ? 6000 : n - 12;
+      const take = capped ? 5000 : eligible;
+      return {
+        data: {
+          dry_run: dry,
+          matched: n + 8,
+          eligible,
+          would_add: take,
+          added: dry ? 0 : take,
+          capped,
+          cap: 5000,
+          not_found: 0,
+          skipped_no_phone: 3,
+          skipped_dnc: 4,
+          skipped_org_dnc: 1,
+          skipped_closed: 2,
+          skipped_removed: 0,
+          skipped_already_in_campaign: 6,
+          skipped_active_elsewhere: 2,
+        },
+        error: null,
+      };
+    };
     const originalFetch = window.fetch;
     window.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
       const u = String(url);
@@ -132,11 +162,32 @@ export function ContactImportHarness() {
   const view = params.get('view') ?? 'import';
   useStubs(params.get('scenario') ?? 'default');
   const [contact] = useState<Contact>(() => fixtureContact());
+  const pickContacts = useState<Contact[]>(() =>
+    ['Austin Roofing', 'Dallas Plumbing', 'Waco HVAC', 'Austin Electric'].map(
+      (name, i) =>
+        ({
+          ...fixtureContact(),
+          id: `dev-pick-${i}`,
+          business_name: name,
+          city: name.split(' ')[0],
+          phone_number: `+1555123000${i}`,
+        }) as Contact
+    )
+  )[0];
   return (
     <AuthProvider>
       <OrgProvider>
         <div className="min-h-screen bg-surface-0 p-4">
-          {view === 'detail' ? (
+          {view === 'bulk' ? (
+            <AddExistingContactsModal
+              campaignId="dev-campaign"
+              contacts={pickContacts}
+              existingContactIds={new Set()}
+              otherCampaigns={[{ id: 'dev-other', name: 'Austin HVAC, Oct' }]}
+              onClose={() => {}}
+              onDone={() => {}}
+            />
+          ) : view === 'detail' ? (
             <ContactDetailModal contact={contact} open onClose={() => {}} />
           ) : (
             <ImportContactsModal open onClose={() => {}} onSuccess={() => {}} />
