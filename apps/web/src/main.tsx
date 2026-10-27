@@ -63,6 +63,11 @@ if (devHarness?.has('dev_wrapup')) {
   import('./dev/GhlWebhookHarness.tsx').then(({ GhlWebhookHarness }) => {
     root.render(<GhlWebhookHarness />);
   });
+} else if (devHarness?.has('dev_contact_import')) {
+  // TASK-H01: CSV import modal (unmatched columns -> custom fields) and the contact modal's custom values. `?dev_contact_import=1&view=import|detail`.
+  import('./dev/ContactImportHarness.tsx').then(({ ContactImportHarness }) => {
+    root.render(<ContactImportHarness />);
+  });
 } else if (devHarness?.has('dev_contact_dnc')) {
   // TASK-G31: the contact modal's do-not-call control per role. `?dev_contact_dnc=1&role=agent|admin|owner&dnc=1|0`.
   import('./dev/ContactDncHarness.tsx').then(({ ContactDncHarness }) => {
