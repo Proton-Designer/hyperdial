@@ -2189,6 +2189,8 @@ export interface Contact {
   address: string | null;
   /** TASK-H01: canonical city (CSV City/Town/Locality column or the edit form). Null on older contacts -- fall back to parsing `address`. */
   city: string | null;
+  /** TASK-G18: name of the import list the contact came from (set on insert only). */
+  import_list?: string | null;
   /** TASK-H01: CSV-created custom field values keyed by `ContactFieldDef.key`. Stored and shown only, never pushed to GHL. */
   custom_values: Record<string, string>;
   category: string | null;
@@ -3198,6 +3200,76 @@ export async function addLeadsToCampaign(
   };
 }
 
+/** TASK-H02: filters for `addLeadsToCampaignBulk` in `filter` mode. Evaluated server-side over ALL the org's contacts. */
+export interface BulkLeadFilter {
+  /** name / business name contains */
+  search?: string;
+  category?: string;
+  contactStatus?: string;
+  /** contains, against `contacts.city`, or against `address` for contacts that have no city */
+  city?: string;
+  importList?: string;
+  /** copy another campaign's leads (contacts that are still active there are skipped) */
+  fromCampaignId?: string;
+}
+
+/** TASK-H02: what `add_leads_to_campaign_bulk` returns. Every skipped contact has exactly one reason. */
+export interface BulkAddLeadsResult {
+  dry_run: boolean;
+  matched: number;
+  eligible: number;
+  would_add: number;
+  added: number;
+  /** more eligible contacts than `cap`; run it again for the rest */
+  capped: boolean;
+  cap: number;
+  /** `ids` mode only: ids that are not contacts of this org */
+  not_found: number;
+  skipped_no_phone: number;
+  skipped_dnc: number;
+  skipped_org_dnc: number;
+  skipped_closed: number;
+  skipped_removed: number;
+  skipped_already_in_campaign: number;
+  skipped_active_elsewhere: number;
+}
+
+/**
+ * TASK-H02: one server-side statement (owner/admin only) instead of `addLeadsToCampaign`'s client loop. `mode: 'ids'` adds
+ * exactly the given contacts, `'filter'` adds everything matching `filter` (empty filter = every contact in the org).
+ * `dryRun` returns the same counts without writing -- use it for previews, debounced.
+ */
+export async function addLeadsToCampaignBulk(args: {
+  campaignId: string;
+  mode: 'ids' | 'filter';
+  contactIds?: string[];
+  filter?: BulkLeadFilter;
+  skipClosed?: boolean;
+  /** server clamps to 1..5000 */
+  cap?: number;
+  dryRun?: boolean;
+}): Promise<BulkAddLeadsResult> {
+  const f = args.filter ?? {};
+  const filter: Record<string, string> = {};
+  if (f.search?.trim()) filter.search = f.search.trim();
+  if (f.category) filter.category = f.category;
+  if (f.contactStatus) filter.contact_status = f.contactStatus;
+  if (f.city?.trim()) filter.city = f.city.trim();
+  if (f.importList) filter.import_list = f.importList;
+  if (f.fromCampaignId) filter.from_campaign_id = f.fromCampaignId;
+  const { data, error } = await supabase.rpc('add_leads_to_campaign_bulk', {
+    p_campaign_id: args.campaignId,
+    p_mode: args.mode,
+    p_contact_ids: args.mode === 'ids' ? (args.contactIds ?? []) : null,
+    p_filter: filter,
+    p_skip_closed: args.skipClosed ?? true,
+    p_cap: args.cap ?? 5000,
+    p_dry_run: args.dryRun ?? false,
+  });
+  if (error) throw new Error(error.message);
+  return data as BulkAddLeadsResult;
+}
+
 /** TASK-T6 review fix-forward: used to be a hard `.delete()` -- contradicted this task's own
  *  "Remove from campaign (terminal status)" ask and silently destroyed the lead's own attempts/
  *  history (`call_legs.lead_id` is `on delete set null`, so the leg survives but its link to the
@@ -4175,7 +4247,7 @@ export interface CrmSyncJob {
   id: string;
   org_id: string;
   provider: string;
-  /** crm_sync_jobs_kind_check as of 20261019203749 (TASK-G21). */
+  /** crm_sync_jobs_kind_check as of 20261027133819 (TASK-H03 close_tag). */
   kind:
     | 'disposition'
     | 'contact_upsert'
@@ -4185,7 +4257,8 @@ export interface CrmSyncJob {
     | 'inbound_call_note'
     | 'transfer_note'
     | 'dnc_flag'
-    | 'objection_field';
+    | 'objection_field'
+    | 'close_tag';
   contact_id: string | null;
   status: 'queued' | 'running' | 'done' | 'failed' | 'dead';
   attempts: number;
@@ -6189,4 +6262,145 @@ export function retryShiftGhl(outboxId?: number): Promise<{ reset: number }> {
   return callShiftsFunction('admin-ghl-retry', {
     body: outboxId === undefined ? {} : { outboxId },
   });
+}
+
+// --- TASK-H03: "Log Close" (a provider the intern closed: form -> contact_closes -> closes webhook) ---
+
+export type CloseFrequency = 'weekly' | 'biweekly' | 'monthly';
+export type CloseDeliveryStatus = 'pending' | 'sent' | 'failed' | 'not_configured';
+
+export interface LogContactCloseInput {
+  contactId: string;
+  ownerName: string;
+  businessName: string;
+  mobile: string;
+  email?: string | null;
+  services: string[];
+  cities: string[];
+  frequencies: CloseFrequency[];
+  insured: boolean;
+  bestContact?: string | null;
+  startingPrice?: number | null;
+  capacity?: number | null;
+  yearsInBusiness?: number | null;
+}
+
+export interface LogContactCloseResult {
+  closeId: string;
+  /** True when the same agent already closed this contact within the last 60 s (double click). */
+  deduped: boolean;
+  deliveryStatus: CloseDeliveryStatus;
+}
+
+/** log-contact-close: stores the close, marks the contact 'Closed', queues delivery to the org's closes webhook. */
+export async function logContactClose(input: LogContactCloseInput): Promise<LogContactCloseResult> {
+  const res = await fetch(`${getFunctionsUrl()}/log-contact-close`, {
+    method: 'POST',
+    headers: await getEdgeFunctionHeaders(),
+    body: JSON.stringify(input),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Could not save the close');
+  return data as LogContactCloseResult;
+}
+
+/** The org's service-category list (org_close_settings, readable by every org member). Empty until an admin adds some. */
+export async function getCloseServiceCategories(): Promise<string[]> {
+  const orgId = await getActiveOrgId();
+  const { data, error } = await supabase
+    .from('org_close_settings')
+    .select('service_categories')
+    .eq('org_id', orgId)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return (data?.service_categories as string[] | undefined) ?? [];
+}
+
+/** What the Log Close form autofills from. `city` exists only once TASK-H01's column is applied. */
+export interface CloseContactPrefill {
+  businessName: string | null;
+  ownerName: string | null;
+  phone: string | null;
+  /** contacts has no email column; kept so the form's prefill shape is stable if one is added. */
+  email: string | null;
+  city: string | null;
+  address: string | null;
+}
+
+export async function getCloseContactPrefill(contactId: string): Promise<CloseContactPrefill> {
+  const cols = 'business_name, first_name, last_name, owner_contact, phone_number, address';
+  let res = await supabase
+    .from('contacts')
+    .select(`${cols}, city`)
+    .eq('id', contactId)
+    .maybeSingle();
+  if (res.error) {
+    // 42703 = column "city" does not exist yet (H01 migration not applied): retry without it.
+    res = await supabase.from('contacts').select(cols).eq('id', contactId).maybeSingle();
+  }
+  if (res.error) throw new Error(res.error.message);
+  const c = res.data as Record<string, string | null> | null;
+  if (!c) throw new Error('Contact not found');
+  const person = [c.first_name, c.last_name].filter(Boolean).join(' ').trim();
+  return {
+    businessName: c.business_name || null,
+    ownerName: c.owner_contact || person || null,
+    phone: c.phone_number || null,
+    email: null,
+    city: c.city || null,
+    address: c.address || null,
+  };
+}
+
+export interface CloseSettings {
+  categories: string[];
+  webhook: { url: string | null; enabled: boolean; hasSecret: boolean; updatedAt: string | null };
+  counts: { pending: number; failed: number; sent: number; notConfigured: number };
+  recentFailures: {
+    id: string;
+    businessName: string | null;
+    lastError: string | null;
+    createdAt: string;
+  }[];
+  /** Present only on the response that generated it (rotateSecret) -- shown once. */
+  secret?: string;
+}
+
+async function callCloseSettings<T>(body: Record<string, unknown>): Promise<T> {
+  const res = await fetch(`${getFunctionsUrl()}/close-webhook-settings`, {
+    method: 'POST',
+    headers: await getEdgeFunctionHeaders(),
+    body: JSON.stringify(body),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Failed to update the closes settings');
+  return data as T;
+}
+
+/** Owner/admin only. */
+export function getCloseSettings(): Promise<CloseSettings> {
+  return callCloseSettings<CloseSettings>({ action: 'get' });
+}
+
+/** Owner/admin only. Either part may be omitted. */
+export function saveCloseSettings(input: {
+  categories?: string[];
+  webhook?: { url: string | null; enabled: boolean; rotateSecret?: boolean; clearSecret?: boolean };
+}): Promise<CloseSettings> {
+  return callCloseSettings<CloseSettings>({ action: 'save', ...input });
+}
+
+/** Owner/admin only. Sends a `ping` event to the saved URL. */
+export function testCloseWebhook(): Promise<{
+  outcome: 'sent' | 'retry' | 'permanent';
+  error?: string;
+}> {
+  return callCloseSettings({ action: 'test' });
+}
+
+/** Owner/admin only. Re-queues failed closes (one, or all) and delivers them now. */
+export function retryCloseDeliveries(
+  closeId?: string
+): Promise<{ requeued: number; sent: number; failed: number }> {
+  return callCloseSettings({ action: 'retry', ...(closeId ? { closeId } : {}) });
 }

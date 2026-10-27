@@ -12,6 +12,7 @@ import {
   type TopObjection,
 } from '@/lib/api';
 import { Button } from '@/components/ui/button';
+import { LogCloseModal } from './LogCloseModal';
 import { OBJECTION_LABEL, OBJECTION_ORDER } from '@/components/shifts/clockModel';
 
 /** TASK-F-T2 (REC-5): the recording may still be processing when this modal opens (the
@@ -249,6 +250,11 @@ export function WrapUpModal({
   const [submitError, setSubmitError] = useState<string | null>(null);
 
   const modalRef = useRef<HTMLDivElement>(null);
+  // TASK-H03: the Log Close form opens over this modal; while it is open this modal's own keyboard shortcuts
+  // (Tab trap, Enter-submit, digit picks) must stand down, or typing in the form would drive the disposition.
+  const [showLogClose, setShowLogClose] = useState(false);
+  const logCloseOpenRef = useRef(false);
+  logCloseOpenRef.current = showLogClose;
   const notesRef = useRef<HTMLTextAreaElement>(null);
   const firstDispositionRef = useRef<HTMLButtonElement>(null);
   const minCallback = useMemo(() => nowAsDateTimeLocalMin(), []);
@@ -361,6 +367,7 @@ export function WrapUpModal({
   // deliberately no-ops: this modal has no close/cancel path.
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      if (logCloseOpenRef.current) return;
       const active = document.activeElement;
       const typing = isTypingTarget(active);
 
@@ -443,6 +450,17 @@ export function WrapUpModal({
               <> · {formatDuration(callDurationSeconds)}</>
             )}
           </p>
+          {contact.id && (
+            <Button
+              type="button"
+              variant="fe-secondary"
+              size="sm"
+              className="mt-3"
+              onClick={() => setShowLogClose(true)}
+            >
+              Log close
+            </Button>
+          )}
         </div>
 
         <div className="p-4 space-y-4 max-h-[70vh] overflow-y-auto">
@@ -616,6 +634,14 @@ export function WrapUpModal({
           </p>
         </div>
       </div>
+      {showLogClose && contact.id && (
+        <LogCloseModal
+          contactId={contact.id}
+          name={contact.name}
+          phone={contact.phone}
+          onClose={() => setShowLogClose(false)}
+        />
+      )}
     </div>,
     document.body
   );

@@ -4,6 +4,7 @@ import { motion } from 'motion/react';
 import { Play } from 'lucide-react';
 import { ContactBatchCard } from './ContactBatchCard';
 import { LiveCallPanel } from './LiveCallPanel';
+import { LogCloseModal } from './LogCloseModal';
 import { TransferModal } from './TransferModal';
 import { ContactNotesPanel } from '@/components/contacts/ContactNotesPanel';
 import { Button } from '@/components/ui/button';
@@ -410,6 +411,7 @@ export function ParallelDialerUI({
             onEndCall={onEndLiveCall}
           />
           {connectedContact && <ContactDetailsPanel contact={connectedContact} />}
+          {connectedContact && <LogCloseCard contact={connectedContact} />}
           {connectedContactHistory.length > 0 && (
             <ContactHistoryPanel history={connectedContactHistory} />
           )}
@@ -550,6 +552,32 @@ function AutoResumePrefControl({ onChange }: { onChange?: (value: 0 | 5 | 10 | 1
         ))}
       </select>
     </label>
+  );
+}
+
+/** TASK-H03: "Log close" for the connected contact. Always shown (unlike the details card, which hides when
+ *  every field is empty) because closing never depends on what we already know about the business. */
+function LogCloseCard({ contact }: { contact: ConnectedContactDetails }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <div className="rounded-app-lg border border-border-subtle bg-surface-1 p-4 flex items-center justify-between gap-3">
+        <p className="text-body text-text-secondary">
+          Closed them? Log it so it reaches the closes sheet.
+        </p>
+        <Button type="button" variant="fe-secondary" size="sm" onClick={() => setOpen(true)}>
+          Log close
+        </Button>
+      </div>
+      {open && (
+        <LogCloseModal
+          contactId={contact.id}
+          name={contact.name}
+          phone={contact.phone}
+          onClose={() => setOpen(false)}
+        />
+      )}
+    </>
   );
 }
 

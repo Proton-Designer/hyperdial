@@ -41,6 +41,7 @@ import { GhlTagPicker } from '@/components/settings/GhlTagPicker';
 import { describeTagSync } from '@/components/settings/ghlTagSync';
 import { GhlFieldCoverageCard } from '@/components/settings/GhlFieldCoverageCard';
 import { GhlWebhookCard } from '@/components/settings/GhlWebhookCard';
+import { CloseSettingsCard } from '@/components/settings/CloseSettingsCard';
 import { PurchaseNumbersModal } from '@/components/settings/PurchaseNumbersModal';
 import { PageHeader } from '@/components/app/PageHeader';
 import { EmptyState } from '@/components/app/EmptyState';
@@ -2082,6 +2083,7 @@ function IntegrationsTab() {
       {isConnected && (isOwner || role === 'admin') && <GhlFieldCoverageCard />}
       {isConnected && (isOwner || role === 'admin') && <GhlCampaignMappingsEditor />}
       {isConnected && <SyncStatusList />}
+      {(isOwner || role === 'admin') && <CloseSettingsCard />}
     </motion.div>
   );
 }

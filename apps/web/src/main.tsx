@@ -14,6 +14,11 @@ if (devHarness?.has('dev_wrapup')) {
   import('./dev/WrapUpModalHarness.tsx').then(({ WrapUpModalHarness }) => {
     root.render(<WrapUpModalHarness />);
   });
+} else if (devHarness?.has('dev_log_close')) {
+  // TASK-H03: LogCloseModal with fixture data. `?dev_log_close=1&scenario=normal|nocats|slow|fail|badprefill|notconfigured|failed`.
+  import('./dev/LogCloseHarness.tsx').then(({ LogCloseHarness }) => {
+    root.render(<LogCloseHarness />);
+  });
 } else if (devHarness?.has('dev_dialer_states')) {
   // TASK-L2b: every dial_sessions.state rendered against ParallelDialerUI/DialerStateBanner/
   // WrapUpModal with fixture data, no live session/DB. `?dev_dialer_states=1`.

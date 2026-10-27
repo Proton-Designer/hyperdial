@@ -46,7 +46,7 @@ import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { cn } from '@/components/ui/utils';
 
 const CATEGORIES = ['All', 'Cold', 'Warm', 'Follow Up', 'Voicemail', 'Booked'] as const;
-const CONTACT_STATUSES = ['All', 'No Contact', 'Contacted'] as const;
+const CONTACT_STATUSES = ['All', 'No Contact', 'Contacted', 'Closed'] as const;
 const CONTACTS_PER_PAGE = 50;
 
 function contactDisplayName(c: Contact): string {

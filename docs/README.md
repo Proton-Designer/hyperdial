@@ -15,6 +15,7 @@ Human-facing documentation. For AI-agent context, start at
 | [shifts-setup.md](guides/shifts-setup.md)                                     | Turning Shifts on and the GoHighLevel go-live: calendar, fields, tags, checks, what runs automatically                                   |
 | [ghl-data-sync-setup.md](guides/ghl-data-sync-setup.md)                       | Setting up the HyperDial ↔ GoHighLevel data sync: every field and tag, mapping, the Remove-from-call-lists switch, what is not built     |
 | [ghl-first-connect-checklist.md](guides/ghl-first-connect-checklist.md)       | The first time GoHighLevel is connected: ordered tests for tags, fields, calls, shifts, instant updates and the phone lookup, with fixes |
+| [closes-webhook.md](guides/closes-webhook.md)                                 | Log Close: setting up the closes Sheet (Apps Script) or GoHighLevel webhook, categories, delivery retries, payload                       |
 | [intern-quick-start.md](guides/intern-quick-start.md)                         | You ARE the intern — signing in and dialing, not managing                                                                                |
 | [running-your-team.md](guides/running-your-team.md)                           | You're an owner/admin/manager — roles, distribution, supervision, coaching, goals, the shared inbox, and everything else Mission 5 added |
 
