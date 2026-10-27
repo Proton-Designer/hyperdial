@@ -76,7 +76,8 @@ interface CrmSyncJobRow {
     | 'inbound_call_note'
     | 'transfer_note'
     | 'dnc_flag'
-    | 'objection_field';
+    | 'objection_field'
+    | 'close_tag';
   contact_id: string | null;
   call_leg_id: string | null;
   payload: Record<string, unknown>;
@@ -261,7 +262,11 @@ async function processJob(
       progress: job.progress ?? {},
       pushConfig: ctx.pushConfig,
     });
-  } else if (job.kind === 'voicemail_tag' || job.kind === 'no_answer_tag') {
+  } else if (
+    job.kind === 'voicemail_tag' ||
+    job.kind === 'no_answer_tag' ||
+    job.kind === 'close_tag'
+  ) {
     // TASK-F-T3 (VMD-3, GHL-9 overlap): the counted tag itself was computed at enqueue time
     // (SQL) -- this function only ever pushes whatever payload.ghl_tag says.
     const tag = (job.payload as { ghl_tag?: string }).ghl_tag;

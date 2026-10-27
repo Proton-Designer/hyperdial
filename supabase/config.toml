@@ -439,6 +439,10 @@ verify_jwt = false
 # TASK-G30: PUBLIC endpoint called by GoHighLevel, which sends no Supabase JWT. The function authenticates the
 # request itself (X-GHL-Signature Ed25519 or the per-org X-HyperDial-Webhook-Secret) and fails closed.
 verify_jwt = false
+[functions.close-delivery-worker]
+# TASK-H03: triggered by pg_net (cron) with only X-Cron-Secret (CLOSE_DELIVERY_WORKER_SECRET), no Supabase JWT --
+# without this the gateway 401s every tick. Fails closed in code when the secret is unset.
+verify_jwt = false
 
 # Parallel dialer (auth required except webhook)
 [functions.dialer-session-start]
