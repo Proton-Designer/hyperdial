@@ -14,6 +14,7 @@ import {
   parseContactsCsv,
   importContacts,
   CONTACT_CANONICAL_FIELDS,
+  CUSTOM_FIELD_OPTION,
   type ParseCsvResponse,
   type ParseCsvColumn,
   type ImportContactsResult,
@@ -22,7 +23,9 @@ import { Button } from '@/components/ui/button';
 import { useFocusTrap } from '@/hooks/useFocusTrap';
 
 const SKIP_OPTION = 'Skip this column';
-const FIELD_OPTIONS = [SKIP_OPTION, ...CONTACT_CANONICAL_FIELDS];
+// TASK-H01: several columns may use this at once, unlike a canonical field (one column each).
+const FIELD_OPTIONS = [SKIP_OPTION, ...CONTACT_CANONICAL_FIELDS, CUSTOM_FIELD_OPTION];
+const optionLabel = (opt: string) => (opt === CUSTOM_FIELD_OPTION ? 'New custom field' : opt);
 
 const IMPORT_CATEGORIES = ['Cold', 'Warm', 'Follow Up', 'Voicemail', 'Booked'] as const;
 
@@ -58,6 +61,7 @@ export function ImportContactsModal({
   const assignedCount = columns.filter(
     (c) => c.mapped_field && c.mapped_field !== SKIP_OPTION
   ).length;
+  const customCount = columns.filter((c) => c.mapped_field === CUSTOM_FIELD_OPTION).length;
   const skippedCount = columns.filter((c) => c.mapped_field === SKIP_OPTION).length;
   const allAssigned = columns.every(
     (c) => c.mapped_field !== null && c.mapped_field !== undefined && c.mapped_field !== ''
@@ -68,7 +72,7 @@ export function ImportContactsModal({
     const usedFields = new Set<string>();
     return cols.map((col) => {
       const field = col.mapped_field?.trim();
-      if (!field || field === SKIP_OPTION) return { ...col };
+      if (!field || field === SKIP_OPTION || field === CUSTOM_FIELD_OPTION) return { ...col };
       if (usedFields.has(field)) {
         return { ...col, mapped_field: null, status: 'incomplete' as const };
       }
@@ -94,7 +98,16 @@ export function ImportContactsModal({
         parseContactsCsv(text)
           .then((res) => {
             setParseResult(res);
-            setColumns(normalizeColumnMappings(res.columns.map((col) => ({ ...col }))));
+            // TASK-H01: a column with no match becomes a custom field instead of blocking the import.
+            setColumns(
+              normalizeColumnMappings(
+                res.columns.map((col) =>
+                  col.mapped_field
+                    ? { ...col }
+                    : { ...col, mapped_field: CUSTOM_FIELD_OPTION, status: 'mapped' as const }
+                )
+              )
+            );
             setStep(2);
           })
           .catch((e) => setError(e instanceof Error ? e.message : 'Failed to parse CSV'))
@@ -123,7 +136,7 @@ export function ImportContactsModal({
       const next = [...prev];
       const isSkip = value === SKIP_OPTION;
       const field = isSkip ? null : value;
-      if (!isSkip && field) {
+      if (!isSkip && field && field !== CUSTOM_FIELD_OPTION) {
         const alreadyUsed = prev.some((c, i) => i !== index && c.mapped_field === field);
         if (alreadyUsed) {
           next[index] = { ...next[index], mapped_field: null, status: 'incomplete' };
@@ -140,7 +153,7 @@ export function ImportContactsModal({
   };
 
   const isFieldMappedElsewhere = (field: string, currentIndex: number) => {
-    if (field === SKIP_OPTION) return false;
+    if (field === SKIP_OPTION || field === CUSTOM_FIELD_OPTION) return false;
     return columns.some((c, i) => i !== currentIndex && c.mapped_field === field);
   };
 
@@ -297,6 +310,14 @@ export function ImportContactsModal({
                 <p className="text-meta text-text-secondary">
                   {assignedCount + skippedCount} of {columns.length} columns assigned
                 </p>
+                {customCount > 0 && (
+                  <div className="rounded-app-md bg-surface-2 border border-border-subtle text-text-secondary text-body p-3">
+                    {customCount} column{customCount === 1 ? '' : 's'} didn't match a contact field
+                    and will be saved as custom fields (shown on each contact). Change a column to
+                    Skip to leave it out. An organization can have up to 50 custom fields; any
+                    beyond that are skipped.
+                  </div>
+                )}
                 {parseResult.invalid_phone_count > 0 && (
                   <div className="rounded-app-md bg-warning-soft border border-warning/30 text-warning text-body p-3">
                     {parseResult.invalid_phone_count} row
@@ -382,7 +403,10 @@ export function ImportContactsModal({
                           <td className="p-3">
                             {col.mapped_field && col.mapped_field !== SKIP_OPTION ? (
                               <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium bg-success-soft text-success">
-                                <CheckCircle className="w-3 h-3" /> Mapped
+                                <CheckCircle className="w-3 h-3" />{' '}
+                                {col.mapped_field === CUSTOM_FIELD_OPTION
+                                  ? 'Custom field'
+                                  : 'Mapped'}
                               </span>
                             ) : (
                               <span className="inline-flex px-2 py-1 rounded-full text-xs font-medium bg-surface-3 text-text-secondary">
@@ -419,7 +443,7 @@ export function ImportContactsModal({
                                           'text-text-muted opacity-70 cursor-not-allowed'
                                       )}
                                     >
-                                      {opt}
+                                      {optionLabel(opt)}
                                     </SelectItem>
                                   );
                                 })}
@@ -466,7 +490,11 @@ export function ImportContactsModal({
                   {importResult.skippedDnc > 0 &&
                     `${importResult.skippedDnc} not added to the campaign (do-not-call). `}
                   {importResult.skippedActiveCampaign > 0 &&
-                    `${importResult.skippedActiveCampaign} not added to the campaign (already active in another campaign).`}
+                    `${importResult.skippedActiveCampaign} not added to the campaign (already active in another campaign). `}
+                  {importResult.customFieldsCreated > 0 &&
+                    `${importResult.customFieldsCreated} new custom field${importResult.customFieldsCreated === 1 ? '' : 's'} created. `}
+                  {importResult.customFieldsSkipped > 0 &&
+                    `${importResult.customFieldsSkipped} column${importResult.customFieldsSkipped === 1 ? ' was' : 's were'} skipped because your organization is at its 50 custom-field limit.`}
                 </p>
                 <Button variant="primary" onClick={handleViewContacts}>
                   View contacts

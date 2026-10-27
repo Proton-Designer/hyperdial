@@ -92,6 +92,7 @@ export function AddContactModal({ open, onClose, onSuccess }: AddContactModalPro
       'Last Name': 'last_name',
       'Owner Contact': 'owner_contact',
       Address: 'address',
+      City: 'city',
     };
     return map[label] ?? 'notes';
   };

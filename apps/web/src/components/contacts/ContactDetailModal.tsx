@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
   X,
@@ -13,7 +13,7 @@ import {
   ShieldOff,
 } from 'lucide-react';
 import { motion } from 'motion/react';
-import { updateContact, type Contact } from '@/lib/api';
+import { listContactFieldDefs, updateContact, type Contact, type ContactFieldDef } from '@/lib/api';
 import { useOrg } from '@/contexts/OrgContext';
 import { ContactNotesPanel } from './ContactNotesPanel';
 import { ContactChangeHistoryPanel } from './ContactChangeHistoryPanel';
@@ -64,6 +64,7 @@ interface EditFormState {
   last_name: string;
   owner_contact: string;
   address: string;
+  city: string;
   timezone: string;
 }
 
@@ -78,6 +79,7 @@ function toFormState(c: Contact): EditFormState {
     last_name: c.last_name ?? '',
     owner_contact: c.owner_contact ?? '',
     address: c.address ?? '',
+    city: c.city ?? '',
     timezone: c.timezone ?? '',
   };
 }
@@ -101,6 +103,22 @@ export function ContactDetailModal({ contact, open, onClose, onUpdated }: Contac
   const [error, setError] = useState<string | null>(null);
   const [dncSaving, setDncSaving] = useState(false);
   const [tab, setTab] = useState<DetailTab>('details');
+  const [fieldDefs, setFieldDefs] = useState<ContactFieldDef[]>([]);
+  const hasCustomValues = Object.keys(contact?.custom_values ?? {}).length > 0;
+
+  // TASK-H01: labels for the contact's custom values. Best effort -- without them the key is shown.
+  useEffect(() => {
+    if (!open || !hasCustomValues) return;
+    let cancelled = false;
+    listContactFieldDefs()
+      .then((defs) => {
+        if (!cancelled) setFieldDefs(defs);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [open, hasCustomValues]);
 
   if (!open) return null;
   const c = contact;
@@ -155,6 +173,7 @@ export function ContactDetailModal({ contact, open, onClose, onUpdated }: Contac
         last_name: form.last_name.trim() || undefined,
         owner_contact: form.owner_contact.trim() || undefined,
         address: form.address.trim() || undefined,
+        city: form.city.trim() || undefined,
         timezone: form.timezone || undefined,
       });
       onUpdated?.(updated);
@@ -365,6 +384,12 @@ export function ContactDetailModal({ contact, open, onClose, onUpdated }: Contac
                         <div className="text-text-secondary line-clamp-2">{c.address}</div>
                       </div>
                     )}
+                    {c.city && (
+                      <div className="flex gap-2">
+                        <MapPin className="w-4 h-4 text-accent-to flex-shrink-0 mt-0.5" />
+                        <div className="text-text-secondary">City: {c.city}</div>
+                      </div>
+                    )}
                     {c.business_link && (
                       <div className="flex gap-2">
                         <Globe className="w-4 h-4 text-accent-to flex-shrink-0 mt-0.5" />
@@ -415,6 +440,20 @@ export function ContactDetailModal({ contact, open, onClose, onUpdated }: Contac
                       </div>
                     )}
                   </div>
+
+                  {hasCustomValues && (
+                    <div className="space-y-1 pt-2 border-t border-white/5">
+                      <div className="text-xs font-medium text-text-secondary">Custom fields</div>
+                      {Object.entries(c.custom_values ?? {}).map(([key, value]) => (
+                        <div key={key} className="flex gap-2 text-sm">
+                          <span className="text-text-muted flex-shrink-0">
+                            {fieldDefs.find((d) => d.key === key)?.label ?? key}:
+                          </span>
+                          <span className="text-text-secondary break-words min-w-0">{value}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
 
                   <div className="text-xs text-text-secondary pt-2 border-t border-white/5">
                     Added {new Date(c.created_at).toLocaleDateString()}
@@ -507,6 +546,14 @@ export function ContactDetailModal({ contact, open, onClose, onUpdated }: Contac
                       className={inputClass}
                       value={form.address}
                       onChange={(e) => setField('address', e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm text-text-secondary mb-1">City</label>
+                    <input
+                      className={inputClass}
+                      value={form.city}
+                      onChange={(e) => setField('city', e.target.value)}
                     />
                   </div>
                   <div>

@@ -5,6 +5,11 @@ import { requireOrgRole } from '../_shared/auth.ts';
 import { normalizePhoneStrict } from '../_shared/phone-normalize.ts';
 import { timezoneForAreaCode } from '../_shared/area-code-tz.ts';
 import { normalizeListName } from '../_shared/list-name.ts';
+import {
+  CUSTOM_FIELD_MARKER,
+  normalizeCustomValue,
+  planCustomFields,
+} from '../_shared/custom-fields.ts';
 import { planCampaignQueue, type CampaignQueueCandidate } from '../_shared/campaign-queue.ts';
 import {
   fetchActiveElsewhereContactIds,
@@ -56,6 +61,8 @@ const CANONICAL_TO_DB: Record<string, string> = {
   'Last Name': 'last_name',
   'Owner Contact': 'owner_contact',
   Address: 'address',
+  // TASK-H01: canonical, not a custom field (H02 filters by it, H03 autofills from it).
+  City: 'city',
 };
 
 Deno.serve(async (req) => {
@@ -108,6 +115,46 @@ Deno.serve(async (req) => {
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
+    // TASK-H01: headers left on "Create custom field" become per-org custom fields (idempotent: the
+    // same header in a later import reuses the same def). Past the org cap the extra headers are
+    // skipped and counted, never an error.
+    const customHeaders = [
+      ...new Set(
+        columnMappings
+          .filter((m) => m.mapped_field?.trim() === CUSTOM_FIELD_MARKER && m.original_header)
+          .map((m) => m.original_header)
+      ),
+    ];
+    let customKeyByHeader = new Map<string, string>();
+    let customFieldsCreated = 0;
+    let customFieldsSkipped = 0;
+    if (customHeaders.length > 0) {
+      const { data: defRows, error: defErr } = await supabase
+        .from('contact_field_defs')
+        .select('key')
+        .eq('org_id', orgId);
+      if (defErr) throw new Error(`custom field lookup failed: ${defErr.message}`);
+      const plan = planCustomFields({
+        headers: customHeaders,
+        existingKeys: ((defRows ?? []) as { key: string }[]).map((d) => d.key),
+      });
+      if (plan.newDefs.length > 0) {
+        const { error: insDefErr } = await supabase.from('contact_field_defs').upsert(
+          plan.newDefs.map((d) => ({
+            org_id: orgId,
+            key: d.key,
+            label: d.label,
+            created_by: user.id,
+          })),
+          { onConflict: 'org_id,key', ignoreDuplicates: true }
+        );
+        if (insDefErr) throw new Error(`custom field create failed: ${insDefErr.message}`);
+        customFieldsCreated = plan.newDefs.length;
+      }
+      customKeyByHeader = plan.keyByHeader;
+      customFieldsSkipped = plan.overCapHeaders.length;
+    }
+
     const existingPhones = await fetchAllContactRows(supabase, orgId);
     const existingByPhoneDigits = new Map<string, { id: string; dnc: boolean }>();
     for (const r of existingPhones) {
@@ -131,6 +178,8 @@ Deno.serve(async (req) => {
     // TASK-F-T1 (QUE-7): carries an internal-only `phone` field alongside the two real
     // CampaignQueueCandidate fields, used below to build the org-wide DNC lookup -- never passed
     // through to planCampaignQueue as a literal, so TS's excess-property check never sees it.
+    // TASK-H01: custom values for re-imported duplicates, merged server-side without overwriting.
+    const duplicateCustomValues = new Map<string, Record<string, string>>();
     const duplicateContactCandidates = new Map<
       string,
       CampaignQueueCandidate & { phone: string }
@@ -167,6 +216,11 @@ Deno.serve(async (req) => {
           contact[dbCol] = val || null;
         }
       }
+      const customValues: Record<string, string> = {};
+      for (const [header, key] of customKeyByHeader) {
+        const v = normalizeCustomValue(row[header]);
+        if (v !== null) customValues[key] = v;
+      }
       if (!contact.phone_number) {
         if (phoneWasProvided) invalid++;
         skipped++;
@@ -185,11 +239,19 @@ Deno.serve(async (req) => {
             dnc: existingMatch.dnc,
             phone: contact.phone_number as string,
           });
+          if (Object.keys(customValues).length > 0) {
+            // first occurrence of a key wins when the same phone repeats in one CSV
+            duplicateCustomValues.set(existingMatch.id, {
+              ...customValues,
+              ...(duplicateCustomValues.get(existingMatch.id) ?? {}),
+            });
+          }
         }
         continue;
       }
       existingSet.add(phoneDigits);
       contact.phone_raw = phoneRaw;
+      if (customKeyByHeader.size > 0) contact.custom_values = customValues;
       const timezone = timezoneForAreaCode(areaCode);
       if (timezone) contact.timezone = timezone;
       // TASK-G18: only set when a list name was given, so a request without one never touches the new column.
@@ -238,6 +300,20 @@ Deno.serve(async (req) => {
       }));
     }
 
+    if (duplicateCustomValues.size > 0) {
+      const items = [...duplicateCustomValues].map(([contact_id, values]) => ({
+        contact_id,
+        values,
+      }));
+      for (let i = 0; i < items.length; i += 500) {
+        const { error: mergeErr } = await supabase.rpc('import_merge_custom_values', {
+          p_org_id: orgId,
+          p_items: items.slice(i, i + 500),
+        });
+        if (mergeErr) console.error('contacts-import custom value merge error:', mergeErr);
+      }
+    }
+
     let skippedDnc = 0;
     let skippedActiveCampaign = 0;
     const queueCandidates: CampaignQueueCandidate[] = [
@@ -283,7 +359,16 @@ Deno.serve(async (req) => {
     // skippedActiveCampaign (TASK-L3) only apply when campaignId is set -- they count contacts
     // that exist (new or matched-duplicate) but were not queued onto it.
     return new Response(
-      JSON.stringify({ imported, skipped, invalid, duplicates, skippedDnc, skippedActiveCampaign }),
+      JSON.stringify({
+        imported,
+        skipped,
+        invalid,
+        duplicates,
+        skippedDnc,
+        skippedActiveCampaign,
+        customFieldsCreated,
+        customFieldsSkipped,
+      }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   } catch (err) {

@@ -17,6 +17,7 @@ const CANONICAL_FIELDS = [
   'Last Name',
   'Owner Contact',
   'Address',
+  'City',
 ] as const;
 
 const ALIASES: Record<string, string> = {
@@ -66,7 +67,12 @@ const ALIASES: Record<string, string> = {
   street: 'Address',
   location: 'Address',
   addr: 'Address',
+  town: 'City',
+  locality: 'City',
 };
+
+/** TASK-H01: City matches only these exact headers -- a substring rule would map "Capacity" or "Electricity". */
+const CITY_HEADERS = new Set(['city', 'town', 'locality', 'city/town', 'business city']);
 
 function normalizeForMatch(s: string): string {
   return (s || '').trim().toLowerCase().replace(/\s+/g, ' ');
@@ -84,6 +90,7 @@ function headerMatchScore(originalHeader: string, field: string): number {
   if (normalizeForMatch(field) === norm) return 100;
   if (field === 'Business Link' && isBusinessLinkMatch(norm)) return 100;
   if (field === 'Business Link') return 0;
+  if (field === 'City') return CITY_HEADERS.has(norm) ? (norm === 'city' ? 100 : 80) : 0;
   const canonNorm = normalizeForMatch(field);
   if (norm.includes(canonNorm) || canonNorm.includes(norm)) return 60;
   const alias = ALIASES[norm] || ALIASES[originalHeader.trim().toLowerCase()];

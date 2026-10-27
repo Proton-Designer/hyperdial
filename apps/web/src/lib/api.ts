@@ -2147,7 +2147,26 @@ export const CONTACT_CANONICAL_FIELDS = [
   'Last Name',
   'Owner Contact',
   'Address',
+  'City',
 ] as const;
+
+/** TASK-H01: mapped_field value for a CSV column that becomes a per-org custom field (the server derives key + label from the header). */
+export const CUSTOM_FIELD_OPTION = 'Custom field';
+
+/** TASK-H01: one per-org custom contact field (contact_field_defs); values live in `Contact.custom_values[key]`. */
+export interface ContactFieldDef {
+  key: string;
+  label: string;
+}
+
+export async function listContactFieldDefs(): Promise<ContactFieldDef[]> {
+  const { data, error } = await supabase
+    .from('contact_field_defs')
+    .select('key, label')
+    .order('created_at', { ascending: true });
+  if (error) throw new Error(error.message);
+  return (data ?? []) as ContactFieldDef[];
+}
 
 export interface Contact {
   id: string;
@@ -2168,6 +2187,10 @@ export interface Contact {
   last_name: string | null;
   owner_contact: string | null;
   address: string | null;
+  /** TASK-H01: canonical city (CSV City/Town/Locality column or the edit form). Null on older contacts -- fall back to parsing `address`. */
+  city: string | null;
+  /** TASK-H01: CSV-created custom field values keyed by `ContactFieldDef.key`. Stored and shown only, never pushed to GHL. */
+  custom_values: Record<string, string>;
   category: string | null;
   contact_status: string | null;
   /** IANA zone, e.g. "America/Chicago". Derived from the area code at import time, editable. */
@@ -2231,6 +2254,10 @@ export interface ImportContactsResult {
   /** Same, for contacts already active in a different campaign (QUE-8: one active campaign per
    *  contact at a time). */
   skippedActiveCampaign: number;
+  /** TASK-H01: new custom fields this import created for the org (re-using an existing one is not counted). */
+  customFieldsCreated: number;
+  /** TASK-H01: columns left on "Create custom field" that were skipped because the org is at its 50-field cap. */
+  customFieldsSkipped: number;
 }
 
 export async function importContacts(
@@ -2281,6 +2308,7 @@ export interface CreateContactInput {
   last_name?: string;
   owner_contact?: string;
   address?: string;
+  city?: string;
   category?: string;
   contact_status?: string;
   timezone?: string;
@@ -2335,6 +2363,7 @@ export async function createContact(input: CreateContactInput): Promise<Contact>
       last_name: input.last_name ?? null,
       owner_contact: input.owner_contact ?? null,
       address: input.address ?? null,
+      city: input.city ?? null,
       category: input.category ?? 'Cold',
       contact_status: input.contact_status ?? 'No Contact',
       timezone: input.timezone ?? phoneFields.timezone ?? null,
@@ -2371,6 +2400,7 @@ export async function updateContact(id: string, input: UpdateContactInput): Prom
     'last_name',
     'owner_contact',
     'address',
+    'city',
     'category',
     'contact_status',
     'timezone',
