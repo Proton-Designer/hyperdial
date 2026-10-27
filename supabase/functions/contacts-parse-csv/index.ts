@@ -182,6 +182,9 @@ function assignBestFitColumns(
       .filter(Boolean);
     for (const field of canonicalFields) {
       const h = headerMatchScore(original_header, field);
+      // TASK-H06: Rating / Review Count are bare numbers, so a column of small integers ("Years In Business",
+      // "Employees") fitted them on values alone and silently landed in review_count. Require a header match.
+      if (h === 0 && (field === 'Rating' || field === 'Review Count')) continue;
       const v = valueMatchScore(preview_data, field);
       const combined = h * 0.5 + v * 0.5;
       if (combined >= 25) candidates.push({ colIdx, field, score: combined });
