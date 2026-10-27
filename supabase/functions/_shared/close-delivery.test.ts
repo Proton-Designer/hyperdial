@@ -61,6 +61,10 @@ Deno.test('url guard accepts https hostnames, rejects the SSRF shapes', () => {
     'https://user:pw@example.com/x',
     'https://example.com:8443/x',
     'https://2130706433/x',
+    'https://localhost./x',
+    'https://db.internal./x',
+    'https://metadata.google.internal./x',
+    'https://127.0.0.1./x',
     'not a url',
   ]) {
     assertEquals(validateWebhookUrl(bad).ok, false, bad);

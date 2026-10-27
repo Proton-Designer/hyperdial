@@ -100,6 +100,10 @@ export function validateWebhookUrl(
   if (url.port && url.port !== '443')
     return { ok: false, error: 'Only the default https port is allowed' };
   const host = url.hostname.toLowerCase();
+  // A trailing dot ("localhost.", "db.internal.") is the same host for DNS but slips past the suffix checks below.
+  if (host.endsWith('.') || host.includes('..')) {
+    return { ok: false, error: 'Hostnames ending in a dot are not allowed' };
+  }
   if (host.startsWith('[') || /^[0-9.]+$/.test(host) || /^0x[0-9a-f]+$/i.test(host)) {
     return { ok: false, error: 'IP addresses are not allowed; use a hostname' };
   }
