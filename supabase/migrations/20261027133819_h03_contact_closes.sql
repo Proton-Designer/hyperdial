@@ -125,9 +125,19 @@ begin
   if v_org is null then
     raise exception 'contact not found' using errcode = 'P0002';
   end if;
+  -- TASK-H05: explicit role gate inside the RPC (it is granted to `authenticated`, so the Edge Function's check is not the only door).
+  -- Everyone who can dial may log a close: owner, admin, manager, agent. Non-members and any other role are refused.
+  if not private.has_org_role(v_org, array['owner', 'admin', 'manager', 'agent']) then
+    raise exception 'not allowed to log a close in this organization' using errcode = '42501';
+  end if;
   if not private.contact_read_access(v_org, p_contact_id) then
     raise exception 'no access to this contact' using errcode = '42501';
   end if;
+
+  -- TASK-H05: serialize closes of one contact. Two parallel submits (double click, two tabs) used to both pass the 60 s
+  -- check below and insert twice. The second caller now waits here for the first transaction to commit, then sees its row
+  -- and returns it as `deduped`. Transaction-scoped: released at commit/rollback.
+  perform pg_advisory_xact_lock(hashtext('close:' || p_contact_id::text));
 
   -- 60 s double-click guard: the same caller closing the same contact again returns the existing close.
   select cc.id, cc.delivery_status into v_id, v_status

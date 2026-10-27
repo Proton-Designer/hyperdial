@@ -38,7 +38,7 @@ Deno.serve(async (req: Request) => {
     Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
   );
   try {
-    return jsonResponse(await runCloseDeliveries(supabase, { limit: 20 }));
+    return jsonResponse(await runCloseDeliveries(supabase, { limit: 10 }));
   } catch (err) {
     console.error('[close-delivery-worker] failed', err);
     return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, 500);

@@ -50,3 +50,36 @@ export function parseOptionalNumber(raw: string): number | null | undefined {
   const n = Number(t);
   return Number.isFinite(n) ? n : undefined;
 }
+
+const EMAIL_LIKE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+
+export function looksLikeEmail(raw: string): boolean {
+  return EMAIL_LIKE.test(raw.trim());
+}
+
+/** Phone-shaped: at least 7 digits and nothing but digits and phone punctuation. */
+function looksLikePhone(raw: string): boolean {
+  const t = raw.trim();
+  return /^[+\d\s().\-x#]+$/i.test(t) && t.replace(/\D/g, '').length >= 7;
+}
+
+function looksLikeUrl(raw: string): boolean {
+  const t = raw.trim();
+  return /^(https?:\/\/|www\.)/i.test(t) || (/^\S+\.[a-z]{2,}(\/\S*)?$/i.test(t) && !/\s/.test(t));
+}
+
+/**
+ * `contacts.owner_contact` is a free "Owner / email" column: it holds a person's name, an email address or a phone number.
+ * Only a name may prefill "Owner name"; an email goes to the Email field (owner name left empty for the intern to fill),
+ * a phone or URL is not used at all. Only when the column is empty does it fall back to the first/last name.
+ */
+export function splitOwnerContact(
+  ownerContact: string | null | undefined,
+  personName: string | null | undefined
+): { ownerName: string | null; email: string | null } {
+  const raw = ownerContact?.trim() ?? '';
+  if (!raw) return { ownerName: personName?.trim() || null, email: null };
+  if (looksLikeEmail(raw)) return { ownerName: null, email: raw };
+  if (looksLikePhone(raw) || looksLikeUrl(raw)) return { ownerName: null, email: null };
+  return { ownerName: raw, email: null };
+}

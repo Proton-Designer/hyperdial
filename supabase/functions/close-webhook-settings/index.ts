@@ -178,7 +178,8 @@ Deno.serve(async (req: Request) => {
       const { data: requeued, error } = await q.select('id');
       if (error) throw new Error(error.message);
       let tally = { claimed: 0, sent: 0, failed: 0, retrying: 0 };
-      for (const r of (requeued ?? []).slice(0, 50)) {
+      // A few inline (each delivery can take up to ~10 s); the rest are already pending and due, so the 5-minute sweep delivers them.
+      for (const r of (requeued ?? []).slice(0, 5)) {
         const t = await runCloseDeliveries(supabase, { limit: 1, closeId: r.id as string });
         tally = {
           claimed: tally.claimed + t.claimed,

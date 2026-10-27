@@ -1,6 +1,7 @@
 import { supabase } from './supabase';
 import { normalizePhoneStrict } from './phone-normalize';
 import { timezoneForAreaCode } from './area-code-tz';
+import { splitOwnerContact } from './closeForm';
 
 const getFunctionsUrl = () => {
   const url = import.meta.env.VITE_SUPABASE_URL;
@@ -6344,11 +6345,13 @@ export async function getCloseContactPrefill(contactId: string): Promise<CloseCo
   const c = res.data as Record<string, string | null> | null;
   if (!c) throw new Error('Contact not found');
   const person = [c.first_name, c.last_name].filter(Boolean).join(' ').trim();
+  // owner_contact is a free "Owner / email" column (TASK-H05): a name goes to Owner name, an email to Email.
+  const owner = splitOwnerContact(c.owner_contact, person);
   return {
     businessName: c.business_name || null,
-    ownerName: c.owner_contact || person || null,
+    ownerName: owner.ownerName,
     phone: c.phone_number || null,
-    email: null,
+    email: owner.email,
     city: c.city || null,
     address: c.address || null,
   };

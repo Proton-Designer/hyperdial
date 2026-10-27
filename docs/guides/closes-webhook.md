@@ -42,49 +42,66 @@ const HEADERS = [
   'Years in business',
 ];
 
+// Text columns (0-based positions in HEADERS); the last three are numbers and are written as they are.
+const TEXT_COLUMNS = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
+
+// A value that starts with = + - @ would be turned into a formula (or lose its +) by Sheets. A leading apostrophe
+// makes Sheets keep it as plain text (and hides the apostrophe). Mobile numbers always start with +, so this is also
+// what keeps them as text. Never remove this: the web app URL is public and the fields are free text.
+function safe(value) {
+  const text = value === null || value === undefined ? '' : String(value);
+  return /^[=+\-@]/.test(text) ? "'" + text : text;
+}
+
 function doPost(e) {
-  const body = JSON.parse(e.postData.contents);
-  if (body.event !== 'contact.closed') return reply({ ok: true, ignored: body.event });
-
-  const lock = LockService.getScriptLock();
-  lock.waitLock(20000);
   try {
-    const sheet =
-      SpreadsheetApp.getActive().getSheetByName(SHEET_NAME) ||
-      SpreadsheetApp.getActive().insertSheet(SHEET_NAME);
-    if (sheet.getLastRow() === 0) sheet.appendRow(HEADERS);
+    const body = JSON.parse(e.postData.contents);
+    if (body.event !== 'contact.closed') return reply({ ok: true, ignored: body.event });
 
-    // HyperDial can deliver the same close twice (a retry after a slow answer): skip a close_id already present.
-    const ids =
-      sheet.getLastRow() > 1
-        ? sheet
-            .getRange(2, 2, sheet.getLastRow() - 1, 1)
-            .getValues()
-            .flat()
-        : [];
-    if (ids.indexOf(body.close_id) !== -1) return reply({ ok: true, duplicate: true });
+    const lock = LockService.getScriptLock();
+    lock.waitLock(20000);
+    try {
+      const sheet =
+        SpreadsheetApp.getActive().getSheetByName(SHEET_NAME) ||
+        SpreadsheetApp.getActive().insertSheet(SHEET_NAME);
+      if (sheet.getLastRow() === 0) sheet.appendRow(HEADERS);
 
-    const f = body.form;
-    sheet.appendRow([
-      body.closed_at,
-      body.close_id,
-      (body.agent && body.agent.name) || '',
-      f.business_name,
-      f.owner_name,
-      f.mobile,
-      f.email || '',
-      f.services.join(', '),
-      f.cities.join(', '),
-      f.frequencies.join(', '),
-      f.insured ? 'Yes' : 'No',
-      f.best_contact || '',
-      f.starting_price,
-      f.capacity,
-      f.years_in_business,
-    ]);
-    return reply({ ok: true });
-  } finally {
-    lock.releaseLock();
+      // HyperDial can deliver the same close twice (a retry after a slow answer): skip a close_id already present.
+      const ids =
+        sheet.getLastRow() > 1
+          ? sheet
+              .getRange(2, 2, sheet.getLastRow() - 1, 1)
+              .getValues()
+              .flat()
+          : [];
+      if (ids.indexOf(body.close_id) !== -1) return reply({ ok: true, duplicate: true });
+
+      const f = body.form;
+      const row = [
+        body.closed_at,
+        body.close_id,
+        (body.agent && body.agent.name) || '',
+        f.business_name,
+        f.owner_name,
+        f.mobile,
+        f.email || '',
+        f.services.join(', '),
+        f.cities.join(', '),
+        f.frequencies.join(', '),
+        f.insured ? 'Yes' : 'No',
+        f.best_contact || '',
+        f.starting_price,
+        f.capacity,
+        f.years_in_business,
+      ].map((v, i) => (TEXT_COLUMNS.indexOf(i) !== -1 ? safe(v) : v));
+      sheet.getRange(sheet.getLastRow() + 1, 1, 1, row.length).setValues([row]);
+      return reply({ ok: true });
+    } finally {
+      lock.releaseLock();
+    }
+  } catch (err) {
+    // HyperDial reads this answer: ok:false makes it retry later and shows the text in Settings.
+    return reply({ ok: false, error: String((err && err.message) || err) });
   }
 }
 
@@ -97,9 +114,11 @@ function reply(obj) {
 
 Notes:
 
-- Apps Script answers a POST with a **302 redirect** to `script.googleusercontent.com` _after the script has run_. HyperDial treats that redirect as delivered and never follows it. A redirect to any other host counts as a failure.
+- Apps Script answers a POST with a **302 redirect** to `script.googleusercontent.com` _after the script has run_, and the script's own answer sits behind it. HyperDial fetches that address **once** (that host only, over https, no further redirects) and counts the close as delivered only if the answer is JSON with `"ok": true`. `{"ok":false,"error":"…"}`, an error page or anything else is a failure: the close is retried and the text appears in Settings. The snippet above catches its own errors and always answers with `ok` for this reason; keep that if you edit it. A redirect to any other host counts as a failure.
+- Other receivers (for example a GoHighLevel inbound webhook): any `2xx` answer counts as delivered.
+- The webhook host must resolve to a public address: HyperDial looks the name up before every request and refuses private, loopback, link-local and similar addresses.
 - Apps Script cannot read request headers, so it cannot check HyperDial's signature. Leave **signing secret** unset for Apps Script and keep the web-app URL private (anyone with the URL can add rows).
-- Phone numbers: the Sheet may turn `+1512…` into a formula or number. Format the Mobile column as **Plain text** first.
+- Text safety: the snippet prefixes any text value that starts with `=`, `+`, `-` or `@` with an apostrophe, so a pasted `=IMPORTXML(…)` stays text and phone numbers keep their `+`. Sheets hides that apostrophe in the cell. Do not also set the columns to Plain text format: in a Plain text cell the apostrophe would show.
 
 ## 3. GoHighLevel instead
 

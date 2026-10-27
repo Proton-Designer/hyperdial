@@ -9,6 +9,7 @@ import {
   nextDeliveryState,
   type CloseRow,
   type DeliveryOutcome,
+  type HostResolver,
 } from './close-delivery.ts';
 
 export type DeliveryStatus = 'pending' | 'sent' | 'failed' | 'not_configured';
@@ -31,7 +32,8 @@ export async function deliverClaimedClose(
   supabase: SupabaseClient,
   close: CloseRow,
   fetchImpl?: typeof fetch,
-  now: number = Date.now()
+  now: number = Date.now(),
+  resolveHost?: HostResolver
 ): Promise<DeliveryStatus> {
   const { data: hook } = await supabase
     .from('org_close_webhook')
@@ -54,6 +56,7 @@ export async function deliverClaimedClose(
       payload,
       fetchImpl,
       now: () => now,
+      resolveHost,
     });
   }
 
@@ -79,7 +82,13 @@ export async function deliverClaimedClose(
 /** Claims up to `limit` due rows (or exactly `closeId`) and delivers each. */
 export async function runCloseDeliveries(
   supabase: SupabaseClient,
-  opts: { limit: number; closeId?: string; fetchImpl?: typeof fetch; now?: number }
+  opts: {
+    limit: number;
+    closeId?: string;
+    fetchImpl?: typeof fetch;
+    now?: number;
+    resolveHost?: HostResolver;
+  }
 ): Promise<{ claimed: number; sent: number; failed: number; retrying: number }> {
   const { data, error } = await supabase.rpc('claim_contact_closes', {
     p_limit: opts.limit,
@@ -90,7 +99,13 @@ export async function runCloseDeliveries(
   const tally = { claimed: rows.length, sent: 0, failed: 0, retrying: 0 };
   for (const row of rows) {
     try {
-      const s = await deliverClaimedClose(supabase, row, opts.fetchImpl, opts.now);
+      const s = await deliverClaimedClose(
+        supabase,
+        row,
+        opts.fetchImpl,
+        opts.now,
+        opts.resolveHost
+      );
       if (s === 'sent') tally.sent++;
       else if (s === 'pending') tally.retrying++;
       else tally.failed++;

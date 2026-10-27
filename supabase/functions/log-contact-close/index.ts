@@ -53,8 +53,9 @@ Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return corsPreflightResponse();
   if (req.method !== 'POST') return jsonResponse({ error: 'Method not allowed' }, 405);
 
-  // Managers are not admitted: the RPC's contact_read_access gate only covers owner/admin/assigned agent.
-  const { error: authError } = await requireOrgRole(req, ['owner', 'admin', 'agent']);
+  // Everyone who can dial may log a close (managers dial too). The RPC repeats this role check and then applies
+  // contact_read_access, so a caller outside these roles is refused there as well.
+  const { error: authError } = await requireOrgRole(req, ['owner', 'admin', 'manager', 'agent']);
   if (authError) return authError;
 
   const parsed = await readJsonBody<CloseBody>(req);
