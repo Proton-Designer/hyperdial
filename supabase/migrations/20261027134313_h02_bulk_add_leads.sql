@@ -32,7 +32,9 @@ declare
   v_status text := nullif(btrim(coalesce(p_filter ->> 'contact_status', '')), '');
   v_city text := nullif(btrim(coalesce(p_filter ->> 'city', '')), '');
   v_list text := nullif(btrim(coalesce(p_filter ->> 'import_list', '')), '');
-  v_from uuid := nullif(btrim(coalesce(p_filter ->> 'from_campaign_id', '')), '')::uuid;
+  v_from_text text := nullif(btrim(coalesce(p_filter ->> 'from_campaign_id', '')), '');
+  -- the RPC rejects a malformed id first; a non-uuid here (direct call) simply matches nothing instead of raising 22P02
+  v_from uuid := case when v_from_text ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' then v_from_text::uuid end;
 begin
   -- user text -> ILIKE pattern with the wildcards neutralised
   if v_search is not null then
@@ -72,12 +74,15 @@ begin
         -- city column first; contacts imported before it existed fall back to the free-text address
         and (v_city is null or c.city ilike v_city or (c.city is null and coalesce(c.address, '') ilike v_city))
         and (v_list is null or c.import_list = v_list)
-        and (v_from is null or exists (select 1 from public.campaign_leads src
-                                        where src.campaign_id = v_from and src.org_id = p_org_id and src.contact_id = c.id))
+        and (v_from_text is null or (v_from is not null and exists (select 1 from public.campaign_leads src
+                                        where src.campaign_id = v_from and src.org_id = p_org_id and src.contact_id = c.id)))
       )
     );
 end;
 $$;
+
+-- Called only from add_leads_to_campaign_bulk (SECURITY DEFINER, runs as the owner): no other role needs EXECUTE.
+revoke all on function private.bulk_lead_candidates(uuid, uuid, text, uuid[], jsonb, boolean) from public, anon, authenticated;
 
 create function public.add_leads_to_campaign_bulk(
   p_campaign_id uuid,
@@ -110,8 +115,15 @@ begin
   if p_mode not in ('ids', 'filter') then
     raise exception 'mode must be ids or filter' using errcode = '22023';
   end if;
-  if p_mode = 'ids' and coalesce(cardinality(p_contact_ids), 0) = 0 then
-    raise exception 'no contacts given' using errcode = '22023';
+  if p_mode = 'ids' then
+    -- dedupe (and drop nulls) first so repeated ids neither inflate not_found nor count against the cap
+    select array_agg(distinct x) into p_contact_ids from unnest(coalesce(p_contact_ids, '{}')) x where x is not null;
+    if coalesce(cardinality(p_contact_ids), 0) = 0 then
+      raise exception 'no contacts given' using errcode = '22023';
+    end if;
+    if cardinality(p_contact_ids) > 5000 then
+      raise exception 'at most 5000 contacts can be added by id at a time' using errcode = '22023';
+    end if;
   end if;
   if jsonb_typeof(v_filter) is distinct from 'object' then
     raise exception 'filter must be an object' using errcode = '22023';
@@ -124,9 +136,16 @@ begin
   end if;
 
   -- a from_campaign_id must belong to the same org
-  if nullif(v_filter ->> 'from_campaign_id', '') is not null
-     and not exists (select 1 from public.campaigns where id = (v_filter ->> 'from_campaign_id')::uuid and org_id = v_org) then
-    raise exception 'source campaign not found' using errcode = '22023';
+  if nullif(btrim(coalesce(v_filter ->> 'from_campaign_id', '')), '') is not null then
+    -- CASE, not OR: SQL does not promise left-to-right evaluation, and the uuid cast must never see a malformed id
+    if not (case
+              when btrim(v_filter ->> 'from_campaign_id') ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+                then exists (select 1 from public.campaigns
+                              where id = btrim(v_filter ->> 'from_campaign_id')::uuid and org_id = v_org)
+              else false
+            end) then
+      raise exception 'source campaign not found' using errcode = '22023';
+    end if;
   end if;
 
   -- One statement: classify once (materialized), insert the eligible batch, count everything. No temp table, so it is

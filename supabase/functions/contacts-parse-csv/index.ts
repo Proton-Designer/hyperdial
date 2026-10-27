@@ -67,8 +67,6 @@ const ALIASES: Record<string, string> = {
   street: 'Address',
   location: 'Address',
   addr: 'Address',
-  town: 'City',
-  locality: 'City',
 };
 
 /** TASK-H01: City matches only these exact headers -- a substring rule would map "Capacity" or "Electricity". */

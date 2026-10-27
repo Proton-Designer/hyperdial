@@ -300,6 +300,8 @@ Deno.serve(async (req) => {
       }));
     }
 
+    // TASK-H04: contacts whose re-imported custom values could not be saved (surfaced in the response, never silent).
+    let customValuesNotSaved = 0;
     if (duplicateCustomValues.size > 0) {
       const items = [...duplicateCustomValues].map(([contact_id, values]) => ({
         contact_id,
@@ -310,7 +312,10 @@ Deno.serve(async (req) => {
           p_org_id: orgId,
           p_items: items.slice(i, i + 500),
         });
-        if (mergeErr) console.error('contacts-import custom value merge error:', mergeErr);
+        if (mergeErr) {
+          console.error('contacts-import custom value merge error:', mergeErr);
+          customValuesNotSaved += items.slice(i, i + 500).length;
+        }
       }
     }
 
@@ -368,6 +373,7 @@ Deno.serve(async (req) => {
         skippedActiveCampaign,
         customFieldsCreated,
         customFieldsSkipped,
+        customValuesNotSaved,
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );

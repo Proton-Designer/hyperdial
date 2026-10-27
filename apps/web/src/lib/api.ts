@@ -2260,6 +2260,8 @@ export interface ImportContactsResult {
   customFieldsCreated: number;
   /** TASK-H01: columns left on "Create custom field" that were skipped because the org is at its 50-field cap. */
   customFieldsSkipped: number;
+  /** TASK-H04: contacts (re-imported duplicates) whose custom values could NOT be saved; 0 on success. */
+  customValuesNotSaved: number;
 }
 
 export async function importContacts(

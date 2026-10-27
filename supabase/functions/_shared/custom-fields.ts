@@ -33,15 +33,42 @@ const RESERVED_KEYS = new Set([
   'custom_values',
 ]);
 
+/** Lowercased, NFKC-normalised, whitespace-collapsed header: what the stable hash below is computed from. */
+function normalizeForHash(header: string): string {
+  return (header ?? '').normalize('NFKC').toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
+/** FNV-1a 32-bit over the UTF-16 code units, as 8 hex chars. Sync on purpose (planning is pure and sync). */
+function shortHash(text: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) {
+    h ^= text.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h.toString(16).padStart(8, '0');
+}
+
+/**
+ * Header -> field key. Plain Latin headers slugify as before ("Years in Business?" -> years_in_business). A header whose
+ * slug is empty, or that loses non-ASCII letters/digits in the slug ("رقم", "城市", "Ciudad 城市"), gets a stable key
+ * with a short hash of the normalised header appended (field_1a2b3c4d, ciudad_9f8e7d6c): the same header gives the same
+ * key in every import, whatever its column position, and two different such headers never share one. Accents alone
+ * ("Año") are not a loss: NFKD turns them into ASCII + marks.
+ */
 export function slugifyHeader(header: string): string {
-  let slug = (header ?? '')
-    .normalize('NFKD')
+  const decomposed = (header ?? '').normalize('NFKD').replace(/\p{M}+/gu, '');
+  const slug = decomposed
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '_')
     .replace(/^_+|_+$/g, '');
-  if (!slug) slug = 'field';
-  if (!/^[a-z]/.test(slug)) slug = `f_${slug}`;
-  return slug.slice(0, MAX_KEY_LENGTH).replace(/_+$/, '');
+  const lostLetters = /[^\x00-\x7F]/u.test(decomposed.replace(/[^\p{L}\p{N}\x00-\x7F]/gu, ''));
+  if (!slug || lostLetters) {
+    const base = slug && /^[a-z]/.test(slug) ? slug : slug ? `f_${slug}` : 'field';
+    const hash = shortHash(normalizeForHash(header));
+    return `${base.slice(0, MAX_KEY_LENGTH - 9).replace(/_+$/, '')}_${hash}`;
+  }
+  const keyed = /^[a-z]/.test(slug) ? slug : `f_${slug}`;
+  return keyed.slice(0, MAX_KEY_LENGTH).replace(/_+$/, '');
 }
 
 export function normalizeLabel(header: string): string {

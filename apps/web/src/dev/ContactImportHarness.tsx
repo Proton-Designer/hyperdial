@@ -150,6 +150,7 @@ function useStubs(scenario: string) {
           skippedActiveCampaign: 0,
           customFieldsCreated: scenario === 'capped' ? 1 : custom,
           customFieldsSkipped: scenario === 'capped' ? custom - 1 : 0,
+          customValuesNotSaved: 0,
         });
       }
       return originalFetch(url as RequestInfo, init);

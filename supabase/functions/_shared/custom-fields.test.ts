@@ -1,4 +1,4 @@
-import { assertEquals } from 'jsr:@std/assert@1';
+import { assertEquals, assertNotEquals } from 'jsr:@std/assert@1';
 import {
   MAX_CUSTOM_FIELDS_PER_ORG,
   MAX_CUSTOM_VALUE_LENGTH,
@@ -12,7 +12,7 @@ Deno.test(
   () => {
     assertEquals(slugifyHeader('  Years in Business? '), 'years_in_business');
     assertEquals(slugifyHeader('2024 Revenue'), 'f_2024_revenue');
-    assertEquals(slugifyHeader('???'), 'field');
+    assertEquals(slugifyHeader('Año de fundación'), 'ano_de_fundacion');
     assertEquals(slugifyHeader('x'.repeat(100)).length, 40);
   }
 );
@@ -27,6 +27,36 @@ Deno.test(
     assertEquals(plan.newDefs, [{ key: 'insured', label: 'Insured' }]);
     assertEquals(plan.keyByHeader.get('Tier'), 'tier');
     assertEquals(plan.keyByHeader.get('Insured'), 'insured');
+  }
+);
+
+Deno.test(
+  'slugifyHeader: non-Latin / symbol-only headers get a stable hashed key, never a positional one',
+  () => {
+    const key = slugifyHeader('رقم الهاتف');
+    assertEquals(key, slugifyHeader('  رقم   الهاتف '), 'whitespace-insensitive and stable');
+    assertEquals(/^field_[0-9a-f]{8}$/.test(key), true);
+    assertEquals(/^[a-z][a-z0-9_]{0,39}$/.test(slugifyHeader('城市')), true);
+    assertNotEquals(slugifyHeader('城市'), slugifyHeader('省份'));
+    assertNotEquals(slugifyHeader('???'), slugifyHeader('###'));
+    // mixed: the Latin part is kept readable, the CJK part still distinguishes it from the plain header
+    assertEquals(slugifyHeader('Ciudad 城市').startsWith('ciudad_'), true);
+    assertNotEquals(slugifyHeader('Ciudad 城市'), slugifyHeader('Ciudad'));
+    assertEquals(slugifyHeader('Ciudad'), 'ciudad');
+  }
+);
+
+Deno.test(
+  'planCustomFields: non-Latin headers map to the same key whatever the column order or file',
+  () => {
+    const first = planCustomFields({ headers: ['رقم', 'اسم'], existingKeys: [] });
+    const later = planCustomFields({
+      headers: ['اسم'],
+      existingKeys: first.newDefs.map((d) => d.key),
+    });
+    assertEquals(later.keyByHeader.get('اسم'), first.keyByHeader.get('اسم'));
+    assertEquals(later.newDefs, []);
+    assertNotEquals(first.keyByHeader.get('رقم'), first.keyByHeader.get('اسم'));
   }
 );
 

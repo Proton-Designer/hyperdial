@@ -496,6 +496,16 @@ export function ImportContactsModal({
                   {importResult.customFieldsSkipped > 0 &&
                     `${importResult.customFieldsSkipped} column${importResult.customFieldsSkipped === 1 ? ' was' : 's were'} skipped because your organization is at its 50 custom-field limit.`}
                 </p>
+                {importResult.customValuesNotSaved > 0 && (
+                  <div
+                    role="alert"
+                    className="rounded-app-md bg-warning-soft border border-warning/30 text-warning text-body p-3"
+                  >
+                    The custom-field values for {importResult.customValuesNotSaved} existing contact
+                    {importResult.customValuesNotSaved === 1 ? '' : 's'} could not be saved. Their
+                    other details are unchanged. Import the file again to retry.
+                  </div>
+                )}
                 <Button variant="primary" onClick={handleViewContacts}>
                   View contacts
                 </Button>
