@@ -6369,6 +6369,8 @@ export interface CloseSettings {
   }[];
   /** Present only on the response that generated it (rotateSecret) -- shown once. */
   secret?: string;
+  /** TASK-H08: the URL was saved but its host could not be looked up yet (delivery will retry). */
+  warning?: string;
 }
 
 async function callCloseSettings<T>(body: Record<string, unknown>): Promise<T> {

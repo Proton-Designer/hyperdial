@@ -87,7 +87,10 @@ export function CloseSettingsCard() {
       });
       apply(res);
       if (res.secret) setNewSecret(res.secret);
-      setMessage({ tone: 'ok', text: 'Webhook saved.' });
+      setMessage({
+        tone: 'ok',
+        text: res.warning ? `Webhook saved. ${res.warning}` : 'Webhook saved.',
+      });
     });
 
   const copySecret = async () => {

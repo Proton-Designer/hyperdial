@@ -3,6 +3,7 @@ import {
   CLOSE_MAX_ATTEMPTS,
   buildClosePayload,
   checkHostResolvesPublic,
+  checkWebhookUrlForSave,
   deliverClose as realDeliverClose,
   isBlockedAddress,
   nextDeliveryState,
@@ -432,4 +433,55 @@ Deno.test('retry schedule: backoff, then failed at the max attempt', () => {
     nextAttemptAt: null,
   });
   assertEquals(nextDeliveryState({ kind: 'permanent', error: 'x' }, 1, now).status, 'failed');
+});
+
+Deno.test(
+  'save-time check: public host passes, private host is refused, unresolved saves with a warning',
+  async () => {
+    assertEquals(await checkWebhookUrlForSave('https://hooks.example.com/x', PUBLIC_IP), {
+      ok: true,
+      warning: null,
+    });
+    const priv = await checkWebhookUrlForSave('https://127.0.0.1.nip.io/x', () =>
+      Promise.resolve(['127.0.0.1'])
+    );
+    assertEquals(priv.ok, false);
+    assert(!priv.ok && priv.error.includes('private or internal'));
+    assertEquals(
+      (
+        await checkWebhookUrlForSave('https://a.example.com/x', () =>
+          Promise.resolve(['93.184.216.34', '10.0.0.8'])
+        )
+      ).ok,
+      false
+    );
+    const unresolved = await checkWebhookUrlForSave('https://later.example.com/x', () =>
+      Promise.resolve([])
+    );
+    assertEquals(unresolved, {
+      ok: true,
+      warning: 'Could not look up the host yet; delivery will retry.',
+    });
+    const lookupError = await checkWebhookUrlForSave('https://later.example.com/x', () =>
+      Promise.reject(new Error('NXDOMAIN'))
+    );
+    assertEquals(lookupError.ok, true);
+  }
+);
+
+Deno.test('save-time check: the name rules still run first and never touch DNS', async () => {
+  let looked = false;
+  const spy = () => {
+    looked = true;
+    return Promise.resolve(['93.184.216.34']);
+  };
+  for (const bad of [
+    'http://example.com/x',
+    'https://localhost/x',
+    'https://127.0.0.1/x',
+    'nope',
+  ]) {
+    assertEquals((await checkWebhookUrlForSave(bad, spy)).ok, false, bad);
+  }
+  assertEquals(looked, false);
 });

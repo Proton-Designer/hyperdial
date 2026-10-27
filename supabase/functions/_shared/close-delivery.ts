@@ -259,6 +259,28 @@ export async function checkHostResolvesPublic(
   return { ok: true };
 }
 
+/**
+ * TASK-H08: the same address check at SAVE time, so an admin learns about a private host right away instead of at the
+ * first delivery/test. A private/internal answer is refused; a host that does not resolve yet is saved with a warning
+ * (the name may be created later; delivery re-checks and retries). Run only for a non-empty URL.
+ */
+export async function checkWebhookUrlForSave(
+  raw: string,
+  resolver: HostResolver = resolveHostAddresses
+): Promise<{ ok: true; warning: string | null } | { ok: false; error: string }> {
+  const guard = validateWebhookUrl(raw);
+  if (!guard.ok) return { ok: false, error: guard.error };
+  const resolved = await checkHostResolvesPublic(guard.url.hostname, resolver);
+  if (resolved.ok) return { ok: true, warning: null };
+  if (resolved.kind === 'permanent') {
+    return {
+      ok: false,
+      error: 'That host points at a private or internal address, so it cannot be used.',
+    };
+  }
+  return { ok: true, warning: 'Could not look up the host yet; delivery will retry.' };
+}
+
 export interface DeliverArgs {
   url: string;
   secret: string | null;

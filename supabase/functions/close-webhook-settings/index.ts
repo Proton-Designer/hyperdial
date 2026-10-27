@@ -13,7 +13,7 @@ import { corsHeaders, corsPreflightResponse } from '../_shared/cors.ts';
 import { requireOrgRole } from '../_shared/auth.ts';
 import { logOrgAction } from '../_shared/audit.ts';
 import { readJsonBody } from '../_shared/http-json.ts';
-import { deliverClose, validateWebhookUrl } from '../_shared/close-delivery.ts';
+import { checkWebhookUrlForSave, deliverClose } from '../_shared/close-delivery.ts';
 import { runCloseDeliveries } from '../_shared/close-delivery-run.ts';
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -75,6 +75,7 @@ Deno.serve(async (req: Request) => {
   );
   try {
     let secret: string | undefined;
+    let warning: string | undefined;
 
     if (action === 'save') {
       if (body.categories !== undefined) {
@@ -104,8 +105,10 @@ Deno.serve(async (req: Request) => {
         const enabled = w.enabled === true;
         const url = typeof w.url === 'string' && w.url.trim() ? w.url.trim() : null;
         if (url) {
-          const guard = validateWebhookUrl(url);
-          if (!guard.ok) return jsonResponse({ error: guard.error }, 400);
+          // Name rules + DNS: a private/internal host is refused here (TASK-H08); an unresolvable one saves with a warning.
+          const check = await checkWebhookUrlForSave(url);
+          if (!check.ok) return jsonResponse({ error: check.error }, 400);
+          if (check.warning) warning = check.warning;
         }
         if (enabled && !url)
           return jsonResponse({ error: 'Add a URL before turning the webhook on' }, 400);
@@ -245,6 +248,7 @@ Deno.serve(async (req: Request) => {
           createdAt: r.created_at,
         })),
       ...(secret ? { secret } : {}),
+      ...(warning ? { warning } : {}),
     });
   } catch (err) {
     console.error('[close-webhook-settings] failed', err);
