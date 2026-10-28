@@ -411,7 +411,9 @@ export function ParallelDialerUI({
             onEndCall={onEndLiveCall}
           />
           {connectedContact && <ContactDetailsPanel contact={connectedContact} />}
-          {connectedContact && <LogCloseCard contact={connectedContact} />}
+          {connectedContact && (
+            <LogCloseCard key={connectedContact.id} contact={connectedContact} />
+          )}
           {connectedContactHistory.length > 0 && (
             <ContactHistoryPanel history={connectedContactHistory} />
           )}

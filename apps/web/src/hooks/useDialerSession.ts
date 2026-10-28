@@ -96,7 +96,11 @@ interface DialerHookState {
    *  "Your call was taken over by <name>" state. */
   takenOverByManagerName: string | null;
   loading: boolean;
+  /** Could not load a session at all -- Dialer.tsx replaces the session UI with an error card. */
   error: string | null;
+  /** A refetch failed while a session is already on screen: the last snapshot stays up (so the
+   *  wrap-up / Log Close forms keep what was typed) and the next poll retries. */
+  refreshError: string | null;
 }
 
 function campaignScriptEqual(a: CampaignScriptInfo | null, b: CampaignScriptInfo | null): boolean {
@@ -152,11 +156,16 @@ export function useDialerSession(initialSessionId: string | null = null) {
     takenOverByManagerName: null,
     loading: false,
     error: null,
+    refreshError: null,
   });
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const loadSession = useCallback(async (sessionId: string) => {
-    setState((prev) => ({ ...prev, loading: true, error: null }));
+  // `background` (the 3s poll) leaves `loading` alone: Dialer.tsx swaps the whole session UI for
+  // a spinner while `loading` is true, so flipping it on every poll unmounted and remounted the
+  // dialer (and the wrap-up / Log Close forms with it) every few seconds, wiping their state.
+  const loadSession = useCallback(async (sessionId: string, opts?: { background?: boolean }) => {
+    const background = opts?.background ?? false;
+    if (!background) setState((prev) => ({ ...prev, loading: true, error: null }));
     try {
       const {
         session,
@@ -186,15 +195,19 @@ export function useDialerSession(initialSessionId: string | null = null) {
           campaignScript: withhold ? prev.campaignScript : campaignScript,
           pendingCampaignScript: withhold ? campaignScript : null,
           takenOverByManagerName,
+          error: null,
+          refreshError: null,
         };
       });
     } catch (e) {
-      setState((prev) => ({
-        ...prev,
-        error: e instanceof Error ? e.message : 'Failed to load dialer session',
-      }));
+      const message = e instanceof Error ? e.message : 'Failed to load dialer session';
+      setState((prev) =>
+        prev.session?.id === sessionId
+          ? { ...prev, refreshError: message }
+          : { ...prev, error: message }
+      );
     } finally {
-      setState((prev) => ({ ...prev, loading: false }));
+      if (!background) setState((prev) => ({ ...prev, loading: false }));
     }
   }, []);
 
@@ -365,7 +378,7 @@ export function useDialerSession(initialSessionId: string | null = null) {
       return;
     }
     pollRef.current = setInterval(() => {
-      loadSession(sessionId);
+      loadSession(sessionId, { background: true });
     }, POLL_INTERVAL_MS);
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);

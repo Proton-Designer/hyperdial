@@ -46,7 +46,8 @@ export function PowerHourBoard({
   // before.
   useVisibilityPacedPolling(load, POLL_MS, error !== null, isLive);
 
-  if (error) return <p className="text-meta text-danger">{error}</p>;
+  // A failed refresh keeps the last board up (error shown with it), not swapped for the error.
+  if (error && !rows) return <p className="text-meta text-danger">{error}</p>;
   if (!rows) {
     return (
       <div className="space-y-1">
@@ -87,6 +88,7 @@ export function PowerHourBoard({
 
   return (
     <div className="space-y-1.5">
+      {error && <p className="text-meta text-danger">Couldn't refresh: {error}</p>}
       <div className="flex items-center justify-between text-meta text-text-secondary">
         <span>
           Team total: <span className="text-text-primary font-medium">{teamTotal}</span>

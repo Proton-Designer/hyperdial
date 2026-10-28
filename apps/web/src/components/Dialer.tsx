@@ -762,7 +762,9 @@ function DialerBody({
   );
   const resolvedCount =
     parallelSession.connected + parallelSession.voicemail + parallelSession.noAnswer;
-  const isParallelLoading = isParallelMode && parallelSession.loading;
+  // Full-screen spinner only before the first snapshot: once a session is on screen, a refetch
+  // (after Hold, Resume, a wrap-up submit, ...) must not unmount the dialer UI and the forms in it.
+  const isParallelLoading = isParallelMode && parallelSession.loading && !parallelSession.session;
   const connectedContactPreview =
     parallelSession.currentBatchContacts.find((c) => c.id === parallelSession.connectedContactId) ??
     null;
@@ -1001,6 +1003,12 @@ function DialerBody({
           !parallelSession.error &&
           parallelSession.session && (
             <>
+              {parallelSession.refreshError && (
+                <div className="max-w-3xl mx-auto mb-3 p-3 rounded-app-md bg-danger-soft border border-danger/30 text-danger text-meta">
+                  Lost contact with the server ({parallelSession.refreshError}). Retrying -- what
+                  you see may be a few seconds old.
+                </div>
+              )}
               <DialerStateBanner
                 sessionState={parallelSession.session.state}
                 pauseReason={parallelSession.session.pause_reason}
@@ -1070,6 +1078,7 @@ function DialerBody({
                 re-open this same modal, per this task's own spec line. */}
               {parallelSession.session.state === 'wrap_up' && parallelSession.wrapUpLeg && (
                 <WrapUpModal
+                  key={parallelSession.wrapUpLeg.legId}
                   sessionId={parallelSession.session.id}
                   legId={parallelSession.wrapUpLeg.legId}
                   contact={parallelSession.wrapUpLeg.contact}

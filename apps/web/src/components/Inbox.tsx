@@ -203,11 +203,19 @@ export function Inbox({ onNavigateToDialer }: InboxProps) {
         </div>
       )}
 
-      {!loading && error && (
+      {/* A failed 20s refresh keeps the last list on screen (an error line above it) instead of
+          swapping it for the error state; the full error state is only for "never loaded". */}
+      {!loading && error && !items && (
         <EmptyState icon={InboxIcon} title="Couldn't load the inbox" body={error} />
       )}
 
-      {!loading && !error && items && items.length === 0 && (
+      {!loading && error && items && (
+        <div className="mb-3 p-3 rounded-app-md bg-danger-soft border border-danger/30 text-danger text-meta">
+          Couldn't refresh the inbox: {error}
+        </div>
+      )}
+
+      {!loading && items && items.length === 0 && (
         <EmptyState
           icon={InboxIcon}
           title="Nothing here"
@@ -215,7 +223,7 @@ export function Inbox({ onNavigateToDialer }: InboxProps) {
         />
       )}
 
-      {!loading && !error && items && items.length > 0 && (
+      {!loading && items && items.length > 0 && (
         <div className="space-y-2">
           {items.map((item) => {
             const claimerName = nameFor(item.claimedBy);

@@ -251,3 +251,14 @@ never block or roll back the real write it's attached to. This is the same "neve
 shape behind three separate Mission-5 guards (E7/N4/G6, see `mem.decisions`), and it is a dry-run
 requirement as much as a production one: a fixture that forces one of these guards to fail must
 assert the base write still committed, not just that the guard behaved.
+
+**A background poll must never drive a render gate.** `useDialerSession`'s 3s poll called the same
+`loadSession` as a first load, which set `loading=true`, and `Dialer.tsx` swapped the whole session
+UI for a spinner while `loading` was true -- so every poll unmounted and remounted the dialer, and the
+wrap-up modal (picked disposition, notes, recording position) and the Log Close form were wiped every
+few seconds (reported 2026-10-28, present since the initial import). Fix: polls pass
+`{ background: true }` and never touch `loading`; the spinner shows only before the first snapshot;
+a refetch that fails while a session is on screen sets `refreshError` (a warning line) instead of
+`error` (which replaces the UI). Same "keep the last data, show the error beside it" rule applied to
+Inbox and PowerHourBoard; Team's live board already followed it. Any new polled screen: loading /
+error states are for "never loaded", not for "refreshing".
