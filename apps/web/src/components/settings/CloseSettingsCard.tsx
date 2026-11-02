@@ -145,8 +145,8 @@ export function CloseSettingsCard() {
           <section>
             <div className="text-sm text-white mb-1">Service categories</div>
             <p className="text-xs text-text-secondary mb-2">
-              The list interns pick &ldquo;Services offered&rdquo; from. Until you add some, the
-              form tells them to ask an admin.
+              The list interns pick &ldquo;Services offered&rdquo; from. Until you add some, interns
+              type the services in a text box. They can always add an &ldquo;Other&rdquo; entry.
             </p>
             {categories.length > 0 && (
               <div className="flex flex-wrap gap-2 mb-2">

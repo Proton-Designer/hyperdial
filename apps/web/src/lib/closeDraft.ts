@@ -13,6 +13,8 @@ export interface CloseDraftValues {
   mobile: string;
   email: string;
   services: string[];
+  /** TASK-H20: free-text services (comma separated): the only input when the org has no categories, "Other" otherwise. */
+  serviceDraft: string;
   cities: string[];
   cityDraft: string;
   frequencies: CloseFrequency[];
@@ -40,6 +42,7 @@ export function emptyCloseDraftValues(name: string, phone: string): CloseDraftVa
     mobile: phone,
     email: '',
     services: [],
+    serviceDraft: '',
     cities: [],
     cityDraft: '',
     frequencies: [],

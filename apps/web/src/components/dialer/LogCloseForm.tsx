@@ -38,6 +38,16 @@ const FREQUENCIES: { value: CloseFrequency; label: string }[] = [
 const INPUT =
   'w-full rounded-app-md bg-surface-2 border border-border-subtle px-3 py-2 text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent-to';
 
+/** Picked chips + the free-text box (comma separated), trimmed and de-duplicated (case-insensitive). */
+function mergeServices(picked: string[], draft: string): string[] {
+  const out: string[] = [];
+  for (const raw of [...picked, ...draft.split(',')]) {
+    const t = raw.trim();
+    if (t && !out.some((o) => o.toLowerCase() === t.toLowerCase())) out.push(t);
+  }
+  return out;
+}
+
 function Chip({
   selected,
   onClick,
@@ -119,6 +129,7 @@ export function LogCloseForm({
     services,
     cities,
     cityDraft,
+    serviceDraft,
     frequencies,
     insured,
     bestContact,
@@ -198,7 +209,11 @@ export function LogCloseForm({
     if (!isPlausibleMobile(mobile)) return setError('Enter a valid mobile number.');
     if (email.trim() && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email.trim()))
       return setError('That email does not look right.');
-    if (services.length === 0) return setError('Pick at least one service.');
+    const allServices = mergeServices(services, serviceDraft);
+    if (allServices.length === 0) return setError('Enter at least one service.');
+    if (allServices.length > 10) return setError('Enter at most 10 services.');
+    if (allServices.some((x) => x.length > 60))
+      return setError('Each service must be 60 characters or fewer.');
     if (finalCities.length === 0) return setError('Add at least one city they cover.');
     if (frequencies.length === 0) return setError('Pick at least one frequency.');
     if (insured === null) return setError('Say whether they are insured.');
@@ -218,7 +233,7 @@ export function LogCloseForm({
       businessName: businessName.trim(),
       mobile: mobile.trim(),
       email: email.trim() || null,
-      services,
+      services: allServices,
       cities: finalCities,
       frequencies,
       insured,
@@ -324,23 +339,37 @@ export function LogCloseForm({
                 >
                   <Loader2 className="w-4 h-4 animate-spin" /> Loading services…
                 </div>
-              ) : categoriesError ? (
-                <p className="text-meta text-danger">{categoriesError}</p>
-              ) : categories && categories.length === 0 ? (
-                <p className="text-body text-text-secondary">
-                  No service categories yet — ask an admin to add them in Settings.
-                </p>
               ) : (
-                <div className="flex flex-wrap gap-2">
-                  {categories?.map((c) => (
-                    <Chip
-                      key={c}
-                      selected={services.includes(c)}
-                      onClick={() => patchValues((v) => ({ services: toggle(v.services, c) }))}
-                    >
-                      {c}
-                    </Chip>
-                  ))}
+                <div className="space-y-2">
+                  {categoriesError && <p className="text-meta text-danger">{categoriesError}</p>}
+                  {categories && categories.length > 0 && (
+                    <div className="flex flex-wrap gap-2">
+                      {categories.map((c) => (
+                        <Chip
+                          key={c}
+                          selected={services.includes(c)}
+                          onClick={() => patchValues((v) => ({ services: toggle(v.services, c) }))}
+                        >
+                          {c}
+                        </Chip>
+                      ))}
+                    </div>
+                  )}
+                  <input
+                    className={INPUT}
+                    value={serviceDraft}
+                    onChange={(e) => patchValues({ serviceDraft: e.target.value })}
+                    placeholder={
+                      categories && categories.length > 0
+                        ? 'Other (separate with commas)'
+                        : 'e.g. plumbing, HVAC'
+                    }
+                    aria-label={
+                      categories && categories.length > 0 ? 'Other services' : 'Services offered'
+                    }
+                    maxLength={300}
+                    autoComplete="off"
+                  />
                 </div>
               )}
             </Field>
