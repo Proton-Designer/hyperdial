@@ -4,6 +4,8 @@ import {
   getGhlWebhookSettings,
   revokeGhlWebhookSecret,
   rotateGhlWebhookSecret,
+  type GhlIntakeOutcome,
+  type GhlIntakeSummary,
   type GhlWebhookSettings,
 } from '@/lib/api';
 
@@ -51,6 +53,86 @@ function CopyField({
 
 const when = (iso: string | null) => (iso ? new Date(iso).toLocaleString() : null);
 
+/** TASK-H17: plain words for what happened to a lead that arrived through the webhook. */
+function describeIntake(
+  outcome: GhlIntakeOutcome,
+  campaignName: string | null
+): { text: string; tone: 'good' | 'warn' | 'muted' | 'bad' } {
+  switch (outcome) {
+    case 'queued':
+      return {
+        text: campaignName ? `Added to ${campaignName}` : 'Added to a campaign',
+        tone: 'good',
+      };
+    case 'already_queued':
+      return { text: 'Already in a campaign', tone: 'muted' };
+    case 'skipped_dnc':
+      return { text: 'Do-not-call, skipped', tone: 'warn' };
+    case 'skipped_paused':
+      return { text: 'Has a paused tag, skipped', tone: 'warn' };
+    case 'skipped_active_elsewhere':
+      return { text: 'Active in another campaign, skipped', tone: 'muted' };
+    case 'no_matching_rule':
+      return { text: 'No rule for its tags', tone: 'warn' };
+    default:
+      return { text: 'Could not be added (error)', tone: 'bad' };
+  }
+}
+
+const TONE_CLASS = {
+  good: 'text-success',
+  warn: 'text-yellow-400',
+  muted: 'text-text-secondary',
+  bad: 'text-danger',
+} as const;
+
+/** The latest leads GoHighLevel sent, newest first. The empty state tells the admin what to do first. */
+function RecentLeads({ intake }: { intake: GhlIntakeSummary | undefined }) {
+  const recent = intake?.recent ?? [];
+  return (
+    <div className="mb-4">
+      <h4 className="text-sm text-white font-medium mb-1">Recent leads</h4>
+      <p className="text-xs text-text-muted mb-2" role="status">
+        {intake?.lastIntakeAt
+          ? `Last new lead received ${when(intake.lastIntakeAt)}.`
+          : 'No new leads received yet.'}
+      </p>
+      {recent.length === 0 ? (
+        <div className="rounded-app border border-dashed border-white/10 p-3 text-xs text-text-secondary">
+          <p className="text-white mb-1">Nothing here yet. To get started:</p>
+          <ol className="list-decimal pl-5 space-y-0.5">
+            <li>
+              Add a tag &rarr; campaign rule in &ldquo;Tag/stage &rarr; campaign mappings&rdquo;
+              below.
+            </li>
+            <li>Create the GoHighLevel workflow (&ldquo;Set up in GoHighLevel&rdquo; below).</li>
+            <li>Add that tag to a test contact in GoHighLevel. It shows up here within seconds.</li>
+          </ol>
+        </div>
+      ) : (
+        <ul className="divide-y divide-white/10 rounded-app border border-white/10 bg-surface-2">
+          {recent.slice(0, 20).map((r, i) => {
+            const d = describeIntake(r.outcome, r.campaignName);
+            const who = [r.contactName, r.phone].filter(Boolean).join(' · ') || 'Unknown contact';
+            return (
+              <li
+                key={`${r.receivedAt}-${i}`}
+                className="px-3 py-2 flex flex-col gap-0.5 sm:flex-row sm:items-center sm:justify-between sm:gap-3"
+              >
+                <div className="min-w-0">
+                  <div className="text-xs text-white truncate">{who}</div>
+                  <div className="text-[11px] text-text-muted">{when(r.receivedAt)}</div>
+                </div>
+                <div className={`text-xs sm:text-right ${TONE_CLASS[d.tone]}`}>{d.text}</div>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 /**
  * TASK-G30: Settings -> GoHighLevel -> "Instant updates". Owner/admin only (the parent renders it only for
  * them; the endpoint enforces it too). Shows the webhook URL, whether events are arriving, and creates /
@@ -96,11 +178,19 @@ export function GhlWebhookCard() {
 
   return (
     <div className="bg-surface-1 rounded-app-lg p-6 border border-border-subtle max-w-xl mt-6">
-      <h3 className="text-white font-medium mb-1">Instant updates from GoHighLevel</h3>
+      <h3 className="text-white font-medium mb-1">Instant new leads from GoHighLevel</h3>
+      <p className="text-sm text-text-secondary mb-2">
+        A GoHighLevel workflow can now send NEW leads to HyperDial the moment they appear, so
+        interns can dial them within seconds. Each lead goes to a campaign by its tag or pipeline
+        stage, using the rules in{' '}
+        <a href="#ghl-campaign-mappings" className="text-accent-to hover:underline">
+          Tag/stage &rarr; campaign mappings
+        </a>
+        . The same workflow URL and secret also give instant do-not-call, signed-up and owner
+        updates.
+      </p>
       <p className="text-sm text-text-secondary mb-4">
-        When someone is set to Do Not Disturb, gets a do-not-call tag, enters a signed-up stage or
-        changes owner in GoHighLevel, GoHighLevel can tell HyperDial right away instead of waiting
-        for the next 5-minute check. The regular check keeps running as a safety net.
+        The 5-minute check above stays on as a backup, in case an instant update is missed.
       </p>
 
       {!settings && !loadError && (
@@ -121,12 +211,15 @@ export function GhlWebhookCard() {
         <>
           {!settings.reconcileEnabled && (
             <p className="text-sm text-yellow-400 mb-4" role="status">
-              Instant updates only act while &ldquo;Remove from call lists&rdquo; above is switched
-              on. It is off right now, so incoming events are ignored.
+              Instant do-not-call and signed-up updates only act while &ldquo;Remove from call
+              lists&rdquo; above is switched on. It is off right now, so those events are ignored
+              (new leads are not affected).
             </p>
           )}
 
           <CopyField label="Webhook URL" value={settings.webhookUrl} />
+
+          <RecentLeads intake={settings.intake} />
 
           <p className="text-xs text-text-muted mb-4" role="status">
             {settings.lastEventAt
@@ -209,20 +302,32 @@ export function GhlWebhookCard() {
 
           <details className="rounded-app border border-white/10 bg-surface-2 px-3 py-2 mb-3">
             <summary className="cursor-pointer text-sm text-white">
-              Set it up with a GoHighLevel workflow (no app needed)
+              Set up in GoHighLevel (no app needed)
             </summary>
             <ol className="list-decimal pl-5 mt-2 space-y-1.5 text-xs text-text-secondary">
-              <li>In GoHighLevel open Automation &rarr; Workflows &rarr; Create workflow.</li>
               <li>
-                Trigger: one of &ldquo;Contact DND&rdquo;, &ldquo;Contact Tag&rdquo; (added or
-                removed) or &ldquo;Pipeline Stage Changed&rdquo;. Make one workflow per trigger.
+                In GoHighLevel open Automation &rarr; Workflows &rarr; Create workflow (start from
+                scratch).
               </li>
               <li>
-                Action: &ldquo;Custom Webhook&rdquo;. Method POST, URL = the Webhook URL above.
+                <span className="text-white">For new leads:</span> Trigger &ldquo;Contact Tag&rdquo;
+                with the filter &ldquo;Tag Added&rdquo; set to the tags in your rules (for example{' '}
+                <code className="text-white">hd-frisco</code>), or &ldquo;Contact Created&rdquo; if
+                every new contact should be considered. Tag triggers only fire for tags added after
+                the workflow is published.
+              </li>
+              <li>
+                <span className="text-white">For do-not-call, signed-up and owner changes:</span>{' '}
+                make a separate workflow with the trigger &ldquo;Contact DND&rdquo;, &ldquo;Contact
+                Tag&rdquo; (added or removed) or &ldquo;Pipeline Stage Changed&rdquo;.
+              </li>
+              <li>
+                Action: &ldquo;Custom Webhook&rdquo;. Method POST, URL = the Webhook URL above,
+                authorization &ldquo;No auth&rdquo;.
               </li>
               <li>
                 Headers: add <code className="text-white">X-HyperDial-Webhook-Secret</code> with the
-                secret as the value.
+                secret as the value (create the secret above first; it is shown once).
               </li>
               <li>
                 Custom data: <code className="text-white">contact_id</code> ={' '}
@@ -231,8 +336,9 @@ export function GhlWebhookCard() {
                 <code className="text-white">{'{{location.id}}'}</code>.
               </li>
               <li>
-                Save and publish the workflow, then change a test contact&rsquo;s tag and check
-                &ldquo;Last update received&rdquo; above.
+                Save and publish the workflow, then add the tag to a test contact and watch
+                &ldquo;Recent leads&rdquo; above. A full walkthrough, including n8n, is in
+                docs/guides/ghl-instant-intake.md.
               </li>
             </ol>
           </details>

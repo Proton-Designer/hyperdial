@@ -50,6 +50,13 @@ import {
   type OrgMember,
   type CampaignRetryRule,
   type RetryRuleAction,
+  listGhlCampaignMappings,
+  createGhlTagCampaignMapping,
+  createGhlStageCampaignMapping,
+  deleteGhlCampaignMapping,
+  listGhlPipelineStages,
+  type GhlCampaignMapping,
+  type GhlPipelineStageOption,
 } from '../../lib/api';
 import { ScriptHistoryPanel } from './ScriptHistoryPanel';
 import { ImportContactsModal } from '../contacts/ImportContactsModal';
@@ -98,6 +105,176 @@ const RETRY_RULE_LABEL: Record<string, string> = {
   wrong_number: 'Wrong number',
   dnc: 'Do not call',
 };
+
+/** TASK-H17 (#5): "Auto-add from GHL" -- THIS campaign's tag/stage rules (owner/admin only). Same table and api.ts wrappers as
+ *  Settings -> GoHighLevel -> "Tag/stage -> campaign mappings", which keeps the org-wide view. A GHL contact that arrives with
+ *  one of these tags (instantly via the workflow, or by the 5-minute check) is queued onto this campaign. Own fetch lifecycle. */
+function GhlAutoAddCard({ campaignId }: { campaignId: string }) {
+  const [rules, setRules] = useState<GhlCampaignMapping[] | null>(null);
+  const [stages, setStages] = useState<GhlPipelineStageOption[] | null>(null);
+  const [matchType, setMatchType] = useState<'tag' | 'stage'>('tag');
+  const [tag, setTag] = useState('');
+  const [stageKey, setStageKey] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(() => {
+    listGhlCampaignMappings()
+      .then((all) => setRules(all.filter((m) => m.campaign_id === campaignId)))
+      .catch((e) => setError(e instanceof Error ? e.message : 'Failed to load the rules'));
+  }, [campaignId]);
+
+  useEffect(() => {
+    setRules(null);
+    setError(null);
+    load();
+  }, [load]);
+
+  const add = async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      if (matchType === 'tag') {
+        if (!tag.trim()) throw new Error('Enter a tag.');
+        await createGhlTagCampaignMapping(tag.trim(), campaignId);
+        setTag('');
+      } else {
+        const [pipelineId, pipelineStageId] = stageKey.split('|');
+        if (!pipelineStageId) throw new Error('Pick a stage.');
+        await createGhlStageCampaignMapping(pipelineId, pipelineStageId, campaignId);
+        setStageKey('');
+      }
+      load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to add the rule');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const remove = async (id: string) => {
+    setError(null);
+    try {
+      await deleteGhlCampaignMapping(id);
+      load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to remove the rule');
+    }
+  };
+
+  const loadStages = async () => {
+    try {
+      setStages(await listGhlPipelineStages());
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to load GHL pipelines');
+    }
+  };
+
+  return (
+    <div className="bg-surface-2/60 rounded-app-lg border border-white/5 p-6 mb-6">
+      <h3 className="text-lg font-bold text-white mb-1">Auto-add from GHL</h3>
+      <p className="text-sm text-text-secondary mb-4">
+        A GoHighLevel contact with one of these tags (or in one of these pipeline stages) is added
+        to this campaign automatically. n8n tags each lead, for example{' '}
+        <code className="text-white">hd-mckinney</code> for a McKinney, TX campaign. The webhook and
+        backup check are set up in Settings &rarr; Integrations &rarr; GoHighLevel.
+      </p>
+
+      {error && (
+        <p className="text-sm text-danger mb-3" role="alert">
+          {error}
+        </p>
+      )}
+
+      {rules === null && !error ? (
+        <p className="text-sm text-text-secondary" role="status">
+          Loading rules...
+        </p>
+      ) : (
+        <>
+          {rules && rules.length === 0 ? (
+            <p className="text-sm text-text-secondary mb-3">
+              No rules yet. Add the tag n8n puts on this market&rsquo;s leads.
+            </p>
+          ) : (
+            <ul className="mb-3 divide-y divide-white/5 rounded-app-md border border-white/10">
+              {rules?.map((m) => (
+                <li
+                  key={m.id}
+                  className="flex items-center justify-between gap-3 px-3 py-2 text-sm"
+                >
+                  <span className="min-w-0 break-words text-white">
+                    {m.match_type === 'tag'
+                      ? `Tag "${m.tag}"`
+                      : `Stage "${stages?.find((s) => s.stageId === m.pipeline_stage_id)?.stageName ?? m.pipeline_stage_id}"`}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => void remove(m.id)}
+                    className="shrink-0 text-xs text-danger hover:underline"
+                  >
+                    Remove
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          <div className="flex flex-wrap items-center gap-2">
+            <select
+              value={matchType}
+              onChange={(e) => setMatchType(e.target.value as 'tag' | 'stage')}
+              aria-label="Rule type"
+              className="rounded-app-md bg-surface-1 border border-white/10 px-2 py-1.5 text-sm text-white"
+            >
+              <option value="tag">Tag</option>
+              <option value="stage">Pipeline stage</option>
+            </select>
+            {matchType === 'tag' ? (
+              <input
+                type="text"
+                value={tag}
+                onChange={(e) => setTag(e.target.value)}
+                placeholder="GHL tag, e.g. hd-mckinney"
+                aria-label="GHL tag"
+                className="min-w-0 flex-1 rounded-app-md bg-surface-1 border border-white/10 px-3 py-1.5 text-sm text-white placeholder-text-muted"
+              />
+            ) : stages ? (
+              <select
+                value={stageKey}
+                onChange={(e) => setStageKey(e.target.value)}
+                aria-label="Pipeline stage"
+                className="min-w-0 flex-1 rounded-app-md bg-surface-1 border border-white/10 px-3 py-1.5 text-sm text-white"
+              >
+                <option value="">Pick a stage...</option>
+                {stages.map((s) => (
+                  <option key={s.stageId} value={`${s.pipelineId}|${s.stageId}`}>
+                    {s.pipelineName} / {s.stageName}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <button
+                type="button"
+                onClick={() => void loadStages()}
+                className="flex-1 text-left text-sm text-accent-to hover:underline"
+              >
+                Load pipeline stages from GHL...
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => void add()}
+              disabled={saving}
+              className="px-3 py-1.5 bg-gradient-to-r from-accent-from to-accent-to rounded-app-md text-white text-sm font-medium disabled:opacity-50"
+            >
+              Add rule
+            </button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
 
 /** Campaign settings -> Retry Rules (TASK-F-T1, QUE-2/QUE-3/QUE-5), admin+ only. Small and
  *  functional per the task spec -- one row per seeded disposition_key, own fetch-on-mount/save
@@ -1078,6 +1255,7 @@ export function CampaignManageModal({
               )}
 
               {canManage && campaignId && <RetryRulesCard campaignId={campaignId} />}
+              {canManage && campaignId && <GhlAutoAddCard campaignId={campaignId} />}
 
               {/* Agent assignment (admin+ only). RLS on campaign_agents already scopes agents
                   to their assigned campaigns (TASK-P1-01); this is that assignment's UI. */}
@@ -1306,6 +1484,8 @@ export function CampaignManageModal({
                             <th className="pb-2 pr-2">Category</th>
                             <th className="pb-2 pr-2">Contact status</th>
                             <th className="pb-2 pr-2">Lead status</th>
+                            <th className="pb-2 pr-2">Source</th>
+                            <th className="pb-2 pr-2">Added</th>
                             <th className="pb-2 pr-2">Priority</th>
                             <th className="pb-2 pr-2 text-right">Actions</th>
                           </tr>
@@ -1349,6 +1529,12 @@ export function CampaignManageModal({
                                 >
                                   {lead.status}
                                 </span>
+                              </td>
+                              <td className="py-3 pr-2 text-text-secondary">
+                                {lead.list_name ?? '—'}
+                              </td>
+                              <td className="py-3 pr-2 text-text-secondary whitespace-nowrap">
+                                {formatDate(lead.added_at)}
                               </td>
                               <td className="py-3 pr-2">
                                 <select

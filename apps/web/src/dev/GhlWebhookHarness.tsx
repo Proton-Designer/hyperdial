@@ -10,9 +10,33 @@ import { GhlWebhookCard } from '../components/settings/GhlWebhookCard';
  *   reconcile_off the call-list switch is off (warning shown)
  *   load_error    the first load answers 500
  *   action_error  create / replace / delete answer 500
+ *   intake        recent new leads in every outcome (TASK-H17); other scenarios show the empty state
  *   slow          every call takes 2.5 s
  */
 const ORG = 'dev-fixture-org';
+
+const OUTCOMES = [
+  ['queued', 'Frisco Roofers'],
+  ['already_queued', 'McKinney Roofers'],
+  ['skipped_dnc', null],
+  ['skipped_paused', null],
+  ['skipped_active_elsewhere', 'Spring Roofing Outreach'],
+  ['no_matching_rule', null],
+  ['error', null],
+] as const;
+
+const INTAKE_ROWS = Array.from({ length: 20 }, (_, i) => ({
+  receivedAt: new Date(Date.UTC(2026, 10, 2, 15, 41, 7) - i * 95_000).toISOString(),
+  contactName:
+    i === 4
+      ? null
+      : i === 2
+        ? 'Lone Star Roofing & Exteriors of North Texas LLC'
+        : `Business ${i + 1}`,
+  phone: i === 5 ? null : `+1469555${String(100 + i).padStart(4, '0')}`,
+  outcome: OUTCOMES[i % OUTCOMES.length][0],
+  campaignName: OUTCOMES[i % OUTCOMES.length][1],
+}));
 
 function useStubs(scenario: string) {
   useState(() => {
@@ -67,6 +91,10 @@ function useStubs(scenario: string) {
           lastEventAt: live ? '2026-10-19T20:30:00Z' : null,
           lastEventType: live ? 'ContactDndUpdate' : null,
           handledCount: live ? 42 : 0,
+          intake: {
+            lastIntakeAt: scenario === 'intake' ? INTAKE_ROWS[0].receivedAt : null,
+            recent: scenario === 'intake' ? INTAKE_ROWS : [],
+          },
           ...(secret ? { secret } : {}),
         }),
         { status: 200 }

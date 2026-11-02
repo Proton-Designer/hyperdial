@@ -2654,6 +2654,8 @@ export interface CampaignLead {
   priority: CampaignLeadPriority;
   assigned_agent_id: string | null;
   added_at: string;
+  /** The list the lead came from (CSV import name, "GHL (auto)" for GHL pull/intake); null for older leads. */
+  list_name: string | null;
   contact: Contact;
 }
 
@@ -2828,7 +2830,7 @@ export async function setCampaignAgents(campaignId: string, userIds: string[]): 
 export async function listCampaignLeads(campaignId: string): Promise<CampaignLead[]> {
   const { data: leadsData, error: leadsError } = await supabase
     .from('campaign_leads')
-    .select('id, campaign_id, contact_id, status, priority, assigned_agent_id, added_at')
+    .select('id, campaign_id, contact_id, status, priority, assigned_agent_id, added_at, list_name')
     .eq('campaign_id', campaignId)
     .order('added_at', { ascending: false });
   if (leadsError) throw new Error(leadsError.message);
@@ -2840,6 +2842,7 @@ export async function listCampaignLeads(campaignId: string): Promise<CampaignLea
     priority: string;
     assigned_agent_id: string | null;
     added_at: string;
+    list_name: string | null;
   }[];
   if (leads.length === 0) return [];
   const contactIds = [...new Set(leads.map((l) => l.contact_id))];
@@ -2858,6 +2861,7 @@ export async function listCampaignLeads(campaignId: string): Promise<CampaignLea
       priority: l.priority as CampaignLeadPriority,
       assigned_agent_id: l.assigned_agent_id,
       added_at: l.added_at,
+      list_name: l.list_name,
       contact: contactsMap.get(l.contact_id)!,
     }))
     .filter((cl) => cl.contact);
@@ -3904,6 +3908,27 @@ export async function createGhlTag(name: string): Promise<{ tag: string; created
 
 // --- GHL webhook: instant DND / tag / stage / owner changes (TASK-G30) ---
 
+export type GhlIntakeOutcome =
+  | 'queued'
+  | 'already_queued'
+  | 'skipped_dnc'
+  | 'skipped_paused'
+  | 'skipped_active_elsewhere'
+  | 'no_matching_rule'
+  | 'error';
+
+export interface GhlIntakeSummary {
+  lastIntakeAt: string | null;
+  /** Latest first (the card shows 20). */
+  recent: Array<{
+    receivedAt: string;
+    contactName: string | null;
+    phone: string | null;
+    outcome: GhlIntakeOutcome;
+    campaignName: string | null;
+  }>;
+}
+
 export interface GhlWebhookSettings {
   /** Where GoHighLevel posts to (Marketplace app webhook URL, or a workflow "Custom Webhook" URL). */
   webhookUrl: string;
@@ -3916,6 +3941,8 @@ export interface GhlWebhookSettings {
   lastEventAt: string | null;
   lastEventType: string | null;
   handledCount: number;
+  /** TASK-H16/H17: new leads that arrived through the webhook (a GHL workflow's "Custom Webhook"). */
+  intake?: GhlIntakeSummary;
   /** Present only in the answer to `rotateGhlWebhookSecret`: shown once, store it in GoHighLevel now. */
   secret?: string;
 }

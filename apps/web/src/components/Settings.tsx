@@ -2344,11 +2344,12 @@ function GhlPullSettingsCard({
 
   return (
     <div className="bg-surface-1 rounded-app-lg p-6 border border-border-subtle max-w-xl mt-6">
-      <h3 className="text-white font-medium mb-1">Scheduled pull + field mapping</h3>
+      <h3 className="text-white font-medium mb-1">Backup check + field mapping</h3>
       <p className="text-sm text-text-secondary mb-4">
-        Every 5 minutes, HyperDial can automatically pull GHL contacts matching your tag/stage
-        mappings below into their mapped campaign. Disabled by default -- turn it on once your
-        mappings look right.
+        New leads normally arrive instantly through the workflow in &ldquo;Instant new leads&rdquo;
+        below. As a backup, HyperDial can also check GHL every 5 minutes for contacts matching your
+        tag/stage mappings and add them to their mapped campaign. Disabled by default -- turn it on
+        once your mappings look right.
       </p>
 
       <label className="flex items-center gap-2 mb-4">
@@ -2357,7 +2358,9 @@ function GhlPullSettingsCard({
           checked={pullEnabled}
           onChange={(e) => setPullEnabled(e.target.checked)}
         />
-        <span className="text-sm text-white">Enable the 5-minute auto-pull</span>
+        <span className="text-sm text-white">
+          Also check GHL every 5 minutes, in case an instant update is missed
+        </span>
       </label>
 
       {status.ghl_last_pull_at && (
@@ -2501,7 +2504,10 @@ function GhlCampaignMappingsEditor() {
     stages?.find((s) => s.stageId === pipelineStageId)?.stageName ?? pipelineStageId;
 
   return (
-    <div className="bg-surface-1 rounded-app-lg p-6 border border-border-subtle max-w-xl mt-6">
+    <div
+      id="ghl-campaign-mappings"
+      className="bg-surface-1 rounded-app-lg p-6 border border-border-subtle max-w-xl mt-6 scroll-mt-4"
+    >
       <h3 className="text-white font-medium mb-1">Tag/stage → campaign mappings</h3>
       <p className="text-sm text-text-secondary mb-4">
         Contacts matching a tag or pipeline stage below are pulled and queued onto the mapped
