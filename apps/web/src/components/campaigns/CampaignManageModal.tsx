@@ -236,14 +236,14 @@ function GhlAutoAddCard({ campaignId }: { campaignId: string }) {
                 onChange={(e) => setTag(e.target.value)}
                 placeholder="GHL tag, e.g. hd-mckinney"
                 aria-label="GHL tag"
-                className="min-w-0 flex-1 rounded-app-md bg-surface-1 border border-white/10 px-3 py-1.5 text-sm text-white placeholder-text-muted"
+                className="min-w-0 basis-full flex-1 rounded-app-md bg-surface-1 border border-white/10 px-3 py-1.5 text-sm text-white sm:basis-0 placeholder-text-muted"
               />
             ) : stages ? (
               <select
                 value={stageKey}
                 onChange={(e) => setStageKey(e.target.value)}
                 aria-label="Pipeline stage"
-                className="min-w-0 flex-1 rounded-app-md bg-surface-1 border border-white/10 px-3 py-1.5 text-sm text-white"
+                className="min-w-0 basis-full flex-1 rounded-app-md bg-surface-1 border border-white/10 px-3 py-1.5 text-sm text-white sm:basis-0"
               >
                 <option value="">Pick a stage...</option>
                 {stages.map((s) => (
