@@ -55,6 +55,8 @@ import {
   createGhlStageCampaignMapping,
   deleteGhlCampaignMapping,
   listGhlPipelineStages,
+  getGhlIntegrationStatus,
+  type GhlIntegrationStatus,
   type GhlCampaignMapping,
   type GhlPipelineStageOption,
 } from '../../lib/api';
@@ -111,6 +113,8 @@ const RETRY_RULE_LABEL: Record<string, string> = {
  *  one of these tags (instantly via the workflow, or by the 5-minute check) is queued onto this campaign. Own fetch lifecycle. */
 function GhlAutoAddCard({ campaignId }: { campaignId: string }) {
   const [rules, setRules] = useState<GhlCampaignMapping[] | null>(null);
+  const [allRules, setAllRules] = useState<GhlCampaignMapping[]>([]);
+  const [ghl, setGhl] = useState<GhlIntegrationStatus | null | undefined>(undefined);
   const [stages, setStages] = useState<GhlPipelineStageOption[] | null>(null);
   const [matchType, setMatchType] = useState<'tag' | 'stage'>('tag');
   const [tag, setTag] = useState('');
@@ -120,9 +124,36 @@ function GhlAutoAddCard({ campaignId }: { campaignId: string }) {
 
   const load = useCallback(() => {
     listGhlCampaignMappings()
-      .then((all) => setRules(all.filter((m) => m.campaign_id === campaignId)))
+      .then((all) => {
+        setAllRules(all);
+        setRules(all.filter((m) => m.campaign_id === campaignId));
+      })
       .catch((e) => setError(e instanceof Error ? e.message : 'Failed to load the rules'));
   }, [campaignId]);
+
+  // Whether GHL is connected and the 5-minute check is on: instant intake needs both, so the card says so.
+  useEffect(() => {
+    let cancelled = false;
+    getGhlIntegrationStatus()
+      .then((s) => !cancelled && setGhl(s))
+      .catch(() => !cancelled && setGhl(null));
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // A stage rule shows its name, not the raw id: load the pipelines once when this campaign has a stage rule.
+  const hasStageRule = rules?.some((m) => m.match_type === 'stage') ?? false;
+  useEffect(() => {
+    if (!hasStageRule || stages) return;
+    let cancelled = false;
+    listGhlPipelineStages()
+      .then((s) => !cancelled && setStages(s))
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [hasStageRule, stages]);
 
   useEffect(() => {
     setRules(null);
@@ -146,7 +177,28 @@ function GhlAutoAddCard({ campaignId }: { campaignId: string }) {
       }
       load();
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to add the rule');
+      const msg = e instanceof Error ? e.message : 'Failed to add the rule';
+      if (/duplicate key|unique constraint/i.test(msg)) {
+        // one rule per tag/stage per org: say which campaign already uses it
+        const wanted = tag.trim().toLowerCase();
+        const clash = allRules.find((m) =>
+          matchType === 'tag'
+            ? (m.tag ?? '').trim().toLowerCase() === wanted
+            : m.pipeline_stage_id === stageKey.split('|')[1]
+        );
+        let owner = 'another campaign';
+        if (clash?.campaign_id === campaignId) owner = 'this campaign';
+        else if (clash) {
+          owner =
+            (await listCampaigns().catch(() => []))?.find((c) => c.id === clash.campaign_id)
+              ?.name ?? owner;
+        }
+        setError(
+          `That ${matchType === 'tag' ? 'tag' : 'stage'} already has a rule: it adds leads to ${owner}. Remove that rule first to move it.`
+        );
+      } else {
+        setError(msg);
+      }
     } finally {
       setSaving(false);
     }
@@ -175,10 +227,23 @@ function GhlAutoAddCard({ campaignId }: { campaignId: string }) {
       <h3 className="text-lg font-bold text-white mb-1">Auto-add from GHL</h3>
       <p className="text-sm text-text-secondary mb-4">
         A GoHighLevel contact with one of these tags (or in one of these pipeline stages) is added
-        to this campaign automatically. n8n tags each lead, for example{' '}
-        <code className="text-white">hd-mckinney</code> for a McKinney, TX campaign. The webhook and
-        backup check are set up in Settings &rarr; Integrations &rarr; GoHighLevel.
+        to this campaign automatically (while the 5-minute check is on). n8n tags each lead, for
+        example <code className="text-white">hd-mckinney</code> for a McKinney, TX campaign. The
+        webhook and backup check are set up in Settings &rarr; Integrations &rarr; GoHighLevel.
       </p>
+      {ghl === null && (
+        <p className="text-sm text-yellow-400 mb-3" role="status">
+          GoHighLevel is not connected, so nothing is added automatically yet. Connect it in
+          Settings &rarr; Integrations &rarr; GoHighLevel.
+        </p>
+      )}
+      {ghl && !ghl.ghl_pull_enabled && (
+        <p className="text-sm text-yellow-400 mb-3" role="status">
+          Rules only work while &ldquo;Also check GHL every 5 minutes&rdquo; is switched on in
+          Settings &rarr; Integrations &rarr; GoHighLevel (it is off now). Instant new leads need it
+          too.
+        </p>
+      )}
 
       {error && (
         <p className="text-sm text-danger mb-3" role="alert">

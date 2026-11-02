@@ -25,7 +25,7 @@ By the **Tag/stage → campaign mappings** card in Settings → Integrations →
 4. **Headers**: add `X-HyperDial-Webhook-Secret` with the secret as the value.
 5. **Custom data** (key/value): `contact_id` = `{{contact.id}}` and `location_id` = `{{location.id}}`.
 6. **Save and publish** the workflow.
-7. Test: add the tag to one test contact. Within seconds the contact appears under **Recent leads** in the HyperDial card with what happened to it.
+7. Test: add the tag to one test contact. Within seconds the contact appears under **Recent leads** in the HyperDial card with what happened to it. Re-testing the same contact within 10 minutes is ignored (an identical ping is dropped as a duplicate): wait 10 minutes or test another contact.
 
 The same URL and secret also carry the instant do-not-call, signed-up-stage and owner-change updates, which use their own workflows (triggers Contact DND, Contact Tag added/removed, Pipeline Stage Changed). See the card's steps and [ghl-first-connect-checklist.md](ghl-first-connect-checklist.md).
 
@@ -35,27 +35,28 @@ Your n8n flow creates the GoHighLevel contact. Make the same step set the tag so
 
 - In the GoHighLevel node (Create contact), put the tag in **Tags**, for example `hd-frisco` (one tag per campaign or city, matching your rules).
 - Or, if the contact is created by an HTTP Request node, send `"tags": ["hd-frisco"]` in the body of the create-contact call.
-- Make sure the phone number is filled in; a contact without a phone cannot be dialed and is skipped.
+- Make sure the phone number is filled in **before** the tag is added (the workflow reads the contact at that moment). A contact without a usable phone number is never added, by the instant path or the 5-minute check, until the phone is fixed in GoHighLevel.
 
 Nothing else changes in n8n: it does not call HyperDial.
 
 ## What "Recent leads" can say
 
-| Shown                               | Meaning                                                                    |
-| ----------------------------------- | -------------------------------------------------------------------------- |
-| Added to _campaign_                 | Queued; interns can dial it now                                            |
-| Already in a campaign               | It was already queued, nothing changed                                     |
-| Do-not-call, skipped                | The contact or number is on the do-not-call list                           |
-| Has a paused tag, skipped           | It carries one of the "paused" tags set in HyperDial                       |
-| Active in another campaign, skipped | Another campaign is working it; it is not added twice                      |
-| No rule for its tags                | No mapping matches its tags or stage: add a rule, then tag it again        |
-| Could not be added (error)          | Something failed when reading or saving it; the backup check retries later |
+| Shown                               | Meaning                                                                                                                                                                                            |
+| ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Added to _campaign_                 | Queued; interns can dial it now                                                                                                                                                                    |
+| Already in a campaign               | It was already queued, nothing changed                                                                                                                                                             |
+| Do-not-call, skipped                | The contact or number is on the do-not-call list                                                                                                                                                   |
+| Has a paused tag, skipped           | It carries one of the "paused" tags set in HyperDial                                                                                                                                               |
+| Active in another campaign, skipped | Another campaign is working it; it is not added twice                                                                                                                                              |
+| No rule for its tags                | No mapping matches its tags or stage: add a rule, then tag it again                                                                                                                                |
+| Could not be added (error)          | Usually the contact has no usable phone number in GoHighLevel. Fix it there and tag again (after 10 minutes if it is the same ping). Temporary failures are retried by GoHighLevel and show no row |
 
 ## If nothing shows up
 
 - No row at all: the workflow did not fire or the call was refused. In GoHighLevel open the workflow's execution log; a `401` means the secret header is missing or wrong (create a new secret and update the header).
 - A row saying "No rule for its tags": add the mapping, then add the tag again.
-- Leads only show after 5 minutes: the instant path is not working but the backup is; check the workflow and header.
+- Leads only show after 5 minutes: the instant path is not working but the backup is; check the workflow and header. Leads added by the 5-minute check appear in the campaign but not in Recent leads (only instant ones are listed).
+- Re-testing the same contact within 10 minutes does nothing: an identical ping is ignored. Also, HyperDial takes at most 60 instant updates per minute; during a bulk import into GoHighLevel the rest are picked up by the 5-minute check.
 - GoHighLevel can charge for some workflow actions depending on your plan: check the Custom Webhook pricing for yours.
 
 ## Sources for the GoHighLevel wording
