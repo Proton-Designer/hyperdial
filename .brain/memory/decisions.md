@@ -1983,3 +1983,16 @@ Supabase Edge Functions block outbound ports 25/587, and Resend is a single HTTP
 Supabase Auth's own mailer is not used: it has no custom SMTP configured here (default sender,
 2 emails/hour, team addresses only), and `inviteUserByEmail` would create the auth user before
 acceptance, bypassing the invite-only signup trigger.
+
+## 2026-11-01 GHL instant lead intake (TASK-H16/H17): campaigns are the routing unit, tags pick the campaign
+User's n8n pipeline scrapes leads into GHL; HyperDial takes them in by PUSH, not by polling alone: a GHL workflow
+("Contact Tag Added" -> "Custom Webhook" with X-HyperDial-Webhook-Secret) pings `ghl-webhook`, which re-reads the contact
+from GHL (payload ids only, never trusted) and runs the SAME import + queue path as the 5-minute pull
+(`importGhlContactsForMapping` in `_shared/ghl-pull-run.ts`, shared by both callers so the dedupe/DNC/paused/active-elsewhere
+rules cannot drift). Routing is by `org_ghl_campaign_mappings` (tag or pipeline stage -> campaign), editable per campaign
+(CampaignManageModal "Auto-add from GHL") and in Settings. Why tags and not the address/city field: n8n already knows which
+market it searched, while scraped city strings are messy. Intake runs only when the 5-minute pull is ON and the org has at
+least one rule (the pull is the backstop for dropped/rate-limited pings); with neither, the webhook is the old reconcile-only
+one. A contact that matches no rule is not imported (GHL also holds customers), but is logged as `no_matching_rule` in
+`ghl_intake_log` (service-only, 30-day prune) for the Settings "Recent leads" list. Auto-queued leads get list_name
+'GHL (auto)'. Setup guide: docs/guides/ghl-instant-intake.md. Not verified against a live GHL workflow yet (payload shape assumed from GHL docs).
