@@ -22,10 +22,7 @@ interface StartSessionPanelProps {
   startingCampaignId: string | null;
   micRegistering: boolean;
   startError: string | null;
-  conflict: { campaignId: string; campaignName: string; existingSessionId: string } | null;
   onStart: (campaign: CampaignWithStats) => void;
-  onOpenConflict: () => void;
-  onDismissConflict: () => void;
 }
 
 function callerIdLabel(campaign: CampaignWithStats, userNumbers: UserPhoneNumber[]): string {
@@ -41,10 +38,7 @@ export function StartSessionPanel({
   startingCampaignId,
   micRegistering,
   startError,
-  conflict,
   onStart,
-  onOpenConflict,
-  onDismissConflict,
 }: StartSessionPanelProps) {
   const { user } = useAuth();
   // TASK-N1: numbers this intern could actually dial from -- assigned to them, or unassigned
@@ -67,23 +61,6 @@ export function StartSessionPanel({
           Your numbers: {myNumbers.filter((n) => n.status === 'active').length} active,{' '}
           {myNumbers.filter((n) => n.status === 'resting').length} resting
         </p>
-      )}
-
-      {conflict && (
-        <div className="rounded-app-lg border border-warning/30 bg-warning-soft p-4 mb-6 flex items-center justify-between gap-4">
-          <p className="text-body text-warning">
-            A session is already active for{' '}
-            <span className="font-semibold">{conflict.campaignName}</span>.
-          </p>
-          <div className="flex items-center gap-2 flex-shrink-0">
-            <Button variant="warning-soft" size="sm" onClick={onOpenConflict}>
-              Open it
-            </Button>
-            <Button variant="fe-ghost" size="sm" onClick={onDismissConflict}>
-              Dismiss
-            </Button>
-          </div>
-        </div>
       )}
 
       {startError && (

@@ -262,3 +262,17 @@ a refetch that fails while a session is on screen sets `refreshError` (a warning
 `error` (which replaces the UI). Same "keep the last data, show the error beside it" rule applied to
 Inbox and PowerHourBoard; Team's live board already followed it. Any new polled screen: loading /
 error states are for "never loaded", not for "refreshing".
+
+**Hand-copied state lists drift: "active session" was defined three ways.** `dialer-session-start`'s
+409 check and `dial_sessions_one_active_per_agent` treat every state except stopped/completed as
+active, but `dialer-session-active` (the Dialer's page-open restore) predated `paused_agent_lost`
+and never got it. A session whose line dropped (closed tab, laptop asleep) was invisible on page
+open -- the intern saw "Start a session", Start hit the 409, and an "A session is already active"
+banner asked them to sort out a session they couldn't see; UI-6's auto-reconnect-on-refresh never
+fired for the same reason. Line-lost sessions also never time out, so leftovers sat open overnight
+(Kareem: 23h and 20h, 2026-10-27/28) and inflated dialing hours. Fix (2026-11-01): the restore
+includes `paused_agent_lost` plus `stateSince`; the Dialer reconnects a line lost < 10 min ago,
+quietly ends an older one, and on a Start 409 ends the old session and retries -- the banner is
+gone. Nothing live is ever hung up: the stop endpoint (no `force`) refuses while a contact leg is
+`claimed`, and then the Dialer opens that session instead. When adding a session state, grep every
+`.in('state', [` list.

@@ -3743,18 +3743,25 @@ export async function getDialerSession(sessionId: string): Promise<{
 }
 
 /** Returns the current user's active parallel dialer session (if any) in the active org. Use
- *  this to restore the parallel dialer UI when opening the Dialer tab. */
+ *  this to restore the parallel dialer UI when opening the Dialer tab. Includes a session whose
+ *  line dropped (`paused_agent_lost`); `stateSince` is when it entered its current state. */
 export async function getActiveDialerSession(): Promise<{
   sessionId: string;
   campaignId: string;
   state: DialSessionState;
+  stateSince: string;
 } | null> {
   const res = await fetch(`${getFunctionsUrl()}/dialer-session-active`, {
     method: 'GET',
     headers: await getEdgeFunctionHeaders(),
   });
   const data = (await res.json()) as {
-    session?: { sessionId: string; campaignId: string; state: DialSessionState } | null;
+    session?: {
+      sessionId: string;
+      campaignId: string;
+      state: DialSessionState;
+      stateSince: string;
+    } | null;
     error?: string;
   };
   if (!res.ok) throw new Error(data.error || 'Failed to get active dialer session');

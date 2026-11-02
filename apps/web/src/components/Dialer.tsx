@@ -26,6 +26,7 @@ import {
   lookupContactByPhone,
   listCampaigns,
   startDialerSession,
+  stopDialerSession,
   updateMyPresenceHeartbeat,
   getUserPreferences,
   getOrgPauseReasons,
@@ -48,6 +49,23 @@ import {
 } from '@/lib/webrtcRetry';
 
 const REMOTE_AUDIO_ID = 'telnyx-remote-audio';
+
+/** A session whose line dropped longer ago than this is a leftover (a closed tab, a laptop that
+ *  slept overnight), not a refresh to reconnect -- the Dialer closes it instead of restoring it. */
+const LEFTOVER_LINE_LOST_MS = 10 * 60 * 1000;
+
+/** An agent can have only one open session (dial_sessions_one_active_per_agent). When one the
+ *  intern can't see is in the way, end it for them instead of asking them to. Never hangs up a
+ *  live caller: without `force` the stop endpoint refuses (LIVE_CALL_IN_PROGRESS) while a
+ *  prospect is on the line, and this returns false so the caller opens that session instead. */
+async function endLeftoverSession(sessionId: string): Promise<boolean> {
+  try {
+    const { status } = await stopDialerSession(sessionId);
+    return status === 'stopped';
+  } catch {
+    return false;
+  }
+}
 
 export type DialerStatus = 'idle' | 'dialing' | 'ringing' | 'connected';
 
@@ -158,11 +176,6 @@ function DialerBody({
   const [campaignsError, setCampaignsError] = useState<string | null>(null);
   const [startingCampaignId, setStartingCampaignId] = useState<string | null>(null);
   const [startError, setStartError] = useState<string | null>(null);
-  const [startConflict, setStartConflict] = useState<{
-    campaignId: string;
-    campaignName: string;
-    existingSessionId: string;
-  } | null>(null);
   const pendingIntentConsumedRef = useRef(false);
   const pendingManualDialConsumedRef = useRef(false);
 
@@ -438,8 +451,21 @@ function DialerBody({
     if (parallelSessionId != null) return;
     let cancelled = false;
     getActiveDialerSession()
-      .then((session) => {
-        if (!cancelled && session) setRestoredParallelContext(session);
+      .then(async (session) => {
+        if (cancelled || !session) return;
+        if (
+          session.state === 'paused_agent_lost' &&
+          Date.now() - new Date(session.stateSince).getTime() > LEFTOVER_LINE_LOST_MS &&
+          (await endLeftoverSession(session.sessionId))
+        ) {
+          return;
+        }
+        if (!cancelled) {
+          setRestoredParallelContext({
+            sessionId: session.sessionId,
+            campaignId: session.campaignId,
+          });
+        }
       })
       .catch(() => {});
     return () => {
@@ -552,7 +578,6 @@ function DialerBody({
         return;
       }
       setStartError(null);
-      setStartConflict(null);
       setStartingCampaignId(campaign.id);
       try {
         // Mic-permission pre-check (L1 re-review MAJOR): fail fast and clearly instead of a
@@ -577,7 +602,19 @@ function DialerBody({
         beginAgentLegExpectation();
         let started = false;
         try {
-          const { sessionId, warning } = await startDialerSession({ campaignId: campaign.id });
+          let result: Awaited<ReturnType<typeof startDialerSession>>;
+          try {
+            result = await startDialerSession({ campaignId: campaign.id });
+          } catch (err) {
+            // An older session is still open on the server (another tab or device, or one the
+            // page didn't restore) -- end it and start this one, which is what the intern asked
+            // for. If it can't be ended (a prospect is still on the line from it), the outer
+            // catch opens it instead.
+            if (!(err instanceof ActiveSessionExistsError)) throw err;
+            if (!(await endLeftoverSession(err.existingSessionId))) throw err;
+            result = await startDialerSession({ campaignId: campaign.id });
+          }
+          const { sessionId, warning } = result;
           started = true;
           // Deliberately NOT clearing the expectation flag here: setting this state only
           // QUEUES a re-render, and the hook's `optionsRef` (which the exact-match path
@@ -595,32 +632,20 @@ function DialerBody({
         }
       } catch (e) {
         if (e instanceof ActiveSessionExistsError) {
-          // Review fix (minor, L1r4/review-notes-r3.md): sessions are per-agent, not
-          // per-campaign (SEC-8) -- the existing session this 409 refers to can belong to a
-          // completely different campaign than the one just clicked. Look up the real session
-          // so both the conflict banner's text and "Open it" reflect what's ACTUALLY running,
-          // not the campaign the agent happened to click Start on.
+          // Only reached when the older session couldn't be ended -- someone is still on the
+          // line from it. Sessions are per agent, not per campaign (SEC-8), so it can belong to a
+          // different campaign than the one clicked: look up the real one and open it.
           const existingSessionId = e.existingSessionId;
+          let campaignId = campaign.id;
           try {
-            const { session: existingSession } = await getDialerSession(existingSessionId);
-            const existingCampaign = assignedCampaigns?.find(
-              (c) => c.id === existingSession.campaign_id
-            );
-            setStartConflict({
-              campaignId: existingSession.campaign_id,
-              campaignName: existingCampaign?.name ?? 'another campaign',
-              existingSessionId,
-            });
+            campaignId = (await getDialerSession(existingSessionId)).session.campaign_id;
           } catch {
-            // Couldn't resolve the real session -- fall back to the attempted campaign's own
-            // name/id so the banner still renders; "Open it" may point at the wrong campaign
-            // in this fallback case only (unchanged from before this fix).
-            setStartConflict({
-              campaignId: campaign.id,
-              campaignName: campaign.name,
-              existingSessionId,
-            });
+            // Fall back to the clicked campaign; the session view loads by session id anyway.
           }
+          setRestoredParallelContext({ sessionId: existingSessionId, campaignId });
+          toast.warning(
+            'Your earlier session still has a call open -- opened it so you can finish.'
+          );
           return;
         }
         setStartError(e instanceof Error ? e.message : 'Failed to start session');
@@ -634,7 +659,6 @@ function DialerBody({
       connectAgentLine,
       beginAgentLegExpectation,
       endAgentLegExpectation,
-      assignedCampaigns,
     ]
   );
 
@@ -653,15 +677,6 @@ function DialerBody({
     const campaign = assignedCampaigns.find((c) => c.id === pendingCampaignId);
     if (campaign) void handleStartSessionForCampaign(campaign);
   }, [effectiveSessionId, assignedCampaigns, handleStartSessionForCampaign]);
-
-  const handleOpenStartConflict = useCallback(() => {
-    if (!startConflict) return;
-    setRestoredParallelContext({
-      sessionId: startConflict.existingSessionId,
-      campaignId: startConflict.campaignId,
-    });
-    setStartConflict(null);
-  }, [startConflict]);
 
   // When cached numbers load, select first if none selected
   useEffect(() => {
@@ -1099,10 +1114,7 @@ function DialerBody({
             startingCampaignId={startingCampaignId}
             micRegistering={agentLineConnecting}
             startError={startError}
-            conflict={startConflict}
             onStart={(campaign) => void handleStartSessionForCampaign(campaign)}
-            onOpenConflict={handleOpenStartConflict}
-            onDismissConflict={() => setStartConflict(null)}
           />
         )}
 

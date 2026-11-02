@@ -5,16 +5,17 @@ import type { UserPhoneNumber } from '@/contexts/PhoneNumbersContext';
 
 /**
  * Dev-only fixture harness for TASK-L7's own acceptance line ("dev render (fixture) of: no
- * campaigns, campaigns list, pre-flight failing, starting, 409 existing session"). Same spirit
+ * campaigns, campaigns list, pre-flight failing, starting"; the "409 existing session" banner is gone -- the
+ * Dialer now ends a leftover session itself, see Dialer.tsx's endLeftoverSession). Same spirit
  * as `DialerStatesHarness.tsx` (TASK-L2b) -- renders the real `StartSessionPanel` component
  * against plain fixture props, no network/no DB. Reached via `?dev_start_session=1` (main.tsx).
  * `Dialer.tsx` itself is not fixtured here (it owns live hooks -- WebRTC client, `listCampaigns`,
  * `startDialerSession` -- that this panel's own props already abstract away).
  */
 
-type Scenario = 'no_campaigns' | 'list' | 'preflight_failing' | 'starting' | 'conflict';
+type Scenario = 'no_campaigns' | 'list' | 'preflight_failing' | 'starting';
 
-const SCENARIOS: Scenario[] = ['no_campaigns', 'list', 'preflight_failing', 'starting', 'conflict'];
+const SCENARIOS: Scenario[] = ['no_campaigns', 'list', 'preflight_failing', 'starting'];
 
 const FIXTURE_NUMBERS: UserPhoneNumber[] = [
   {
@@ -104,14 +105,6 @@ export function StartSessionHarness() {
     scenario === 'preflight_failing'
       ? 'Microphone access is required to take calls. Allow microphone access and try again.'
       : null;
-  const conflict =
-    scenario === 'conflict'
-      ? {
-          campaignId: FIXTURE_CAMPAIGNS[0].id,
-          campaignName: FIXTURE_CAMPAIGNS[0].name,
-          existingSessionId: 'dev-existing-session',
-        }
-      : null;
 
   return (
     <div className="min-h-screen bg-[#0A1628] p-8">
@@ -144,10 +137,7 @@ export function StartSessionHarness() {
         startingCampaignId={startingCampaignId}
         micRegistering={scenario === 'starting'}
         startError={startError}
-        conflict={conflict}
         onStart={(campaign) => window.alert(`Start clicked (fixture, no-op): ${campaign.name}`)}
-        onOpenConflict={() => window.alert('Open it clicked (fixture, no-op)')}
-        onDismissConflict={() => setScenario('list')}
       />
     </div>
   );
