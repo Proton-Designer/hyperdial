@@ -91,7 +91,7 @@ export function patchCloseDraftValues(
   }));
 }
 
-/** Test/dev helper. */
+/** Clears the draft: on sign-out (AuthContext) and in tests. */
 export function resetCloseDraft() {
   current = null;
   emit();

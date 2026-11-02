@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useState, useCallback, type ReactNode } from 'react';
 import type { User, Session } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
+import { resetCloseDraft } from '@/lib/closeDraft';
 
 export interface SignUpInput {
   email: string;
@@ -123,6 +124,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signOut = useCallback(async () => {
     setError(null);
+    // TASK-H13 review: the Log Close draft (owner name, mobile, email) lives in module memory; drop it on sign-out.
+    resetCloseDraft();
     await supabase.auth.signOut();
   }, []);
 
