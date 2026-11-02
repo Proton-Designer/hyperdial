@@ -246,19 +246,34 @@ Deno.test('intake: existing list_name is never overwritten', async () => {
 });
 
 Deno.test(
-  'intake: contact matching no mapping -> no write at all, no_matching_rule logged',
+  "intake: typo'd campaign tag (hd-...) matching no mapping -> no write at all, no_matching_rule logged",
   async () => {
     const db = seedOwner();
-    const r = await run(db, makeGhl({ contact: { tags: ['plumbing'] } }), [TAG]);
+    const r = await run(db, makeGhl({ contact: { tags: ['plumbing', 'HD-Frisko'] } }), [TAG]);
     assertEquals([r.outcome, r.logged], ['no_matching_rule', true]);
     assertEquals([db.tables.contacts.length, db.tables.campaign_leads.length], [0, 0]);
     assertEquals(db.tables.ghl_intake_log[0].outcome, 'no_matching_rule');
   }
 );
 
+Deno.test(
+  'intake: no-match for an unrelated contact (no hd- tag, or none at all) is NOT logged even on a new-lead trigger',
+  async () => {
+    for (const tags of [[], ['plumbing'], ['hd', 'ahd-x']]) {
+      const db = seedOwner();
+      const r = await run(db, makeGhl({ contact: { tags } }), [TAG]);
+      assertEquals(
+        [r.outcome, r.logged, db.tables.ghl_intake_log.length, db.tables.contacts.length],
+        ['no_matching_rule', false, 0, 0],
+        JSON.stringify(tags)
+      );
+    }
+  }
+);
+
 Deno.test('intake: no-match is not logged when the event was not a new-lead trigger', async () => {
   const db = seedOwner();
-  const r = await run(db, makeGhl({ contact: { tags: [] } }), [TAG], ORG_ROW, 'g1', false);
+  const r = await run(db, makeGhl({ contact: { tags: ['hd-typo'] } }), [TAG], ORG_ROW, 'g1', false);
   assertEquals(
     [r.outcome, r.logged, db.tables.ghl_intake_log.length],
     ['no_matching_rule', false, 0]

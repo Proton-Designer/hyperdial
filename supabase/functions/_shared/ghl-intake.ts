@@ -59,6 +59,13 @@ function byCreatedAt(a: IntakeMapping, b: IntakeMapping): number {
   return (a.created_at ?? '').localeCompare(b.created_at ?? '');
 }
 
+/** Tags that look like a HyperDial campaign tag (`hd-<name>`), the convention n8n / the New Campaign dialog use. */
+export function hasCampaignStyleTag(gc: GhlContact): boolean {
+  return (Array.isArray(gc.tags) ? gc.tags : []).some(
+    (t) => typeof t === 'string' && t.trim().toLowerCase().startsWith('hd-')
+  );
+}
+
 /** The first mapping (by created_at) this contact matches. Tag: same trim + case-insensitive rule as the pull. Stage: the
  *  contact has an opportunity in that pipeline stage (one GHL search, only when a stage mapping exists). */
 async function firstMatchingMapping(
@@ -167,14 +174,17 @@ export async function intakeWebhookContact(
     const gc = await client.getContact(ghlContactId);
     const mapping = await firstMatchingMapping(client, org, gc, ghlContactId, mappings);
     if (!mapping) {
-      const logged = opts.logNoMatch
-        ? await writeLog(supabase, org.org_id, {
-            ghlContactId,
-            contactId: null,
-            campaignId: null,
-            outcome: 'no_matching_rule',
-          })
-        : false;
+      // A "Contact Created" workflow pings for EVERY new GHL contact, so a no-match is only worth a log row when the contact
+      // carries a campaign-style tag (`hd-...`): that catches a typo'd campaign tag and ignores unrelated contacts.
+      const logged =
+        opts.logNoMatch && hasCampaignStyleTag(gc)
+          ? await writeLog(supabase, org.org_id, {
+              ghlContactId,
+              contactId: null,
+              campaignId: null,
+              outcome: 'no_matching_rule',
+            })
+          : false;
       return { outcome: 'no_matching_rule', campaignId: null, contactId: null, logged };
     }
     campaignId = mapping.campaign_id;

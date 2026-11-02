@@ -4159,6 +4159,10 @@ export async function createGhlTagCampaignMapping(
     .select('id, match_type, tag, pipeline_id, pipeline_stage_id, campaign_id, created_at')
     .single();
   if (error) throw new Error(error.message);
+  // TASK-H18: make sure the tag also exists in GoHighLevel so it shows in GHL / n8n tag pickers. Best effort: GHL not
+  // connected, a missing token scope or a network error must never fail (or delay) saving the rule. ghl-tags 'create' is a
+  // no-op when the tag already exists.
+  void createGhlTag(tag.trim()).catch(() => {});
   return data as GhlCampaignMapping;
 }
 
