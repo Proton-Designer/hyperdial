@@ -55,6 +55,21 @@ Deno.test('buildDialPayload: premium AMD and a custom timeout override the defau
   });
   assertEquals(payload.answering_machine_detection, 'premium');
   assertEquals(payload.timeout_secs, 20);
+  assertEquals(payload.answering_machine_detection_config, { total_analysis_time_millis: 5000 });
+});
+
+Deno.test('buildDialPayload: TASK-H19 -- AMD config is sent for premium only', () => {
+  for (const amdMode of ['off', 'detect', 'detect_words'] as const) {
+    const payload = buildDialPayload({
+      connectionId: 'c',
+      to: '+15551234567',
+      from: '+15557654321',
+      webhookUrl: 'https://example.com/w',
+      clientState: 'x',
+      amdMode,
+    });
+    assertEquals('answering_machine_detection_config' in payload, false);
+  }
 });
 
 Deno.test(

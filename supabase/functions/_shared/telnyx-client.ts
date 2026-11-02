@@ -158,7 +158,12 @@ export interface TelnyxDialPayload {
   time_limit_secs?: number;
   custom_headers?: { name: string; value: string }[];
   answering_machine_detection: 'disabled' | 'detect' | 'detect_words' | 'premium';
+  /** TASK-H19: premium only (spec3.json CallRequest.answering_machine_detection_config). */
+  answering_machine_detection_config?: { total_analysis_time_millis: number };
 }
+
+/** A slow premium decision ends as not_sure (= claim) after this long, not Telnyx's own default. */
+export const PREMIUM_AMD_TOTAL_ANALYSIS_MILLIS = 5000;
 
 /** off -> 'disabled', every other value passes straight through -- all 4 are verified members
  *  of CallRequest.answering_machine_detection's enum (spec3.json). */
@@ -178,6 +183,11 @@ export function buildDialPayload(args: DialArgs): TelnyxDialPayload {
     timeout_secs: args.timeoutSecs ?? 25,
     answering_machine_detection: amdModeToTelnyxValue(args.amdMode),
   };
+  if (args.amdMode === 'premium') {
+    payload.answering_machine_detection_config = {
+      total_analysis_time_millis: PREMIUM_AMD_TOTAL_ANALYSIS_MILLIS,
+    };
+  }
   if (args.timeLimitSecs !== undefined) payload.time_limit_secs = args.timeLimitSecs;
   if (args.customHeaders && args.customHeaders.length > 0) {
     payload.custom_headers = args.customHeaders;

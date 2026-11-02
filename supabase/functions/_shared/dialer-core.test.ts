@@ -29,8 +29,8 @@ Deno.test('amdDecision: on, no result yet, waits', () => {
   assertEquals(amdDecision('premium', undefined), 'wait');
 });
 
-const AMD_CLAIM_RESULTS = ['human', 'human_residence', 'human_business', 'not_sure'];
-const AMD_REJECT_RESULTS = ['machine', 'fax_detected', 'silence'];
+const AMD_CLAIM_RESULTS = ['human', 'human_residence', 'human_business', 'not_sure', 'silence'];
+const AMD_REJECT_RESULTS = ['machine', 'fax_detected'];
 
 for (const result of AMD_CLAIM_RESULTS) {
   Deno.test(`amdDecision: on, result "${result}" claims`, () => {

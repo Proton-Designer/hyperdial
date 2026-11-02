@@ -1047,7 +1047,7 @@ export function CampaignManageModal({
                         Answering Machine Detection
                       </label>
                       <Select
-                        value={settingsForm.amd_mode ?? 'off'}
+                        value={settingsForm.amd_mode ?? 'premium'}
                         onValueChange={(v) =>
                           setSettingsForm((f) =>
                             f

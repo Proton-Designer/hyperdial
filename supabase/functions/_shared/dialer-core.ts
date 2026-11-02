@@ -316,8 +316,9 @@ export type AmdDecision = 'claim' | 'reject' | 'wait';
 /**
  * off -> always claim (on call.answered, with no AMD result to evaluate).
  * on, no result yet -> wait (the detection-ended event hasn't arrived).
- * on, with a result -> claim for human/human_residence/human_business/not_sure,
- * reject for machine/fax_detected/silence. An unrecognized result value claims:
+ * on, with a result -> claim for human/human_residence/human_business/not_sure/silence,
+ * reject for machine/fax_detected only. TASK-H19: 'silence' claims -- a person who answers and
+ * says nothing must reach the intern, a dropped real prospect costs more than a wasted bridge. An unrecognized result value claims:
  * a false "machine" drops a real prospect, so the default favors not giving up on
  * one, mirroring hangupOutcome's own default bias below.
  */
@@ -332,10 +333,10 @@ export function amdDecision(
     case 'human_residence':
     case 'human_business':
     case 'not_sure':
+    case 'silence':
       return 'claim';
     case 'machine':
     case 'fax_detected':
-    case 'silence':
       return 'reject';
     default:
       return 'claim';
