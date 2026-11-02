@@ -165,8 +165,12 @@ begin
         v_next_attempt_at := now() + make_interval(mins => coalesce(v_retry_minutes, 120));
       end if;
 
+      -- campaign_leads.next_attempt_at is NOT NULL: an exhausted lead keeps its old value (it is never dialed
+      -- again). Writing the null crashed every 'queued'/'callback' wrap-up on a lead's last attempt (found
+      -- 2026-11-01 by the H09 test; latent on prod, where no lead had reached max_attempts yet).
       update public.campaign_leads cl
-      set status = v_next_status, next_attempt_at = v_next_attempt_at, priority_requeue = false, updated_at = now()
+      set status = v_next_status, next_attempt_at = coalesce(v_next_attempt_at, cl.next_attempt_at),
+          priority_requeue = false, updated_at = now()
       where cl.id = v_leg.lead_id;
 
       perform private.enqueue_nurture_tag_if_exhausted(p_org, v_leg.lead_id, v_leg.contact_id, p_leg);
