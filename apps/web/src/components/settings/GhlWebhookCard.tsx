@@ -102,7 +102,8 @@ function RecentLeads({ intake }: { intake: GhlIntakeSummary | undefined }) {
           <p className="text-white mb-1">Nothing here yet. To get started:</p>
           <ol className="list-decimal pl-5 space-y-0.5">
             <li>
-              Add a tag &rarr; campaign rule in &ldquo;Tag/stage &rarr; campaign mappings&rdquo;
+              Switch on &ldquo;Also check GHL every 5 minutes&rdquo; above (instant leads need it),
+              and add a tag &rarr; campaign rule in &ldquo;Tag/stage &rarr; campaign mappings&rdquo;
               below.
             </li>
             <li>Create the GoHighLevel workflow (&ldquo;Set up in GoHighLevel&rdquo; below).</li>
@@ -190,7 +191,9 @@ export function GhlWebhookCard() {
         updates.
       </p>
       <p className="text-sm text-text-secondary mb-4">
-        The 5-minute check above stays on as a backup, in case an instant update is missed.
+        Instant new leads only work while &ldquo;Also check GHL every 5 minutes&rdquo; above is
+        switched on (it is also the backup if an instant update is missed) and at least one rule
+        exists.
       </p>
 
       {!settings && !loadError && (
@@ -213,7 +216,7 @@ export function GhlWebhookCard() {
             <p className="text-sm text-yellow-400 mb-4" role="status">
               Instant do-not-call and signed-up updates only act while &ldquo;Remove from call
               lists&rdquo; above is switched on. It is off right now, so those events are ignored
-              (new leads are not affected).
+              (new leads need the 5-minute check and a rule instead).
             </p>
           )}
 

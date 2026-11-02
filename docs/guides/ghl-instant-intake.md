@@ -1,6 +1,6 @@
 # Instant new leads from GoHighLevel (and n8n)
 
-A GoHighLevel workflow can send each NEW lead to HyperDial the moment it is created or tagged. HyperDial reads the contact back from GoHighLevel (it never trusts the ping itself), applies the same rules as the 5-minute check, and queues it on a campaign, so interns can dial it within seconds. The 5-minute check stays on as a backup for a ping that is missed.
+A GoHighLevel workflow can send each NEW lead to HyperDial the moment it is created or tagged. HyperDial reads the contact back from GoHighLevel (it never trusts the ping itself), applies the same rules as the 5-minute check, and queues it on a campaign, so interns can dial it within seconds. The 5-minute check is also the backup for a ping that is missed, and instant intake only runs while it is switched on.
 
 This guide is for the GoHighLevel admin and for whoever runs the n8n flow that creates the contacts.
 
@@ -13,7 +13,7 @@ By the **Tag/stage → campaign mappings** card in Settings → Integrations →
 1. Settings → Integrations → GoHighLevel, connected.
 2. **Tag/stage → campaign mappings**: add one rule per tag (or stage), for example `hd-frisco` → Frisco Roofers.
 3. **Instant new leads from GoHighLevel** card: **Create secret**. Copy the secret now; it is shown once. Copy the **Webhook URL** too.
-4. Optional but recommended: leave **Also check GHL every 5 minutes, in case an instant update is missed** on, as the backup.
+4. **Required:** switch on **Also check GHL every 5 minutes, in case an instant update is missed** (in the "Backup check + field mapping" card). Instant intake only runs while it is on and at least one rule exists; with it off, pings are ignored for new leads.
 
 ## Setup in GoHighLevel (about 5 minutes)
 

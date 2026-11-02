@@ -2347,9 +2347,10 @@ function GhlPullSettingsCard({
       <h3 className="text-white font-medium mb-1">Backup check + field mapping</h3>
       <p className="text-sm text-text-secondary mb-4">
         New leads normally arrive instantly through the workflow in &ldquo;Instant new leads&rdquo;
-        below. As a backup, HyperDial can also check GHL every 5 minutes for contacts matching your
-        tag/stage mappings and add them to their mapped campaign. Disabled by default -- turn it on
-        once your mappings look right.
+        below. HyperDial also checks GHL every 5 minutes for contacts matching your tag/stage
+        mappings and adds them to their mapped campaign: it catches any instant update that was
+        missed, and instant new leads only work while it is switched on. Disabled by default -- turn
+        it on once your mappings look right.
       </p>
 
       <label className="flex items-center gap-2 mb-4">
