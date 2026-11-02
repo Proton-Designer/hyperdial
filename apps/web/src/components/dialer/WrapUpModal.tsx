@@ -292,8 +292,14 @@ export function WrapUpModal({
   const selected = dispositions?.find((d) => d.key === selectedKey) ?? null;
   const needsCallback = selected?.lead_effect === 'callback';
   const callbackIso = needsCallback ? localDateTimeToIso(callbackLocal) : null;
+  // TASK-H09: the time is optional. Left empty, the backend reschedules the lead by the campaign's retry rule; a time that
+  // is entered must still be in the future. A disposition that lists 'callback_at' in required_fields still needs one.
+  const callbackRequired = selected?.required_fields?.includes('callback_at') ?? false;
   const callbackValid =
-    !needsCallback || (callbackIso !== null && new Date(callbackIso) > new Date());
+    !needsCallback ||
+    (callbackLocal.trim() === ''
+      ? !callbackRequired
+      : callbackIso !== null && new Date(callbackIso) > new Date());
 
   // DSP-4: a generic per-disposition required_fields check, client-side (the RPC re-checks this
   // server-side regardless -- see the migration's own comment on why). Only two field names are
@@ -316,7 +322,7 @@ export function WrapUpModal({
     // finding, MINOR): a callback time that was valid when picked can become past while the form
     // just sits there with no other state change to trigger a re-render.
     let freshCallbackIso: string | undefined;
-    if (needsCallback) {
+    if (needsCallback && (callbackLocal.trim() !== '' || callbackRequired)) {
       const iso = localDateTimeToIso(callbackLocal);
       if (!iso || new Date(iso) <= new Date()) {
         setSubmitError('Callback time must be in the future.');
@@ -528,7 +534,7 @@ export function WrapUpModal({
           {needsCallback && (
             <div>
               <label htmlFor="wrapup-callback" className="block text-meta text-text-secondary mb-1">
-                Callback time (required)
+                Callback time ({callbackRequired ? 'required' : 'optional'})
               </label>
               <input
                 id="wrapup-callback"
@@ -540,6 +546,11 @@ export function WrapUpModal({
               />
               {callbackLocal && !callbackValid && (
                 <p className="text-xs text-danger mt-1">Callback time must be in the future.</p>
+              )}
+              {!callbackLocal && !callbackRequired && (
+                <p className="text-xs text-text-secondary mt-1">
+                  No time? The lead comes back on the campaign&apos;s retry schedule.
+                </p>
               )}
             </div>
           )}

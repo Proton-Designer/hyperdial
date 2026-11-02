@@ -4573,8 +4573,8 @@ export interface SubmitDispositionInput {
   legId: string;
   dispositionKey: string;
   notes?: string;
-  /** ISO 8601. Required by the backend only when the chosen disposition's lead_effect is
-   *  'callback'; ignored otherwise. */
+  /** ISO 8601. Optional (TASK-H09): for a 'callback' disposition with no time the campaign's retry rule
+   *  schedules the next attempt; ignored for other dispositions. */
   callbackAt?: string;
   /** TASK-F-P1 (DSP-4): required by the backend only when the chosen disposition's
    *  `required_fields` names them; ignored otherwise. */
