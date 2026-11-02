@@ -43,7 +43,38 @@ async function readStatus(supabase: AdminClient, orgId: string) {
     .eq('org_id', orgId)
     .maybeSingle();
   if (error) throw new Error(error.message);
+  // TASK-H16: the latest intakes for the Settings card (contract: apps/web/src/lib/api.ts GhlIntakeSummary)
+  const { data: intakeRows, error: intakeError } = await supabase
+    .from('ghl_intake_log')
+    .select(
+      'received_at, outcome, contacts(first_name, last_name, business_name, phone_number), campaigns(name)'
+    )
+    .eq('org_id', orgId)
+    .order('received_at', { ascending: false })
+    .limit(20);
+  if (intakeError) throw new Error(intakeError.message);
+  const one = <T>(v: T | T[] | null | undefined): T | null =>
+    Array.isArray(v) ? (v[0] ?? null) : (v ?? null);
+  const recent = ((intakeRows ?? []) as Record<string, unknown>[]).map((r) => {
+    const c = one(
+      r.contacts as {
+        first_name: string | null;
+        last_name: string | null;
+        business_name: string | null;
+        phone_number: string | null;
+      } | null
+    );
+    const person = [c?.first_name, c?.last_name].filter(Boolean).join(' ').trim();
+    return {
+      receivedAt: r.received_at as string,
+      contactName: c?.business_name?.trim() || person || null,
+      phone: c?.phone_number ?? null,
+      outcome: r.outcome as string,
+      campaignName: one(r.campaigns as { name: string | null } | null)?.name ?? null,
+    };
+  });
   return {
+    intake: { lastIntakeAt: recent[0]?.receivedAt ?? null, recent },
     webhookUrl: `${Deno.env.get('SUPABASE_URL')}/functions/v1/ghl-webhook`,
     locationId: (integ.location_id as string | null) ?? null,
     reconcileEnabled: integ.ghl_reconcile_enabled === true,

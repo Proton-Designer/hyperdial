@@ -129,11 +129,19 @@ export async function sha256Hex(text: string): Promise<string> {
 
 /** Event types the Marketplace path acts on. `ContactUpdate` is the only candidate for an owner change. */
 export const SUPPORTED_GHL_EVENT_TYPES: ReadonlySet<string> = new Set([
+  'ContactCreate',
   'ContactDndUpdate',
   'ContactTagUpdate',
   'ContactUpdate',
   'OpportunityStageUpdate',
   'OpportunityAssignedToUpdate',
+]);
+
+/** Event types that also trigger instant LEAD INTAKE (TASK-H16), besides a workflow Custom Webhook (type null). */
+export const INTAKE_GHL_EVENT_TYPES: ReadonlySet<string> = new Set([
+  'ContactCreate',
+  'ContactTagUpdate',
+  'OpportunityStageUpdate',
 ]);
 
 export interface GhlWebhookEvent {
@@ -174,10 +182,14 @@ export function parseGhlWebhookEvent(
   const contact = asObj(o.contact);
   const locationId = asId(o.locationId) ?? asId(o.location_id) ?? asId(location?.id);
   // Opportunity events carry the contact in `contactId`; contact events carry it in `id`.
+  // A workflow Custom Webhook (no `type`) names the contact in `contact_id` (GHL's standard workflow body); a top-level
+  // `id` there is not guaranteed to be the contact, so it is only the last resort.
   const contactId =
-    type?.startsWith('Opportunity') === true
-      ? (asId(o.contactId) ?? asId(o.contact_id) ?? asId(contact?.id))
-      : (asId(o.id) ?? asId(o.contactId) ?? asId(o.contact_id) ?? asId(contact?.id));
+    type === null
+      ? (asId(o.contact_id) ?? asId(o.contactId) ?? asId(contact?.id) ?? asId(o.id))
+      : type.startsWith('Opportunity')
+        ? (asId(o.contactId) ?? asId(o.contact_id) ?? asId(contact?.id))
+        : (asId(o.id) ?? asId(o.contactId) ?? asId(o.contact_id) ?? asId(contact?.id));
   return { ok: true, event: { type, locationId, contactId } };
 }
 

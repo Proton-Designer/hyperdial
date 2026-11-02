@@ -215,3 +215,26 @@ Deno.test(
     assertEquals(await readBodyCapped({ body: null }, 100), '');
   }
 );
+
+Deno.test(
+  'parseGhlWebhookEvent: a GHL workflow Custom Webhook body (contact_id, location.id, comma tags) -> ids only (TASK-H16)',
+  () => {
+    const r = parseGhlWebhookEvent(
+      JSON.stringify({
+        contact_id: 'abc123',
+        id: 'not-the-contact',
+        tags: 'roofing, new lead',
+        location: { id: 'loc9', name: 'Biz' },
+      })
+    );
+    assertEquals(r.ok, true);
+    if (r.ok) assertEquals(r.event, { type: null, locationId: 'loc9', contactId: 'abc123' });
+  }
+);
+
+Deno.test('parseGhlWebhookEvent: ContactCreate carries the contact in `id` (TASK-H16)', () => {
+  const r = parseGhlWebhookEvent(
+    JSON.stringify({ type: 'ContactCreate', id: 'c7', locationId: 'l1' })
+  );
+  assertEquals(r.ok && r.event.contactId, 'c7');
+});

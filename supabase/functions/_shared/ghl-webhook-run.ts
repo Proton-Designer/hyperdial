@@ -15,11 +15,13 @@
 import type { GhlClient } from './ghl-client.ts';
 import { decideReconcile, isTransientReadError, type ReconcileConfig } from './ghl-reconcile.ts';
 import { DEFAULT_GHL_DNC_TAGS, DEFAULT_GHL_PAUSED_TAGS } from './ghl-import.ts';
+import { intakeWebhookContact, type IntakeMapping } from './ghl-intake.ts';
 import {
   GHL_LEGACY_SIGNATURE_HEADER,
   GHL_SECRET_HEADER,
   GHL_SIGNATURE_HEADER,
   MAX_WEBHOOK_BODY_BYTES,
+  INTAKE_GHL_EVENT_TYPES,
   SUPPORTED_GHL_EVENT_TYPES,
   isWellFormedWebhookSecret,
   parseGhlWebhookEvent,
@@ -66,10 +68,13 @@ interface OrgRow {
   ghl_paused_tags: string[] | null;
   ghl_exclude_tags: string[] | null;
   ghl_exclude_stage_ids: string[] | null;
+  /** TASK-H16: instant intake only runs while the auto-pull toggle is on (the pull is its backstop). */
+  ghl_pull_enabled?: boolean | null;
+  ghl_field_mapping?: Record<string, string> | null;
 }
 
 const ORG_COLUMNS =
-  'org_id, location_id, ghl_reconcile_enabled, ghl_dnc_tags, ghl_paused_tags, ghl_exclude_tags, ghl_exclude_stage_ids';
+  'org_id, location_id, ghl_reconcile_enabled, ghl_dnc_tags, ghl_paused_tags, ghl_exclude_tags, ghl_exclude_stage_ids, ghl_pull_enabled, ghl_field_mapping';
 
 const res = (status: number, body: Record<string, unknown>): WebhookResponse => ({ status, body });
 const ignored = (reason: string) => res(200, { ok: true, ignored: reason });
@@ -287,7 +292,25 @@ export async function handleGhlWebhook(
   if (!org) return res(401, { error: 'Unauthorized' });
 
   // ---- 3. gates (cheap, before any GHL call) -------------------------------------------------------
-  if (org.ghl_reconcile_enabled !== true) return ignored('reconcile_off');
+  // TASK-H16: instant intake needs the auto-pull toggle on AND at least one tag/stage mapping; with neither this is
+  // exactly the reconcile-only webhook it was before.
+  let intakeMappings: IntakeMapping[] = [];
+  const intakeEvent = event.type === null || INTAKE_GHL_EVENT_TYPES.has(event.type);
+  if (org.ghl_pull_enabled === true && intakeEvent) {
+    const { data: mappingRows, error: mappingError } = await supabase
+      .from('org_ghl_campaign_mappings')
+      .select(
+        'id, match_type, tag, pipeline_id, pipeline_stage_id, campaign_id, ghl_pull_cursor, created_at'
+      )
+      .eq('org_id', org.org_id);
+    if (mappingError) {
+      console.error('[ghl-webhook] mapping lookup failed', mappingError.message);
+      return res(503, { error: 'Temporary failure' });
+    }
+    intakeMappings = (mappingRows ?? []) as IntakeMapping[];
+  }
+  const intakeOn = intakeMappings.length > 0;
+  if (org.ghl_reconcile_enabled !== true && !intakeOn) return ignored('reconcile_off');
   if (!event.contactId) return ignored('no_contact');
 
   // dedupe + rate limit, atomically in the database
@@ -311,13 +334,36 @@ export async function handleGhlWebhook(
   try {
     const { data: token } = await supabase.rpc('get_org_ghl_token', { p_org: org.org_id });
     if (!token) return ignored('no_token');
-    const out = await reconcileWebhookContact(
+    const client = deps.makeClient(token as string);
+    const out =
+      org.ghl_reconcile_enabled === true
+        ? await reconcileWebhookContact(supabase, client, org, event.contactId)
+        : null;
+    if (!intakeOn) return res(200, { ok: true, ...out });
+    // a contact the reconcile step just took off the lists (signed up / active) must not be queued again
+    if (out?.outcome === 'applied' && out.action === 'exclude') {
+      return res(200, {
+        ok: true,
+        ...out,
+        intake: { outcome: 'no_matching_rule', skipped: 'excluded' },
+      });
+    }
+    const intake = await intakeWebhookContact(
       supabase,
-      deps.makeClient(token as string),
+      client,
       org,
-      event.contactId
+      intakeMappings,
+      event.contactId,
+      {
+        // only a deliberate "new lead" trigger is worth a log row when nothing matched
+        logNoMatch: event.type === null || event.type === 'ContactCreate',
+      }
     );
-    return res(200, { ok: true, ...out });
+    return res(200, {
+      ok: true,
+      ...(out ?? { outcome: 'intake' }),
+      intake: { outcome: intake.outcome, campaignId: intake.campaignId },
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.warn(`[ghl-webhook] org ${org.org_id} contact ${event.contactId}: ${message}`);

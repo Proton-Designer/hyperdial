@@ -187,7 +187,7 @@ Deno.test(
   'webhook (signature): unsupported event type and unknown location are ignored with 200',
   async () => {
     const k = await keyPair();
-    const odd = JSON.stringify({ type: 'ContactCreate', id: 'gc1', locationId: 'loc1' });
+    const odd = JSON.stringify({ type: 'ContactDelete', id: 'gc1', locationId: 'loc1' });
     const f1 = fake();
     const r1 = await handleGhlWebhook(
       deps(f1, ghl({}), k.spki),

@@ -22,7 +22,7 @@ import {
   type ExistingContactRow,
   type GhlImportEnrichment,
 } from './ghl-import.ts';
-import { planCampaignQueue, type CampaignQueueCandidate } from './campaign-queue.ts';
+import { chunk, planCampaignQueue, type CampaignQueueCandidate } from './campaign-queue.ts';
 import {
   fetchActiveElsewhereContactIds,
   fetchDncE164Set,
@@ -104,7 +104,10 @@ function parseDateMs(s: string | undefined): number | null {
  *  fix (review-eng2.md #3) -- a fast-moving contact tagged for a DIFFERENT mapping would still
  *  push this mapping's own cursor forward. Mirrors planGhlImport's own tag-match logic exactly
  *  (trim + case-insensitive). */
-function contactMatchesMapping(contact: GhlContact, mapping: GhlCampaignMappingRow): boolean {
+export function contactMatchesMapping(
+  contact: GhlContact,
+  mapping: GhlCampaignMappingRow
+): boolean {
   if (mapping.match_type !== 'tag') return true;
   const wantedTag = (mapping.tag ?? '').trim().toLowerCase();
   const tags = Array.isArray(contact.tags) ? contact.tags : [];
@@ -229,11 +232,95 @@ export async function runGhlPullMapping(
 
   const existingRows: ExistingContactRow[] = await fetchAllExistingContactRows(supabase, orgId);
 
+  const imported = await importGhlContactsForMapping(supabase, {
+    orgId,
+    mapping,
+    contacts: contactsToPlan,
+    existingRows,
+    dncTags: args.dncTags,
+    pausedTags: args.pausedTags,
+    enrichment: args.enrichment,
+  });
+
+  return {
+    mappingId: mapping.id,
+    ...imported.counts,
+    truncated: fetched.truncated,
+    maxDateUpdatedIso: maxDateUpdatedMs !== null ? new Date(maxDateUpdatedMs).toISOString() : null,
+  };
+}
+
+/** campaign_leads.list_name given to leads the GHL pull / webhook intake queues (only ever set on NEW lead rows). */
+export const GHL_AUTO_LIST_NAME = 'GHL (auto)';
+
+/** Which of `contactIds` already have a campaign_leads row (any status) in `campaignId`. */
+async function fetchCampaignLeadContactIds(
+  supabase: SupabaseAny,
+  campaignId: string,
+  contactIds: string[]
+): Promise<Set<string>> {
+  const found = new Set<string>();
+  for (const batch of chunk(contactIds, 200)) {
+    const { data, error } = await supabase
+      .from('campaign_leads')
+      .select('contact_id')
+      .eq('campaign_id', campaignId)
+      .in('contact_id', batch);
+    if (error) throw new Error(`campaign_leads lookup failed: ${error.message}`);
+    for (const row of (data ?? []) as { contact_id: string }[]) found.add(row.contact_id);
+  }
+  return found;
+}
+
+/** One imported GHL contact's fate in a single {@link importGhlContactsForMapping} call. `error` here means the
+ *  contact never became an insert/update (no usable phone). Only filled when `trackOutcomes` is set. */
+export type GhlImportContactOutcome =
+  | 'queued'
+  | 'already_queued'
+  | 'skipped_dnc'
+  | 'skipped_paused'
+  | 'skipped_active_elsewhere'
+  | 'error';
+
+export interface GhlImportContactResult {
+  ghlContactId: string;
+  contactId: string | null;
+  outcome: GhlImportContactOutcome;
+}
+
+export type GhlImportCounts = Omit<
+  GhlPullMappingResult,
+  'mappingId' | 'truncated' | 'maxDateUpdatedIso' | 'error'
+>;
+
+export interface ImportGhlContactsArgs {
+  orgId: string;
+  mapping: GhlCampaignMappingRow;
+  /** Already-fetched GHL contacts (cursor-filtered by the caller). */
+  contacts: GhlContact[];
+  existingRows: ExistingContactRow[];
+  dncTags?: string[];
+  pausedTags?: string[];
+  enrichment?: GhlImportEnrichment;
+  /** Adds one campaign_leads lookup so each contact's outcome can say queued vs already_queued (webhook intake). */
+  trackOutcomes?: boolean;
+}
+
+/** THE import + queue path for "these GHL contacts -> this mapping": plan (dedupe / DNC / paused / enrichment via
+ *  planGhlImport), write contacts, enforce DNC/paused org-wide, queue onto the mapped campaign. Shared by the
+ *  5-minute pull / Sync now (runGhlPullMapping) and the webhook's instant intake (ghl-intake.ts) so the rules
+ *  can never drift between them. */
+export async function importGhlContactsForMapping(
+  supabase: SupabaseAny,
+  args: ImportGhlContactsArgs
+): Promise<{ counts: GhlImportCounts; outcomes: GhlImportContactResult[] }> {
+  const { orgId, mapping, existingRows } = args;
+  const outcomes: GhlImportContactResult[] = [];
   const plan = planGhlImport({
     mode: mapping.match_type,
     value: mapping.match_type === 'tag' ? mapping.tag! : mapping.pipeline_stage_id!,
-    ghlContacts: contactsToPlan,
-    existing: existingRows,
+    ghlContacts: args.contacts,
+    existing: args.existingRows,
     dncTags: args.dncTags,
     pausedTags: args.pausedTags,
     enrichment: args.enrichment,
@@ -241,20 +328,21 @@ export async function runGhlPullMapping(
 
   if (plan.toInsert.length === 0 && plan.toUpdate.length === 0) {
     return {
-      mappingId: mapping.id,
-      created: 0,
-      updated: 0,
-      skipped: plan.skipped,
-      invalid: plan.invalid,
-      skippedDnc: 0,
-      skippedPaused: 0,
-      skippedActiveCampaign: 0,
-      dncTagged: 0,
-      pausedTagged: 0,
-      unpaused: plan.unpausedCount,
-      truncated: fetched.truncated,
-      maxDateUpdatedIso:
-        maxDateUpdatedMs !== null ? new Date(maxDateUpdatedMs).toISOString() : null,
+      counts: {
+        created: 0,
+        updated: 0,
+        skipped: plan.skipped,
+        invalid: plan.invalid,
+        skippedDnc: 0,
+        skippedPaused: 0,
+        skippedActiveCampaign: 0,
+        dncTagged: 0,
+        pausedTagged: 0,
+        unpaused: plan.unpausedCount,
+      },
+      outcomes: args.contacts
+        .filter((c) => c.id)
+        .map((c) => ({ ghlContactId: c.id, contactId: null, outcome: 'error' as const })),
     };
   }
 
@@ -370,6 +458,7 @@ export async function runGhlPullMapping(
   let skippedDnc = 0;
   let skippedPaused = 0;
   let skippedActiveCampaign = 0;
+  const outcomeByContactId = new Map<string, GhlImportContactOutcome>();
   if (queueCandidates.length > 0) {
     const activeElsewhereContactIds = await fetchActiveElsewhereContactIds(supabase, {
       contactIds: queueCandidates.map((c) => c.contactId),
@@ -379,31 +468,70 @@ export async function runGhlPullMapping(
     skippedDnc = queuePlan.skippedDnc;
     skippedPaused = queuePlan.skippedPaused;
     skippedActiveCampaign = queuePlan.skippedActiveElsewhere;
+    if (args.trackOutcomes) {
+      const toQueueSet = new Set(queuePlan.toQueue);
+      for (const c of queueCandidates) {
+        if (toQueueSet.has(c.contactId)) continue;
+        outcomeByContactId.set(
+          c.contactId,
+          c.dnc ? 'skipped_dnc' : c.paused ? 'skipped_paused' : 'skipped_active_elsewhere'
+        );
+      }
+    }
     if (queuePlan.toQueue.length > 0) {
+      const alreadyInCampaign = args.trackOutcomes
+        ? await fetchCampaignLeadContactIds(supabase, mapping.campaign_id, queuePlan.toQueue)
+        : new Set<string>();
       const { raceDropped } = await upsertCampaignLeads(supabase, {
         campaignId: mapping.campaign_id,
         orgId,
         contactIds: queuePlan.toQueue,
         status: 'queued',
+        listName: GHL_AUTO_LIST_NAME,
       });
       skippedActiveCampaign += raceDropped.length;
+      if (args.trackOutcomes) {
+        const dropped = new Set(raceDropped);
+        for (const id of queuePlan.toQueue) {
+          outcomeByContactId.set(
+            id,
+            dropped.has(id)
+              ? 'skipped_active_elsewhere'
+              : alreadyInCampaign.has(id)
+                ? 'already_queued'
+                : 'queued'
+          );
+        }
+      }
+    }
+  }
+  if (args.trackOutcomes) {
+    const contactIdByGhlId = new Map(touched.map((t) => [t.ghlContactId, t.contactId]));
+    for (const c of args.contacts) {
+      if (!c.id) continue;
+      const contactId = contactIdByGhlId.get(c.id) ?? null;
+      outcomes.push({
+        ghlContactId: c.id,
+        contactId,
+        outcome: contactId ? (outcomeByContactId.get(contactId) ?? 'error') : 'error',
+      });
     }
   }
 
   return {
-    mappingId: mapping.id,
-    created: plan.created,
-    updated: plan.updated,
-    skipped: plan.skipped,
-    invalid: plan.invalid,
-    skippedDnc,
-    skippedPaused,
-    skippedActiveCampaign,
-    dncTagged: touched.filter((t) => t.dnc).length,
-    pausedTagged: touched.filter((t) => t.paused).length,
-    unpaused: plan.unpausedCount,
-    truncated: fetched.truncated,
-    maxDateUpdatedIso: maxDateUpdatedMs !== null ? new Date(maxDateUpdatedMs).toISOString() : null,
+    counts: {
+      created: plan.created,
+      updated: plan.updated,
+      skipped: plan.skipped,
+      invalid: plan.invalid,
+      skippedDnc,
+      skippedPaused,
+      skippedActiveCampaign,
+      dncTagged: touched.filter((t) => t.dnc).length,
+      pausedTagged: touched.filter((t) => t.paused).length,
+      unpaused: plan.unpausedCount,
+    },
+    outcomes,
   };
 }
 
