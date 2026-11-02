@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Grid3x3 } from 'lucide-react';
 import { sendDialerDtmf } from '@/lib/api';
 
@@ -9,22 +9,38 @@ const KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '*', '0', '#'];
 export function DtmfKeypad({ sessionId }: { sessionId: string | null }) {
   const [sent, setSent] = useState('');
   const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  // TASK-H15: keys tapped while a request is in flight are queued and sent in order (up to 16 per request, the server's
+  // cap), one request at a time, so quick multi-digit presses are never dropped.
+  const pending = useRef('');
+  const flushing = useRef(false);
 
   if (!sessionId) return null;
 
-  const press = async (key: string) => {
-    if (busy) return;
-    setBusy(true);
-    setError(null);
+  const flush = async () => {
+    if (flushing.current) return;
+    flushing.current = true;
     try {
-      await sendDialerDtmf(sessionId, key);
-      setSent((prev) => (prev + key).slice(-16));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to send keypad tones');
+      while (pending.current) {
+        const batch = pending.current.slice(0, 16);
+        pending.current = pending.current.slice(batch.length);
+        try {
+          await sendDialerDtmf(sessionId, batch);
+          setSent((prev) => (prev + batch).slice(-16));
+        } catch (err) {
+          // Later queued keys would be out of sequence after a failed one: drop them and tell the agent.
+          pending.current = '';
+          setError(err instanceof Error ? err.message : 'Failed to send keypad tones');
+        }
+      }
     } finally {
-      setBusy(false);
+      flushing.current = false;
     }
+  };
+
+  const press = (key: string) => {
+    setError(null);
+    pending.current += key;
+    void flush();
   };
 
   return (
@@ -47,10 +63,9 @@ export function DtmfKeypad({ sessionId }: { sessionId: string | null }) {
             <button
               key={key}
               type="button"
-              disabled={busy}
-              onClick={() => void press(key)}
+              onClick={() => press(key)}
               aria-label={`Send ${key}`}
-              className="h-12 rounded-app-md bg-surface-2 border border-border-subtle text-lg font-semibold text-text-primary hover:bg-surface-3 active:scale-95 disabled:opacity-60"
+              className="h-12 rounded-app-md bg-surface-2 border border-border-subtle text-lg font-semibold text-text-primary hover:bg-surface-3 active:scale-95"
             >
               {key}
             </button>
