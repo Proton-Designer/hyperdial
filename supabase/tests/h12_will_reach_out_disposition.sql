@@ -39,7 +39,7 @@ select public._test_expect_eq('new org seeded with will_reach_out',
   (select count(*)::text from public.dispositions where org_id = :'org' and key = 'will_reach_out'), '1');
 select public._test_expect_eq('shape: label / effect / tag / task / win / sort',
   (select concat_ws('|', label, lead_effect, ghl_tag, creates_task, is_win, sort, active) from public.dispositions where org_id = :'org' and key = 'will_reach_out'),
-  'They''ll reach out|completed|Will Reach Out|false|false|35|true');
+  'They''ll reach out|completed|Will Reach Out|f|f|35|t');
 -- 2. The 9 existing defaults are untouched
 select public._test_expect_eq('10 defaults in total (9 old + 1)',
   (select count(*)::text from public.dispositions where org_id = :'org'), '10');
