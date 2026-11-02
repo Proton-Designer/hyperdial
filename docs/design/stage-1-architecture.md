@@ -206,7 +206,7 @@ Redis is removed from the dial path. The decisions.md entry gets superseded with
 Per-campaign `amd_mode: off | on`.
 
 - **Off:** `call.answered` triggers the claim. Fastest connect; the agent hangs up on voicemail greetings themselves.
-- **On:** use Telnyx **premium** AMD ($0.0065 per call against $0.002 for standard). Accuracy is what matters, since a false "machine" drops a real prospect. `human` or `not_sure` triggers a claim; `machine`, `fax` or `silence` hang up and requeue.
+- **On:** use Telnyx **premium** AMD ($0.0065 per call against $0.002 for standard). Accuracy is what matters, since a false "machine" drops a real prospect. `human`, `not_sure` or `silence` triggers a claim; only `machine` or `fax` hang up and requeue (TASK-H19, 2026-11-02: a silent pickup may be a person, so it reaches the agent). Premium dials cap detection at 5 s (`total_analysis_time_millis`), after which the result is `not_sure` and the leg is claimed. New campaigns default to premium; Off stays selectable.
 - The engine tracks the gap between `answered` and the claim, because every second spent on AMD raises the abandon risk. The UI says so honestly next to the toggle.
 
 ### 4.6 Abandoned humans
