@@ -40,6 +40,7 @@ function makeMockClient(overrides: Partial<TelnyxClient> = {}): {
     hangup: async () => {},
     getCallStatus: async () => null,
     speak: async () => {},
+    sendDtmf: async () => {},
     answer: async () => {},
     transfer: async () => {},
     createConference: async () => ({ id: null, name: '' }),

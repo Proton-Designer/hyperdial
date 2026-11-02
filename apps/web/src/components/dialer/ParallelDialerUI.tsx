@@ -4,6 +4,7 @@ import { motion } from 'motion/react';
 import { Play } from 'lucide-react';
 import { ContactBatchCard } from './ContactBatchCard';
 import { LiveCallPanel } from './LiveCallPanel';
+import { DtmfKeypad } from './DtmfKeypad';
 import { LogCloseModal } from './LogCloseModal';
 import { TransferModal } from './TransferModal';
 import { ContactNotesPanel } from '@/components/contacts/ContactNotesPanel';
@@ -96,6 +97,8 @@ interface ParallelDialerUIProps {
   onStop: (opts?: { force?: boolean }) => void;
   onMuteChange: (muted: boolean) => void;
   onEndLiveCall: () => void;
+  /** TASK-H11: the session the keypad sends tones into. */
+  sessionId?: string | null;
   onHoldCall: () => void;
   onResumeCall: () => void;
   /** MISSION-4 TASK-T8: the Pause/Resume-recording button -- one handler for both directions,
@@ -236,6 +239,7 @@ export function ParallelDialerUI({
   onStop,
   onMuteChange,
   onEndLiveCall,
+  sessionId = null,
   onHoldCall,
   onResumeCall,
   onToggleRecording,
@@ -410,6 +414,7 @@ export function ParallelDialerUI({
             onToggleMute={onMuteChange}
             onEndCall={onEndLiveCall}
           />
+          <DtmfKeypad sessionId={sessionId} />
           {connectedContact && <ContactDetailsPanel contact={connectedContact} />}
           {connectedContact && (
             <LogCloseCard key={connectedContact.id} contact={connectedContact} />

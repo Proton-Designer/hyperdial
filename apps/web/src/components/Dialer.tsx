@@ -1075,6 +1075,7 @@ function DialerBody({
                 onAutoResumePrefChange={setAutoResumePref}
                 onMuteChange={handleToggleMute}
                 onEndLiveCall={handleEndLiveCallParallel}
+                sessionId={parallelSession.sessionId}
                 onHoldCall={() => void parallelSession.hold()}
                 onResumeCall={() => void parallelSession.unhold()}
                 onStartTransfer={async (args) => {

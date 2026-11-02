@@ -464,6 +464,9 @@ verify_jwt = false
 # its own auth code ever runs, same class of bug as TASK-P3-P3's ghl-import/ghl-sync-worker gaps.
 # Fixed proactively in the same commit rather than filing it and moving on.
 verify_jwt = false
+[functions.dialer-send-dtmf]
+# TASK-H11: custom auth (requireTelnyxOrgRole) like every dialer-session-* function.
+verify_jwt = false
 [functions.dialer-session-disposition]
 verify_jwt = false
 [functions.dialer-session-reconnect]

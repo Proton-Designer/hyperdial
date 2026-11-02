@@ -3657,6 +3657,18 @@ export async function hangupLiveCall(sessionId: string): Promise<void> {
   if (!res.ok) throw new Error(data.error || 'Failed to end live call');
 }
 
+/** TASK-H11: plays keypad tones (0-9 * #, at most 16) into the session's live contact leg, for an
+ *  answering-machine menu ("press 1 to be connected"). Server only allows the session's own agent. */
+export async function sendDialerDtmf(sessionId: string, digits: string): Promise<void> {
+  const res = await fetch(`${getFunctionsUrl()}/dialer-send-dtmf`, {
+    method: 'POST',
+    headers: await getEdgeFunctionHeaders(),
+    body: JSON.stringify({ sessionId, digits }),
+  });
+  const data = (await res.json()) as { error?: string };
+  if (!res.ok) throw new Error(data.error || 'Failed to send keypad tones');
+}
+
 /** MISSION-5 TASK-M5-B2: the agent's own "raise hand" button (Dialer.tsx, hotkey R). `raised`
  *  defaults to true; pass false for the agent's own explicit "never mind" clear -- the server
  *  also auto-clears this the moment the call ends or a manager starts coaching this agent, so

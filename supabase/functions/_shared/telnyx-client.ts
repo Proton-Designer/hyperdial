@@ -424,6 +424,10 @@ export interface TelnyxClient {
    */
   getCallStatus(callControlId: string): Promise<{ isAlive: boolean } | null>;
   speak(callControlId: string, payload: { payload: string; voice: string }): Promise<void>;
+  /** TASK-H11: `POST /calls/{id}/actions/send_dtmf` -- plays DTMF tones to the far end of the leg
+   *  (an answering-machine menu: "press 1 to be connected"). `digits` is already validated by
+   *  `_shared/dtmf.ts`. */
+  sendDtmf(callControlId: string, digits: string): Promise<void>;
 
   createConference(args: {
     name: string;
@@ -616,6 +620,13 @@ export function createTelnyxClient(
       await req(`/calls/${encodeURIComponent(callControlId)}/actions/speak`, {
         method: 'POST',
         body: JSON.stringify(payload),
+      });
+    },
+
+    async sendDtmf(callControlId, digits) {
+      await req(`/calls/${encodeURIComponent(callControlId)}/actions/send_dtmf`, {
+        method: 'POST',
+        body: JSON.stringify({ digits }),
       });
     },
 
