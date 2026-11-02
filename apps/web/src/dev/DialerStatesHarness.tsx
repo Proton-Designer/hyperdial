@@ -268,6 +268,7 @@ export function DialerStatesHarness() {
           batchContacts={scenario.batchContacts}
           answeredContactId={scenario.answeredContactId}
           connectedContactId={scenario.connectedContactId}
+          connectedLegId={scenario.connectedContactId ? 'dev-leg' : null}
           connectedAnsweredAt={scenario.connectedContactId ? ANSWERED_2MIN_AGO : null}
           inboundCall={null}
           coachingMode={null}

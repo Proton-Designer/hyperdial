@@ -5,7 +5,8 @@ import { Play } from 'lucide-react';
 import { ContactBatchCard } from './ContactBatchCard';
 import { LiveCallPanel } from './LiveCallPanel';
 import { DtmfKeypad } from './DtmfKeypad';
-import { LogCloseModal } from './LogCloseModal';
+import { LogCloseForm } from './LogCloseForm';
+import { useCloseDraft } from '@/lib/closeDraft';
 import { TransferModal } from './TransferModal';
 import { ContactNotesPanel } from '@/components/contacts/ContactNotesPanel';
 import { Button } from '@/components/ui/button';
@@ -48,6 +49,8 @@ interface ParallelDialerUIProps {
   batchContacts: BatchContactPreview[];
   answeredContactId: string | null;
   connectedContactId: string | null;
+  /** TASK-H13: the connected contact leg's id; keys the inline Log Close draft (same key the wrap-up uses). */
+  connectedLegId?: string | null;
   connectedAnsweredAt: string | null;
   /** TASK-I1: the session's current bridged inbound call, if any -- see LiveCallPanel's own
    *  `flagLabel` comment. Mutually exclusive with `connectedContactId` in practice (an inbound
@@ -220,6 +223,7 @@ export function ParallelDialerUI({
   batchContacts,
   answeredContactId,
   connectedContactId,
+  connectedLegId = null,
   connectedAnsweredAt,
   inboundCall,
   coachingMode,
@@ -417,7 +421,11 @@ export function ParallelDialerUI({
           <DtmfKeypad sessionId={sessionId} />
           {connectedContact && <ContactDetailsPanel contact={connectedContact} />}
           {connectedContact && (
-            <LogCloseCard key={connectedContact.id} contact={connectedContact} />
+            <LogCloseCard
+              key={connectedLegId ?? connectedContact.id}
+              draftKey={connectedLegId ?? connectedContact.id}
+              contact={connectedContact}
+            />
           )}
           {connectedContactHistory.length > 0 && (
             <ContactHistoryPanel history={connectedContactHistory} />
@@ -562,29 +570,54 @@ function AutoResumePrefControl({ onChange }: { onChange?: (value: 0 | 5 | 10 | 1
   );
 }
 
-/** TASK-H03: "Log close" for the connected contact. Always shown (unlike the details card, which hides when
- *  every field is empty) because closing never depends on what we already know about the business. */
-function LogCloseCard({ contact }: { contact: ConnectedContactDetails }) {
+/** TASK-H13: the Log Close form, inline on the live-call screen so an intern fills it while still on the phone. One click
+ *  opens it; the draft is shared with the wrap-up window's Log close dialog (lib/closeDraft.ts), so nothing typed here is lost at
+ *  hang-up. Always shown (unlike the details card, which hides when every field is empty): closing never depends on what we
+ *  already know about the business. */
+function LogCloseCard({
+  contact,
+  draftKey,
+}: {
+  contact: ConnectedContactDetails;
+  draftKey: string;
+}) {
   const [open, setOpen] = useState(false);
+  const { state } = useCloseDraft(draftKey, contact.name, contact.phone);
+  const started = state.values.services.length > 0 || state.values.ownerName.trim() !== '';
   return (
-    <>
-      <div className="rounded-app-lg border border-border-subtle bg-surface-1 p-4 flex items-center justify-between gap-3">
+    <div className="rounded-app-lg border border-border-subtle bg-surface-1">
+      <div className="p-4 flex items-center justify-between gap-3">
         <p className="text-body text-text-secondary">
-          Closed them? Log it so it reaches the closes sheet.
+          {state.done
+            ? 'Closed. Logged for this call.'
+            : started && !open
+              ? 'Close details saved as a draft. Keep going or finish after the call.'
+              : 'Closing them? Fill this in while you talk; it reaches the closes sheet.'}
         </p>
-        <Button type="button" variant="fe-secondary" size="sm" onClick={() => setOpen(true)}>
-          Log close
-        </Button>
+        {!state.done && (
+          <Button
+            type="button"
+            variant="fe-secondary"
+            size="sm"
+            aria-expanded={open}
+            aria-controls="inline-logclose"
+            onClick={() => setOpen((v) => !v)}
+          >
+            {open ? 'Hide' : 'Log close'}
+          </Button>
+        )}
       </div>
-      {open && (
-        <LogCloseModal
-          contactId={contact.id}
-          name={contact.name}
-          phone={contact.phone}
-          onClose={() => setOpen(false)}
-        />
+      {(open || state.done) && (
+        <div id="inline-logclose" className="border-t border-border-subtle">
+          <LogCloseForm
+            draftKey={draftKey}
+            contactId={contact.id}
+            name={contact.name}
+            phone={contact.phone}
+          />
+        </div>
       )}
-    </>
+    </div>
   );
 }
 

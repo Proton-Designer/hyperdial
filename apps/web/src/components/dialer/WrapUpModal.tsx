@@ -647,6 +647,7 @@ export function WrapUpModal({
       </div>
       {showLogClose && contact.id && (
         <LogCloseModal
+          draftKey={legId}
           contactId={contact.id}
           name={contact.name}
           phone={contact.phone}

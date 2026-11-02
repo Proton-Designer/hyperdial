@@ -407,6 +407,8 @@ export function useDialerSession(initialSessionId: string | null = null) {
       (l) => state.session && l.id === state.session.active_leg_id
     );
     const connectedContactId = activeLeg?.contact_id ?? null;
+    // TASK-H13: keys the Log Close draft so it survives the hang-up into the wrap-up window.
+    const connectedLegId = activeLeg?.id ?? null;
     const connectedAnsweredAt = activeLeg?.answered_at ?? null;
     // TASK-T4: 'On hold mm:ss' timer anchor -- null whenever the active leg isn't held.
     const heldAt = activeLeg?.held_at ?? null;
@@ -487,6 +489,7 @@ export function useDialerSession(initialSessionId: string | null = null) {
       callsMade,
       totalContacts,
       connectedContactId,
+      connectedLegId,
       connectedAnsweredAt,
       answeredContactId,
       currentBatchContacts,

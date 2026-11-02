@@ -1055,6 +1055,7 @@ function DialerBody({
                 batchContacts={parallelSession.currentBatchContacts}
                 answeredContactId={parallelSession.answeredContactId}
                 connectedContactId={parallelSession.connectedContactId}
+                connectedLegId={parallelSession.connectedLegId}
                 connectedAnsweredAt={parallelSession.connectedAnsweredAt}
                 inboundCall={parallelSession.inboundCall}
                 coachingMode={parallelSession.coachingMode}

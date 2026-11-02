@@ -17,6 +17,7 @@ export function LogCloseHarness() {
       <p>Log close harness — scenario: {scenario}</p>
       <LogCloseModal
         contactId="00000000-0000-4000-8000-000000000001"
+        draftKey="harness-leg"
         name="Sparkle Window Cleaning"
         phone="+15125550100"
         onClose={() => window.location.reload()}
