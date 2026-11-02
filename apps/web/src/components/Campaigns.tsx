@@ -1,8 +1,18 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Search, Plus, Target, Play, RefreshCw } from 'lucide-react';
-import { listCampaigns, createCampaign, syncGhlNow, type CampaignWithStats } from '../lib/api';
+import {
+  listCampaigns,
+  createCampaign,
+  syncGhlNow,
+  getGhlIntegrationStatus,
+  listGhlCampaignMappings,
+  createGhlTagCampaignMapping,
+  type CampaignWithStats,
+  type GhlCampaignMapping,
+} from '../lib/api';
 import { useOrg } from '@/contexts/OrgContext';
+import { suggestCampaignTag } from '@/lib/campaignTag';
 import { toast } from 'sonner';
 import { CampaignManageModal } from './campaigns/CampaignManageModal';
 import { PageHeader } from '@/components/app/PageHeader';
@@ -31,6 +41,26 @@ const STATUS_CHIP: Record<CampaignWithStats['status'], string> = {
   paused: 'bg-warning-soft text-warning',
   completed: 'bg-surface-3 text-text-secondary',
 };
+
+/** TASK-H18: the campaign's GHL tag(s) at a glance, or "No GHL tag". */
+function CampaignTagChips({ tags }: { tags: GhlCampaignMapping[] }) {
+  if (tags.length === 0) {
+    return <div className="text-meta text-text-muted mt-1">No GHL tag</div>;
+  }
+  return (
+    <div className="flex flex-wrap gap-1 mt-1">
+      {tags.map((m) => (
+        <span
+          key={m.id}
+          title="GHL contacts with this tag are added to this campaign"
+          className="inline-flex max-w-full items-center px-2 py-0.5 rounded-full bg-surface-3 text-xs text-text-secondary font-mono truncate"
+        >
+          {m.tag}
+        </span>
+      ))}
+    </div>
+  );
+}
 
 interface CampaignsProps {
   onNavigateToDialer?: () => void;
@@ -61,6 +91,35 @@ export function Campaigns({
   const { role } = useOrg();
   const isAdmin = role === 'owner' || role === 'admin';
   const [syncing, setSyncing] = useState(false);
+  // TASK-H18: GHL connected? + every tag rule (campaign -> tags), for the New campaign field and the list chips.
+  const [ghlConnected, setGhlConnected] = useState(false);
+  const [ghlPullOn, setGhlPullOn] = useState(true);
+  const [rules, setRules] = useState<GhlCampaignMapping[]>([]);
+  const [newCampaignTag, setNewCampaignTag] = useState('');
+  const [tagEdited, setTagEdited] = useState(false);
+
+  const loadRules = useCallback(() => {
+    listGhlCampaignMappings()
+      .then(setRules)
+      .catch(() => setRules([]));
+  }, []);
+
+  useEffect(() => {
+    if (!isAdmin) return;
+    getGhlIntegrationStatus()
+      .then((st) => {
+        const connected = st?.status === 'connected';
+        setGhlConnected(connected);
+        setGhlPullOn(st?.ghl_pull_enabled === true);
+        if (connected) loadRules();
+      })
+      .catch(() => setGhlConnected(false));
+  }, [isAdmin, loadRules]);
+
+  const tagsFor = (campaignId: string) =>
+    rules.filter((m) => m.campaign_id === campaignId && m.match_type === 'tag' && m.tag);
+  const showTagChips = isAdmin && ghlConnected;
+  const showTagField = isAdmin && ghlConnected;
 
   const fetchCampaigns = useCallback(() => {
     setLoading(true);
@@ -90,8 +149,40 @@ export function Campaigns({
     setCreateError(null);
     try {
       const campaign = await createCampaign(name);
+      const tag = showTagField ? newCampaignTag.trim() : '';
+      if (tag) {
+        try {
+          await createGhlTagCampaignMapping(tag, campaign.id);
+          if (ghlPullOn) {
+            toast.success(`GHL contacts tagged "${tag}" will be added to ${name}.`);
+          } else {
+            toast.warning(
+              `Tag rule saved, but nothing is added yet: switch on "Also check GHL every 5 minutes" in Settings → Integrations → GoHighLevel first (instant leads need it).`
+            );
+          }
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : '';
+          if (/duplicate key|unique constraint/i.test(msg)) {
+            const clash = rules.find(
+              (m) =>
+                m.match_type === 'tag' && (m.tag ?? '').trim().toLowerCase() === tag.toLowerCase()
+            );
+            const owner = campaigns.find((c) => c.id === clash?.campaign_id)?.name;
+            toast.warning(
+              `Campaign created, but the tag "${tag}" already adds leads to ${owner ?? 'another campaign'}. Pick a different tag in this campaign's Auto-add from GHL section.`
+            );
+          } else {
+            toast.warning(
+              `Campaign created, but the GHL tag rule was not saved (${msg || 'unknown error'}). Add it in this campaign's Auto-add from GHL section.`
+            );
+          }
+        }
+        loadRules();
+      }
       setNewCampaignOpen(false);
       setNewCampaignName('');
+      setNewCampaignTag('');
+      setTagEdited(false);
       fetchCampaigns();
       setManageCampaignId(campaign.id);
     } catch (e) {
@@ -237,6 +328,7 @@ export function Campaigns({
                         <div className="text-meta text-text-secondary">
                           Created {formatDate(campaign.created_at)}
                         </div>
+                        {showTagChips && <CampaignTagChips tags={tagsFor(campaign.id)} />}
                       </TableCell>
                       <TableCell>
                         <span
@@ -316,6 +408,11 @@ export function Campaigns({
                       {campaign.status.charAt(0).toUpperCase() + campaign.status.slice(1)}
                     </span>
                   </div>
+                  {showTagChips && (
+                    <div className="mb-2">
+                      <CampaignTagChips tags={tagsFor(campaign.id)} />
+                    </div>
+                  )}
                   <div className="text-meta text-text-secondary mb-1">
                     {campaign.lines} lines · {Number(campaign.connect_rate ?? 0).toFixed(1)}%
                     connect
@@ -376,7 +473,7 @@ export function Campaigns({
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.95 }}
               onClick={(e) => e.stopPropagation()}
-              className="w-[88vw] max-w-[280px] sm:w-[80vw] sm:max-w-[300px] rounded-app-lg border border-border-subtle bg-surface-1 p-4 sm:p-5 shadow-app-md outline-none"
+              className="w-[88vw] max-w-[320px] sm:w-[80vw] sm:max-w-[360px] rounded-app-lg border border-border-subtle bg-surface-1 p-4 sm:p-5 shadow-app-md outline-none"
               role="dialog"
               aria-modal="true"
               aria-labelledby="new-campaign-title"
@@ -389,12 +486,44 @@ export function Campaigns({
                 value={newCampaignName}
                 onChange={(e) => {
                   setNewCampaignName(e.target.value);
+                  if (!tagEdited) setNewCampaignTag(suggestCampaignTag(e.target.value));
                   setCreateError(null);
                 }}
                 placeholder="Campaign name"
                 className="w-full bg-surface-2 border border-border-subtle rounded-app-md px-4 py-3 text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent-to mb-4"
                 onKeyDown={(e) => e.key === 'Enter' && handleCreateCampaign()}
               />
+              {showTagField && (
+                <div className="mb-4">
+                  <label
+                    htmlFor="new-campaign-tag"
+                    className="block text-meta text-text-secondary mb-1"
+                  >
+                    Auto-add GHL leads tagged (optional)
+                  </label>
+                  <input
+                    id="new-campaign-tag"
+                    type="text"
+                    value={newCampaignTag}
+                    onChange={(e) => {
+                      setNewCampaignTag(e.target.value);
+                      setTagEdited(true);
+                    }}
+                    placeholder="hd-your-campaign"
+                    autoCapitalize="none"
+                    className="w-full bg-surface-2 border border-border-subtle rounded-app-md px-4 py-2 text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent-to"
+                  />
+                  <p className="text-meta text-text-muted mt-1">
+                    n8n puts this tag on each lead for this campaign. Clear it to skip.
+                  </p>
+                  {!ghlPullOn && (
+                    <p className="text-meta text-warning mt-1" role="status">
+                      Leads are only added while &ldquo;Also check GHL every 5 minutes&rdquo; is
+                      switched on in Settings → Integrations → GoHighLevel (it is off now).
+                    </p>
+                  )}
+                </div>
+              )}
               {createError && <p className="text-body text-danger mb-4">{createError}</p>}
               <div className="flex justify-end gap-2">
                 <Button

@@ -106,8 +106,13 @@ function RecentLeads({ intake }: { intake: GhlIntakeSummary | undefined }) {
               and add a tag &rarr; campaign rule in &ldquo;Tag/stage &rarr; campaign mappings&rdquo;
               below.
             </li>
-            <li>Create the GoHighLevel workflow (&ldquo;Set up in GoHighLevel&rdquo; below).</li>
-            <li>Add that tag to a test contact in GoHighLevel. It shows up here within seconds.</li>
+            <li>
+              Create the one GoHighLevel workflow (&ldquo;Set up in GoHighLevel&rdquo; below).
+            </li>
+            <li>
+              Create a test contact in GoHighLevel with that tag and a phone number. It shows up
+              here within seconds.
+            </li>
           </ol>
         </div>
       ) : (
@@ -313,11 +318,14 @@ export function GhlWebhookCard() {
                 scratch).
               </li>
               <li>
-                <span className="text-white">For new leads:</span> Trigger &ldquo;Contact Tag&rdquo;
-                with the filter &ldquo;Tag Added&rdquo; set to the tags in your rules (for example{' '}
-                <code className="text-white">hd-frisco</code>), or &ldquo;Contact Created&rdquo; if
-                every new contact should be considered. Tag triggers only fire for tags added after
-                the workflow is published.
+                <span className="text-white">For new leads (one workflow for ALL campaigns):</span>{' '}
+                Trigger &ldquo;Contact Created&rdquo;, no filter. You set this up once and never
+                edit it: adding a campaign later needs no change in GoHighLevel. n8n must put the
+                campaign&rsquo;s tag (shown on the Campaigns list, for example{' '}
+                <code className="text-white">hd-mckinney</code>) on the contact when it creates it,
+                together with the phone number. If the tag is added in a later step, the 5-minute
+                check adds the lead instead (or use the trigger &ldquo;Contact Tag&rdquo; with the
+                filter &ldquo;Tag Added&rdquo; as an alternative).
               </li>
               <li>
                 <span className="text-white">For do-not-call, signed-up and owner changes:</span>{' '}
@@ -339,8 +347,8 @@ export function GhlWebhookCard() {
                 <code className="text-white">{'{{location.id}}'}</code>.
               </li>
               <li>
-                Save and publish the workflow, then add the tag to a test contact and watch
-                &ldquo;Recent leads&rdquo; above. A full walkthrough, including n8n, is in
+                Save and publish the workflow, then create a test contact with a campaign tag and
+                watch &ldquo;Recent leads&rdquo; above. A full walkthrough, including n8n, is in
                 docs/guides/ghl-instant-intake.md.
               </li>
             </ol>
