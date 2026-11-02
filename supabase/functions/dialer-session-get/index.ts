@@ -173,17 +173,24 @@ Deno.serve(async (req) => {
       }>
     > = {};
     if (contactIds.length > 0) {
-      const { data: historyRows, error: historyError } = await supabase
+      let historyQuery = supabase
         .from('call_legs')
         .select(
           'id, contact_id, created_at, outcome, duration_seconds, notes, callback_at, recording_status, recording_path, ' +
-            'disposition:dispositions(label)'
+            'disposition:dispositions(label)' +
+            // TASK-H14: an agent (intern) sees only their OWN past calls on a contact, never a teammate's.
+            (role === 'agent'
+              ? ', own_session:dial_sessions!call_legs_session_id_fkey!inner(agent_id)'
+              : '')
         )
         .eq('org_id', orgId)
         .eq('kind', 'contact')
         .eq('state', 'ended')
-        .in('contact_id', contactIds)
-        .order('created_at', { ascending: false });
+        .in('contact_id', contactIds);
+      if (role === 'agent') historyQuery = historyQuery.eq('own_session.agent_id', user.id);
+      const { data: historyRows, error: historyError } = await historyQuery.order('created_at', {
+        ascending: false,
+      });
       if (historyError) {
         return new Response(JSON.stringify({ error: historyError.message }), {
           status: 500,
