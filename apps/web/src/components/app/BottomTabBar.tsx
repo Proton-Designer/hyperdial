@@ -10,6 +10,7 @@ import {
   UsersRound,
   Headphones,
   Inbox as InboxIcon,
+  BadgeCheck,
   Settings,
   LogOut,
   CalendarClock,
@@ -176,6 +177,19 @@ export function BottomTabBar({ activeTab, onTabChange, isManager }: BottomTabBar
               <InboxIcon className="w-5 h-5 text-text-secondary" />
               Inbox
             </button>
+            {isManagerOrBetter && (
+              <button
+                type="button"
+                onClick={() => {
+                  onTabChange('pros');
+                  setMoreOpen(false);
+                }}
+                className="flex items-center gap-3 rounded-app-md px-3 py-3 text-text-primary hover:bg-white/5"
+              >
+                <BadgeCheck className="w-5 h-5 text-text-secondary" />
+                Onboarded pros
+              </button>
+            )}
             <button
               type="button"
               onClick={() => {

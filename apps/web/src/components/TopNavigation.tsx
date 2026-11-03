@@ -30,6 +30,7 @@ const TAB_LABELS: Record<TabType, string> = {
   team: 'Team',
   recordings: 'Recordings',
   inbox: 'Inbox',
+  pros: 'Onboarded pros',
   shifts: 'Shifts',
   team_shifts: 'Team Shifts',
   settings: 'Settings',

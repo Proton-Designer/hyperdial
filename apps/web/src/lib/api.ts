@@ -6381,6 +6381,76 @@ export interface LogContactCloseResult {
   contactCreated?: boolean;
 }
 
+/** TASK-H25: one onboarded pro = a contact's LATEST close (list_onboarded_pros, owner/admin/manager only). */
+export interface OnboardedPro {
+  closeId: string;
+  contactId: string;
+  businessName: string;
+  ownerName: string;
+  mobile: string;
+  email: string | null;
+  services: string[];
+  cities: string[];
+  frequencies: CloseFrequency[];
+  insured: boolean;
+  bestContact: string | null;
+  startingPrice: number | null;
+  capacity: number | null;
+  yearsInBusiness: number | null;
+  closedBy: string;
+  closedByName: string | null;
+  closedAt: string;
+  closeCount: number;
+}
+
+export interface OnboardedProsResult {
+  pros: OnboardedPro[];
+  /** All pros in the org; greater than pros.length when the list was cut. */
+  total: number;
+}
+
+function numOrNull(v: unknown): number | null {
+  if (v === null || v === undefined || v === '') return null;
+  const n = typeof v === 'number' ? v : Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+export async function listOnboardedPros(): Promise<OnboardedProsResult> {
+  const orgId = await getActiveOrgId();
+  const { data, error } = await supabase.rpc('list_onboarded_pros', { p_org_id: orgId });
+  if (error) throw new Error(error.message);
+  const rows = (data ?? []) as Record<string, unknown>[];
+  const pros = rows.map((r) => ({
+    closeId: r.close_id as string,
+    contactId: r.contact_id as string,
+    businessName: (r.business_name as string | null) ?? '',
+    ownerName: (r.owner_name as string | null) ?? '',
+    mobile: (r.mobile as string | null) ?? '',
+    email: (r.email as string | null) ?? null,
+    services: (r.services as string[] | null) ?? [],
+    cities: (r.cities as string[] | null) ?? [],
+    frequencies: (r.frequencies as CloseFrequency[] | null) ?? [],
+    insured: r.insured === true,
+    bestContact: (r.best_contact as string | null) ?? null,
+    startingPrice: numOrNull(r.starting_price),
+    capacity: numOrNull(r.capacity),
+    yearsInBusiness: numOrNull(r.years_in_business),
+    closedBy: r.closed_by as string,
+    closedByName: (r.closed_by_name as string | null) ?? null,
+    closedAt: r.closed_at as string,
+    closeCount: numOrNull(r.close_count) ?? 1,
+  }));
+  const total = rows.length > 0 ? (numOrNull(rows[0].total_count) ?? pros.length) : 0;
+  return { pros, total: Math.max(total, pros.length) };
+}
+
+/** One contact by id, or null when it does not exist / the caller cannot read it (RLS). */
+export async function getContactById(id: string): Promise<Contact | null> {
+  const { data, error } = await supabase.from('contacts').select('*').eq('id', id).maybeSingle();
+  if (error) throw new Error(error.message);
+  return (data as Contact | null) ?? null;
+}
+
 /** log-contact-close: stores the close, marks the contact 'Closed', queues delivery to the org's closes webhook. */
 export async function logContactClose(input: LogContactCloseInput): Promise<LogContactCloseResult> {
   const res = await fetch(`${getFunctionsUrl()}/log-contact-close`, {

@@ -7,8 +7,11 @@
 /** RFC 4180: a field needs quoting when it contains a comma, a quote, or a newline; an embedded
  *  quote is escaped by doubling it. Never quotes a field that doesn't need it (keeps the common
  *  case, a plain number or short label, readable). */
-function csvField(value: unknown): string {
-  const s = value === null || value === undefined ? '' : String(value);
+function csvField(value: unknown, neutralize = false): string {
+  let s = value === null || value === undefined ? '' : String(value);
+  // TASK-H25: a cell starting with = + - @ (or tab / CR) is run as a formula by Excel/Sheets. Typed free text
+  // (business names, services) must not be able to carry one: a leading apostrophe makes it plain text.
+  if (neutralize && /^[=+\-@\t\r]/.test(s)) s = `'${s}`;
   if (/[",\n]/.test(s)) {
     return `"${s.replace(/"/g, '""')}"`;
   }
@@ -17,10 +20,12 @@ function csvField(value: unknown): string {
 
 export function rowsToCsv<T extends object>(
   columns: { key: keyof T; label: string }[],
-  rows: T[]
+  rows: T[],
+  opts?: { neutralizeFormulas?: boolean }
 ): string {
+  const safe = opts?.neutralizeFormulas === true;
   const header = columns.map((c) => csvField(c.label)).join(',');
-  const lines = rows.map((row) => columns.map((c) => csvField(row[c.key])).join(','));
+  const lines = rows.map((row) => columns.map((c) => csvField(row[c.key], safe)).join(','));
   return [header, ...lines].join('\r\n');
 }
 

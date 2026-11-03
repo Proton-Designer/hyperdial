@@ -8,6 +8,7 @@ import {
   UsersRound,
   Headphones,
   Inbox as InboxIcon,
+  BadgeCheck,
   CalendarClock,
   CalendarRange,
   Settings,
@@ -56,6 +57,8 @@ const tabs: NavTab[] = [
   // MISSION-5 TASK-M5-G6: no minRole -- an agent always sees their own missed calls
   // (`private.can_view_inbox_item`), same "server narrows, tab stays visible" shape as Recordings.
   { id: 'inbox', icon: InboxIcon, label: 'Inbox' },
+  // TASK-H25: owner/admin/manager only (list_onboarded_pros is role- and pod-scoped server-side); agents never see it.
+  { id: 'pros', icon: BadgeCheck, label: 'Pros', minRole: 'manager' },
   // Shifts (TASK-F01): `shifts` shows to every role once the org has it switched on;
   // `team_shifts` is manager-level and always shows (it carries the "Enable Shifts" setup card).
   { id: 'shifts', icon: CalendarClock, label: 'Shifts' },

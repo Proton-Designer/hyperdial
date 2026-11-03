@@ -11,6 +11,7 @@ import { Analytics } from './Analytics';
 import { Team } from './Team';
 import { Recordings } from './Recordings';
 import { Inbox } from './Inbox';
+import { Pros } from './Pros';
 import { useAuth } from '@/contexts/AuthContext';
 import { Settings, type SettingsSection } from './Settings';
 import { Shifts } from './Shifts';
@@ -29,6 +30,7 @@ export type TabType =
   | 'team'
   | 'recordings'
   | 'inbox'
+  | 'pros'
   | 'shifts'
   | 'team_shifts'
   | 'settings';
@@ -74,6 +76,7 @@ const MANAGER_ALLOWED_TABS: readonly TabType[] = [
   'team',
   'recordings',
   'inbox',
+  'pros',
   'shifts',
   'team_shifts',
   'settings',
@@ -93,6 +96,7 @@ const TAB_PATHS: Record<TabType, string> = {
   team: '/team',
   recordings: '/recordings',
   inbox: '/inbox',
+  pros: '/pros',
   shifts: '/shifts',
   team_shifts: '/team-shifts',
   settings: '/settings',
@@ -343,6 +347,11 @@ export function MainApp() {
           {activeTab === 'inbox' && (
             <PageTransition>
               <Inbox onNavigateToDialer={() => setActiveTab('dialer')} />
+            </PageTransition>
+          )}
+          {activeTab === 'pros' && (
+            <PageTransition>
+              <Pros />
             </PageTransition>
           )}
           {activeTab === 'shifts' && (
