@@ -43,21 +43,17 @@ export function isViewAsAllowed(fnName: string | null, method: string): boolean 
 }
 
 /**
- * The function the gateway routes this request to: the FIRST segment after `/functions/v1/` (inside the runtime the prefix may
- * already be stripped, so the first segment is then the name). Any extra path segment returns null (= deny): the gateway
- * routes `/functions/v1/dialer-session-start/dashboard-stats` to dialer-session-start, so taking the LAST segment would let
- * a view token pass an allowlisted name in front of a write function.
+ * The function the gateway routes this request to, from the RAW url string (never the parsed pathname: `new URL` resolves
+ * `%2e%2e` and `..`, so `/dialer-session-start/%2e%2e/dashboard-stats` would parse as `/dashboard-stats` while the gateway
+ * still routes on `dialer-session-start`). Only `/name`, `/functions/v1/name` (prefix at the very start only) and an optional
+ * trailing slash are accepted, `name` being plain [a-z0-9-]+. Everything else (extra segments, %-encoding, dots, backslashes,
+ * a repeated prefix) returns null = deny.
  */
 export function functionNameFromUrl(url: string): string | null {
-  try {
-    const segs = new URL(url).pathname.split('/').filter(Boolean);
-    const i = segs.findIndex((x, k) => x === 'functions' && segs[k + 1] === 'v1');
-    const rest = i >= 0 ? segs.slice(i + 2) : segs;
-    if (rest.length !== 1) return null;
-    return decodeURIComponent(rest[0]);
-  } catch {
-    return null;
-  }
+  const m = /^[a-z][a-z0-9+.-]*:\/\/[^/?#]*(\/[^?#]*)?(?:[?#].*)?$/i.exec(url);
+  const path = m?.[1] ?? '';
+  const n = /^\/(?:functions\/v1\/)?([a-z0-9-]+)\/?$/.exec(path);
+  return n ? n[1] : null;
 }
 
 /**
@@ -95,18 +91,20 @@ const CACHE_TTL_MS = 60_000;
 const CACHE_MAX = 500;
 // Per-isolate. Safe to cache both answers: the view_as_sessions row is written BEFORE its token is handed out (so a "not a
 // view session" answer can never predate the row), and an ended session is already refused by GoTrue's getUser.
-const cache = new Map<string, { at: number; row: ViewAsRow | null }>();
+const cache = new Map<string, { at: number; row: ViewAsRow | null; basisOk: boolean }>();
 
 export function clearViewAsCache() {
   cache.clear();
 }
 
-export async function lookupViewAsSession(
+/** The view_as_sessions row (null = not a view-as session) and whether its basis still holds (viewer owner/admin, target
+ *  active agent of that org only). Cached 60 s; the basis check runs only for view sessions. */
+export async function lookupViewAs(
   supabase: SupabaseAny,
   sessionId: string
-): Promise<ViewAsRow | null> {
+): Promise<{ row: ViewAsRow | null; basisOk: boolean }> {
   const hit = cache.get(sessionId);
-  if (hit && Date.now() - hit.at < CACHE_TTL_MS) return hit.row;
+  if (hit && Date.now() - hit.at < CACHE_TTL_MS) return { row: hit.row, basisOk: hit.basisOk };
   const { data, error } = await supabase
     .from('view_as_sessions')
     .select('session_id, org_id, viewer_id, target_id, ended_at')
@@ -114,9 +112,24 @@ export async function lookupViewAsSession(
     .maybeSingle();
   if (error) throw new Error(error.message);
   const row = (data as ViewAsRow | null) ?? null;
+  let basisOk = true;
+  if (row && !row.ended_at) {
+    const { data: ok, error: bErr } = await supabase.rpc('view_as_basis_ok', {
+      p_session_id: sessionId,
+    });
+    if (bErr) throw new Error(bErr.message);
+    basisOk = ok === true;
+  }
   if (cache.size >= CACHE_MAX) cache.clear();
-  cache.set(sessionId, { at: Date.now(), row });
-  return row;
+  cache.set(sessionId, { at: Date.now(), row, basisOk });
+  return { row, basisOk };
+}
+
+export async function lookupViewAsSession(
+  supabase: SupabaseAny,
+  sessionId: string
+): Promise<ViewAsRow | null> {
+  return (await lookupViewAs(supabase, sessionId)).row;
 }
 
 function deny(status: number, error: string): Response {
@@ -135,14 +148,37 @@ export async function checkViewAs(
   const sessionId = jwtSessionId(token);
   if (!sessionId) return null; // no session claim: not a GoTrue user session, nothing to restrict
   let row: ViewAsRow | null;
+  let basisOk: boolean;
   try {
-    row = await lookupViewAsSession(supabase, sessionId);
+    ({ row, basisOk } = await lookupViewAs(supabase, sessionId));
   } catch (err) {
     console.error('[view-as-guard] lookup failed, failing closed', err);
     return deny(503, 'Could not verify the session. Try again.');
   }
   if (!row) return null;
   if (row.ended_at) return deny(401, 'This view-only session has ended.');
+  if (!basisOk) {
+    // viewer demoted/removed, or target promoted/removed/in another org: end it now so the open tab stops refreshing
+    try {
+      const { data: ended } = await supabase.rpc('view_as_end', {
+        p_session_id: sessionId,
+        p_reason: 'basis_lost',
+      });
+      if (ended?.[0]?.was_open) {
+        await supabase.from('org_audit_log').insert({
+          org_id: row.org_id,
+          actor_user_id: row.viewer_id,
+          action: 'view_as.stop',
+          target_type: 'user',
+          target_id: row.target_id,
+          details: { session_id: sessionId, reason: 'basis_lost' },
+        });
+      }
+    } catch (err) {
+      console.error('[view-as-guard] ending a session whose basis is gone failed', err);
+    }
+    return deny(401, 'This view-only session has ended.');
+  }
   if (isViewAsAllowed(functionNameFromUrl(req.url), req.method)) return null;
   return deny(403, 'View-only');
 }

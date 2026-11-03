@@ -14,13 +14,29 @@ function jwt(claims: Record<string, unknown>): string {
     btoa(JSON.stringify(o)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
   return `${enc({ alg: 'HS256' })}.${enc(claims)}.sig`;
 }
-function fakeDb(row: Record<string, unknown> | null, error: string | null = null) {
+function fakeDb(row: Record<string, unknown> | null, error: string | null = null, basisOk = true) {
   let calls = 0;
+  const rpcCalls: string[] = [];
+  const audits: unknown[] = [];
   return {
     get calls() {
       return calls;
     },
-    from() {
+    rpcCalls,
+    audits,
+    rpc(name: string) {
+      rpcCalls.push(name);
+      if (name === 'view_as_basis_ok') return Promise.resolve({ data: basisOk, error: null });
+      return Promise.resolve({ data: [{ was_open: true }], error: null });
+    },
+    from(table: string) {
+      if (table === 'org_audit_log')
+        return {
+          insert(v: unknown) {
+            audits.push(v);
+            return Promise.resolve({ error: null });
+          },
+        };
       return {
         select() {
           return {
@@ -50,26 +66,38 @@ Deno.test('jwtSessionId: reads the claim, rejects junk', () => {
   assertEquals(jwtSessionId('a.%%%.c'), null);
 });
 
-Deno.test('functionNameFromUrl', () => {
+Deno.test('functionNameFromUrl: exactly one plain name; everything else denied', () => {
+  const H = 'https://x.supabase.co';
   assertEquals(
-    functionNameFromUrl('https://x.supabase.co/functions/v1/dialer-session-get?x=1'),
+    functionNameFromUrl(`${H}/functions/v1/dialer-session-get?x=1`),
     'dialer-session-get'
   );
-  assertEquals(
-    functionNameFromUrl('https://x.supabase.co/dialer-session-get'),
-    'dialer-session-get'
-  );
+  assertEquals(functionNameFromUrl(`${H}/dialer-session-get`), 'dialer-session-get');
+  assertEquals(functionNameFromUrl(`${H}/functions/v1/dashboard-stats/`), 'dashboard-stats');
   assertEquals(functionNameFromUrl('not a url'), null);
-  // extra path segments are never allowed (the gateway routes on the first segment)
-  assertEquals(
-    functionNameFromUrl('https://x.supabase.co/functions/v1/dialer-session-start/dashboard-stats'),
-    null
-  );
-  assertEquals(
-    functionNameFromUrl('https://x.supabase.co/functions/v1/dashboard-stats/'),
-    'dashboard-stats'
-  );
-  assertEquals(functionNameFromUrl('https://x.supabase.co/functions/v1/'), null);
+  for (const bad of [
+    '/functions/v1/dialer-session-start/dashboard-stats',
+    '/dialer-session-start/dashboard-stats',
+    // prefix repeated (runtime strips the first one): must not read as the allowlisted tail
+    '/dialer-session-start/functions/v1/dashboard-stats',
+    '/functions/v1/dialer-session-start/functions/v1/dashboard-stats',
+    '/functions/v1/dialer-session-start%2Fdashboard-stats',
+    '/dialer-session-start%2Fdashboard-stats',
+    '/x/%2e%2e/dashboard-stats',
+    '/dialer-session-start/%2e%2e/dashboard-stats',
+    '/dialer-session-start/../dashboard-stats',
+    '/dialer-session-start/./dashboard-stats',
+    '/dialer-session-start\\dashboard-stats',
+    '/functions/v1/',
+    '/functions/v1',
+    '/',
+    '',
+    '/Dashboard-Stats%00',
+    '/dashboard_stats',
+    '//dashboard-stats',
+  ]) {
+    assertEquals(functionNameFromUrl(`${H}${bad}`), null, bad);
+  }
 });
 
 Deno.test('allowlist: default deny, method must match, no write function listed', () => {
@@ -108,15 +136,48 @@ Deno.test('allowlist: default deny, method must match, no write function listed'
   }
 });
 
-Deno.test('checkViewAs: allowlisted name AFTER a write function name is refused', async () => {
-  clearViewAsCache();
-  const r = await checkViewAs(
-    fakeDb(viewRow),
-    jwt({ session_id: SID }),
-    req('dialer-session-start/dashboard-stats', 'GET')
-  );
-  assertEquals(r?.status, 403);
-});
+// A `Request` already collapses %2e%2e in req.url, so the raw dot-segment forms are tested on functionNameFromUrl only;
+// whether the gateway routes before or after that collapse is a LIVE probe item.
+Deno.test(
+  'checkViewAs: an allowlisted name hidden behind a write function name is refused',
+  async () => {
+    for (const p of [
+      'dialer-session-start/dashboard-stats',
+      'dialer-session-start/functions/v1/dashboard-stats',
+      'dialer-session-start%2Fdashboard-stats',
+      'dialer-session-start/functions/v1/recording-url',
+    ]) {
+      clearViewAsCache();
+      for (const method of ['GET', 'POST']) {
+        const r = await checkViewAs(fakeDb(viewRow), jwt({ session_id: SID }), req(p, method));
+        assertEquals(r?.status, 403, `${method} ${p}`);
+      }
+    }
+  }
+);
+
+Deno.test(
+  'checkViewAs: basis lost (viewer demoted/removed, target promoted/other org) -> 401, session ended and audited once',
+  async () => {
+    clearViewAsCache();
+    const db = fakeDb(viewRow, null, false);
+    const r = await checkViewAs(db, jwt({ session_id: SID }), req('dialer-session-get'));
+    assertEquals(r?.status, 401);
+    assertEquals(db.rpcCalls, ['view_as_basis_ok', 'view_as_end']);
+    assertEquals(db.audits.length, 1);
+  }
+);
+
+Deno.test(
+  'checkViewAs: CONTROL -- unchanged viewer/target pair keeps working, no end/audit',
+  async () => {
+    clearViewAsCache();
+    const db = fakeDb(viewRow, null, true);
+    assertEquals(await checkViewAs(db, jwt({ session_id: SID }), req('dialer-session-get')), null);
+    assertEquals(db.rpcCalls, ['view_as_basis_ok']);
+    assertEquals(db.audits.length, 0);
+  }
+);
 
 Deno.test('checkViewAs: normal session passes; positive control for the denial below', async () => {
   clearViewAsCache();
