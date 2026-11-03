@@ -52,7 +52,7 @@ insert into public.contacts (id, user_id, org_id, business_name, owner_contact, 
 insert into public.campaigns (id, org_id, user_id, name, calling_window_start, calling_window_end, max_attempts, retry_interval_minutes)
   values ('a24a2000-a000-4000-8000-00000000000a', 'a24a0000-a000-4000-8000-0000000000a1', 'a24a0000-a000-4000-8000-000000000001', 'H24 Campaign', '00:00', '23:59', 3, 45);
 insert into public.campaign_leads (id, campaign_id, contact_id, org_id, status, attempts)
-  values ('a24a5000-a000-4000-8000-00000000000a', 'a24a2000-a000-4000-8000-00000000000a', 'a24a0000-a000-4000-8000-0000000000c9', 'a24a0000-a000-4000-8000-0000000000a1', 'pending', 0);
+  values ('a24a5000-a000-4000-8000-00000000000a', 'a24a2000-a000-4000-8000-00000000000a', 'a24a0000-a000-4000-8000-0000000000c9', 'a24a0000-a000-4000-8000-0000000000a1', 'queued', 0);
 insert into public.campaign_agents (campaign_id, user_id, org_id)
   values ('a24a2000-a000-4000-8000-00000000000a', 'a24a0000-a000-4000-8000-000000000008', 'a24a0000-a000-4000-8000-0000000000a1');
 -- inbound calls: c1's number called in 1 hour ago (org A); c5's number 8 days ago; c6's number only in org B
@@ -127,6 +127,11 @@ insert into t_res select 'same number, other format: same contact, close deduped
 -- 4. a DIFFERENT agent, same number, now an existing contact created by the first agent: no access, no inbound -> refused
 insert into r_cap select 'r4', pg_temp.run_as('a24a0000-a000-4000-8000-000000000003', pg_temp.byphone('a24a0000-a000-4000-8000-0000000000a1', '+13185550199', 'New Owner', 'New Biz LLC'));
 insert into t_res select 'contact created by agent 1: agent 2 (no access, no inbound) is refused, not given the contact', (select v from r_cap where k='r4') like 'ERR 42501%' and pg_temp.n_closes('a24a0000-a000-4000-8000-0000000000a1') >= 1 and (select count(*) from public.contact_closes where contact_id = ((select v from r_cap where k='r2')::jsonb ->> 'contact_id')::uuid) = 1, (select v from r_cap where k='r4');
+
+-- 4b. contacts.user_id alone is NOT access: a contact whose user_id is agent 2 but that agent 2 never closed and cannot read
+insert into public.contacts (id, user_id, org_id, business_name, phone_number, contact_status) values
+  ('a24a0000-a000-4000-8000-0000000000ca', 'a24a0000-a000-4000-8000-000000000003', 'a24a0000-a000-4000-8000-0000000000a1', 'Owned By Agent2', '+13185550110', 'No Contact');
+insert into t_res select 'contact with user_id = the agent but no close by them and no access: refused 42501, nothing written', pg_temp.run_as('a24a0000-a000-4000-8000-000000000003', pg_temp.byphone('a24a0000-a000-4000-8000-0000000000a1', '+13185550110', 'N', 'Biz')) like 'ERR 42501%' and not exists (select 1 from public.contact_closes where contact_id = 'a24a0000-a000-4000-8000-0000000000ca'), null;
 
 -- 5. a number that exists only in ANOTHER org: a new contact in this org (no cross-org match), the other org's contact untouched
 insert into r_cap select 'r5', pg_temp.run_as('a24a0000-a000-4000-8000-000000000001', pg_temp.byphone('a24a0000-a000-4000-8000-0000000000a1', '+13185550102', 'O', 'Cross Biz'));
