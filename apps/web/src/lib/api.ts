@@ -6461,3 +6461,46 @@ export function retryCloseDeliveries(
 ): Promise<{ requeued: number; sent: number; failed: number }> {
   return callCloseSettings({ action: 'retry', ...(closeId ? { closeId } : {}) });
 }
+
+// --- TASK-H21: view as intern (view-as-start / view-as-stop; contract in audit/H21/contract.md) ---
+
+export interface ViewAsStartResult {
+  accessToken: string;
+  refreshToken: string;
+  /** Epoch seconds the access token expires; the view client refreshes it by itself. */
+  expiresAt: number | null;
+  sessionId: string;
+  orgId: string;
+  target: { userId: string; name: string };
+}
+
+/** Owner/admin only. Call with the VIEWER's own client (their normal session). Rejects with the server message and a `code`
+ *  of 'self' | 'not_an_agent' | 'multi_org' when the target cannot be viewed. */
+export async function startViewAs(targetUserId: string): Promise<ViewAsStartResult> {
+  const res = await fetch(`${getFunctionsUrl()}/view-as-start`, {
+    method: 'POST',
+    headers: await getEdgeFunctionHeaders(),
+    body: JSON.stringify({ targetUserId }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw Object.assign(new Error(data.error || 'Could not open the view'), {
+      code: data.code as string | undefined,
+    });
+  }
+  return data as ViewAsStartResult;
+}
+
+/** Exit. With the view-as client (its own session) pass nothing; with the viewer's normal client pass the sessionId to end. */
+export async function stopViewAs(
+  sessionId?: string
+): Promise<{ ended: true; alreadyEnded: boolean }> {
+  const res = await fetch(`${getFunctionsUrl()}/view-as-stop`, {
+    method: 'POST',
+    headers: await getEdgeFunctionHeaders(),
+    body: JSON.stringify(sessionId ? { sessionId } : {}),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || 'Could not end the view');
+  return data as { ended: true; alreadyEnded: boolean };
+}

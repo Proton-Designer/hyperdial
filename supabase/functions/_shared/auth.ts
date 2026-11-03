@@ -1,5 +1,6 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { corsHeaders } from './cors.ts';
+import { checkViewAs } from './view-as-guard.ts';
 
 // MISSION-5 TASK-M5-A5: 'manager' added. requireOrgRole is a generic gate -- widening this type
 // alone grants nothing; a call site only admits a manager when it explicitly lists 'manager' in
@@ -43,6 +44,10 @@ export async function getUserFromRequest(
       ),
     };
   }
+
+  // TASK-H21: a "view as intern" session is restricted to an allowlist of read-only functions (default deny).
+  const viewAsBlock = await checkViewAs(supabase, token, req);
+  if (viewAsBlock) return { user: { id: '' }, error: viewAsBlock };
 
   return { user, error: null };
 }

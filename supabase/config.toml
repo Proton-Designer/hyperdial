@@ -444,6 +444,12 @@ verify_jwt = false
 # without this the gateway 401s every tick. Fails closed in code when the secret is unset.
 verify_jwt = false
 
+# TASK-H21: custom auth (requireOrgRole / getUserFromRequest) like every user-facing function here.
+[functions.view-as-start]
+verify_jwt = false
+[functions.view-as-stop]
+verify_jwt = false
+
 # Parallel dialer (auth required except webhook)
 [functions.dialer-session-start]
 verify_jwt = false
