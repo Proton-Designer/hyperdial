@@ -837,7 +837,8 @@ function DialerBody({
   parallelNowRef.current = isParallelMode;
   useEffect(() => {
     if (callState === 'connected') {
-      if (!parallelNowRef.current && lastCallRef.current) connectedOutsideSessionRef.current = true;
+      if (parallelNowRef.current) lastCallRef.current = null;
+      else if (lastCallRef.current) connectedOutsideSessionRef.current = true;
       return;
     }
     if (callState === 'ended' || callState === 'idle') {
@@ -846,6 +847,7 @@ function DialerBody({
         setPostCalls((prev) =>
           [{ id: `${Date.now()}-${number}`, number, direction }, ...prev].slice(0, 5)
         );
+        lastCallRef.current = null;
       }
       connectedOutsideSessionRef.current = false;
     }

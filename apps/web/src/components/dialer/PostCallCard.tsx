@@ -97,7 +97,7 @@ export function PostCallCard({ call, onDismiss }: { call: PostCall; onDismiss: (
           draftKey={`postcall:${call.id}`}
           byPhone
           contactId={known?.contactId ?? undefined}
-          name={known && known.name !== '—' ? known.name : ''}
+          name={known ? (known.name === '—' ? call.number : known.name) : ''}
           phone={call.number}
           onSaved={() => setSaved(true)}
           onClose={() => setLogging(false)}

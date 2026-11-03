@@ -56,6 +56,12 @@ export function emptyCloseDraftValues(name: string, phone: string): CloseDraftVa
 }
 
 let current: CloseDraftState | null = null;
+// TASK-H24: the contact modal ("contact:<id>") and the post-call card ("postcall:<id>") keep their OWN drafts, so
+// opening them mid-call can never replace the live call's draft (the one-draft rule below is for session legs only).
+const SIDE_PREFIXES = ['contact:', 'postcall:'];
+const SIDE_MAX = 5;
+const side = new Map<string, CloseDraftState>();
+const isSideKey = (key: string) => SIDE_PREFIXES.some((p) => key.startsWith(p));
 const listeners = new Set<() => void>();
 
 function emit() {
@@ -64,6 +70,15 @@ function emit() {
 
 /** Make `key` the live draft, dropping any other leg's. Idempotent; safe to call while rendering. */
 export function ensureCloseDraft(key: string, name: string, phone: string): CloseDraftState {
+  if (isSideKey(key)) {
+    let d = side.get(key);
+    if (!d) {
+      d = { key, values: emptyCloseDraftValues(name, phone), submitting: false, done: null };
+      side.set(key, d);
+      if (side.size > SIDE_MAX) side.delete(side.keys().next().value as string);
+    }
+    return d;
+  }
   if (current?.key !== key) {
     current = {
       key,
@@ -79,6 +94,14 @@ export function patchCloseDraft(
   key: string,
   patch: Partial<CloseDraftState> | ((s: CloseDraftState) => Partial<CloseDraftState>)
 ) {
+  if (isSideKey(key)) {
+    const d = side.get(key);
+    if (!d) return;
+    const p = typeof patch === 'function' ? patch(d) : patch;
+    side.set(key, { ...d, ...p });
+    emit();
+    return;
+  }
   if (current?.key !== key) return;
   const p = typeof patch === 'function' ? patch(current) : patch;
   current = { ...current, ...p };
@@ -97,6 +120,7 @@ export function patchCloseDraftValues(
 /** Clears the draft: on sign-out (AuthContext) and in tests. */
 export function resetCloseDraft() {
   current = null;
+  side.clear();
   emit();
 }
 
@@ -111,8 +135,8 @@ export function useCloseDraft(key: string, name: string, phone: string) {
   ensureCloseDraft(key, name, phone);
   const state = useSyncExternalStore(
     subscribe,
-    () => current,
-    () => current
+    () => (isSideKey(key) ? side.get(key) : current),
+    () => (isSideKey(key) ? side.get(key) : current)
   ) as CloseDraftState;
   const patchValues = useCallback(
     (p: Parameters<typeof patchCloseDraftValues>[1]) => patchCloseDraftValues(key, p),
