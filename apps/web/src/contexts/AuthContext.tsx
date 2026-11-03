@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useState, useCallback, type ReactNode } from 'react';
 import type { User, Session } from '@supabase/supabase-js';
+import { toast } from 'sonner';
 import { supabase } from '@/lib/supabase';
 import { resetCloseDraft } from '@/lib/closeDraft';
 import { exitViewAs, isViewOnly, viewAsReady } from '@/lib/viewAs';
@@ -132,7 +133,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     resetCloseDraft();
     // TASK-H21: "sign out" in a view tab is Exit (revokes the view session; never a global sign-out of the intern).
     if (isViewOnly) {
-      await exitViewAs();
+      if ((await exitViewAs()) === 'failed')
+        toast.error('Could not confirm the exit. Use Exit in the bar above to retry.');
       return;
     }
     await supabase.auth.signOut();

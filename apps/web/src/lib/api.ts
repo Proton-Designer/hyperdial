@@ -6505,6 +6505,8 @@ export async function stopViewAs(
     body: JSON.stringify(sessionId ? { sessionId } : {}),
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || 'Could not end the view');
+  if (!res.ok) {
+    throw Object.assign(new Error(data.error || 'Could not end the view'), { status: res.status });
+  }
   return data as { ended: true; alreadyEnded: boolean };
 }
