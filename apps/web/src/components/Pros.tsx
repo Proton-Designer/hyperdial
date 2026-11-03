@@ -42,15 +42,19 @@ const money = (n: number | null) =>
 
 function matchesSearch(p: OnboardedPro, q: string): boolean {
   if (!q) return true;
+  // A phone typed with formatting, "(318) 780": compare digits only once the query has 3+ digits.
+  const qDigits = q.replace(/\D/g, '');
+  if (qDigits.length >= 3 && !/[a-z]/i.test(q) && p.mobile.replace(/\D/g, '').includes(qDigits))
+    return true;
   const hay = [p.businessName, p.ownerName, p.mobile, p.email ?? '', ...p.services, ...p.cities]
     .join(' ')
     .toLowerCase();
   return hay.includes(q);
 }
 
-function Tile({ label, value }: { label: string; value: number }) {
+function Tile({ label, value, hint }: { label: string; value: number; hint?: string }) {
   return (
-    <div className="rounded-app-lg border border-border-subtle bg-surface-1 p-4">
+    <div title={hint} className="rounded-app-lg border border-border-subtle bg-surface-1 p-4">
       <div className="text-meta text-text-secondary">{label}</div>
       <div className="text-page-title text-text-primary mt-1">{value.toLocaleString()}</div>
     </div>
@@ -313,8 +317,16 @@ export function Pros() {
           )}
           <div className="grid grid-cols-3 gap-3">
             <Tile label="Total pros" value={state.total} />
-            <Tile label="This week" value={week} />
-            <Tile label="This month" value={month} />
+            <Tile
+              label="Latest close this week"
+              value={week}
+              hint="Pros whose most recent close was this week. A pro closed again counts by that newest close."
+            />
+            <Tile
+              label="Latest close this month"
+              value={month}
+              hint="Pros whose most recent close was this month. A pro closed again counts by that newest close."
+            />
           </div>
 
           <div className="grid gap-4 md:grid-cols-3">

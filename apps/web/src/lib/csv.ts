@@ -12,6 +12,8 @@
  *  read as text. Apply to each element before joining a list into one cell. */
 export function neutralizeCell(value: string): string {
   const flat = value.replace(/[\r\n\t]+/g, ' ').trim();
+  // A bare phone number (+15125550100) starts with + but cannot be a formula: keep it as is.
+  if (/^\+\d{7,15}$/.test(flat)) return flat;
   return /^[=+\-@]/.test(flat) ? `'${flat}` : flat;
 }
 
