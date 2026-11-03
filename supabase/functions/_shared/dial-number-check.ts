@@ -15,7 +15,7 @@ export const NUMBERS_CAPPED_MESSAGE =
  * TASK-H23 F: a campaign with no fixed caller ID dials from the number pool. If the agent cannot get a pool number the
  * session used to start, answer the agent leg, then pause with 'no_numbers_available' at the first refill. Checked here
  * instead, before any agent leg exists. Same predicate as the refill (has_available_dial_number); the wording says whether
- * the agent has no usable number at all (none) or has numbers that are all capped/resting (capped).
+ * the agent has no number they could use (none) or has numbers that are all capped/resting (capped). Retired numbers never count.
  * Returns null when a number is available.
  */
 export async function checkDialNumberAvailable(
@@ -33,7 +33,8 @@ export async function checkDialNumberAvailable(
     .from('user_phone_numbers')
     .select('id', { count: 'exact', head: true })
     .eq('org_id', orgId)
-    .eq('status', 'active')
+    // 'resting' counts: a number is set to resting the moment it reaches its cap, so a capped agent usually has none 'active'
+    .in('status', ['active', 'resting'])
     .or(`assigned_user_id.is.null,assigned_user_id.eq.${agentId}`);
   if (countError) throw new Error(countError.message);
   return {
