@@ -55,7 +55,21 @@ Deno.test('functionNameFromUrl', () => {
     functionNameFromUrl('https://x.supabase.co/functions/v1/dialer-session-get?x=1'),
     'dialer-session-get'
   );
+  assertEquals(
+    functionNameFromUrl('https://x.supabase.co/dialer-session-get'),
+    'dialer-session-get'
+  );
   assertEquals(functionNameFromUrl('not a url'), null);
+  // extra path segments are never allowed (the gateway routes on the first segment)
+  assertEquals(
+    functionNameFromUrl('https://x.supabase.co/functions/v1/dialer-session-start/dashboard-stats'),
+    null
+  );
+  assertEquals(
+    functionNameFromUrl('https://x.supabase.co/functions/v1/dashboard-stats/'),
+    'dashboard-stats'
+  );
+  assertEquals(functionNameFromUrl('https://x.supabase.co/functions/v1/'), null);
 });
 
 Deno.test('allowlist: default deny, method must match, no write function listed', () => {
@@ -92,6 +106,16 @@ Deno.test('allowlist: default deny, method must match, no write function listed'
     assertEquals(isViewAsAllowed(denied, 'POST'), false, denied);
     assertEquals(isViewAsAllowed(denied, 'GET'), false, denied);
   }
+});
+
+Deno.test('checkViewAs: allowlisted name AFTER a write function name is refused', async () => {
+  clearViewAsCache();
+  const r = await checkViewAs(
+    fakeDb(viewRow),
+    jwt({ session_id: SID }),
+    req('dialer-session-start/dashboard-stats', 'GET')
+  );
+  assertEquals(r?.status, 403);
 });
 
 Deno.test('checkViewAs: normal session passes; positive control for the denial below', async () => {

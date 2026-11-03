@@ -42,11 +42,19 @@ export function isViewAsAllowed(fnName: string | null, method: string): boolean 
   return !!methods && methods.includes(method.toUpperCase());
 }
 
-/** `https://x.supabase.co/functions/v1/dialer-session-get?x=1` -> `dialer-session-get`. */
+/**
+ * The function the gateway routes this request to: the FIRST segment after `/functions/v1/` (inside the runtime the prefix may
+ * already be stripped, so the first segment is then the name). Any extra path segment returns null (= deny): the gateway
+ * routes `/functions/v1/dialer-session-start/dashboard-stats` to dialer-session-start, so taking the LAST segment would let
+ * a view token pass an allowlisted name in front of a write function.
+ */
 export function functionNameFromUrl(url: string): string | null {
   try {
     const segs = new URL(url).pathname.split('/').filter(Boolean);
-    return segs.length > 0 ? decodeURIComponent(segs[segs.length - 1]) : null;
+    const i = segs.findIndex((x, k) => x === 'functions' && segs[k + 1] === 'v1');
+    const rest = i >= 0 ? segs.slice(i + 2) : segs;
+    if (rest.length !== 1) return null;
+    return decodeURIComponent(rest[0]);
   } catch {
     return null;
   }
