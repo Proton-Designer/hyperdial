@@ -1,7 +1,11 @@
 /**
  * TASK-H03: "Log Close" submit. POST { contactId, ownerName, businessName, mobile, email?, services[], cities[],
  * frequencies[], insured, bestContact?, startingPrice?, capacity?, yearsInBusiness? }
- *   -> { closeId, deduped, deliveryStatus: 'pending'|'sent'|'failed'|'not_configured' }
+ *   -> { closeId, deduped, deliveryStatus: 'pending'|'sent'|'failed'|'not_configured', contactId?: string|null, contactCreated?: boolean }
+ * TASK-H24: send `phone` (the number that was called) INSTEAD of `contactId` to close a number that may not be a contact
+ * yet (after a manual call): the RPC finds the org contact by normalized phone or creates it from the form, then closes.
+ * `contactId` in the response is null when the caller was only allowed through because that number phoned in (they
+ * must not learn which contact it is).
  * The RPC runs as the CALLER (user JWT + anon key) so auth.uid() and the contacts trigger see the real agent; it
  * inserts the close, marks the contact Closed and queues the GHL tag in one transaction. The webhook delivery is then
  * attempted once right away (service role); failures stay 'pending' for the 5-minute sweep (close-delivery-worker).
@@ -25,6 +29,7 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
 interface CloseBody {
   contactId?: unknown;
+  phone?: unknown;
   ownerName?: unknown;
   businessName?: unknown;
   mobile?: unknown;
@@ -55,7 +60,12 @@ Deno.serve(async (req: Request) => {
 
   // Everyone who can dial may log a close (managers dial too). The RPC repeats this role check and then applies
   // contact_read_access, so a caller outside these roles is refused there as well.
-  const { error: authError } = await requireOrgRole(req, ['owner', 'admin', 'manager', 'agent']);
+  const { orgId, error: authError } = await requireOrgRole(req, [
+    'owner',
+    'admin',
+    'manager',
+    'agent',
+  ]);
   if (authError) return authError;
 
   const parsed = await readJsonBody<CloseBody>(req);
@@ -69,8 +79,10 @@ Deno.serve(async (req: Request) => {
   const price = num(b.startingPrice);
   const capacity = num(b.capacity);
   const years = num(b.yearsInBusiness);
-  if (!contactId || !UUID_RE.test(contactId))
-    return jsonResponse({ error: 'contactId is required' }, 400);
+  const phone = str(b.phone);
+  const byPhone = !contactId && !!phone?.trim();
+  if (!byPhone && (!contactId || !UUID_RE.test(contactId)))
+    return jsonResponse({ error: 'contactId or phone is required' }, 400);
   if (!services || !cities || !frequencies) {
     return jsonResponse({ error: 'services, cities and frequencies must be arrays of text' }, 400);
   }
@@ -92,8 +104,7 @@ Deno.serve(async (req: Request) => {
       auth: { persistSession: false, autoRefreshToken: false },
     }
   );
-  const { data, error } = await userClient.rpc('log_contact_close', {
-    p_contact_id: contactId,
+  const closeArgs = {
     p_owner_name: str(b.ownerName) ?? '',
     p_business_name: str(b.businessName) ?? '',
     p_mobile: str(b.mobile) ?? '',
@@ -106,7 +117,14 @@ Deno.serve(async (req: Request) => {
     p_starting_price: price,
     p_capacity: capacity,
     p_years_in_business: years,
-  });
+  };
+  const { data, error } = byPhone
+    ? await userClient.rpc('log_contact_close_by_phone', {
+        p_org_id: orgId,
+        p_phone: phone,
+        ...closeArgs,
+      })
+    : await userClient.rpc('log_contact_close', { p_contact_id: contactId, ...closeArgs });
   if (error) {
     // 22023 = validation message written for the form; 42501/P0002 = not allowed / not found.
     const status =
@@ -143,5 +161,11 @@ Deno.serve(async (req: Request) => {
     if (typeof EdgeRuntime !== 'undefined') EdgeRuntime.waitUntil(attempt);
     else await attempt;
   }
-  return jsonResponse({ closeId, deduped: row.deduped === true, deliveryStatus });
+  return jsonResponse({
+    closeId,
+    deduped: row.deduped === true,
+    deliveryStatus,
+    contactId: byPhone ? ((row.contact_id as string | null) ?? null) : contactId,
+    contactCreated: byPhone ? row.contact_created === true : false,
+  });
 });

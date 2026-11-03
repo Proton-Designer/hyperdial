@@ -6327,7 +6327,10 @@ export type CloseFrequency = 'weekly' | 'biweekly' | 'monthly';
 export type CloseDeliveryStatus = 'pending' | 'sent' | 'failed' | 'not_configured';
 
 export interface LogContactCloseInput {
-  contactId: string;
+  /** The contact being closed. Omit and send `phone` instead to close a number that may not be a contact yet (TASK-H24). */
+  contactId?: string;
+  /** The number that was called. The server finds the org contact by normalized phone, or creates it from the form. */
+  phone?: string;
   ownerName: string;
   businessName: string;
   mobile: string;
@@ -6347,6 +6350,11 @@ export interface LogContactCloseResult {
   /** True when the same agent already closed this contact within the last 60 s (double click). */
   deduped: boolean;
   deliveryStatus: CloseDeliveryStatus;
+  /** Set when closed by `phone`: the contact's id, or null when the agent was let through only because that number
+   *  phoned in (they have no access to the contact and must not learn which one it is). */
+  contactId?: string | null;
+  /** Closed by `phone` and the contact did not exist: it was created from the form. */
+  contactCreated?: boolean;
 }
 
 /** log-contact-close: stores the close, marks the contact 'Closed', queues delivery to the org's closes webhook. */
