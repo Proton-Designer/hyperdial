@@ -3,7 +3,7 @@ import { BadgeCheck, Download, Search, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { getContactById, listOnboardedPros, type Contact, type OnboardedPro } from '@/lib/api';
 import { contactHeadline } from '@/lib/contactName';
-import { downloadCsv, rowsToCsv } from '@/lib/csv';
+import { downloadCsv, neutralizeCell, rowsToCsv } from '@/lib/csv';
 import {
   countSince,
   rankBy,
@@ -208,9 +208,9 @@ export function Pros() {
       owner: p.ownerName,
       mobile: p.mobile,
       email: p.email ?? '',
-      services: p.services.join('; '),
-      cities: p.cities.join('; '),
-      frequencies: p.frequencies.join('; '),
+      services: p.services.map(neutralizeCell).join('; '),
+      cities: p.cities.map(neutralizeCell).join('; '),
+      frequencies: p.frequencies.map(neutralizeCell).join('; '),
       insured: p.insured ? 'Yes' : 'No',
       bestContact: p.bestContact ?? '',
       price: p.startingPrice ?? '',

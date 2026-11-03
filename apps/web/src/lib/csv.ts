@@ -7,12 +7,19 @@
 /** RFC 4180: a field needs quoting when it contains a comma, a quote, or a newline; an embedded
  *  quote is escaped by doubling it. Never quotes a field that doesn't need it (keeps the common
  *  case, a plain number or short label, readable). */
+/** TASK-H25: makes one piece of typed text safe to put in a spreadsheet cell. Line breaks and tabs become spaces (a bare
+ *  CR/LF can start a "new row" in some parsers, and a tab a new cell), then a leading = + - @ gets an apostrophe so it is
+ *  read as text. Apply to each element before joining a list into one cell. */
+export function neutralizeCell(value: string): string {
+  const flat = value.replace(/[\r\n\t]+/g, ' ').trim();
+  return /^[=+\-@]/.test(flat) ? `'${flat}` : flat;
+}
+
 function csvField(value: unknown, neutralize = false): string {
   let s = value === null || value === undefined ? '' : String(value);
-  // TASK-H25: a cell starting with = + - @ (or tab / CR) is run as a formula by Excel/Sheets. Typed free text
-  // (business names, services) must not be able to carry one: a leading apostrophe makes it plain text.
-  if (neutralize && /^[=+\-@\t\r]/.test(s)) s = `'${s}`;
-  if (/[",\n]/.test(s)) {
+  if (neutralize) s = neutralizeCell(s);
+  // \r and ; are quoted too: an unquoted CR splits rows in some parsers, and ; splits cells in semicolon locales.
+  if (/[",\r\n;]/.test(s)) {
     return `"${s.replace(/"/g, '""')}"`;
   }
   return s;
