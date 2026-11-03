@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { contactHeadline } from '@/lib/contactName';
 import {
   LayoutGrid,
   Phone,
@@ -43,8 +44,8 @@ const SCREENS: ScreenEntry[] = [
 ];
 
 function contactLabel(c: Contact): string {
-  const name = [c.first_name, c.last_name].filter(Boolean).join(' ').trim();
-  return name || c.business_name || c.phone_raw || c.phone_number || 'Contact';
+  const headline = contactHeadline(c);
+  return headline !== '—' ? headline : c.phone_raw || c.phone_number || 'Contact';
 }
 
 /**

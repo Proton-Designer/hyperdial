@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { contactHeadline, contactNameMatches, contactSecondaryName } from '@/lib/contactName';
 import {
   Search,
   Upload,
@@ -48,11 +49,6 @@ import { cn } from '@/components/ui/utils';
 const CATEGORIES = ['All', 'Cold', 'Warm', 'Follow Up', 'Voicemail', 'Booked'] as const;
 const CONTACT_STATUSES = ['All', 'No Contact', 'Contacted', 'Closed'] as const;
 const CONTACTS_PER_PAGE = 50;
-
-function contactDisplayName(c: Contact): string {
-  const name = [c.first_name, c.last_name].filter(Boolean).join(' ').trim();
-  return name || c.business_name || '—';
-}
 
 function Pill({
   children,
@@ -121,11 +117,7 @@ export function Contacts() {
   }, [currentPage]);
 
   const filteredContacts = contacts.filter((contact) => {
-    const name = contactDisplayName(contact);
-    const company = contact.business_name ?? '';
-    const matchesSearch =
-      name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      company.toLowerCase().includes(searchQuery.toLowerCase());
+    const matchesSearch = contactNameMatches(contact, searchQuery);
     const cat = contact.category ?? 'Cold';
     const status = contact.contact_status ?? 'No Contact';
     const matchesCategory = categoryFilter === 'All' || cat === categoryFilter;
@@ -384,8 +376,10 @@ export function Contacts() {
               </TableHeader>
               <TableBody>
                 {paginatedContacts.map((contact) => {
-                  const name = contactDisplayName(contact);
-                  const businessType = contact.business_type ?? '—';
+                  const name = contactHeadline(contact);
+                  const person = contactSecondaryName(contact);
+                  const businessType =
+                    [person, contact.business_type].filter(Boolean).join(' · ') || '—';
                   const phone = contact.phone_number ?? '—';
                   const category = contact.category ?? 'Cold';
                   const contactStatus = contact.contact_status ?? 'No Contact';
@@ -483,7 +477,8 @@ export function Contacts() {
             </label>
           )}
           {paginatedContacts.map((contact) => {
-            const name = contactDisplayName(contact);
+            const name = contactHeadline(contact);
+            const person = contactSecondaryName(contact);
             const phone = contact.phone_number ?? '—';
             const category = contact.category ?? 'Cold';
             const contactStatus = contact.contact_status ?? 'No Contact';
@@ -506,6 +501,7 @@ export function Contacts() {
                 )}
                 <div className="flex-1 min-w-0">
                   <div className="font-medium text-text-primary truncate">{name}</div>
+                  {person && <div className="text-meta text-text-secondary truncate">{person}</div>}
                   <div className="text-meta text-text-secondary truncate">{phone}</div>
                   <div className="flex flex-wrap gap-1 mt-1">
                     <Pill>{category}</Pill>

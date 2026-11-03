@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { contactHeadline, contactSecondaryName } from '@/lib/contactName';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import {
@@ -76,11 +77,6 @@ import { useFocusTrap } from '@/hooks/useFocusTrap';
 const CATEGORIES = ['All', 'Cold', 'Warm', 'Follow Up', 'Voicemail', 'Booked'] as const;
 const CONTACT_STATUSES = ['All', 'No Contact', 'Contacted'] as const;
 const LEADS_PER_PAGE = 50;
-
-function contactDisplayName(c: Contact): string {
-  const name = [c.first_name, c.last_name].filter(Boolean).join(' ').trim();
-  return name || c.business_name || '—';
-}
 
 function formatDate(s: string | null): string {
   if (!s) return '—';
@@ -1566,7 +1562,12 @@ export function CampaignManageModal({
                                 />
                               </td>
                               <td className="py-3 pr-2 text-white">
-                                {contactDisplayName(lead.contact)}
+                                {contactHeadline(lead.contact)}
+                                {contactSecondaryName(lead.contact) && (
+                                  <div className="text-xs text-text-secondary">
+                                    {contactSecondaryName(lead.contact)}
+                                  </div>
+                                )}
                               </td>
                               <td className="py-3 pr-2 text-text-secondary">
                                 {lead.contact?.business_type ?? '—'}
@@ -1596,7 +1597,7 @@ export function CampaignManageModal({
                                 </span>
                               </td>
                               <td className="py-3 pr-2 text-text-secondary">
-                                {lead.list_name ?? '—'}
+                                {lead.list_name ?? lead.contact?.import_list ?? '—'}
                               </td>
                               <td className="py-3 pr-2 text-text-secondary whitespace-nowrap">
                                 {formatDate(lead.added_at)}

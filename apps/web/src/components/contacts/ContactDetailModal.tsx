@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { contactHeadline } from '@/lib/contactName';
 import { createPortal } from 'react-dom';
 import {
   X,
@@ -43,11 +44,6 @@ const TIMEZONE_OPTIONS: { value: string; label: string }[] = [
   { value: 'Pacific/Guam', label: 'Chamorro (Guam)' },
   { value: 'Pacific/Pago_Pago', label: 'Samoa' },
 ];
-
-function contactDisplayName(c: Contact): string {
-  const name = [c.first_name, c.last_name].filter(Boolean).join(' ').trim();
-  return name || c.business_name || '—';
-}
 
 function truncateUrl(url: string, maxLen: number): string {
   if (!url || url.length <= maxLen) return url || '—';
@@ -129,7 +125,7 @@ export function ContactDetailModal({ contact, open, onClose, onUpdated }: Contac
   // (20260924001300) enforces that boundary server-side regardless of what this UI shows.
   const canEditFields = role === 'owner' || role === 'admin';
 
-  const name = contactDisplayName(c);
+  const name = contactHeadline(c);
   const category = c.category ?? 'Cold';
   const contactStatus = c.contact_status ?? 'No Contact';
 
