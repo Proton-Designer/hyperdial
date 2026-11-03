@@ -4709,6 +4709,30 @@ export async function listDncNumbers(): Promise<DncNumber[]> {
   return (data ?? []) as DncNumber[];
 }
 
+/**
+ * TASK-H26: is this number on the org's Do Not Call list? Reads `dnc_numbers` (every org member can read it) and
+ * `contacts.dnc` for the same number. Throws when either lookup fails, so the caller can refuse to dial (fail
+ * closed). Browser-side check only: it is not enforced by the server, and an agent's `contacts` read is limited by
+ * RLS to contacts they can see, so a flagged contact outside their scope is caught only via `dnc_numbers`.
+ */
+export async function isNumberOnDnc(rawNumber: string): Promise<boolean> {
+  const e164 = normalizePhoneStrict(rawNumber)?.e164 ?? rawNumber.trim();
+  const orgId = await getActiveOrgId();
+  const [listRes, contactRes] = await Promise.all([
+    supabase.from('dnc_numbers').select('id').eq('org_id', orgId).eq('e164', e164).limit(1),
+    supabase
+      .from('contacts')
+      .select('id')
+      .eq('org_id', orgId)
+      .eq('phone_number', e164)
+      .eq('dnc', true)
+      .limit(1),
+  ]);
+  if (listRes.error) throw new Error(listRes.error.message);
+  if (contactRes.error) throw new Error(contactRes.error.message);
+  return (listRes.data?.length ?? 0) > 0 || (contactRes.data?.length ?? 0) > 0;
+}
+
 /** `e164` must already be normalized client-side (phone-normalize.ts's normalizePhoneStrict) --
  *  this function does not re-normalize, matching createDisposition's own "no server-side
  *  normalization" shape. */

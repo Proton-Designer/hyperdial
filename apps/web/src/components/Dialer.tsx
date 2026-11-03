@@ -24,6 +24,7 @@ import { isTypingTarget } from '@/lib/keyboard';
 import {
   getActiveDialerSession,
   getDialerSession,
+  isNumberOnDnc,
   getTelnyxConnectionStatus,
   lookupContactByPhone,
   listCampaigns,
@@ -748,6 +749,7 @@ function DialerBody({
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
+  const dncCheckingRef = useRef(false);
   const handleDial = async (phoneNumber: string) => {
     if (!selectedFromNumber) return;
     // Defense-in-depth, see handleStartSessionForCampaign's own comment -- the manual dialer UI
@@ -759,6 +761,25 @@ function DialerBody({
           : 'HyperDial is open in another tab. Close it there first, then try again.'
       );
       return;
+    }
+    // TASK-H26: the one Do Not Call check for every manual dial (typed, Inbox call-back, contact "Call").
+    // Browser-side only; fails closed when the lookup fails.
+    if (dialerStatus !== 'idle' || dncCheckingRef.current) {
+      toast.error("You're already on a call.");
+      return;
+    }
+    dncCheckingRef.current = true;
+    try {
+      if (await isNumberOnDnc(phoneNumber)) {
+        toast.error('This number is on the Do Not Call list.');
+        return;
+      }
+    } catch (err) {
+      console.error('DNC check failed:', err);
+      toast.error("Couldn't check the Do Not Call list. Try again.");
+      return;
+    } finally {
+      dncCheckingRef.current = false;
     }
     setOutboundNumber(phoneNumber);
     lastCallRef.current = { number: phoneNumber, direction: 'outbound' };
