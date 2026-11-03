@@ -4,6 +4,7 @@ import { requireTelnyxOrgRole } from '../_shared/telnyx-org-context.ts';
 import { startSession } from '../_shared/dialer-engine.ts';
 import { readJsonBody } from '../_shared/http-json.ts';
 import { checkSpendGate } from '../_shared/spend-gate.ts';
+import { checkDialNumberAvailable } from '../_shared/dial-number-check.ts';
 
 /**
  * Starts a rolling-refill dial session for a campaign (TASK-P2-E2). Rewritten from the
@@ -179,6 +180,13 @@ Deno.serve(async (req) => {
         code: 'ACTIVE_SESSION_EXISTS',
         existingSessionId: existing.id,
       });
+    }
+
+    // TASK-H23 F: a pool-dialing campaign (no fixed caller ID) with no number this agent can use would answer the
+    // agent leg and then pause at the first refill. Refuse now, before any leg exists, saying why (none vs capped).
+    if (!campaign.caller_id_number_id) {
+      const noNumber = await checkDialNumberAvailable(supabase, orgId, user.id);
+      if (noNumber) return jsonResponse(400, noNumber as unknown as Record<string, unknown>);
     }
 
     // TASK-SP: checked here (Go Ready), not on every refill -- a live GET /balance call on
