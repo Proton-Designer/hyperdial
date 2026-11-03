@@ -25,9 +25,24 @@ export function consumePendingStartCampaignId(): string | null {
  * instead of building a second dial-triggering path.
  */
 let pendingManualDialNumber: string | null = null;
+const manualDialListeners = new Set<() => void>();
+
+/** TASK-H23 (B): the Dialer is permanently mounted (MainApp keeps it CSS-hidden), so it can no
+ *  longer read the pending number once on mount -- it subscribes, and every new number wakes it. */
+export function subscribePendingManualDial(listener: () => void): () => void {
+  manualDialListeners.add(listener);
+  return () => {
+    manualDialListeners.delete(listener);
+  };
+}
 
 export function setPendingManualDialNumber(e164: string): void {
   pendingManualDialNumber = e164;
+  manualDialListeners.forEach((l) => l());
+}
+
+export function hasPendingManualDialNumber(): boolean {
+  return pendingManualDialNumber !== null;
 }
 
 export function consumePendingManualDialNumber(): string | null {

@@ -69,7 +69,7 @@ function Pill({
   );
 }
 
-export function Contacts() {
+export function Contacts({ onNavigateToDialer }: { onNavigateToDialer?: () => void } = {}) {
   const { role } = useOrg();
   const breakpoint = useBreakpoint();
   const isDesktop = breakpoint === 'desktop';
@@ -577,6 +577,7 @@ export function Contacts() {
         contact={detailContact}
         open={detailContact != null}
         onClose={() => setDetailContact(null)}
+        onNavigateToDialer={onNavigateToDialer}
         onUpdated={(updated) => {
           setDetailContact(updated);
           setContacts((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));

@@ -307,7 +307,7 @@ export function MainApp() {
           </div>
           {activeTab === 'contacts' && (
             <PageTransition>
-              <Contacts />
+              <Contacts onNavigateToDialer={() => setActiveTab('dialer')} />
             </PageTransition>
           )}
           {activeTab === 'campaigns' && (

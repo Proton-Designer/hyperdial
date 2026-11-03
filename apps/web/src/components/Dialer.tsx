@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { isViewOnly, VIEW_ONLY_MESSAGE } from '@/lib/viewAs';
 import { createPortal } from 'react-dom';
 import { toast } from 'sonner';
@@ -41,7 +41,12 @@ import { playConnectChime } from '@/lib/dialerSoundCue';
 import {
   consumePendingStartCampaignId,
   consumePendingManualDialNumber,
+  subscribePendingManualDial,
+  hasPendingManualDialNumber,
 } from '@/lib/dialerLaunchIntent';
+import { dialableNumbers, pickCallerId } from '@/lib/dialNumbers';
+import { useAuth } from '@/contexts/AuthContext';
+import { useOrg } from '@/contexts/OrgContext';
 import { useSingleTabLock } from '@/lib/useSingleTabLock';
 import {
   WEBRTC_RETRY_BASE_MS,
@@ -141,7 +146,15 @@ function DialerBody({
   onNavigateToSettings,
   isAgentLineOwner,
 }: DialerBodyProps) {
-  const { numbers: userNumbers } = usePhoneNumbers();
+  const { numbers: allNumbers, loading: numbersLoading } = usePhoneNumbers();
+  const { user } = useAuth();
+  const { role: orgRole } = useOrg();
+  // TASK-H23 (C): RLS shows the whole org's numbers; this agent may only dial from their own
+  // assigned one or an unassigned pool one (owner/admin keep every non-retired number).
+  const userNumbers = useMemo(
+    () => dialableNumbers(allNumbers, user?.id, orgRole === 'owner' || orgRole === 'admin'),
+    [allNumbers, user?.id, orgRole]
+  );
   const [selectedFromNumber, setSelectedFromNumber] = useState<string | null>(null);
   const [callDuration, setCallDuration] = useState(0);
   const [outboundNumber, setOutboundNumber] = useState('');
@@ -178,7 +191,10 @@ function DialerBody({
   const [startingCampaignId, setStartingCampaignId] = useState<string | null>(null);
   const [startError, setStartError] = useState<string | null>(null);
   const pendingIntentConsumedRef = useRef(false);
-  const pendingManualDialConsumedRef = useRef(false);
+  // TASK-H23 (B): bumped by every setPendingManualDialNumber so the effect below re-runs for each
+  // new number, not just the first one after page load.
+  const [pendingDialTick, setPendingDialTick] = useState(0);
+  useEffect(() => subscribePendingManualDial(() => setPendingDialTick((t) => t + 1)), []);
 
   const effectiveSessionId = parallelSessionId ?? restoredParallelContext?.sessionId ?? null;
   const effectiveCampaignId = parallelCampaignId ?? restoredParallelContext?.campaignId ?? null;
@@ -685,10 +701,12 @@ function DialerBody({
 
   // When cached numbers load, select first if none selected
   useEffect(() => {
-    if (userNumbers.length > 0 && !selectedFromNumber) {
-      setSelectedFromNumber(userNumbers[0].phone_number);
-    }
-  }, [userNumbers, selectedFromNumber]);
+    const stillValid = userNumbers.some((n) => n.phone_number === selectedFromNumber);
+    if (selectedFromNumber && stillValid) return;
+    // TASK-H23 (C): own number, then the pool -- never "the newest number in the org".
+    const pick = pickCallerId(userNumbers, user?.id);
+    setSelectedFromNumber(pick ? pick.phone_number : null);
+  }, [userNumbers, selectedFromNumber, user?.id]);
 
   // Create remote audio element outside React so Telnyx SDK never sees React fiber (avoids "Converting circular structure to JSON")
   const remoteAudioCreated = useRef(false);
@@ -949,14 +967,39 @@ function DialerBody({
   // manual-dial path is actually the one in use (not mid parallel-dial session) -- reuses
   // ManualDialPanel's own onDial handler rather than a second dial-triggering path.
   useEffect(() => {
-    if (!selectedFromNumber) return;
-    if (isParallelMode && !parallelSession.error) return;
-    if (pendingManualDialConsumedRef.current) return;
-    pendingManualDialConsumedRef.current = true;
+    if (!hasPendingManualDialNumber()) return;
+    // The line is not ready yet: leave the number pending (consume clears it) and re-run when the
+    // numbers load / ownership resolves -- never drop it silently.
+    if (numbersLoading) return;
+    if (!isAgentLineOwner) {
+      if (isViewOnly) {
+        consumePendingManualDialNumber();
+        toast.error(VIEW_ONLY_MESSAGE);
+      }
+      return;
+    }
+    if (isParallelMode && !parallelSession.error) {
+      consumePendingManualDialNumber();
+      toast.error('You are in a dial session. End or pause it before calling a number manually.');
+      return;
+    }
+    if (!selectedFromNumber) {
+      consumePendingManualDialNumber();
+      toast.error("You don't have a phone number yet. Ask your manager to assign you one.");
+      return;
+    }
     const pendingNumber = consumePendingManualDialNumber();
     if (!pendingNumber) return;
     void handleDial(pendingNumber);
-  }, [selectedFromNumber, isParallelMode, parallelSession.error, handleDial]);
+  }, [
+    pendingDialTick,
+    numbersLoading,
+    isAgentLineOwner,
+    selectedFromNumber,
+    isParallelMode,
+    parallelSession.error,
+    handleDial,
+  ]);
 
   return (
     <div className="flex h-full">
@@ -1036,6 +1079,7 @@ function DialerBody({
               <DialerStateBanner
                 sessionState={parallelSession.session.state}
                 pauseReason={parallelSession.session.pause_reason}
+                hasDialNumber={dialableNumbers(allNumbers, user?.id, false).length > 0}
                 takenOverByManagerName={parallelSession.takenOverByManagerName}
                 ringingCount={parallelSession.currentBatchContacts.length}
                 connectedContact={connectedContactPreview}

@@ -25,6 +25,9 @@ interface DialerStateBannerProps {
    *  field comment (api.ts) for why a stale value must never be read once the session has moved
    *  on to a different state. */
   pauseReason: string | null;
+  /** TASK-H23 (D): false when this agent has no non-retired assigned-or-pool number at all, so
+   *  `no_numbers_available` says "you have no number" instead of blaming the dial limit. */
+  hasDialNumber?: boolean;
   /** MISSION-5 TASK-M5-N1 (deferred backlog item): only meaningful while
    *  `pauseReason === 'call_taken_over_by_manager'` -- see getDialerSession's own comment
    *  (api.ts) for how this is resolved. Null renders a name-less fallback sentence rather than
@@ -53,6 +56,7 @@ interface DialerStateBannerProps {
 export function DialerStateBanner({
   sessionState,
   pauseReason,
+  hasDialNumber = true,
   takenOverByManagerName,
   ringingCount,
   webrtcReady,
@@ -152,8 +156,16 @@ export function DialerStateBanner({
       <StatusBanner
         tone="error"
         icon={<AlertTriangle className="w-5 h-5" />}
-        title="All your numbers have hit today's dial limit"
-        detail="Ask your manager to assign you another number or wait for one to finish resting, then resume."
+        title={
+          hasDialNumber
+            ? "All your numbers have hit today's dial limit or are resting"
+            : "You don't have a phone number yet"
+        }
+        detail={
+          hasDialNumber
+            ? 'Try again later, or ask your manager for another number, then resume.'
+            : 'Ask your manager to assign you one in Settings, then resume.'
+        }
         action={
           <Button variant="primary" onClick={onResume} disabled={resuming}>
             {resuming ? 'Resuming…' : 'Resume'}

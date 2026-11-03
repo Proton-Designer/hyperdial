@@ -1,5 +1,6 @@
 import { Phone } from 'lucide-react';
 import type { UserPhoneNumber } from '../Dialer';
+import { cn } from '@/components/ui/utils';
 
 interface CampaignStatsProps {
   userNumbers: UserPhoneNumber[];
@@ -27,8 +28,19 @@ export function CampaignStats({ userNumbers }: CampaignStatsProps) {
                 className="flex items-center justify-between px-2.5 py-2 bg-surface-2 rounded-app-sm"
               >
                 <span className="text-meta text-text-primary truncate">{num.phone_number}</span>
-                <span className="px-1.5 py-0.5 bg-success-soft rounded text-[10px] font-medium text-success shrink-0">
-                  Active
+                <span
+                  className={cn(
+                    'px-1.5 py-0.5 rounded text-[10px] font-medium shrink-0',
+                    num.status === 'active'
+                      ? 'bg-success-soft text-success'
+                      : 'bg-surface-3 text-text-muted'
+                  )}
+                >
+                  {num.status === 'active'
+                    ? 'Active'
+                    : num.status === 'resting'
+                      ? 'Resting'
+                      : 'Retired'}
                 </span>
               </div>
             ))}

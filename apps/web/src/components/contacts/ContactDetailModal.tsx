@@ -16,6 +16,7 @@ import {
 import { motion } from 'motion/react';
 import { listContactFieldDefs, updateContact, type Contact, type ContactFieldDef } from '@/lib/api';
 import { useOrg } from '@/contexts/OrgContext';
+import { setPendingManualDialNumber } from '@/lib/dialerLaunchIntent';
 import { ContactNotesPanel } from './ContactNotesPanel';
 import { ContactChangeHistoryPanel } from './ContactChangeHistoryPanel';
 
@@ -89,9 +90,17 @@ interface ContactDetailModalProps {
   onClose: () => void;
   /** Called after a save succeeds, with the fresh row, so the caller can refresh its list. */
   onUpdated?: (contact: Contact) => void;
+  /** TASK-H23 (A): switches to the Dialer tab so "Call" places the call in HyperDial. */
+  onNavigateToDialer?: () => void;
 }
 
-export function ContactDetailModal({ contact, open, onClose, onUpdated }: ContactDetailModalProps) {
+export function ContactDetailModal({
+  contact,
+  open,
+  onClose,
+  onUpdated,
+  onNavigateToDialer,
+}: ContactDetailModalProps) {
   const { role } = useOrg();
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState<EditFormState | null>(null);
@@ -185,6 +194,16 @@ export function ContactDetailModal({ contact, open, onClose, onUpdated }: Contac
   // TASK-G31: marking do-not-call is open to every role that can see the contact; clearing it is owner/admin only
   // (the contacts_agent_update_scope trigger enforces it, this just says so up front).
   const dncLocked = c.dnc && !canEditFields;
+  // TASK-H23 (A): "Call" places the call inside HyperDial (the Dialer's manual-dial path), never a
+  // tel: link that hands the number to FaceTime. A do-not-call contact is never dialed.
+  const callDisabledReason = c.dnc ? 'Do not call: this contact has asked not to be called.' : null;
+  const canCall = !callDisabledReason && Boolean(onNavigateToDialer);
+  const placeCall = () => {
+    if (!canCall || !c.phone_number) return;
+    setPendingManualDialNumber(c.phone_number);
+    handleClose();
+    onNavigateToDialer?.();
+  };
 
   const toggleDnc = async () => {
     if (dncSaving || dncLocked) return;
@@ -331,12 +350,15 @@ export function ContactDetailModal({ contact, open, onClose, onUpdated }: Contac
                     {c.phone_number && (
                       <div className="flex gap-2 items-center">
                         <Phone className="w-4 h-4 text-accent-to flex-shrink-0" />
-                        <a
-                          href={`tel:${c.phone_number}`}
-                          className="text-accent-to hover:underline truncate block"
+                        <button
+                          type="button"
+                          onClick={placeCall}
+                          disabled={!canCall}
+                          title={callDisabledReason ?? 'Call in HyperDial'}
+                          className="text-accent-to hover:underline truncate block disabled:text-text-muted disabled:no-underline disabled:cursor-not-allowed"
                         >
                           {c.phone_number}
-                        </a>
+                        </button>
                       </div>
                     )}
                     {c.timezone && (
@@ -587,13 +609,21 @@ export function ContactDetailModal({ contact, open, onClose, onUpdated }: Contac
           ) : (
             <>
               {c.phone_number && (
-                <a
-                  href={`tel:${c.phone_number}`}
-                  className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-accent-from to-accent-to text-white font-semibold text-sm"
-                >
-                  <Phone className="w-4 h-4" />
-                  Call
-                </a>
+                <div className="flex flex-col items-start gap-1">
+                  <button
+                    type="button"
+                    onClick={placeCall}
+                    disabled={!canCall}
+                    title={callDisabledReason ?? undefined}
+                    className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-accent-from to-accent-to text-white font-semibold text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <Phone className="w-4 h-4" />
+                    Call
+                  </button>
+                  {callDisabledReason && (
+                    <span className="text-meta text-text-muted">{callDisabledReason}</span>
+                  )}
+                </div>
               )}
               <button
                 type="button"
