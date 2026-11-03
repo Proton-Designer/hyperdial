@@ -42,3 +42,44 @@ export function pickCallerId(
   }
   return best;
 }
+
+export type PendingDialAction =
+  { kind: 'wait' } | { kind: 'refuse'; message: string } | { kind: 'dial' };
+
+/**
+ * TASK-H23 (B): what the Dialer does with a number left by Inbox "Call back" / contact "Call".
+ * Every refusal consumes the number (so it can never fire later by surprise); only "not ready
+ * yet" (numbers still loading) waits.
+ */
+export function decidePendingDial(s: {
+  numbersLoading: boolean;
+  isViewOnly: boolean;
+  isAgentLineOwner: boolean;
+  inParallelSession: boolean;
+  callActive: boolean;
+  hasFromNumber: boolean;
+  viewOnlyMessage: string;
+}): PendingDialAction {
+  if (s.numbersLoading) return { kind: 'wait' };
+  if (s.isViewOnly) return { kind: 'refuse', message: s.viewOnlyMessage };
+  if (!s.isAgentLineOwner) {
+    return {
+      kind: 'refuse',
+      message: 'HyperDial is open in another tab. Close it there first, then try again.',
+    };
+  }
+  if (s.inParallelSession) {
+    return {
+      kind: 'refuse',
+      message: 'End your dial session before calling a number manually.',
+    };
+  }
+  if (s.callActive) return { kind: 'refuse', message: "You're already on a call." };
+  if (!s.hasFromNumber) {
+    return {
+      kind: 'refuse',
+      message: "You don't have a phone number yet. Ask your manager to assign you one.",
+    };
+  }
+  return { kind: 'dial' };
+}

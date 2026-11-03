@@ -44,7 +44,7 @@ import {
   subscribePendingManualDial,
   hasPendingManualDialNumber,
 } from '@/lib/dialerLaunchIntent';
-import { dialableNumbers, pickCallerId } from '@/lib/dialNumbers';
+import { dialableNumbers, pickCallerId, decidePendingDial } from '@/lib/dialNumbers';
 import { useAuth } from '@/contexts/AuthContext';
 import { useOrg } from '@/contexts/OrgContext';
 import { useSingleTabLock } from '@/lib/useSingleTabLock';
@@ -968,24 +968,21 @@ function DialerBody({
   // ManualDialPanel's own onDial handler rather than a second dial-triggering path.
   useEffect(() => {
     if (!hasPendingManualDialNumber()) return;
-    // The line is not ready yet: leave the number pending (consume clears it) and re-run when the
-    // numbers load / ownership resolves -- never drop it silently.
-    if (numbersLoading) return;
-    if (!isAgentLineOwner) {
-      if (isViewOnly) {
-        consumePendingManualDialNumber();
-        toast.error(VIEW_ONLY_MESSAGE);
-      }
-      return;
-    }
-    if (isParallelMode && !parallelSession.error) {
+    // Not ready (numbers still loading): leave it pending and re-run when they load. Every other
+    // outcome consumes the number, so it can never dial later by surprise.
+    const action = decidePendingDial({
+      numbersLoading,
+      isViewOnly,
+      isAgentLineOwner,
+      inParallelSession: isParallelMode && !parallelSession.error,
+      callActive: dialerStatus !== 'idle',
+      hasFromNumber: Boolean(selectedFromNumber),
+      viewOnlyMessage: VIEW_ONLY_MESSAGE,
+    });
+    if (action.kind === 'wait') return;
+    if (action.kind === 'refuse') {
       consumePendingManualDialNumber();
-      toast.error('You are in a dial session. End or pause it before calling a number manually.');
-      return;
-    }
-    if (!selectedFromNumber) {
-      consumePendingManualDialNumber();
-      toast.error("You don't have a phone number yet. Ask your manager to assign you one.");
+      toast.error(action.message);
       return;
     }
     const pendingNumber = consumePendingManualDialNumber();
@@ -998,6 +995,7 @@ function DialerBody({
     selectedFromNumber,
     isParallelMode,
     parallelSession.error,
+    dialerStatus,
     handleDial,
   ]);
 
