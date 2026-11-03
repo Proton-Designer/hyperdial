@@ -2005,3 +2005,10 @@ one. A contact that matches no rule is not imported (GHL also holds customers), 
 - Why AMD on at all: with AMD off, a voicemail that answers first is claimed and the engine hangs up the rest of the batch, which can drop a real person on another line.
 - Drift: `.brain/domains/dialer.md` (~line 58) still says silence is hung up — it is now connected. `_shared/amd.ts` (maps silence -> machine) has no importers; dead code.
 - Watch: silent machines now reach interns; if voicemails slip through too often, raise the 5 s cap (sd-eng2 suggests toward 8000).
+
+## 2026-11-02 — View as intern (TASK-H21); DB read-only layer is OFF (user chose option A)
+- Owner/admin opens a view-only tab as an active agent of their org (Settings → Team). Real GoTrue session minted by `view-as-start` (no email), own sessionStorage client, marker row in `view_as_sessions`, audited as `view_as.start/stop`.
+- Enforcement live: edge guard in `getUserFromRequest` (`_shared/view-as-guard.ts`): default deny plus an allowlist, so adding a read function a view needs means adding it to the allowlist. Web fetch guard refuses non-GET except allowlisted read RPCs/functions (client-side only). Trigger on auth.users blocks password/email change on a live-viewed account (the intern's own change too, until Exit or at most 2 h after a closed tab).
+- NOT on: `pgrst.db_pre_request`. Hosted refused `alter role authenticator` (42501, reserved role; `supautils.privileged_role` names a role that does not exist on this project). Migration 20261102190100 is deliberately NOT applied; do not `db push` it blindly and do not work around the refusal. User is asking Supabase. Run it when Supabase allows it (rollback in its header).
+- Residual until then: with a view token copied from devtools an admin can write via PostgREST what the intern's RLS allows, attributed to the intern, and read for up to 1 h after Exit. Also accepted regardless: global logout, MFA enroll, user metadata via GoTrue.
+- Only `role='agent'` can be viewed. As of this date Henry and Kareem are `admin`, so they cannot be viewed and they see everyone's data.
