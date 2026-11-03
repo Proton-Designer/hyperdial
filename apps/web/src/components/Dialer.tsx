@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { isViewOnly, VIEW_ONLY_MESSAGE } from '@/lib/viewAs';
 import { createPortal } from 'react-dom';
 import { toast } from 'sonner';
 import { useTelnyxCall } from '../lib/useTelnyxCall';
@@ -367,7 +368,7 @@ function DialerBody({
   // an online intern to "offline" for a routing decision. Fire-and-forget by design (see the
   // function's own header comment) -- never surfaced as an error here.
   useEffect(() => {
-    if (!isAgentLineOwner) return;
+    if (!isAgentLineOwner || isViewOnly) return;
     void updateMyPresenceHeartbeat();
     const interval = setInterval(() => {
       void updateMyPresenceHeartbeat();
@@ -574,7 +575,11 @@ function DialerBody({
       // early return in this component's JSX below) -- never register a client or dial from a
       // tab that isn't the single-tab-lock owner, even if this were somehow reached anyway.
       if (!isAgentLineOwner) {
-        setStartError('HyperDial is open in another tab. Close it there first, then try again.');
+        setStartError(
+          isViewOnly
+            ? VIEW_ONLY_MESSAGE
+            : 'HyperDial is open in another tab. Close it there first, then try again.'
+        );
         return;
       }
       setStartError(null);
@@ -729,7 +734,11 @@ function DialerBody({
     // Defense-in-depth, see handleStartSessionForCampaign's own comment -- the manual dialer UI
     // is not rendered at all for a non-owner tab.
     if (!isAgentLineOwner) {
-      toast.error('HyperDial is open in another tab. Close it there first, then try again.');
+      toast.error(
+        isViewOnly
+          ? VIEW_ONLY_MESSAGE
+          : 'HyperDial is open in another tab. Close it there first, then try again.'
+      );
       return;
     }
     setOutboundNumber(phoneNumber);
@@ -1108,7 +1117,7 @@ function DialerBody({
             </>
           )}
 
-        {(!isParallelMode || parallelSession.error) && (
+        {!isViewOnly && (!isParallelMode || parallelSession.error) && (
           <StartSessionPanel
             campaigns={assignedCampaigns}
             campaignsError={campaignsError}
@@ -1122,7 +1131,7 @@ function DialerBody({
 
         {(!isParallelMode || parallelSession.error) && <CallForwardingCard />}
 
-        {(!isParallelMode || parallelSession.error) && (
+        {!isViewOnly && (!isParallelMode || parallelSession.error) && (
           <ManualDialPanel
             userNumbers={userNumbers}
             selectedFromNumber={selectedFromNumber}

@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
+import { isViewOnly } from './viewAsFlag';
 import { TelnyxRTC } from '@telnyx/webrtc';
 import { getWebrtcCredentials } from './api';
 
@@ -220,6 +221,8 @@ export function useTelnyxCall(options: UseTelnyxCallOptions = {}) {
   const hangupRequestedRef = useRef(false);
 
   const connect = useCallback((): Promise<void> => {
+    // TASK-H21: a view-as tab must never register a WebRTC client or create Telnyx credentials as the intern.
+    if (isViewOnly) return Promise.reject(new Error('View-only'));
     if (connectPromiseRef.current) return connectPromiseRef.current;
     if (clientRef.current) return Promise.resolve();
     setIsConnecting(true);

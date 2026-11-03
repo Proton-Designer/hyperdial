@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, type ReactNode } from 'react';
+import { isViewOnly, VIEW_AS_BANNER_HEIGHT } from '@/lib/viewAs';
 import { createPortal } from 'react-dom';
 import { Search, Bell, ChevronDown, LogOut, User, Building2, Check, Settings } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -131,7 +132,7 @@ export function TopNavigation({ activeTab = 'dashboard', onTabChange }: TopNavig
   useFocusTrap(signOutRef, showSignOutConfirm);
 
   useEffect(() => {
-    ensureWeekSummary().catch(() => {});
+    if (!isViewOnly) ensureWeekSummary().catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -201,15 +202,18 @@ export function TopNavigation({ activeTab = 'dashboard', onTabChange }: TopNavig
   const handleSignOutConfirm = () => {
     setShowUserMenu(false);
     setShowSignOutConfirm(false);
-    localStorage.clear();
-    sessionStorage.clear();
+    // TASK-H21: in a view tab "Sign out" is Exit; never clear storage there (localStorage is the admin's).
+    if (!isViewOnly) {
+      localStorage.clear();
+      sessionStorage.clear();
+    }
     signOut();
   };
 
   return (
     <nav
       className="fixed top-0 left-0 right-0 z-50 flex items-center gap-3 border-b border-border-subtle bg-surface-1/60 px-3 backdrop-blur-xl sm:px-4"
-      style={{ height: TOP_NAV_HEIGHT }}
+      style={{ height: TOP_NAV_HEIGHT, top: VIEW_AS_BANNER_HEIGHT }}
     >
       {/* Left Section */}
       <div className="flex min-w-0 items-center gap-4">

@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { ViewAsButton } from '@/components/settings/ViewAsButton';
 import { createPortal } from 'react-dom';
 import { toast } from 'sonner';
 import { motion } from 'motion/react';
@@ -733,6 +734,7 @@ function TeamTab({ scrollTo }: { scrollTo?: SettingsSection }) {
                 </button>
               ) : (
                 <>
+                  <ViewAsButton member={m} disabled={busy} />
                   <button
                     disabled={busy}
                     onClick={() =>
@@ -823,6 +825,7 @@ function TeamTab({ scrollTo }: { scrollTo?: SettingsSection }) {
               </button>
             ) : (
               <>
+                <ViewAsButton member={m} disabled={busy} />
                 <select
                   value={m.role}
                   disabled={busy}

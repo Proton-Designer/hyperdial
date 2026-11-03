@@ -1,4 +1,5 @@
 import { Phone, Play, Users } from 'lucide-react';
+import { isViewOnly, VIEW_ONLY_MESSAGE } from '@/lib/viewAs';
 import type { CampaignWithStats } from '@/lib/api';
 import type { UserPhoneNumber } from '@/contexts/PhoneNumbersContext';
 import { useAuth } from '@/contexts/AuthContext';
@@ -111,7 +112,8 @@ export function StartSessionPanel({
                 <Button
                   variant="primary"
                   onClick={() => onStart(campaign)}
-                  disabled={isStartingOther || isStartingThis}
+                  disabled={isStartingOther || isStartingThis || isViewOnly}
+                  title={isViewOnly ? VIEW_ONLY_MESSAGE : undefined}
                   loading={isStartingThis}
                   className="flex-shrink-0"
                 >

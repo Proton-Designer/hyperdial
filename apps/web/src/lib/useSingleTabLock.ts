@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { isViewOnly } from './viewAsFlag';
 
 const LOCK_KEY = 'hyperdial_agent_line_lock';
 const CHANNEL_NAME = 'hyperdial-agent-line-lock';
@@ -76,6 +77,9 @@ export function useSingleTabLock(): { isOwner: boolean; otherTabOpen: boolean } 
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
+    // TASK-H21: a view-as tab never claims, broadcasts or reads the lock (it shares localStorage/BroadcastChannel with
+    // the admin's own dialer tab). It stays isOwner=false, otherTabOpen=false, so nothing line-owning ever runs.
+    if (isViewOnly) return;
     const tabId = tabIdRef.current;
     const channel = 'BroadcastChannel' in window ? new BroadcastChannel(CHANNEL_NAME) : null;
     let heartbeatTimer: ReturnType<typeof setInterval> | null = null;

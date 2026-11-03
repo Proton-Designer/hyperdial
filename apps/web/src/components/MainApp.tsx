@@ -1,4 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
+import { ViewAsBanner } from './app/ViewAsBanner';
+import { isViewOnly, VIEW_AS_BANNER_HEIGHT } from '@/lib/viewAs';
 import { TopNavigation, TOP_NAV_HEIGHT } from './TopNavigation';
 import { Sidebar } from './Sidebar';
 import { Dashboard } from './Dashboard';
@@ -157,7 +159,7 @@ export function MainApp() {
   const setSidebarCollapsed = (value: boolean) => {
     setSidebarCollapsedState(value);
     try {
-      localStorage.setItem('hd_sidebar_collapsed', String(value));
+      if (!isViewOnly) localStorage.setItem('hd_sidebar_collapsed', String(value));
     } catch {
       // Best-effort only -- not persisting the preference isn't worth surfacing an error for.
     }
@@ -245,9 +247,14 @@ export function MainApp() {
 
   return (
     <div className="h-screen bg-surface-0 flex flex-col overflow-hidden">
+      <ViewAsBanner />
       <TopNavigation activeTab={activeTab} onTabChange={setActiveTab} />
-      {/* Spacer reserves space so content starts below the fixed top bar */}
-      <div aria-hidden className="flex-shrink-0" style={{ height: TOP_NAV_HEIGHT }} />
+      {/* Spacer reserves space so content starts below the fixed top bar (and the view-as banner) */}
+      <div
+        aria-hidden
+        className="flex-shrink-0"
+        style={{ height: TOP_NAV_HEIGHT + VIEW_AS_BANNER_HEIGHT }}
+      />
       <div className="flex flex-1 min-h-0 overflow-hidden">
         {!isMobile && (
           <Sidebar
@@ -255,7 +262,7 @@ export function MainApp() {
             onTabChange={setActiveTab}
             collapsed={sidebarCollapsed}
             onToggleCollapse={() => setSidebarCollapsed(!sidebarCollapsed)}
-            topOffset={TOP_NAV_HEIGHT}
+            topOffset={TOP_NAV_HEIGHT + VIEW_AS_BANNER_HEIGHT}
           />
         )}
         <main

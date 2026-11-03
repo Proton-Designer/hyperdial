@@ -1,4 +1,5 @@
 import { supabase } from './supabase';
+import { isViewOnly } from './viewAsFlag';
 import { normalizePhoneStrict } from './phone-normalize';
 import { timezoneForAreaCode } from './area-code-tz';
 import { splitOwnerContact } from './closeForm';
@@ -302,6 +303,7 @@ export async function setMyForwardNumber(forwardPhoneNumber: string | null): Pro
  *  a failed heartbeat just means the next one (or none, if the tab closed) determines presence
  *  -- never worth surfacing as an error to the agent. */
 export async function updateMyPresenceHeartbeat(): Promise<void> {
+  if (isViewOnly) return; // TASK-H21: a viewer must never mark the intern online (inbound routing reads last_seen_at)
   const orgId = await getActiveOrgId();
   const {
     data: { user },
@@ -2125,6 +2127,7 @@ export async function listMyCampaignAssignments(): Promise<string[]> {
 }
 
 export async function ensureWeekSummary(): Promise<void> {
+  if (isViewOnly) return; // TASK-H21: inserts a notification
   const url = `${getFunctionsUrl()}/ensure-week-summary`;
   const res = await fetch(url, { method: 'POST', headers: await getEdgeFunctionHeaders() });
   if (!res.ok) {
@@ -5623,6 +5626,7 @@ export async function listInboxItems(): Promise<InboxItem[]> {
  *  (requirement #3). Called by `listInboxItems` itself; exported separately for a manual refresh
  *  action that wants the sweep without a full re-fetch. */
 export async function reopenStaleInboxClaims(): Promise<void> {
+  if (isViewOnly) return; // TASK-H21: writes campaign/inbox rows
   const orgId = await getActiveOrgId();
   const { error } = await supabase.rpc('reopen_stale_inbox_claims', { p_org: orgId });
   if (error) throw new Error(error.message);

@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useState, useCallback, type React
 import type { User, Session } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 import { resetCloseDraft } from '@/lib/closeDraft';
+import { exitViewAs, isViewOnly, viewAsReady } from '@/lib/viewAs';
 
 export interface SignUpInput {
   email: string;
@@ -47,11 +48,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const clearPasswordRecovery = useCallback(() => setPasswordRecovery(false), []);
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      setUser(session?.user ?? null);
-      setLoading(false);
-    });
+    // TASK-H21: in a view tab the intern's session is installed first (viewAsReady); otherwise this resolves at once.
+    viewAsReady
+      .then(() => supabase.auth.getSession())
+      .then(({ data: { session } }) => {
+        setSession(session);
+        setUser(session?.user ?? null);
+        setLoading(false);
+      });
 
     const {
       data: { subscription },
@@ -126,6 +130,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setError(null);
     // TASK-H13 review: the Log Close draft (owner name, mobile, email) lives in module memory; drop it on sign-out.
     resetCloseDraft();
+    // TASK-H21: "sign out" in a view tab is Exit (revokes the view session; never a global sign-out of the intern).
+    if (isViewOnly) {
+      await exitViewAs();
+      return;
+    }
     await supabase.auth.signOut();
   }, []);
 

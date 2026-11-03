@@ -8,6 +8,8 @@ import { MainApp } from './components/MainApp';
 import { InviteLanding } from './components/InviteLanding';
 import { ResetPassword } from './components/ResetPassword';
 import { Toaster } from '@/components/ui/sonner';
+import { ViewAsEnded } from '@/components/app/ViewAsBanner';
+import { isViewOnly } from '@/lib/viewAs';
 
 function getInviteTokenFromUrl(): string | null {
   return new URLSearchParams(window.location.search).get('invite');
@@ -63,6 +65,9 @@ function AppContent() {
 }
 
 export default function App() {
+  if (!isViewOnly && new URLSearchParams(window.location.search).has('view_as_ended')) {
+    return <ViewAsEnded />;
+  }
   return (
     <AuthProvider>
       <OrgProvider>

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { isViewOnly } from '@/lib/viewAs';
 import { Button } from '@/components/ui/button';
 import { getMyForwardNumber, setMyForwardNumber } from '@/lib/api';
 
@@ -50,7 +51,7 @@ export function CallForwardingCard() {
         <input
           type="tel"
           value={value}
-          disabled={loading || saving}
+          disabled={loading || saving || isViewOnly}
           onChange={(e) => setValue(e.target.value)}
           placeholder="+15551234567"
           className="flex-1 bg-surface-2 border border-white/10 rounded-app-md px-3 py-2 text-white placeholder-text-muted focus:outline-none focus:border-accent-to disabled:opacity-60"

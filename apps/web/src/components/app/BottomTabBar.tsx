@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { isViewOnly } from '@/lib/viewAs';
 import {
   LayoutGrid,
   Phone,
@@ -179,8 +180,10 @@ export function BottomTabBar({ activeTab, onTabChange, isManager }: BottomTabBar
               type="button"
               onClick={() => {
                 setMoreOpen(false);
-                localStorage.clear();
-                sessionStorage.clear();
+                if (!isViewOnly) {
+                  localStorage.clear();
+                  sessionStorage.clear();
+                }
                 signOut();
               }}
               className="flex items-center gap-3 rounded-app-md px-3 py-3 text-danger hover:bg-white/5"
