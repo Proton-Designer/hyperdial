@@ -15,7 +15,10 @@
 --        NULL in that case, so the caller learns nothing about the contact.
 --      - otherwise 42501 "This number belongs to a contact you don't have access to. Ask your manager to log the close."
 --    A close writes only a contact_closes row + contact_status 'Closed' (the one clause of contacts_agent_update_scope),
---    never the contact's own fields. The unique (org_id, phone_number) index is the backstop for a concurrent create.
+--    never the contact's own fields.
+--    A contact created here gets import_list 'Manual close' (its Source is not blank). The inbound proof is org-wide on
+--    purpose: a call-back may be made by a different agent than the one the call rang.
+--    The unique (org_id, phone_number) index is the backstop for a concurrent create.
 
 create or replace function private.log_contact_close_core(
   p_uid uuid,
@@ -285,8 +288,8 @@ begin
       select t.timezone into v_tz from private.area_code_timezones t where t.area_code = substring(v_phone from 3 for 3);
     end if;
     select btrim(s) into v_city from unnest(coalesce(p_cities, '{}')) s where btrim(s) <> '' limit 1;
-    insert into public.contacts (user_id, org_id, business_name, owner_contact, phone_number, phone_raw, timezone, city)
-    values (v_uid, p_org_id, v_business, v_owner, v_phone, btrim(p_phone), v_tz, v_city)
+    insert into public.contacts (user_id, org_id, business_name, owner_contact, phone_number, phone_raw, timezone, city, import_list)
+    values (v_uid, p_org_id, v_business, v_owner, v_phone, btrim(p_phone), v_tz, v_city, 'Manual close')
     returning id into v_contact;
     v_created := true;
   end if;

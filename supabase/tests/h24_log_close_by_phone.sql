@@ -117,7 +117,7 @@ insert into t_res select 'unknown number: contact created + closed in one call',
 insert into t_res select 'unknown number: contact has org, E.164 phone, business, owner, city, timezone, creator, status Closed', exists (
   select 1 from public.contacts where id = ((select v from r_cap where k='r2')::jsonb ->> 'contact_id')::uuid and org_id = 'a24a0000-a000-4000-8000-0000000000a1'::uuid and phone_number = '+13185550199'
     and business_name = 'New Biz LLC' and owner_contact = 'New Owner' and city = 'Monroe' and timezone = 'America/Chicago'
-    and user_id = 'a24a0000-a000-4000-8000-000000000002'::uuid and contact_status = 'Closed'), null;
+    and user_id = 'a24a0000-a000-4000-8000-000000000002'::uuid and contact_status = 'Closed' and import_list = 'Manual close'), null;
 insert into t_res select 'unknown number: close row points at the new contact', exists (select 1 from public.contact_closes where id = ((select v from r_cap where k='r2')::jsonb ->> 'close_id')::uuid and contact_id = ((select v from r_cap where k='r2')::jsonb ->> 'contact_id')::uuid and closed_by = 'a24a0000-a000-4000-8000-000000000002'::uuid), null;
 
 -- 3. same number again in another format, same agent within 60 s: same contact (no duplicate), deduped close
