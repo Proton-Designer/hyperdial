@@ -15,7 +15,13 @@ import { emptyCloseDraftValues, useCloseDraft } from '@/lib/closeDraft';
 export interface LogCloseFormProps {
   /** The call leg id the draft is keyed by (falls back to the contact id when there is no leg). */
   draftKey: string;
-  contactId: string;
+  /** The contact to prefill from. Absent for a number that is not a contact (TASK-H24). */
+  contactId?: string;
+  /** TASK-H24: close by the dialed number instead of by contact id: the server finds the org contact by phone or
+   *  creates it from the form, and lets an agent through to a contact they cannot read only if that number phoned in. */
+  byPhone?: boolean;
+  /** Called once a close was saved (the contact modal uses it to show "Closed"). */
+  onSaved?: () => void;
   /** Shown/used until the contact's own details load (and as the fallback if they cannot). */
   name: string;
   phone: string;
@@ -111,6 +117,8 @@ const DELIVERY_NOTE: Record<CloseDeliveryStatus, string> = {
 export function LogCloseForm({
   draftKey,
   contactId,
+  byPhone = false,
+  onSaved,
   name,
   phone,
   onClose,
@@ -154,7 +162,9 @@ export function LogCloseForm({
   // loaded is kept (only empty fields are filled).
   useEffect(() => {
     let cancelled = false;
-    if (!state.values.prefilled) {
+    if (!state.values.prefilled && !contactId) {
+      patchValues({ prefilled: true });
+    } else if (!state.values.prefilled && contactId) {
       loadPrefill(contactId)
         .then((p) => {
           if (cancelled) return;
@@ -228,7 +238,7 @@ export function LogCloseForm({
       return setError('Years in business must be a whole number.');
 
     const input: LogContactCloseInput = {
-      contactId,
+      ...(byPhone || !contactId ? { phone } : { contactId }),
       ownerName: ownerName.trim(),
       businessName: businessName.trim(),
       mobile: mobile.trim(),
@@ -246,6 +256,7 @@ export function LogCloseForm({
     try {
       const res = await submitClose(input);
       // Logged once: both surfaces now show "Closed", and the typed values are gone.
+      onSaved?.();
       patchState({
         done: res.deliveryStatus,
         submitting: false,

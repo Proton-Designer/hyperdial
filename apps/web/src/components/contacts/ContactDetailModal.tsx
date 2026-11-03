@@ -17,6 +17,8 @@ import { motion } from 'motion/react';
 import { listContactFieldDefs, updateContact, type Contact, type ContactFieldDef } from '@/lib/api';
 import { useOrg } from '@/contexts/OrgContext';
 import { setPendingManualDialNumber } from '@/lib/dialerLaunchIntent';
+import { LogCloseModal } from '@/components/dialer/LogCloseModal';
+import { isViewOnly } from '@/lib/viewAs';
 import { ContactNotesPanel } from './ContactNotesPanel';
 import { ContactChangeHistoryPanel } from './ContactChangeHistoryPanel';
 
@@ -107,6 +109,9 @@ export function ContactDetailModal({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [dncSaving, setDncSaving] = useState(false);
+  // TASK-H24: "Log close" from the contact itself (a close is otherwise only reachable from a session wrap-up).
+  const [logCloseOpen, setLogCloseOpen] = useState(false);
+  const [closedHere, setClosedHere] = useState(false);
   const [tab, setTab] = useState<DetailTab>('details');
   const [fieldDefs, setFieldDefs] = useState<ContactFieldDef[]>([]);
   const hasCustomValues = Object.keys(contact?.custom_values ?? {}).length > 0;
@@ -608,6 +613,21 @@ export function ContactDetailModal({
             </>
           ) : (
             <>
+              {c.contact_status === 'Closed' || closedHere ? (
+                <span className="inline-flex items-center px-3 py-2 rounded-xl border border-success/30 bg-success-soft text-success text-sm font-semibold">
+                  Already closed
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setLogCloseOpen(true)}
+                  disabled={isViewOnly}
+                  title={isViewOnly ? 'View-only' : undefined}
+                  className="px-4 py-2 rounded-xl border border-white/10 text-text-primary hover:bg-white/5 text-sm font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Log close
+                </button>
+              )}
               {c.phone_number && (
                 <div className="flex flex-col items-start gap-1">
                   <button
@@ -636,6 +656,19 @@ export function ContactDetailModal({
           )}
         </div>
       </motion.div>
+      {logCloseOpen && (
+        <LogCloseModal
+          draftKey={`contact:${c.id}`}
+          contactId={c.id}
+          name={contactHeadline(c)}
+          phone={c.phone_number ?? ''}
+          onSaved={() => {
+            setClosedHere(true);
+            onUpdated?.({ ...c, contact_status: 'Closed' });
+          }}
+          onClose={() => setLogCloseOpen(false)}
+        />
+      )}
     </div>,
     document.body
   );

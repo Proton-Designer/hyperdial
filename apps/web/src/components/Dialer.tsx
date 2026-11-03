@@ -12,6 +12,7 @@ import { DialerStateBanner } from './dialer/DialerStateBanner';
 import { IncomingCallBanner } from './dialer/IncomingCallBanner';
 import { CallForwardingCard } from './dialer/CallForwardingCard';
 import { WrapUpModal } from './dialer/WrapUpModal';
+import { PostCallCard, type PostCall } from './dialer/PostCallCard';
 import { StartSessionPanel } from './dialer/StartSessionPanel';
 import { ShiftDialerBanner } from './shifts/ShiftDialerBanner';
 import { ManualDialPanel } from './dialer/ManualDialPanel';
@@ -760,6 +761,7 @@ function DialerBody({
       return;
     }
     setOutboundNumber(phoneNumber);
+    lastCallRef.current = { number: phoneNumber, direction: 'outbound' };
     try {
       await dial(phoneNumber, selectedFromNumber);
     } catch (err) {
@@ -802,6 +804,31 @@ function DialerBody({
   const isParallelMode = Boolean(
     effectiveCampaignId && (parallelSession.sessionId ?? effectiveSessionId)
   );
+
+  // TASK-H24: a connected call OUTSIDE a dial session (manual dial, or an inbound call answered from the
+  // banner) has no wrap-up window, so it leaves a card with "Log close" until dismissed. Inbound calls answered
+  // outside a session run through this same callState (answer() -> the same notification handler), so they are
+  // covered; session calls (parallel mode) keep their wrap-up and never reach this.
+  const [postCalls, setPostCalls] = useState<PostCall[]>([]);
+  const lastCallRef = useRef<{ number: string; direction: 'outbound' | 'inbound' } | null>(null);
+  const connectedOutsideSessionRef = useRef(false);
+  const parallelNowRef = useRef(false);
+  parallelNowRef.current = isParallelMode;
+  useEffect(() => {
+    if (callState === 'connected') {
+      if (!parallelNowRef.current && lastCallRef.current) connectedOutsideSessionRef.current = true;
+      return;
+    }
+    if (callState === 'ended' || callState === 'idle') {
+      if (connectedOutsideSessionRef.current && lastCallRef.current) {
+        const { number, direction } = lastCallRef.current;
+        setPostCalls((prev) =>
+          [{ id: `${Date.now()}-${number}`, number, direction }, ...prev].slice(0, 5)
+        );
+      }
+      connectedOutsideSessionRef.current = false;
+    }
+  }, [callState]);
   const resolvedCount =
     parallelSession.connected + parallelSession.voicemail + parallelSession.noAnswer;
   // Full-screen spinner only before the first snapshot: once a session is on screen, a refetch
@@ -1040,11 +1067,22 @@ function DialerBody({
         {/* MISSION-5 TASK-M5-E2: compact live power-hour board, same self-contained/renders-
             nothing-when-idle shape as the two above. */}
         <PowerHourLiveBanner />
+        {postCalls.map((pc) => (
+          <PostCallCard
+            key={pc.id}
+            call={pc}
+            onDismiss={() => setPostCalls((prev) => prev.filter((x) => x.id !== pc.id))}
+          />
+        ))}
         {pendingInboundCall && (
           <IncomingCallBanner
             fromE164={pendingInboundCall.fromE164}
             contactName={pendingCallContactName}
-            onAnswer={answerPendingInboundCall}
+            onAnswer={() => {
+              if (pendingInboundCall.fromE164)
+                lastCallRef.current = { number: pendingInboundCall.fromE164, direction: 'inbound' };
+              answerPendingInboundCall();
+            }}
             onDecline={declinePendingInboundCall}
           />
         )}

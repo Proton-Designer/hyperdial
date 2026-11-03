@@ -43,7 +43,7 @@ export function LogCloseModal({ onClose, ...form }: LogCloseModalProps) {
               Log close
             </h2>
             <p className="text-body text-text-secondary mt-1 truncate">
-              {form.name || 'Unknown contact'} · {form.phone}
+              {form.name || 'Not in your contacts'} · {form.phone}
             </p>
           </div>
           <button
