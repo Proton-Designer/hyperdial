@@ -81,21 +81,16 @@ function Chip({
 
 function Field({
   label,
-  required,
   hint,
   children,
 }: {
   label: string;
-  required?: boolean;
   hint?: string;
   children: React.ReactNode;
 }) {
   return (
     <div>
-      <div className="text-meta text-text-secondary mb-1.5">
-        {label}
-        {required && <span className="text-danger"> *</span>}
-      </div>
+      <div className="text-meta text-text-secondary mb-1.5">{label}</div>
       {children}
       {hint && <p className="text-meta text-text-muted mt-1">{hint}</p>}
     </div>
@@ -214,19 +209,15 @@ export function LogCloseForm({
     const priceN = parseOptionalNumber(price);
     const capacityN = parseOptionalNumber(capacity);
     const yearsN = parseOptionalNumber(years);
-    if (!ownerName.trim()) return setError('Enter the owner name.');
-    if (!businessName.trim()) return setError('Enter the business name.');
-    if (!isPlausibleMobile(mobile)) return setError('Enter a valid mobile number.');
+    // TASK-H28: nothing is required (the contact or dialed number is the anchor); what IS entered must still be valid.
+    if (mobile.trim() && !isPlausibleMobile(mobile))
+      return setError('Enter a valid mobile number.');
     if (email.trim() && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email.trim()))
       return setError('That email does not look right.');
     const allServices = mergeServices(services, serviceDraft);
-    if (allServices.length === 0) return setError('Enter at least one service.');
     if (allServices.length > 10) return setError('Enter at most 10 services.');
     if (allServices.some((x) => x.length > 60))
       return setError('Each service must be 60 characters or fewer.');
-    if (finalCities.length === 0) return setError('Add at least one city they cover.');
-    if (frequencies.length === 0) return setError('Pick at least one frequency.');
-    if (insured === null) return setError('Say whether they are insured.');
     if (priceN === undefined || priceN === null ? priceN === undefined : priceN < 0)
       return setError('Starting price must be a number.');
     if (
@@ -239,9 +230,9 @@ export function LogCloseForm({
 
     const input: LogContactCloseInput = {
       ...(byPhone || !contactId ? { phone } : { contactId }),
-      ownerName: ownerName.trim(),
-      businessName: businessName.trim(),
-      mobile: mobile.trim(),
+      ownerName: ownerName.trim() || null,
+      businessName: businessName.trim() || null,
+      mobile: mobile.trim() || null,
       email: email.trim() || null,
       services: allServices,
       cities: finalCities,
@@ -291,6 +282,7 @@ export function LogCloseForm({
       ) : (
         <>
           <div className={`p-4 space-y-4 ${scroll ? 'overflow-y-auto' : ''}`}>
+            <p className="text-body text-text-secondary">Fill in what you know.</p>
             {error && (
               <div
                 ref={errorRef}
@@ -306,7 +298,7 @@ export function LogCloseForm({
               </p>
             )}
 
-            <Field label="Owner name" required>
+            <Field label="Owner name">
               <input
                 className={INPUT}
                 value={ownerName}
@@ -314,7 +306,7 @@ export function LogCloseForm({
                 autoComplete="off"
               />
             </Field>
-            <Field label="Business name" required>
+            <Field label="Business name">
               <input
                 className={INPUT}
                 value={businessName}
@@ -322,7 +314,7 @@ export function LogCloseForm({
                 autoComplete="off"
               />
             </Field>
-            <Field label="Mobile number" required>
+            <Field label="Mobile number">
               <input
                 className={INPUT}
                 type="tel"
@@ -342,7 +334,7 @@ export function LogCloseForm({
               />
             </Field>
 
-            <Field label="Services offered" required>
+            <Field label="Services offered">
               {categories === null && !categoriesError ? (
                 <div
                   className="flex items-center gap-2 text-body text-text-secondary"
@@ -385,11 +377,7 @@ export function LogCloseForm({
               )}
             </Field>
 
-            <Field
-              label="Cities they cover"
-              required
-              hint="Type a city and press Enter or comma to add it."
-            >
+            <Field label="Cities they cover" hint="Type a city and press Enter or comma to add it.">
               {cities.length > 0 && (
                 <div className="flex flex-wrap gap-2 mb-2">
                   {cities.map((c) => (
@@ -434,7 +422,7 @@ export function LogCloseForm({
               />
             </Field>
 
-            <Field label="Frequencies offered" required>
+            <Field label="Frequencies offered">
               <div className="flex flex-wrap gap-2">
                 {FREQUENCIES.map((f) => (
                   <Chip
@@ -450,12 +438,18 @@ export function LogCloseForm({
               </div>
             </Field>
 
-            <Field label="Insured?" required>
+            <Field label="Insured?">
               <div className="flex gap-2">
-                <Chip selected={insured === true} onClick={() => patchValues({ insured: true })}>
+                <Chip
+                  selected={insured === true}
+                  onClick={() => patchValues({ insured: insured === true ? null : true })}
+                >
                   Yes
                 </Chip>
-                <Chip selected={insured === false} onClick={() => patchValues({ insured: false })}>
+                <Chip
+                  selected={insured === false}
+                  onClick={() => patchValues({ insured: insured === false ? null : false })}
+                >
                   No
                 </Chip>
               </div>

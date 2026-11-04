@@ -31,8 +31,17 @@ const UNKNOWN = 'Unknown';
 const inputClass =
   'bg-surface-2 border border-border-subtle rounded-app-sm px-3 py-2 text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent-to';
 
-const headline = (p: OnboardedPro) =>
-  contactHeadline({ business_name: p.businessName, first_name: p.ownerName, last_name: null });
+// TASK-H28: a close may have no business or owner; fall back to the phone, then a plain label.
+const headline = (p: OnboardedPro) => {
+  const h = contactHeadline({
+    business_name: p.businessName,
+    first_name: p.ownerName,
+    last_name: null,
+  });
+  return h !== '—' ? h : p.mobile.trim() || 'Unnamed pro';
+};
+const insuredText = (p: OnboardedPro) =>
+  p.insured === null ? 'Insured: —' : p.insured ? 'Insured' : 'Not insured';
 const closerName = (p: OnboardedPro) => p.closedByName?.trim() || UNKNOWN;
 const when = (iso: string) => new Date(iso).toLocaleDateString();
 const money = (n: number | null) =>
@@ -215,7 +224,7 @@ export function Pros() {
       services: p.services.map(neutralizeCell).join('; '),
       cities: p.cities.map(neutralizeCell).join('; '),
       frequencies: p.frequencies.map(neutralizeCell).join('; '),
-      insured: p.insured ? 'Yes' : 'No',
+      insured: p.insured === null ? '' : p.insured ? 'Yes' : 'No',
       bestContact: p.bestContact ?? '',
       price: p.startingPrice ?? '',
       capacity: p.capacity ?? '',
@@ -455,7 +464,7 @@ export function Pros() {
                         <td className="p-3 text-meta text-text-secondary whitespace-nowrap">
                           <div>{p.frequencies.join(', ') || '—'}</div>
                           <div>
-                            {p.insured ? 'Insured' : 'Not insured'} · {money(p.startingPrice)}
+                            {insuredText(p)} · {money(p.startingPrice)}
                           </div>
                           <div>
                             Cap {p.capacity ?? '—'} · {p.yearsInBusiness ?? '—'} yrs
@@ -505,8 +514,8 @@ export function Pros() {
                       <Tags items={p.services} />
                       <Tags items={p.cities} />
                       <div className="text-meta text-text-muted">
-                        {p.frequencies.join(', ') || '—'} · {p.insured ? 'Insured' : 'Not insured'}{' '}
-                        · {money(p.startingPrice)} · Cap {p.capacity ?? '—'} ·{' '}
+                        {p.frequencies.join(', ') || '—'} · {insuredText(p)} ·{' '}
+                        {money(p.startingPrice)} · Cap {p.capacity ?? '—'} ·{' '}
                         {p.yearsInBusiness ?? '—'} yrs · closed by {closerName(p)}
                       </div>
                     </button>

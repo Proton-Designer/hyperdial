@@ -6345,14 +6345,16 @@ export interface LogContactCloseInput {
   contactId?: string;
   /** The number that was called. The server finds the org contact by normalized phone, or creates it from the form. */
   phone?: string;
-  ownerName: string;
-  businessName: string;
-  mobile: string;
+  /** TASK-H28: nothing is required; blank = null. A value that is sent must still be valid. */
+  ownerName?: string | null;
+  businessName?: string | null;
+  mobile?: string | null;
   email?: string | null;
-  services: string[];
-  cities: string[];
-  frequencies: CloseFrequency[];
-  insured: boolean;
+  services?: string[];
+  cities?: string[];
+  frequencies?: CloseFrequency[];
+  /** null = not answered. */
+  insured?: boolean | null;
   bestContact?: string | null;
   startingPrice?: number | null;
   capacity?: number | null;
@@ -6382,7 +6384,8 @@ export interface OnboardedPro {
   services: string[];
   cities: string[];
   frequencies: CloseFrequency[];
-  insured: boolean;
+  /** null = not answered. */
+  insured: boolean | null;
   bestContact: string | null;
   startingPrice: number | null;
   capacity: number | null;
@@ -6420,7 +6423,7 @@ export async function listOnboardedPros(): Promise<OnboardedProsResult> {
     services: (r.services as string[] | null) ?? [],
     cities: (r.cities as string[] | null) ?? [],
     frequencies: (r.frequencies as CloseFrequency[] | null) ?? [],
-    insured: r.insured === true,
+    insured: typeof r.insured === 'boolean' ? r.insured : null,
     bestContact: (r.best_contact as string | null) ?? null,
     startingPrice: numOrNull(r.starting_price),
     capacity: numOrNull(r.capacity),
