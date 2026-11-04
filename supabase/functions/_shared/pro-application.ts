@@ -9,7 +9,7 @@ export const PRO_TOKEN_RE = /^[0-9a-f]{64}$/;
 /** The form is a few hundred bytes; refuse anything bigger before parsing. */
 export const MAX_BODY_BYTES = 20_000;
 /** Honeypot: a field real people never see. Any non-empty value gets a fake success and no database call. */
-export const HONEYPOT_FIELD = 'website';
+export const HONEYPOT_FIELD = 'hd_chk';
 
 export interface ProApplicationInput {
   token: string;

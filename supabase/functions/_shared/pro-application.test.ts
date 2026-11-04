@@ -36,12 +36,12 @@ Deno.test('token format: only 64 lowercase hex chars pass', () => {
 
 Deno.test('a filled honeypot is detected (any non-empty value), an empty one is not', () => {
   assertEquals(
-    parseProApplicationBody({ ...good, website: 'http://spam.example' }).kind,
+    parseProApplicationBody({ ...good, hd_chk: 'http://spam.example' }).kind,
     'honeypot'
   );
-  assertEquals(parseProApplicationBody({ ...good, website: 1 }).kind, 'honeypot');
-  assertEquals(parseProApplicationBody({ ...good, website: '' }).kind, 'ok');
-  assertEquals(parseProApplicationBody({ ...good, website: '   ' }).kind, 'ok');
+  assertEquals(parseProApplicationBody({ ...good, hd_chk: 1 }).kind, 'honeypot');
+  assertEquals(parseProApplicationBody({ ...good, hd_chk: '' }).kind, 'ok');
+  assertEquals(parseProApplicationBody({ ...good, hd_chk: '   ' }).kind, 'ok');
 });
 
 Deno.test('a good body parses; optional bits default to null / empty', () => {

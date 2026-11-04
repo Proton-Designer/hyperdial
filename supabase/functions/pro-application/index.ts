@@ -2,7 +2,7 @@
  * TASK-H29: PUBLIC pro form endpoint (no login; deploy with --no-verify-jwt, see config.toml).
  *   GET  ?token=<64 hex>  -> { orgName, serviceCategories }            404 { error } for anything else (no detail)
  *   POST { token, ownerName, businessName, mobile, email?, services[], cities[], frequencies[], insured,
- *          bestContact?, startingPrice?, capacity?, yearsInBusiness?, website? (honeypot) }
+ *          bestContact?, startingPrice?, capacity?, yearsInBusiness?, hd_chk? (honeypot) }
  *        -> 200 { ok: true } | 400 { error } (readable field message) | 404 { error } | 429 { error } | 500 { error }
  * Nothing but the two GET fields is ever read back from the database, and the answer never says whether the number or
  * business already exists. Everything goes through the service-only RPCs get_pro_form_info / submit_pro_application:
