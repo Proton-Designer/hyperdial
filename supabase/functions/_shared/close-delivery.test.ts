@@ -64,6 +64,42 @@ Deno.test('payload carries the form, numeric price and agent', () => {
   assertEquals(p.form.email, null);
 });
 
+Deno.test(
+  'TASK-H28: a close with every field blank still builds a payload and is delivered',
+  async () => {
+    const blank = {
+      ...close,
+      owner_name: null,
+      business_name: null,
+      mobile: null,
+      email: null,
+      services: [],
+      cities: [],
+      frequencies: [],
+      insured: null,
+      best_contact: null,
+      starting_price: null,
+      capacity: null,
+      years_in_business: null,
+    };
+    const p = buildClosePayload(blank, { id: 'u1', name: null });
+    assertEquals(p.form.owner_name, null);
+    assertEquals(p.form.insured, null);
+    assertEquals(p.form.services, []);
+    assertEquals(p.form.starting_price, null);
+    const f = fake(200);
+    const out = await deliverClose({
+      url: 'https://example.com/hook',
+      secret: 's',
+      payload: p,
+      fetchImpl: f.impl,
+      resolveHost: () => Promise.resolve(['93.184.216.34']),
+    });
+    assertEquals(out.kind, 'sent');
+    assert(JSON.parse(f.calls[0].init.body as string).form.owner_name === null);
+  }
+);
+
 Deno.test('url guard accepts https hostnames, rejects the SSRF shapes', () => {
   assert(validateWebhookUrl('https://script.google.com/macros/s/abc/exec').ok);
   for (const bad of [

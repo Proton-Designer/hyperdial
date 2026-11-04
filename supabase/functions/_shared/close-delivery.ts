@@ -15,14 +15,15 @@ export interface CloseRow {
   org_id: string;
   contact_id: string;
   closed_by: string;
-  owner_name: string;
-  business_name: string;
-  mobile: string;
+  // TASK-H28: nothing on the form is required, so these can all be null (and the lists empty)
+  owner_name: string | null;
+  business_name: string | null;
+  mobile: string | null;
   email: string | null;
   services: string[];
   cities: string[];
   frequencies: string[];
-  insured: boolean;
+  insured: boolean | null;
   best_contact: string | null;
   starting_price: number | string | null;
   capacity: number | null;

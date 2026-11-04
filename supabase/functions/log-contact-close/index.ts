@@ -1,6 +1,9 @@
 /**
- * TASK-H03: "Log Close" submit. POST { contactId, ownerName, businessName, mobile, email?, services[], cities[],
- * frequencies[], insured, bestContact?, startingPrice?, capacity?, yearsInBusiness? }
+ * TASK-H03: "Log Close" submit. POST { contactId, ownerName?, businessName?, mobile?, email?, services?[], cities?[],
+ * frequencies?[], insured?: boolean|null, bestContact?, startingPrice?, capacity?, yearsInBusiness? }
+ * TASK-H28: NOTHING on the form is required (the contact, or the dialed number, is the anchor). Absent/blank text = null,
+ * absent lists = [], insured absent/null = not answered. A value that is entered must still be valid (the RPC checks it).
+ * Blank business name falls back to the contact's, blank mobile to the contact's phone (done in the RPC).
  *   -> { closeId, deduped, deliveryStatus: 'pending'|'sent'|'failed'|'not_configured', contactId?: string|null, contactCreated?: boolean }
  * TASK-H24: send `phone` (the number that was called) INSTEAD of `contactId` to close a number that may not be a contact
  * yet (after a manual call): the RPC finds the org contact by normalized phone or creates it from the form, then closes.
@@ -45,8 +48,13 @@ interface CloseBody {
 }
 
 const str = (v: unknown): string | null => (typeof v === 'string' ? v : null);
+// Absent or null = an empty list (TASK-H28); anything else that is not an array of text is a 400 (null result).
 const strArray = (v: unknown): string[] | null =>
-  Array.isArray(v) && v.every((x) => typeof x === 'string') ? (v as string[]) : null;
+  v === undefined || v === null
+    ? []
+    : Array.isArray(v) && v.every((x) => typeof x === 'string')
+      ? (v as string[])
+      : null;
 const num = (v: unknown): number | null | undefined =>
   v === null || v === undefined || v === ''
     ? null
@@ -86,8 +94,8 @@ Deno.serve(async (req: Request) => {
   if (!services || !cities || !frequencies) {
     return jsonResponse({ error: 'services, cities and frequencies must be arrays of text' }, 400);
   }
-  if (typeof b.insured !== 'boolean')
-    return jsonResponse({ error: 'insured must be true or false' }, 400);
+  if (b.insured !== undefined && b.insured !== null && typeof b.insured !== 'boolean')
+    return jsonResponse({ error: 'insured must be true, false or empty' }, 400);
   if (price === undefined || capacity === undefined || years === undefined) {
     return jsonResponse({ error: 'price, capacity and years must be numbers' }, 400);
   }
@@ -112,7 +120,7 @@ Deno.serve(async (req: Request) => {
     p_services: services,
     p_cities: cities,
     p_frequencies: frequencies,
-    p_insured: b.insured,
+    p_insured: typeof b.insured === 'boolean' ? b.insured : null,
     p_best_contact: str(b.bestContact),
     p_starting_price: price,
     p_capacity: capacity,
