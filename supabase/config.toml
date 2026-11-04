@@ -571,3 +571,8 @@ s3_region = "env(S3_REGION)"
 s3_access_key = "env(S3_ACCESS_KEY)"
 # Configures AWS_SECRET_ACCESS_KEY for S3 bucket
 s3_secret_key = "env(S3_SECRET_KEY)"
+
+[functions.pro-application]
+# TASK-H29: PUBLIC pro form (no login, visitors have no JWT). Auth is the unguessable link token; the function only calls
+# service-only RPCs and rate limits by hashed IP. Deploy with --no-verify-jwt.
+verify_jwt = false
