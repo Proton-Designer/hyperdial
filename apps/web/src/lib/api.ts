@@ -6569,6 +6569,107 @@ export async function reviewProApplication(
   };
 }
 
+// --- TASK-H27: manual calls (outside a dial session) get a record and an outcome ---
+
+export interface RecordManualCallInput {
+  /** One per call, generated once when the call starts and REUSED on a retry (the server de-duplicates on it). */
+  clientKey: string;
+  phone: string;
+  direction: 'outbound' | 'inbound';
+  answered: boolean;
+  startedAt: string;
+  endedAt: string;
+  durationSeconds: number | null;
+}
+
+/** Records one manual call when it ends (answered or not). Returns the log id the outcome is saved against. */
+export async function recordManualCall(
+  input: RecordManualCallInput
+): Promise<{ id: string; contactId: string | null; created: boolean }> {
+  const orgId = await getActiveOrgId();
+  const { data, error } = await supabase.rpc('record_manual_call', {
+    p_org_id: orgId,
+    p_client_key: input.clientKey,
+    p_phone: input.phone,
+    p_direction: input.direction,
+    p_answered: input.answered,
+    p_started_at: input.startedAt,
+    p_ended_at: input.endedAt,
+    p_duration_seconds: input.durationSeconds,
+  });
+  if (error) throw new Error(error.message);
+  const row = (Array.isArray(data) ? data[0] : data) as {
+    id?: string;
+    contact_id?: string | null;
+    created?: boolean;
+  } | null;
+  if (!row?.id) throw new Error('The call was not recorded');
+  return { id: row.id, contactId: row.contact_id ?? null, created: row.created !== false };
+}
+
+export type ManualCallEffect = 'dnc' | 'completed' | 'exhausted' | null;
+
+/** Saves (or changes) the outcome and/or note of a manual call. A disposition key of null saves only the note. */
+export async function setManualCallOutcome(
+  id: string,
+  disposition: string | null,
+  notes: string | null
+): Promise<{ dispositionKey: string | null; effect: ManualCallEffect; contactEffect: string }> {
+  const { data, error } = await supabase.rpc('set_manual_call_outcome', {
+    p_id: id,
+    p_disposition: disposition,
+    p_notes: notes,
+  });
+  if (error) throw new Error(error.message);
+  const row = (Array.isArray(data) ? data[0] : data) as {
+    disposition_key?: string | null;
+    effect?: ManualCallEffect;
+    contact_effect?: string;
+  } | null;
+  return {
+    dispositionKey: row?.disposition_key ?? null,
+    effect: row?.effect ?? null,
+    contactEffect: row?.contact_effect ?? 'none',
+  };
+}
+
+export interface ManualCallEntry {
+  id: string;
+  userId: string;
+  userName: string | null;
+  direction: 'outbound' | 'inbound';
+  answered: boolean;
+  startedAt: string;
+  durationSeconds: number | null;
+  dispositionKey: string | null;
+  dispositionLabel: string | null;
+  notes: string | null;
+}
+
+/** Manual calls to/from this contact, newest first. The server scopes it: an agent sees only their own calls. */
+export async function listContactManualCalls(
+  contactId: string,
+  limit = 50
+): Promise<ManualCallEntry[]> {
+  const { data, error } = await supabase.rpc('list_contact_manual_calls', {
+    p_contact_id: contactId,
+    p_limit: limit,
+  });
+  if (error) throw new Error(error.message);
+  return ((data ?? []) as Record<string, unknown>[]).map((r) => ({
+    id: r.id as string,
+    userId: r.user_id as string,
+    userName: (r.user_name as string | null) ?? null,
+    direction: r.direction === 'inbound' ? 'inbound' : 'outbound',
+    answered: r.answered === true,
+    startedAt: r.started_at as string,
+    durationSeconds: numOrNull(r.duration_seconds),
+    dispositionKey: (r.disposition_key as string | null) ?? null,
+    dispositionLabel: (r.disposition_label as string | null) ?? null,
+    notes: (r.notes as string | null) ?? null,
+  }));
+}
+
 /** log-contact-close: stores the close, marks the contact 'Closed', queues delivery to the org's closes webhook. */
 export async function logContactClose(input: LogContactCloseInput): Promise<LogContactCloseResult> {
   const res = await fetch(`${getFunctionsUrl()}/log-contact-close`, {

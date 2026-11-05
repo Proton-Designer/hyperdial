@@ -85,6 +85,11 @@ if (proFormToken) {
   import('./dev/ContactDncHarness.tsx').then(({ ContactDncHarness }) => {
     root.render(<ContactDncHarness />);
   });
+} else if (devHarness?.has('dev_post_call')) {
+  // TASK-H27: the post-call card (outcome chips, notes, Save). `?dev_post_call=1&record=ok|fail`.
+  import('./dev/PostCallHarness.tsx').then(({ PostCallHarness }) => {
+    root.render(<PostCallHarness />);
+  });
 } else if (devHarness?.has('dev_shifts')) {
   // TASK-F01: the intern Shifts screen against fixture data, no live backend.
   // `?dev_shifts=1&scenario=default|unsubmitted|under_minimum|deadline_passed|power_week|empty|

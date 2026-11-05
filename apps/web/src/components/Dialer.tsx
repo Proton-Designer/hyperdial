@@ -13,6 +13,7 @@ import { IncomingCallBanner } from './dialer/IncomingCallBanner';
 import { CallForwardingCard } from './dialer/CallForwardingCard';
 import { WrapUpModal } from './dialer/WrapUpModal';
 import { PostCallCard, type PostCall } from './dialer/PostCallCard';
+import { recordWithRetry, talkSeconds } from '@/lib/manualCall';
 import { StartSessionPanel } from './dialer/StartSessionPanel';
 import { ShiftDialerBanner } from './shifts/ShiftDialerBanner';
 import { ManualDialPanel } from './dialer/ManualDialPanel';
@@ -37,6 +38,7 @@ import {
   ActiveSessionExistsError,
   ReconnectAlreadyInFlightError,
   LiveCallInProgressError,
+  recordManualCall,
   type CampaignWithStats,
 } from '@/lib/api';
 import { playConnectChime } from '@/lib/dialerSoundCue';
@@ -782,11 +784,18 @@ function DialerBody({
       dncCheckingRef.current = false;
     }
     setOutboundNumber(phoneNumber);
-    lastCallRef.current = { number: phoneNumber, direction: 'outbound' };
+    lastCallRef.current = {
+      number: phoneNumber,
+      direction: 'outbound',
+      key: crypto.randomUUID(),
+      startedAt: Date.now(),
+    };
     try {
       await dial(phoneNumber, selectedFromNumber);
     } catch (err) {
       console.error('Dial error:', err);
+      // The call was never placed: nothing to record.
+      lastCallRef.current = null;
     }
   };
 
@@ -831,25 +840,61 @@ function DialerBody({
   // outside a session run through this same callState (answer() -> the same notification handler), so they are
   // covered; session calls (parallel mode) keep their wrap-up and never reach this.
   const [postCalls, setPostCalls] = useState<PostCall[]>([]);
-  const lastCallRef = useRef<{ number: string; direction: 'outbound' | 'inbound' } | null>(null);
+  const lastCallRef = useRef<{
+    number: string;
+    direction: 'outbound' | 'inbound';
+    key: string;
+    startedAt: number;
+  } | null>(null);
+  const connectedAtRef = useRef<number | null>(null);
   const connectedOutsideSessionRef = useRef(false);
   const parallelNowRef = useRef(false);
   parallelNowRef.current = isParallelMode;
   useEffect(() => {
     if (callState === 'connected') {
       if (parallelNowRef.current) lastCallRef.current = null;
-      else if (lastCallRef.current) connectedOutsideSessionRef.current = true;
+      else if (lastCallRef.current) {
+        connectedOutsideSessionRef.current = true;
+        connectedAtRef.current ??= Date.now();
+      }
       return;
     }
     if (callState === 'ended' || callState === 'idle') {
-      if (connectedOutsideSessionRef.current && lastCallRef.current) {
-        const { number, direction } = lastCallRef.current;
-        setPostCalls((prev) =>
-          [{ id: `${Date.now()}-${number}`, number, direction }, ...prev].slice(0, 5)
-        );
-        lastCallRef.current = null;
+      const call = lastCallRef.current;
+      // TASK-H27: every manual call is recorded once when it ends, answered or not (a session call is never in
+      // lastCallRef). The card (outcome + Log close) is for answered calls only. View-only tabs record nothing.
+      if (call && !parallelNowRef.current && !isViewOnly) {
+        const answered = connectedOutsideSessionRef.current;
+        const endedAt = Date.now();
+        const input = {
+          clientKey: call.key,
+          phone: call.number,
+          direction: call.direction,
+          answered,
+          startedAt: new Date(call.startedAt).toISOString(),
+          endedAt: new Date(endedAt).toISOString(),
+          durationSeconds: answered ? talkSeconds(connectedAtRef.current, endedAt) : null,
+        };
+        const recorded = recordWithRetry(recordManualCall, input);
+        recorded.catch(() => undefined); // already logged; the card shows its own retry
+        if (answered) {
+          setPostCalls((prev) =>
+            [
+              {
+                id: `${call.startedAt}-${call.number}`,
+                number: call.number,
+                direction: call.direction,
+                recorded,
+                retryRecord: () => recordWithRetry(recordManualCall, input, []),
+              },
+              ...prev,
+            ].slice(0, 5)
+          );
+        }
       }
+      if (call) lastCallRef.current = null;
       connectedOutsideSessionRef.current = false;
+      connectedAtRef.current = null;
     }
   }, [callState]);
   const resolvedCount =
@@ -1103,7 +1148,12 @@ function DialerBody({
             contactName={pendingCallContactName}
             onAnswer={() => {
               if (pendingInboundCall.fromE164)
-                lastCallRef.current = { number: pendingInboundCall.fromE164, direction: 'inbound' };
+                lastCallRef.current = {
+                  number: pendingInboundCall.fromE164,
+                  direction: 'inbound',
+                  key: crypto.randomUUID(),
+                  startedAt: Date.now(),
+                };
               answerPendingInboundCall();
             }}
             onDecline={declinePendingInboundCall}

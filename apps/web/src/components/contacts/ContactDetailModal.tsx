@@ -21,6 +21,7 @@ import { LogCloseModal } from '@/components/dialer/LogCloseModal';
 import { isViewOnly } from '@/lib/viewAs';
 import { ContactNotesPanel } from './ContactNotesPanel';
 import { ContactChangeHistoryPanel } from './ContactChangeHistoryPanel';
+import { ManualCallsPanel } from './ManualCallsPanel';
 
 type DetailTab = 'details' | 'notes' | 'history';
 
@@ -317,7 +318,12 @@ export function ContactDetailModal({
           )}
 
           {tab === 'notes' && !editing && <ContactNotesPanel contactId={c.id} />}
-          {tab === 'history' && !editing && <ContactChangeHistoryPanel contactId={c.id} />}
+          {tab === 'history' && !editing && (
+            <>
+              <ContactChangeHistoryPanel contactId={c.id} />
+              <ManualCallsPanel contactId={c.id} />
+            </>
+          )}
 
           {!editing
             ? tab === 'details' && (
