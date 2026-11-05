@@ -209,8 +209,14 @@ insert into r_cap select 'o3', pg_temp.run_as('a27a0000-a000-4000-8000-000000000
 insert into t_res select 'no contact access: the number is STILL added to dnc_numbers, the contact and its leads are untouched, no GHL job',
   exists (select 1 from public.dnc_numbers where org_id = 'a27a0000-a000-4000-8000-0000000000a1' and e164 = '+13185550703')
   and not (select dnc from public.contacts where id = 'a27a0000-a000-4000-8000-0000000000c3')
-  and (select v from r_cap where k='o3')::jsonb ->> 'contact_effect' = 'skipped_no_access'
+  and (select v from r_cap where k='o3')::jsonb ->> 'contact_effect' = 'none'
   and not exists (select 1 from public.crm_sync_jobs where call_leg_id = (select id from public.manual_call_logs where client_key = 'key-ag-call03')), (select v from r_cap where k='o3');
+-- existence oracle control: DNC on an unreadable contact must look exactly like DNC on a number nobody has as a contact
+insert into r_cap select 'ux', pg_temp.run_as('a27a0000-a000-4000-8000-000000000002', pg_temp.rec('key-ag-unk02', '+13185559998'));
+insert into r_cap select 'ux2', pg_temp.run_as('a27a0000-a000-4000-8000-000000000002', pg_temp.setout('key-ag-unk02', 'do_not_call'));
+insert into t_res select 'no existence oracle: the outcome answer for an unreadable contact (c3) equals the answer for a number with no contact at all (apart from ids)',
+  ((select v from r_cap where k='o3')::jsonb - 'id') = ((select v from r_cap where k='ux2')::jsonb - 'id'), (select v from r_cap where k='o3') || ' vs ' || (select v from r_cap where k='ux2');
+insert into t_res select 'control: a readable contact DOES answer differently (applied)', (select v from r_cap where k='o1')::jsonb ->> 'contact_effect' = 'applied', null;
 -- who may set an outcome
 insert into t_res select 'another agent, a manager and an org B owner cannot set the outcome of ag''s call (42501), nothing written',
   pg_temp.run_as('a27a0000-a000-4000-8000-000000000003', format('select * from public.set_manual_call_outcome(%L::uuid, ''callback'')', (select id from public.manual_call_logs where client_key = 'key-ag-call02'))) like 'ERR 42501%'
@@ -251,7 +257,7 @@ update public.org_integrations set status = 'connected' where org_id = 'a27a0000
 
 -- ===== 4. list_contact_manual_calls ==================================================================================
 insert into t_res select 'list (agent): only their own calls on c1', pg_temp.run_as('a27a0000-a000-4000-8000-000000000002', $q$ select count(*) as n, count(*) filter (where user_id <> auth.uid()) as others from public.list_contact_manual_calls('a27a0000-a000-4000-8000-0000000000c1') $q$)::jsonb = '{"n": 2, "others": 0}'::jsonb
-  and pg_temp.run_as('a27a0000-a000-4000-8000-000000000002', $q$ select disposition_key as k from public.list_contact_manual_calls('a27a0000-a000-4000-8000-0000000000c1') where disposition_key is not null $q$)::jsonb ->> 'k' = 'not_interested', null;
+  and pg_temp.run_as('a27a0000-a000-4000-8000-000000000002', $q$ select count(*) as k from public.list_contact_manual_calls('a27a0000-a000-4000-8000-0000000000c1') where disposition_key = 'not_interested' $q$)::jsonb ->> 'k' = '1', null;
 insert into t_res select 'list (owner): sees every user''s calls on that number (ag and ag2 on c1)', (pg_temp.run_as('a27a0000-a000-4000-8000-000000000001', $q$ select count(*) as n from public.list_contact_manual_calls('a27a0000-a000-4000-8000-0000000000c1') $q$)::jsonb ->> 'n')::int >= 3, null;
 insert into t_res select 'list: refused for an unreadable contact (agent, c3), another org, anon; unknown contact is P0002',
   pg_temp.run_as('a27a0000-a000-4000-8000-000000000002', $q$ select * from public.list_contact_manual_calls('a27a0000-a000-4000-8000-0000000000c3') $q$) like 'ERR 42501%'

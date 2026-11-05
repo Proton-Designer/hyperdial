@@ -230,14 +230,14 @@ begin
           update public.campaign_leads set status = 'dnc', updated_at = now() where contact_id = v_contact;
           v_contact_effect := 'applied';
         else
-          v_contact_effect := 'skipped_no_access';
+          v_contact_effect := 'none';  -- same answer as "no such contact": never reveal an unreadable contact
         end if;
       elsif v_can then
         update public.campaign_leads set status = v_effect, updated_at = now()
         where contact_id = v_contact and org_id = v_log.org_id and status in ('queued', 'callback');
         v_contact_effect := 'applied';
       else
-        v_contact_effect := 'skipped_no_access';
+        v_contact_effect := 'none';  -- same answer as "no such contact": never reveal an unreadable contact
       end if;
       v_applied := v_effect;
     elsif v_effect is not null and v_applied is not distinct from v_effect then
