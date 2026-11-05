@@ -63,7 +63,7 @@ create table public.pro_applications (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
-create unique index pro_applications_one_pending_per_mobile on public.pro_applications (org_id, mobile) where status = 'pending';
+create index pro_applications_pending_mobile_idx on public.pro_applications (org_id, mobile) where status = 'pending';
 create index pro_applications_org_status_idx on public.pro_applications (org_id, status, created_at desc);
 create index pro_applications_referred_idx on public.pro_applications (referred_by);
 alter table public.pro_applications enable row level security;
@@ -214,6 +214,11 @@ begin
     return;
   end if;
 
+  -- serialize concurrent submissions per link, then per ip hash (always this order), so the count-then-insert below
+  -- cannot be raced past the caps by parallel requests
+  perform pg_advisory_xact_lock(hashtext('proformlinkrate:' || v_link.id::text));
+  perform pg_advisory_xact_lock(hashtext('proformiprate:' || v_ip));
+
   delete from public.pro_form_attempts a where a.created_at < now() - interval '1 day';
   if (select count(*) from public.pro_form_attempts a where a.ip_hash = v_ip and a.created_at > now() - interval '1 hour') >= 5
      or (select count(*) from public.pro_form_attempts a where a.link_id = v_link.id and a.created_at > now() - interval '1 hour') >= 30 then
@@ -266,20 +271,29 @@ begin
     return query select 'invalid'::text, 'Years in business is not valid'::text; return;
   end if;
 
-  -- one pending row per org + mobile: a correction replaces it (the first link keeps the credit)
-  insert into public.pro_applications (
-    org_id, link_id, referred_by, owner_name, business_name, mobile, email, services, cities, frequencies, insured,
-    best_contact, starting_price, capacity, years_in_business, ip_hash
-  ) values (
-    v_link.org_id, v_link.id, v_link.user_id, v_owner, v_business, v_mobile, v_email, v_services, v_cities, v_freqs,
-    p_insured, v_best, p_starting_price, p_capacity, p_years_in_business, v_ip
-  )
-  on conflict (org_id, mobile) where status = 'pending' do update set
-    owner_name = excluded.owner_name, business_name = excluded.business_name, email = excluded.email,
-    services = excluded.services, cities = excluded.cities, frequencies = excluded.frequencies,
-    insured = excluded.insured, best_contact = excluded.best_contact, starting_price = excluded.starting_price,
-    capacity = excluded.capacity, years_in_business = excluded.years_in_business, ip_hash = excluded.ip_hash,
-    updated_at = now();
+  -- A correction replaces the pending row only when the SAME visitor sends it: org + mobile + link + ip hash all match.
+  -- Anyone else (another link, another address) gets their own pending row and the same answer; the reviewer sees the
+  -- duplicates through list_pro_applications.same_number_pending. A stranger can therefore never alter an existing row.
+  update public.pro_applications pa set
+    owner_name = v_owner, business_name = v_business, email = v_email, services = v_services, cities = v_cities,
+    frequencies = v_freqs, insured = p_insured, best_contact = v_best, starting_price = p_starting_price,
+    capacity = p_capacity, years_in_business = p_years_in_business, updated_at = now()
+  where pa.id = (
+    select x.id from public.pro_applications x
+    where x.org_id = v_link.org_id and x.mobile = v_mobile and x.status = 'pending'
+      and x.link_id = v_link.id and x.ip_hash = v_ip
+    order by x.created_at limit 1
+    for update
+  );
+  if not found then
+    insert into public.pro_applications (
+      org_id, link_id, referred_by, owner_name, business_name, mobile, email, services, cities, frequencies, insured,
+      best_contact, starting_price, capacity, years_in_business, ip_hash
+    ) values (
+      v_link.org_id, v_link.id, v_link.user_id, v_owner, v_business, v_mobile, v_email, v_services, v_cities, v_freqs,
+      p_insured, v_best, p_starting_price, p_capacity, p_years_in_business, v_ip
+    );
+  end if;
   return query select 'ok'::text, null::text;
 end;
 $$;
@@ -406,7 +420,10 @@ returns table (
   contact_id uuid,
   created_at timestamptz,
   pending_count bigint,
-  total_count bigint
+  total_count bigint,
+  same_number_pending boolean,
+  existing_contact boolean,
+  contact_dnc boolean
 )
 language plpgsql
 security definer
@@ -414,6 +431,8 @@ stable
 set search_path = ''
 as $$
 #variable_conflict use_column
+declare
+  v_full boolean;
 begin
   if auth.uid() is null then
     raise exception 'not authenticated' using errcode = '28000';
@@ -424,6 +443,8 @@ begin
   if p_status is not null and p_status not in ('pending', 'approved', 'rejected') then
     raise exception 'status must be pending, approved or rejected' using errcode = '22023';
   end if;
+
+  v_full := private.has_org_role(p_org_id, array['owner', 'admin']);
 
   return query
   with visible as (
@@ -440,7 +461,13 @@ begin
          nullif(btrim(coalesce(p.first_name, '') || ' ' || coalesce(p.last_name, '')), ''),
          v.owner_name, v.business_name, v.mobile, v.email, v.services, v.cities, v.frequencies, v.insured, v.best_contact,
          v.starting_price, v.capacity, v.years_in_business, v.status, v.reviewed_by, v.reviewed_at, v.close_id, v.contact_id,
-         v.created_at, c.pending, c.total
+         v.created_at, c.pending, c.total,
+         -- another pending application for the same number among the rows this caller can see
+         (v.status = 'pending' and exists (
+           select 1 from visible o where o.mobile = v.mobile and o.status = 'pending' and o.id <> v.id)),
+         -- contact existence / DNC only for owner/admin: a manager must not learn about contacts outside their pods
+         case when v_full then exists (select 1 from public.contacts k where k.org_id = p_org_id and k.phone_number = v.mobile) end,
+         case when v_full then exists (select 1 from public.contacts k where k.org_id = p_org_id and k.phone_number = v.mobile and k.dnc) end
   from visible v
   cross join counts c
   left join public.profiles p on p.user_id = v.referred_by

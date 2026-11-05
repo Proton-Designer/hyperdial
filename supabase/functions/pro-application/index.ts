@@ -18,6 +18,7 @@ import {
   clientIp,
   hashIp,
   parseProApplicationBody,
+  readBoundedBody,
   submitResponse,
 } from '../_shared/pro-application.ts';
 
@@ -59,11 +60,13 @@ Deno.serve(async (req: Request) => {
 
   const declared = Number(req.headers.get('content-length') ?? '0');
   if (declared > MAX_BODY_BYTES) return json({ error: 'Invalid request' }, 413);
+  // Bounded read: count bytes as they arrive and stop at the limit, so a missing or false content-length (chunked
+  // upload) cannot make us buffer an oversized body before checking.
+  const bodyBytes = await readBoundedBody(req, MAX_BODY_BYTES);
+  if (bodyBytes === 'too_large') return json({ error: 'Invalid request' }, 413);
   let raw: unknown;
   try {
-    const bodyText = await req.text();
-    if (bodyText.length > MAX_BODY_BYTES) return json({ error: 'Invalid request' }, 413);
-    raw = JSON.parse(bodyText);
+    raw = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bodyBytes));
   } catch {
     return json({ error: 'Invalid request' }, 400);
   }

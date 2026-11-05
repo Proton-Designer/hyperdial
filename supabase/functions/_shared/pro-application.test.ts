@@ -3,8 +3,10 @@ import {
   MAX_BODY_BYTES,
   PRO_TOKEN_RE,
   clientIp,
+  isIpLiteral,
   hashIp,
   parseProApplicationBody,
+  readBoundedBody,
   submitResponse,
 } from './pro-application.ts';
 
@@ -102,6 +104,36 @@ Deno.test('client IP: cf-connecting-ip, then first x-forwarded-for, else unknown
   assertEquals(clientIp(new Headers()), 'unknown');
 });
 
+Deno.test('client IP: only a valid IP literal is used, junk falls to unknown', () => {
+  for (const ok of ['1.2.3.4', '255.255.255.255', '2001:db8::1', '::1', '::ffff:1.2.3.4']) {
+    assert(isIpLiteral(ok), ok);
+  }
+  for (const bad of [
+    '',
+    'abc',
+    '256.1.1.1',
+    '1.2.3',
+    '1.2.3.4.5',
+    '1.2.3.4:80',
+    'a'.repeat(60),
+    "1.1.1.1'; --",
+    '::g',
+    'localhost',
+    '1111:'.repeat(10),
+  ]) {
+    assert(!isIpLiteral(bad), bad);
+  }
+  assertEquals(
+    clientIp(new Headers({ 'cf-connecting-ip': 'evil<script>', 'x-forwarded-for': '2.2.2.2' })),
+    '2.2.2.2'
+  );
+  assertEquals(
+    clientIp(new Headers({ 'x-forwarded-for': 'random-' + 'x'.repeat(500) })),
+    'unknown'
+  );
+  assertEquals(clientIp(new Headers({ 'x-forwarded-for': '2001:db8::1, 3.3.3.3' })), '2001:db8::1');
+});
+
 Deno.test(
   'RPC status -> HTTP: ok 200, not_found 404, rate_limited 429, invalid 400 with the message, anything else 500',
   () => {
@@ -122,3 +154,36 @@ Deno.test(
 Deno.test('body limit constant is small', () => {
   assert(MAX_BODY_BYTES <= 50_000);
 });
+
+Deno.test(
+  'bounded body read: under the limit returns the bytes, over it stops early without content-length',
+  async () => {
+    const small = new Request('http://x/', { method: 'POST', body: '{"a":1}' });
+    const r = await readBoundedBody(small, 100);
+    assert(r !== 'too_large');
+    assertEquals(new TextDecoder().decode(r), '{"a":1}');
+    // chunked stream with no content-length: 50 chunks of 1000 bytes, limit 5000 -> stops, never reads it all
+    let pulled = 0;
+    const stream = new ReadableStream<Uint8Array>({
+      pull(c) {
+        if (pulled >= 50) return c.close();
+        pulled++;
+        c.enqueue(new Uint8Array(1000));
+      },
+    });
+    const big = new Request('http://x/', {
+      method: 'POST',
+      body: stream,
+      duplex: 'half',
+    } as RequestInit);
+    assertEquals(await readBoundedBody(big, 5000), 'too_large');
+    assert(pulled < 50, `pulled ${pulled}`);
+    // exactly at the limit passes
+    const exact = await readBoundedBody(
+      new Request('http://x/', { method: 'POST', body: 'x'.repeat(100) }),
+      100
+    );
+    assert(exact !== 'too_large' && exact.byteLength === 100);
+    assertEquals(await readBoundedBody(new Request('http://x/'), 10), new Uint8Array(0));
+  }
+);

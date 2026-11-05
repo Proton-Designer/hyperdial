@@ -163,11 +163,25 @@ insert into r_cap select 'x_new', pg_temp.svc(pg_temp.sub(pg_temp.tok('o'), 'ip-
 insert into r_cap select 'x_contact', pg_temp.svc(pg_temp.sub(pg_temp.tok('o'), 'ip-x2', '+13185550301', 'Old Co'));
 insert into t_res select 'submitting an existing contact''s number or business name answers exactly like a fresh one', (select v from r_cap where k='x_new') = (select v from r_cap where k='x_contact') and (select v from r_cap where k='x_new') = '{"status": "ok", "message": null}', (select v from r_cap where k='x_contact');
 
--- replace pending
+-- pending rule: only the SAME visitor (org + mobile + link + ip hash) replaces; anyone else adds another pending row
 insert into r_cap select 'rp1', pg_temp.svc(pg_temp.sub(pg_temp.tok('ag1'), 'ip-rp1', '+13185550420', 'First Name Co'));
-insert into r_cap select 'rp2', pg_temp.svc(pg_temp.sub(pg_temp.tok('o'), 'ip-rp2', '(318) 555-0420', 'Corrected Co'));
-insert into t_res select 'same org + mobile again: the pending row is replaced (one row, corrected values), the first link keeps the credit', pg_temp.n_apps('+13185550420') = 1
-  and exists (select 1 from public.pro_applications where mobile = '+13185550420' and business_name = 'Corrected Co' and status = 'pending' and referred_by = 'a29a0000-a000-4000-8000-000000000002'), null;
+insert into r_cap select 'rp2', pg_temp.svc(pg_temp.sub(pg_temp.tok('o'), 'ip-rp2', '(318) 555-0420', 'Stranger Co'));
+insert into t_res select 'stranger (other link AND other ip) with the same mobile: same 200, a SECOND pending row, the original untouched', (select v from r_cap where k='rp2') = '{"status": "ok", "message": null}'
+  and pg_temp.n_apps('+13185550420') = 2
+  and exists (select 1 from public.pro_applications where mobile = '+13185550420' and business_name = 'First Name Co' and referred_by = 'a29a0000-a000-4000-8000-000000000002' and status = 'pending')
+  and exists (select 1 from public.pro_applications where mobile = '+13185550420' and business_name = 'Stranger Co' and referred_by = 'a29a0000-a000-4000-8000-000000000001'), null;
+insert into r_cap select 'rp3', pg_temp.svc(pg_temp.sub(pg_temp.tok('ag1'), 'ip-rp3', '+13185550420', 'Other Ip Co'));
+insert into t_res select 'same link but a different ip: also a new row (all four must match to replace)', pg_temp.n_apps('+13185550420') = 3 and exists (select 1 from public.pro_applications where mobile = '+13185550420' and business_name = 'First Name Co'), null;
+insert into r_cap select 'rp4', pg_temp.svc(pg_temp.sub(pg_temp.tok('o'), 'ip-rp1', '+13185550420', 'Same Ip Other Link Co'));
+insert into t_res select 'same ip but a different link: also a new row', pg_temp.n_apps('+13185550420') = 4 and exists (select 1 from public.pro_applications where mobile = '+13185550420' and business_name = 'First Name Co'), null;
+insert into r_cap select 'rp5', pg_temp.svc(pg_temp.sub(pg_temp.tok('ag1'), 'ip-rp1', '(318) 555-0420', 'Corrected Co'));
+insert into t_res select 'POSITIVE CONTROL: the same visitor (same link + ip + number) corrects its own pending row: still 4 rows, original now corrected, credit kept', pg_temp.n_apps('+13185550420') = 4
+  and exists (select 1 from public.pro_applications where mobile = '+13185550420' and business_name = 'Corrected Co' and referred_by = 'a29a0000-a000-4000-8000-000000000002' and status = 'pending')
+  and not exists (select 1 from public.pro_applications where mobile = '+13185550420' and business_name = 'First Name Co'), null;
+insert into t_res select 'a second submit from the same visitor for a DIFFERENT number is a different row, never a replace', pg_temp.svc(pg_temp.sub(pg_temp.tok('ag1'), 'ip-rp1', '+13185550421', 'Other Number Co')) like '%"ok"%' and pg_temp.n_apps('+13185550421') = 1 and pg_temp.n_apps('+13185550420') = 4, null;
+insert into t_res select 'submit takes the per-link and per-ip advisory locks before counting (both exact keys held in this transaction)',
+  (select count(*) from pg_locks l where l.locktype = 'advisory' and l.pid = pg_backend_pid() and l.objid::bigint = (hashtext('proformlinkrate:' || (select id::text from public.pro_form_links where token = pg_temp.tok('ag1')))::bigint & 4294967295)) >= 1
+  and (select count(*) from pg_locks l where l.locktype = 'advisory' and l.pid = pg_backend_pid() and l.objid::bigint = (hashtext('proformiprate:ip-rp1')::bigint & 4294967295)) >= 1, null;
 
 -- rate limits
 create temp table rl(k text);
@@ -275,6 +289,19 @@ insert into t_res select 'manager (pod p1): sees ONLY applications referred by a
 insert into t_res select 'manager: pending_count is also scoped to their pods', pg_temp.run_as('a29a0000-a000-4000-8000-000000000004', $q$ select max(pending_count) as p from public.list_pro_applications('a29a0000-a000-4000-8000-0000000000a1') $q$)::jsonb ->> 'p' = (select count(*)::text from public.pro_applications where org_id = 'a29a0000-a000-4000-8000-0000000000a1' and referred_by = 'a29a0000-a000-4000-8000-000000000002' and status = 'pending'), null;
 insert into t_res select 'manager with no pods sees nothing; a manager cannot review', pg_temp.run_as('a29a0000-a000-4000-8000-000000000007', $q$ select count(*) as n from public.list_pro_applications('a29a0000-a000-4000-8000-0000000000a1') $q$)::jsonb ->> 'n' = '0'
   and pg_temp.review('a29a0000-a000-4000-8000-000000000004', 'a29a6000-a000-4000-8000-000000000001', 'approve') like 'ERR 42501%', null;
+-- duplicates + existing contact flags on list_pro_applications
+insert into r_cap select 'dup_o', pg_temp.run_as('a29a0000-a000-4000-8000-000000000001', $q$ select count(*) filter (where same_number_pending) as dup, count(*) as n from public.list_pro_applications('a29a0000-a000-4000-8000-0000000000a1') where mobile = '+13185550420' $q$);
+insert into t_res select 'list (owner): all four pending rows for the shared number say same_number_pending; a unique number does not', (select v from r_cap where k='dup_o')::jsonb ->> 'dup' = '4'
+  and pg_temp.run_as('a29a0000-a000-4000-8000-000000000001', $q$ select same_number_pending as d from public.list_pro_applications('a29a0000-a000-4000-8000-0000000000a1') where mobile = '+13185550421' $q$)::jsonb ->> 'd' = 'false', (select v from r_cap where k='dup_o');
+insert into t_res select 'list (owner): existing_contact is true for a number that is an org contact (and contact_dnc true only for the DNC one), false for a new number', pg_temp.run_as('a29a0000-a000-4000-8000-000000000001', $q$ select existing_contact as e, contact_dnc as d from public.list_pro_applications('a29a0000-a000-4000-8000-0000000000a1') where mobile = '+13185550301' $q$)::jsonb = '{"e": true, "d": false}'::jsonb
+  and pg_temp.run_as('a29a0000-a000-4000-8000-000000000001', $q$ select existing_contact as e, contact_dnc as d from public.list_pro_applications('a29a0000-a000-4000-8000-0000000000a1') where mobile = '+13185550302' $q$)::jsonb = '{"e": true, "d": true}'::jsonb
+  and pg_temp.run_as('a29a0000-a000-4000-8000-000000000001', $q$ select existing_contact as e, contact_dnc as d from public.list_pro_applications('a29a0000-a000-4000-8000-0000000000a1') where mobile = '+13185550421' $q$)::jsonb = '{"e": false, "d": false}'::jsonb, null;
+insert into t_res select 'list (admin) gets the contact flags too', pg_temp.run_as('a29a0000-a000-4000-8000-000000000006', $q$ select existing_contact as e from public.list_pro_applications('a29a0000-a000-4000-8000-0000000000a1') where mobile = '+13185550301' $q$)::jsonb ->> 'e' = 'true', null;
+insert into t_res select 'list (manager): existing_contact and contact_dnc are NULL on every row (even for a number that is a contact), same_number_pending still works', pg_temp.run_as('a29a0000-a000-4000-8000-000000000004', $q$ select count(*) filter (where existing_contact is not null or contact_dnc is not null) as leaked, count(*) as n from public.list_pro_applications('a29a0000-a000-4000-8000-0000000000a1') $q$)::jsonb ->> 'leaked' = '0'
+  and pg_temp.run_as('a29a0000-a000-4000-8000-000000000004', $q$ select count(*) as n from public.list_pro_applications('a29a0000-a000-4000-8000-0000000000a1') where mobile = '+13185550301' $q$)::jsonb ->> 'n' <> '0'
+  and pg_temp.run_as('a29a0000-a000-4000-8000-000000000004', $q$ select count(*) filter (where same_number_pending) as dup from public.list_pro_applications('a29a0000-a000-4000-8000-0000000000a1') where mobile = '+13185550420' $q$)::jsonb ->> 'dup' = '2', null;
+insert into t_res select 'approve keeps a DNC contact DNC (the flag is a column approve never writes)', (select dnc from public.contacts where id = 'a29a0000-a000-4000-8000-0000000000c2') is true, null;
+
 -- table RLS direct
 insert into t_res select 'table RLS: agent sees no application rows, manager only pod rows, owner all of the org, anon denied', pg_temp.run_as('a29a0000-a000-4000-8000-000000000002', 'select count(*) as n from public.pro_applications')::jsonb ->> 'n' = '0'
   and pg_temp.run_as('a29a0000-a000-4000-8000-000000000004', 'select count(*) as n from public.pro_applications where referred_by is distinct from ''a29a0000-a000-4000-8000-000000000002''')::jsonb ->> 'n' = '0'
@@ -284,8 +311,9 @@ insert into t_res select 'no client writes on applications (insert/update/delete
   and pg_temp.dml_as('a29a0000-a000-4000-8000-000000000001', $q$ delete from public.pro_applications $q$) like 'ERR 42501%'
   and pg_temp.dml_as('a29a0000-a000-4000-8000-000000000002', $q$ insert into public.pro_applications (org_id, owner_name, business_name, mobile, services, cities, frequencies, insured) values ('a29a0000-a000-4000-8000-0000000000a1', 'a', 'b', '+13185550999', '{x}', '{y}', '{weekly}', true) $q$) like 'ERR 42501%', null;
 -- schema facts
-insert into t_res select 'RLS is enabled on all three new tables and the partial unique index for pending exists', (select count(*) from pg_class where relname in ('pro_form_links', 'pro_applications', 'pro_form_attempts') and relrowsecurity) = 3
-  and exists (select 1 from pg_indexes where indexname = 'pro_applications_one_pending_per_mobile' and indexdef like '%WHERE%pending%'), null;
+insert into t_res select 'RLS is enabled on all three new tables; pending-mobile index is a plain (non-unique) partial index and the unique one is gone', (select count(*) from pg_class where relname in ('pro_form_links', 'pro_applications', 'pro_form_attempts') and relrowsecurity) = 3
+  and exists (select 1 from pg_indexes where indexname = 'pro_applications_pending_mobile_idx' and indexdef like '%WHERE%pending%' and indexdef not like '%UNIQUE%')
+  and not exists (select 1 from pg_indexes where indexname = 'pro_applications_one_pending_per_mobile'), null;
 
 select jsonb_build_object('failed', coalesce((select jsonb_agg(label) from t_res where ok is not true), '[]'::jsonb), 'n', (select count(*) from t_res)) as result;
 rollback;

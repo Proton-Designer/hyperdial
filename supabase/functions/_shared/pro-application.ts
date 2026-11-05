@@ -122,12 +122,28 @@ export function parseProApplicationBody(raw: unknown): ParsedBody {
   };
 }
 
-/** The caller's address as the platform's edge proxy reports it; 'unknown' still gets rate limited as one bucket. */
+/** True for a plain IPv4 (0-255 each) or IPv6 literal; anything else (junk, hostnames, ports, long strings) is not an address. */
+export function isIpLiteral(v: string): boolean {
+  if (v.length === 0 || v.length > 45) return false;
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(v);
+  if (m) return m.slice(1).every((o) => Number(o) <= 255);
+  return (
+    /^[0-9a-fA-F:]+(?:\.\d{1,3}){0,3}$/.test(v) && v.includes(':') && /^[0-9a-fA-F:.]+$/.test(v)
+  );
+}
+
+/**
+ * The caller's address as the platform's edge proxy reports it (cf-connecting-ip, then the first x-forwarded-for entry).
+ * Only the FORMAT is checked: a value that is not an IP literal counts as 'unknown' (one shared bucket), so a client cannot
+ * mint endless distinct buckets with junk. The first-entry choice is deliberate (the right-most may be one shared proxy);
+ * whether a client can spoof it is tested at deploy.
+ */
 export function clientIp(headers: Headers): string {
   const cf = headers.get('cf-connecting-ip')?.trim();
-  if (cf) return cf;
+  if (cf && isIpLiteral(cf)) return cf;
   const xff = headers.get('x-forwarded-for')?.split(',')[0]?.trim();
-  return xff || 'unknown';
+  if (xff && isIpLiteral(xff)) return xff;
+  return 'unknown';
 }
 
 /** HMAC-SHA256(salt, ip) as hex. Only this hash is ever stored; the raw address is never written anywhere. */
@@ -162,4 +178,36 @@ export function submitResponse(
     default:
       return { status: 500, body: { error: 'Could not save your answers' } };
   }
+}
+
+/** Reads the request body with a running byte counter; returns 'too_large' as soon as it passes maxBytes (the rest is never read). */
+export async function readBoundedBody(
+  req: Request,
+  maxBytes: number
+): Promise<Uint8Array | 'too_large'> {
+  if (!req.body) return new Uint8Array(0);
+  const reader = req.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        await reader.cancel();
+        return 'too_large';
+      }
+      chunks.push(value);
+    }
+  } catch {
+    return new Uint8Array(0); // aborted upload: parses as invalid JSON -> 400
+  }
+  const out = new Uint8Array(total);
+  let at = 0;
+  for (const c of chunks) {
+    out.set(c, at);
+    at += c.byteLength;
+  }
+  return out;
 }
