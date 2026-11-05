@@ -154,7 +154,7 @@ insert into t_res select 'rotate: a new token, the old one is revoked and exactl
 insert into t_res select 'revoked token: GET gives no rows and POST gives not_found, nothing written', pg_temp.svc(format('select count(*) as n from public.get_pro_form_info(%L)', pg_temp.tok('old')))::jsonb ->> 'n' = '0'
   and pg_temp.svc(pg_temp.sub(pg_temp.tok('old'), 'ip-rv', '+13185550406')) like '%not_found%' and pg_temp.n_apps('+13185550406') = 0, null;
 insert into t_res select 'control: the new token works', pg_temp.svc(pg_temp.sub(pg_temp.tok('ag2new'), 'ip-rv2', '+13185550406')) like '%"ok"%', null;
-update public.org_members set status = 'inactive' where user_id = 'a29a0000-a000-4000-8000-000000000009';
+update public.org_members set status = 'disabled' where user_id = 'a29a0000-a000-4000-8000-000000000009';
 insert into t_res select 'a link whose owner is no longer an active member is dead (GET empty, POST not_found)', pg_temp.svc(format('select count(*) as n from public.get_pro_form_info(%L)', pg_temp.tok('gone')))::jsonb ->> 'n' = '0'
   and pg_temp.svc(pg_temp.sub(pg_temp.tok('gone'), 'ip-gone', '+13185550407')) like '%not_found%', null;
 
