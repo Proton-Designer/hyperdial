@@ -861,6 +861,9 @@ function DialerBody({
     }
     if (callState === 'ended' || callState === 'idle') {
       const call = lastCallRef.current;
+      // A late 'ended'/'idle' from the PREVIOUS call can arrive right after a quick redial; a call that has not connected and
+      // started under 2 s ago cannot be the one that just ended, so leave it for its own end.
+      if (call && !connectedOutsideSessionRef.current && Date.now() - call.startedAt < 2000) return;
       // TASK-H27: every manual call is recorded once when it ends, answered or not (a session call is never in
       // lastCallRef). The card (outcome + Log close) is for answered calls only. View-only tabs record nothing.
       if (call && !parallelNowRef.current && !isViewOnly) {
