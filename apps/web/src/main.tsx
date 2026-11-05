@@ -1,5 +1,5 @@
 import { createRoot } from 'react-dom/client';
-import App from './App.tsx';
+import { proFormTokenFromPath } from './lib/proForm.ts';
 import './styles/globals.css';
 
 const root = createRoot(document.getElementById('root')!);
@@ -8,7 +8,14 @@ const root = createRoot(document.getElementById('root')!);
 // build, so Vite/Rollup dead-code-eliminates these whole branches -- including the dynamic
 // imports -- out of the built bundle entirely.
 const devHarness = import.meta.env.DEV ? new URLSearchParams(window.location.search) : null;
-if (devHarness?.has('dev_wrapup')) {
+const proFormToken = proFormTokenFromPath(window.location.pathname);
+if (proFormToken) {
+  // TASK-H29: the public pro form (/join/:token). It is rendered WITHOUT loading App, so the Supabase client
+  // (session recovery, token refresh, auth providers) is never even imported for a visitor.
+  import('./components/join/ProFormPage.tsx').then(({ ProFormPage }) => {
+    root.render(<ProFormPage token={proFormToken} />);
+  });
+} else if (devHarness?.has('dev_wrapup')) {
   // TASK-L2a: WrapUpModal in isolation, fixture dispositions. `?dev_wrapup=1`
   // (`&dev_wrapup_fail=1` to exercise the submit-error retry path).
   import('./dev/WrapUpModalHarness.tsx').then(({ WrapUpModalHarness }) => {
@@ -87,5 +94,7 @@ if (devHarness?.has('dev_wrapup')) {
     root.render(<ShiftsHarness />);
   });
 } else {
-  root.render(<App />);
+  import('./App.tsx').then(({ default: App }) => {
+    root.render(<App />);
+  });
 }

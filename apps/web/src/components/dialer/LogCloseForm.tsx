@@ -5,12 +5,14 @@ import {
   getCloseServiceCategories,
   logContactClose,
   type CloseDeliveryStatus,
-  type CloseFrequency,
   type LogContactCloseInput,
 } from '@/lib/api';
 import { addCities, isPlausibleMobile, parseOptionalNumber, prefillCity } from '@/lib/closeForm';
 import { Button } from '@/components/ui/button';
 import { emptyCloseDraftValues, useCloseDraft } from '@/lib/closeDraft';
+import { CopyFormLink } from './CopyFormLink';
+import { isViewOnly } from '@/lib/viewAs';
+import { Chip, Field, FREQUENCIES, INPUT, mergeServices } from './closeFormParts';
 
 export interface LogCloseFormProps {
   /** The call leg id the draft is keyed by (falls back to the contact id when there is no leg). */
@@ -33,68 +35,6 @@ export interface LogCloseFormProps {
   loadPrefill?: typeof getCloseContactPrefill;
   loadCategories?: typeof getCloseServiceCategories;
   submitClose?: typeof logContactClose;
-}
-
-const FREQUENCIES: { value: CloseFrequency; label: string }[] = [
-  { value: 'weekly', label: 'Weekly' },
-  { value: 'biweekly', label: 'Biweekly' },
-  { value: 'monthly', label: 'Monthly' },
-];
-
-const INPUT =
-  'w-full rounded-app-md bg-surface-2 border border-border-subtle px-3 py-2 text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent-to';
-
-/** Picked chips + the free-text box (comma separated), trimmed and de-duplicated (case-insensitive). */
-function mergeServices(picked: string[], draft: string): string[] {
-  const out: string[] = [];
-  for (const raw of [...picked, ...draft.split(',')]) {
-    const t = raw.trim();
-    if (t && !out.some((o) => o.toLowerCase() === t.toLowerCase())) out.push(t);
-  }
-  return out;
-}
-
-function Chip({
-  selected,
-  onClick,
-  children,
-}: {
-  selected: boolean;
-  onClick: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      aria-pressed={selected}
-      onClick={onClick}
-      className={`px-3 py-1.5 rounded-full text-body border transition-colors ${
-        selected
-          ? 'bg-accent-to/20 border-accent-to text-text-primary'
-          : 'bg-surface-2 border-border-subtle text-text-secondary hover:text-text-primary'
-      }`}
-    >
-      {children}
-    </button>
-  );
-}
-
-function Field({
-  label,
-  hint,
-  children,
-}: {
-  label: string;
-  hint?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div>
-      <div className="text-meta text-text-secondary mb-1.5">{label}</div>
-      {children}
-      {hint && <p className="text-meta text-text-muted mt-1">{hint}</p>}
-    </div>
-  );
 }
 
 const DELIVERY_NOTE: Record<CloseDeliveryStatus, string> = {
@@ -283,6 +223,15 @@ export function LogCloseForm({
         <>
           <div className={`p-4 space-y-4 ${scroll ? 'overflow-y-auto' : ''}`}>
             <p className="text-body text-text-secondary">Fill in what you know.</p>
+            {/* TASK-H29: a pro who is not closing on the call fills in the form themselves. */}
+            {!isViewOnly && (
+              <div className="flex flex-wrap items-center justify-between gap-2 rounded-app-md border border-border-subtle bg-surface-2 p-3">
+                <span className="text-body text-text-secondary">
+                  Not closing yet? Send them the form
+                </span>
+                <CopyFormLink />
+              </div>
+            )}
             {error && (
               <div
                 ref={errorRef}

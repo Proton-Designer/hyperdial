@@ -6444,6 +6444,131 @@ export async function getContactById(id: string): Promise<Contact | null> {
   return (data as Contact | null) ?? null;
 }
 
+// --- TASK-H29: pro form links + applications (the public form itself is lib/proForm.ts) ---
+
+/** The caller's own form link. Get-or-create (it creates the row on first use), so call it on a click, not on mount. */
+export async function getMyProFormLink(): Promise<string> {
+  const orgId = await getActiveOrgId();
+  const { data, error } = await supabase.rpc('get_my_pro_form_link', { p_org_id: orgId });
+  if (error) throw new Error(error.message);
+  const row = (Array.isArray(data) ? data[0] : data) as { token?: string } | null;
+  if (!row?.token) throw new Error('Could not get your form link');
+  return proFormUrl(row.token);
+}
+
+/** The kill switch: the old link stops working at once and a new one is issued. */
+export async function rotateMyProFormLink(): Promise<string> {
+  const orgId = await getActiveOrgId();
+  const { data, error } = await supabase.rpc('rotate_my_pro_form_link', { p_org_id: orgId });
+  if (error) throw new Error(error.message);
+  const row = (Array.isArray(data) ? data[0] : data) as { token?: string } | null;
+  if (!row?.token) throw new Error('Could not create a new form link');
+  return proFormUrl(row.token);
+}
+
+export function proFormUrl(token: string): string {
+  return `${window.location.origin}/join/${token}`;
+}
+
+export type ProApplicationStatus = 'pending' | 'approved' | 'rejected';
+
+export interface ProApplication {
+  id: string;
+  referredBy: string | null;
+  referredByName: string | null;
+  ownerName: string;
+  businessName: string;
+  mobile: string;
+  email: string | null;
+  services: string[];
+  cities: string[];
+  frequencies: CloseFrequency[];
+  insured: boolean | null;
+  bestContact: string | null;
+  startingPrice: number | null;
+  capacity: number | null;
+  yearsInBusiness: number | null;
+  status: ProApplicationStatus;
+  reviewedAt: string | null;
+  createdAt: string;
+  /** Pending only: another pending application the caller can see has this mobile (approve one, reject the rest). */
+  samePending: boolean;
+  /** Owner/admin only; null = unknown (always null for a manager). */
+  existingContact: boolean | null;
+  contactDnc: boolean | null;
+}
+
+export interface ProApplicationsResult {
+  applications: ProApplication[];
+  /** Pending applications the caller can see (all statuses counted, regardless of the filter). */
+  pendingCount: number;
+  /** Rows matching the status filter. */
+  total: number;
+}
+
+export async function listProApplications(
+  status: ProApplicationStatus,
+  limit = 200
+): Promise<ProApplicationsResult> {
+  const orgId = await getActiveOrgId();
+  const { data, error } = await supabase.rpc('list_pro_applications', {
+    p_org_id: orgId,
+    p_status: status,
+    p_limit: limit,
+  });
+  if (error) throw new Error(error.message);
+  const rows = (data ?? []) as Record<string, unknown>[];
+  const applications = rows.map((r) => ({
+    id: r.id as string,
+    referredBy: (r.referred_by as string | null) ?? null,
+    referredByName: (r.referred_by_name as string | null) ?? null,
+    ownerName: (r.owner_name as string | null) ?? '',
+    businessName: (r.business_name as string | null) ?? '',
+    mobile: (r.mobile as string | null) ?? '',
+    email: (r.email as string | null) ?? null,
+    services: (r.services as string[] | null) ?? [],
+    cities: (r.cities as string[] | null) ?? [],
+    frequencies: (r.frequencies as CloseFrequency[] | null) ?? [],
+    insured: typeof r.insured === 'boolean' ? r.insured : null,
+    bestContact: (r.best_contact as string | null) ?? null,
+    startingPrice: numOrNull(r.starting_price),
+    capacity: numOrNull(r.capacity),
+    yearsInBusiness: numOrNull(r.years_in_business),
+    status: r.status as ProApplicationStatus,
+    reviewedAt: (r.reviewed_at as string | null) ?? null,
+    createdAt: r.created_at as string,
+    samePending: r.same_number_pending === true,
+    existingContact: typeof r.existing_contact === 'boolean' ? r.existing_contact : null,
+    contactDnc: typeof r.contact_dnc === 'boolean' ? r.contact_dnc : null,
+  }));
+  const first = rows[0];
+  return {
+    applications,
+    pendingCount: first ? (numOrNull(first.pending_count) ?? 0) : 0,
+    total: first ? (numOrNull(first.total_count) ?? applications.length) : 0,
+  };
+}
+
+/** Owner/admin only. Approve creates (or finds) the contact and logs the close; reject writes nothing else. */
+export async function reviewProApplication(
+  id: string,
+  action: 'approve' | 'reject'
+): Promise<{ status: 'approved' | 'rejected'; contactCreated: boolean }> {
+  const { data, error } = await supabase.rpc('review_pro_application', {
+    p_id: id,
+    p_action: action,
+  });
+  if (error) throw new Error(error.message);
+  const row = (Array.isArray(data) ? data[0] : data) as {
+    status?: 'approved' | 'rejected';
+    contact_created?: boolean;
+  } | null;
+  return {
+    status: row?.status ?? (action === 'approve' ? 'approved' : 'rejected'),
+    contactCreated: row?.contact_created === true,
+  };
+}
+
 /** log-contact-close: stores the close, marks the contact 'Closed', queues delivery to the org's closes webhook. */
 export async function logContactClose(input: LogContactCloseInput): Promise<LogContactCloseResult> {
   const res = await fetch(`${getFunctionsUrl()}/log-contact-close`, {

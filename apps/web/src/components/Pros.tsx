@@ -18,6 +18,7 @@ import { EmptyState } from '@/components/app/EmptyState';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
 import { useOrg } from '@/contexts/OrgContext';
+import { ProApplications } from '@/components/pros/ProApplications';
 import { ContactDetailModal } from '@/components/contacts/ContactDetailModal';
 
 interface Filters {
@@ -277,6 +278,12 @@ export function Pros() {
             </Button>
           ) : undefined
         }
+      />
+
+      <ProApplications
+        canReview={role === 'owner' || role === 'admin'}
+        isManager={isManagerRole}
+        onApproved={load}
       />
 
       {state.kind === 'loading' && (

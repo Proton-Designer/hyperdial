@@ -88,6 +88,7 @@ const READ_ONLY_RPCS: ReadonlySet<string> = new Set([
   'list_campaign_script_versions',
   'list_contact_change_history',
   'list_contact_notes',
+  'list_pro_applications',
   'list_disposition_quality_flags',
   'lookup_contact_by_phone',
   'my_goal_targets',
