@@ -96,11 +96,27 @@ export function parseProApplicationBody(raw: unknown): ParsedBody {
   if (b.insured !== undefined && b.insured !== null && typeof b.insured !== 'boolean') {
     return { kind: 'bad', error: 'Some answers are not in the expected format' };
   }
-  if (capacity !== null && !Number.isInteger(capacity)) {
-    return { kind: 'bad', error: 'Capacity must be a whole number' };
+  // same limits as submit_pro_application, so a bad value is a readable 400 here and never reaches an integer cast (500)
+  if (price !== null && (price < 0 || price > 99_999_999)) {
+    return { kind: 'bad', error: 'Starting price is not valid' };
   }
-  if (years !== null && !Number.isInteger(years)) {
-    return { kind: 'bad', error: 'Years in business must be a whole number' };
+  if (capacity !== null && (!Number.isInteger(capacity) || capacity < 0 || capacity > 10_000)) {
+    return {
+      kind: 'bad',
+      error:
+        capacity > 10_000 || capacity < 0
+          ? 'Capacity is not valid'
+          : 'Capacity must be a whole number',
+    };
+  }
+  if (years !== null && (!Number.isInteger(years) || years < 0 || years > 150)) {
+    return {
+      kind: 'bad',
+      error:
+        years > 150 || years < 0
+          ? 'Years in business is not valid'
+          : 'Years in business must be a whole number',
+    };
   }
   return {
     kind: 'ok',

@@ -187,3 +187,37 @@ Deno.test(
     assertEquals(await readBoundedBody(new Request('http://x/'), 10), new Uint8Array(0));
   }
 );
+
+Deno.test(
+  'numeric answers are bounded like the SQL: out of range is a 400 field message, edges pass',
+  () => {
+    for (const [field, value, msg] of [
+      ['startingPrice', -1, 'Starting price is not valid'],
+      ['startingPrice', 100_000_000, 'Starting price is not valid'],
+      ['capacity', 10_001, 'Capacity is not valid'],
+      ['capacity', -1, 'Capacity is not valid'],
+      ['capacity', 3_000_000_000, 'Capacity is not valid'],
+      ['yearsInBusiness', 151, 'Years in business is not valid'],
+      ['yearsInBusiness', -3, 'Years in business is not valid'],
+      ['yearsInBusiness', 1e12, 'Years in business is not valid'],
+    ] as const) {
+      const r = parseProApplicationBody({ ...good, [field]: value });
+      assert(r.kind === 'bad', `${field}=${value}`);
+      assertEquals(r.error, msg);
+    }
+    const edge = parseProApplicationBody({
+      ...good,
+      startingPrice: 99_999_999,
+      capacity: 10_000,
+      yearsInBusiness: 150,
+    });
+    assertEquals(edge.kind, 'ok');
+    const zero = parseProApplicationBody({
+      ...good,
+      startingPrice: 0,
+      capacity: 0,
+      yearsInBusiness: 0,
+    });
+    assertEquals(zero.kind, 'ok');
+  }
+);

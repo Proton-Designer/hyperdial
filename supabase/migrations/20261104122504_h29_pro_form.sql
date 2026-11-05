@@ -271,6 +271,8 @@ begin
     return query select 'invalid'::text, 'Years in business is not valid'::text; return;
   end if;
 
+  perform pg_advisory_xact_lock(hashtext('proformmobile:' || v_link.org_id::text || ':' || v_mobile));  -- third and last, for the cap below
+
   -- A correction replaces the pending row only when the SAME visitor sends it: org + mobile + link + ip hash all match.
   -- Anyone else (another link, another address) gets their own pending row and the same answer; the reviewer sees the
   -- duplicates through list_pro_applications.same_number_pending. A stranger can therefore never alter an existing row.
@@ -286,6 +288,12 @@ begin
     for update
   );
   if not found then
+    -- at most 3 pending rows per org + mobile: a 4th from yet another link/address gets the same answer but is not stored
+    if (select count(*) from public.pro_applications x
+        where x.org_id = v_link.org_id and x.mobile = v_mobile and x.status = 'pending') >= 3 then
+      return query select 'ok'::text, null::text;
+      return;
+    end if;
     insert into public.pro_applications (
       org_id, link_id, referred_by, owner_name, business_name, mobile, email, services, cities, frequencies, insured,
       best_contact, starting_price, capacity, years_in_business, ip_hash
