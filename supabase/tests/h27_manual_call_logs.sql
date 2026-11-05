@@ -40,8 +40,12 @@ insert into public.dispositions (org_id, key, label, lead_effect, ghl_tag, activ
   ('a27a0000-a000-4000-8000-0000000000a1', 'already_on_platform', 'Already on platform', 'exhausted', 'Already On Platform', true, null, 40),
   ('a27a0000-a000-4000-8000-0000000000a1', 'do_not_call', 'Do not call', 'dnc', 'DNC', true, null, 70),
   ('a27a0000-a000-4000-8000-0000000000a1', 'voicemail_left', 'Left voicemail', 'queued', null, true, null, 80),
-  ('a27a0000-a000-4000-8000-0000000000a1', 'retired_key', 'Retired', 'completed', null, false, null, 99);
-insert into public.org_integrations (org_id, provider, status) values ('a27a0000-a000-4000-8000-0000000000a1', 'ghl', 'connected');
+  ('a27a0000-a000-4000-8000-0000000000a1', 'retired_key', 'Retired', 'completed', null, false, null, 99)
+-- live seeds the default dispositions when an org is created: take over those rows with the values this test needs
+on conflict (org_id, key) do update set label = excluded.label, lead_effect = excluded.lead_effect, ghl_tag = excluded.ghl_tag,
+  active = excluded.active, required_fields = excluded.required_fields, sort = excluded.sort;
+insert into public.org_integrations (org_id, provider, status) values ('a27a0000-a000-4000-8000-0000000000a1', 'ghl', 'connected')
+  on conflict (org_id, provider) do update set status = 'connected';
 -- contacts: c1 dnc test (lead), c2 completed (lead), c3 NOT readable by ag (no lead), c4 exhausted (lead), c5 callback no-op (lead),
 -- c6 completed with a callback-status lead, c7 created AFTER the call (late resolve)
 insert into public.contacts (id, user_id, org_id, business_name, phone_number) values
