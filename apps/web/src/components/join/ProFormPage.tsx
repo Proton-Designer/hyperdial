@@ -34,6 +34,30 @@ export function ProFormPage({ token }: { token: string }) {
   const [load, setLoad] = useState<Load>({ kind: 'loading' });
   const [attempt, setAttempt] = useState(0);
 
+  // The link is a secret: keep it out of search indexes and out of the Referer header of anything the page links to.
+  useEffect(() => {
+    const added: HTMLMetaElement[] = [];
+    for (const [name, content] of [
+      ['robots', 'noindex, nofollow'],
+      ['referrer', 'no-referrer'],
+    ]) {
+      const m = document.createElement('meta');
+      m.name = name;
+      m.content = content;
+      document.head.appendChild(m);
+      added.push(m);
+    }
+    return () => added.forEach((m) => m.remove());
+  }, []);
+  const orgName = load.kind === 'ready' ? load.info.orgName : '';
+  useEffect(() => {
+    const prev = document.title;
+    if (orgName) document.title = orgName;
+    return () => {
+      document.title = prev;
+    };
+  }, [orgName]);
+
   useEffect(() => {
     let cancelled = false;
     setLoad({ kind: 'loading' });
@@ -257,6 +281,7 @@ function ProFormBody({ token, info }: { token: string; info: ProFormInfo }) {
         <input
           className={INPUT}
           type="tel"
+          maxLength={40}
           inputMode="tel"
           autoComplete="tel"
           value={mobile}
