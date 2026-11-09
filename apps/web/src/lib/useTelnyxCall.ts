@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import { isViewOnly } from './viewAsFlag';
 import { TelnyxRTC } from '@telnyx/webrtc';
 import { getWebrtcCredentials } from './api';
+import { telnyxErrorToError } from './webrtcRetry';
 
 export type CallState = 'idle' | 'dialing' | 'ringing' | 'connected' | 'ended';
 
@@ -265,7 +266,8 @@ export function useTelnyxCall(options: UseTelnyxCallOptions = {}) {
             if (settled) return;
             settled = true;
             clearTimeout(timeoutId);
-            reject(err);
+            console.error('Telnyx connection error:', err);
+            reject(telnyxErrorToError(err));
           })
           .on(
             'telnyx.notification',

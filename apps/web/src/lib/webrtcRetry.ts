@@ -22,3 +22,36 @@ export function nextWebrtcRetryDelayMs(currentDelayMs: number): number {
 export function isDefinitiveTelnyxNotConnectedError(message: string): boolean {
   return /not connected/i.test(message);
 }
+
+export const LOGIN_REFUSED_MESSAGE =
+  'Telnyx refused your phone line login. An admin needs to check that the HyperDial connection is turned on in Telnyx (Connections), then reload.';
+
+/** TASK-H30: the Telnyx SDK emits `telnyx.error` with a plain object (`{error:{code,name,message}}`), not an Error.
+ *  Turns whatever arrives into a real Error with a readable message; the original stays on `cause`. Reads defensively. */
+export function telnyxErrorToError(raw: unknown): Error {
+  if (raw instanceof Error) return raw;
+  const o = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+  const inner = (o.error && typeof o.error === 'object' ? o.error : o) as Record<string, unknown>;
+  const code =
+    typeof inner.code === 'number' || typeof inner.code === 'string' ? String(inner.code) : '';
+  const name = typeof inner.name === 'string' ? inner.name : '';
+  const message =
+    typeof inner.message === 'string' ? inner.message : typeof raw === 'string' ? raw : '';
+  if (code === '46001' || code === '-32001' || name === 'LOGIN_FAILED') {
+    const e = new Error(LOGIN_REFUSED_MESSAGE, { cause: raw });
+    e.name = 'TelnyxLoginRefused';
+    return e;
+  }
+  const detail = [code || name, message].filter(Boolean).join(': ');
+  return new Error(
+    `Couldn't connect your phone line${detail ? ` (${detail})` : ''}. Check your internet and try again.`,
+    {
+      cause: raw,
+    }
+  );
+}
+
+/** Login refused is not transient: retrying on a timer never fixes it. */
+export function isTelnyxLoginRefused(e: unknown): boolean {
+  return e instanceof Error && e.name === 'TelnyxLoginRefused';
+}

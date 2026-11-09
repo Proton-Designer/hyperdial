@@ -56,6 +56,7 @@ import {
   WEBRTC_RETRY_BASE_MS,
   nextWebrtcRetryDelayMs,
   isDefinitiveTelnyxNotConnectedError,
+  isTelnyxLoginRefused,
 } from '@/lib/webrtcRetry';
 
 const REMOTE_AUDIO_ID = 'telnyx-remote-audio';
@@ -364,6 +365,7 @@ function DialerBody({
         .catch((e) => {
           if (cancelled) return;
           // Surfaced via useTelnyxCall's own `error` state; DialerStateBanner renders it.
+          if (isTelnyxLoginRefused(e)) return; // retrying never fixes a refused login; Start still lets them try again
           const message = e instanceof Error ? e.message : String(e);
           if (isDefinitiveTelnyxNotConnectedError(message)) {
             setOrgTelnyxConnected(false);
