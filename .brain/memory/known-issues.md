@@ -1432,3 +1432,15 @@ keeps the same objects for an unchanged session, and OrgContext keys on `user.id
 put the `User`/`Session` object in a dependency array; use `user?.id`. Testing trap: a
 synthetic `visibilitychange` must be dispatched with `{ bubbles: true }`, because supabase-js
 listens on `window`, not `document`.
+
+## 2026-11-09 — "Couldn't register your phone line" for everyone: Telnyx connection switched off outside HyperDial (FIXED live + b559858)
+
+The org's Telnyx credential connection and call-control app (`hyperdial-org-<org>-webrtc` and
+`hyperdial-org-<org>`) were set `active:false` on the Telnyx side between Nov 5 and Nov 9 (a new
+"backfire" app was created on the same MHB Telnyx account on Nov 8). HyperDial never toggles
+`active`. Telnyx then answers every WebRTC login with `-32001 Login Incorrect` even for a fresh
+token, and `updated_at` on the resource does NOT change, so it can't date the switch. Fixed live by
+PATCHing `active:true` on both. Diagnose fast: `GET /v2/credential_connections/<id>` and
+`/v2/call_control_applications/<id>` and check `active`. Trap: the SDK's `telnyx.error` payload is
+a plain object, not an Error, so the UI showed only a generic message; b559858 turns it into a
+readable Error and stops the retry loop on a refused login.
