@@ -348,7 +348,7 @@ export function TerritoryRulesModal({
             <p className="text-meta text-text-secondary">
               {editingId ? 'Edit rule' : 'Add a rule'}
             </p>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <input
                 type="text"
                 placeholder="State (e.g. TX)"
@@ -367,7 +367,7 @@ export function TerritoryRulesModal({
                 className="w-28 rounded-app-md bg-surface-2 border border-border-subtle px-3 py-2 text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent-to"
               />
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <select
                 value={targetType}
                 onChange={(e) => {
@@ -382,7 +382,7 @@ export function TerritoryRulesModal({
               <select
                 value={targetId}
                 onChange={(e) => setTargetId(e.target.value)}
-                className="flex-1 rounded-app-md bg-surface-2 border border-border-subtle px-3 py-2 text-text-primary focus:outline-none focus:border-accent-to"
+                className="min-w-[10rem] flex-1 rounded-app-md bg-surface-2 border border-border-subtle px-3 py-2 text-text-primary focus:outline-none focus:border-accent-to"
               >
                 <option value="">Choose {targetType === 'agent' ? 'a teammate' : 'a pod'}…</option>
                 {targetType === 'agent'

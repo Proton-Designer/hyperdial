@@ -2544,11 +2544,11 @@ function GhlCampaignMappingsEditor() {
         </div>
       )}
 
-      <div className="flex items-center gap-2 mb-2">
+      <div className="flex flex-wrap items-center gap-2 mb-2">
         <select
           value={matchType}
           onChange={(e) => setMatchType(e.target.value as 'tag' | 'stage')}
-          className="bg-surface-2 border border-white/10 rounded-app-md px-2 py-1.5 text-sm text-white"
+          className="max-w-full bg-surface-2 border border-white/10 rounded-app-md px-2 py-1.5 text-sm text-white"
         >
           <option value="tag">Tag</option>
           <option value="stage">Pipeline stage</option>
@@ -2559,13 +2559,13 @@ function GhlCampaignMappingsEditor() {
             value={tag}
             onChange={(e) => setTag(e.target.value)}
             placeholder="GHL tag"
-            className="flex-1 bg-surface-2 border border-white/10 rounded-app-md px-3 py-1.5 text-sm text-white placeholder-text-muted"
+            className="min-w-[140px] flex-1 bg-surface-2 border border-white/10 rounded-app-md px-3 py-1.5 text-sm text-white placeholder-text-muted"
           />
         ) : stages ? (
           <select
             value={stageKey}
             onChange={(e) => setStageKey(e.target.value)}
-            className="flex-1 bg-surface-2 border border-white/10 rounded-app-md px-3 py-1.5 text-sm text-white"
+            className="min-w-[140px] flex-1 bg-surface-2 border border-white/10 rounded-app-md px-3 py-1.5 text-sm text-white"
           >
             <option value="">Pick a stage...</option>
             {stages.map((s) => (
@@ -2578,7 +2578,7 @@ function GhlCampaignMappingsEditor() {
           <button
             type="button"
             onClick={handleLoadStages}
-            className="flex-1 text-sm text-accent-to hover:underline text-left"
+            className="min-w-[140px] flex-1 text-sm text-accent-to hover:underline text-left"
           >
             Load pipeline stages from GHL...
           </button>
@@ -2586,7 +2586,7 @@ function GhlCampaignMappingsEditor() {
         <select
           value={campaignId}
           onChange={(e) => setCampaignId(e.target.value)}
-          className="bg-surface-2 border border-white/10 rounded-app-md px-2 py-1.5 text-sm text-white"
+          className="max-w-full bg-surface-2 border border-white/10 rounded-app-md px-2 py-1.5 text-sm text-white"
         >
           <option value="">Campaign...</option>
           {campaigns.map((c) => (
@@ -3540,7 +3540,7 @@ function RecordingSettingsCard() {
         ) : (
           <div className="space-y-3">
             <select
-              className="bg-surface-2 border border-border-subtle rounded-app-md px-3 py-2 text-sm text-text-primary"
+              className="max-w-full bg-surface-2 border border-border-subtle rounded-app-md px-3 py-2 text-sm text-text-primary"
               value={consentMode}
               disabled={consentSaving}
               onChange={(e) => handleConsentModeChange(e.target.value as AnnounceRecordingMode)}

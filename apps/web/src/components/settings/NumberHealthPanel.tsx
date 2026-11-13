@@ -94,47 +94,91 @@ export function NumberHealthPanel() {
       ) : stats.length === 0 ? (
         <p className="text-sm text-text-secondary">No numbers in the pool yet.</p>
       ) : (
-        <div className="hd-scroll-x">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-left text-text-secondary border-b border-border-subtle">
-                <th className="py-2 pr-4">Number</th>
-                <th className="py-2 pr-4">Status</th>
-                <th className="py-2 pr-4">Dials (7d / 30d)</th>
-                <th className="py-2 pr-4">Answer rate (7d / 30d)</th>
-                <th className="py-2 pr-4">Avg talk (30d)</th>
-              </tr>
-            </thead>
-            <tbody>
-              {stats.map((s) => (
-                <tr key={s.number_id} className="border-b border-border-subtle last:border-0">
-                  <td className="py-2 pr-4 text-text-primary">{s.phone_number}</td>
-                  <td className="py-2 pr-4">
-                    {s.status === 'resting' && s.flagged_reason ? (
-                      <span
-                        className="px-2 py-0.5 rounded-full bg-danger/10 text-danger text-xs"
-                        title={s.flagged_reason}
-                      >
-                        Flagged
-                      </span>
-                    ) : (
-                      <span className="text-text-secondary capitalize">{s.status}</span>
-                    )}
-                  </td>
-                  <td className="py-2 pr-4 text-text-primary">
-                    {s.dials_7d} / {s.dials_30d}
-                  </td>
-                  <td className="py-2 pr-4 text-text-primary">
-                    {formatPct(s.human_answer_rate_7d)} / {formatPct(s.human_answer_rate_30d)}
-                  </td>
-                  <td className="py-2 pr-4 text-text-primary">
-                    {formatSeconds(s.avg_talk_seconds_30d)}
-                  </td>
+        <>
+          <div className="space-y-2 md:hidden">
+            {stats.map((s) => (
+              <div
+                key={s.number_id}
+                className="rounded-app-md border border-border-subtle bg-surface-2/40 p-3 space-y-1"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-medium text-text-primary">{s.phone_number}</span>
+                  {s.status === 'resting' && s.flagged_reason ? (
+                    <span className="px-2 py-0.5 rounded-full bg-danger/10 text-danger text-xs">
+                      Flagged
+                    </span>
+                  ) : (
+                    <span className="text-text-secondary text-sm capitalize">{s.status}</span>
+                  )}
+                </div>
+                {s.status === 'resting' && s.flagged_reason && (
+                  <div className="text-meta text-danger">{s.flagged_reason}</div>
+                )}
+                <div className="grid grid-cols-3 gap-2 text-meta text-text-secondary">
+                  <div>
+                    Dials 7d / 30d
+                    <div className="text-sm text-text-primary">
+                      {s.dials_7d} / {s.dials_30d}
+                    </div>
+                  </div>
+                  <div>
+                    Answer rate
+                    <div className="text-sm text-text-primary">
+                      {formatPct(s.human_answer_rate_7d)} / {formatPct(s.human_answer_rate_30d)}
+                    </div>
+                  </div>
+                  <div>
+                    Avg talk 30d
+                    <div className="text-sm text-text-primary">
+                      {formatSeconds(s.avg_talk_seconds_30d)}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="hidden md:block hd-scroll-x">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-text-secondary border-b border-border-subtle">
+                  <th className="py-2 pr-4">Number</th>
+                  <th className="py-2 pr-4">Status</th>
+                  <th className="py-2 pr-4">Dials (7d / 30d)</th>
+                  <th className="py-2 pr-4">Answer rate (7d / 30d)</th>
+                  <th className="py-2 pr-4">Avg talk (30d)</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody>
+                {stats.map((s) => (
+                  <tr key={s.number_id} className="border-b border-border-subtle last:border-0">
+                    <td className="py-2 pr-4 text-text-primary">{s.phone_number}</td>
+                    <td className="py-2 pr-4">
+                      {s.status === 'resting' && s.flagged_reason ? (
+                        <span
+                          className="px-2 py-0.5 rounded-full bg-danger/10 text-danger text-xs"
+                          title={s.flagged_reason}
+                        >
+                          Flagged
+                        </span>
+                      ) : (
+                        <span className="text-text-secondary capitalize">{s.status}</span>
+                      )}
+                    </td>
+                    <td className="py-2 pr-4 text-text-primary">
+                      {s.dials_7d} / {s.dials_30d}
+                    </td>
+                    <td className="py-2 pr-4 text-text-primary">
+                      {formatPct(s.human_answer_rate_7d)} / {formatPct(s.human_answer_rate_30d)}
+                    </td>
+                    <td className="py-2 pr-4 text-text-primary">
+                      {formatSeconds(s.avg_talk_seconds_30d)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
       )}
     </div>
   );

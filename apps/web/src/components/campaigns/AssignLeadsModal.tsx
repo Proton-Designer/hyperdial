@@ -268,7 +268,7 @@ export function AssignLeadsModal({
             </div>
           )}
         </div>
-        <div className="border-t border-border-subtle p-4 flex justify-between gap-2">
+        <div className="border-t border-border-subtle p-4 flex flex-wrap justify-between gap-2">
           <Button type="button" variant="fe-ghost" onClick={handleUnassign} disabled={submitting}>
             {unassigning ? 'Unassigning…' : 'Unassign this slice'}
           </Button>

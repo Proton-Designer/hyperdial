@@ -162,11 +162,11 @@ function FunnelAndInsights({ start, end }: { start: Date; end: Date }) {
       <div className="rounded-app-lg border border-border-subtle bg-surface-1 p-6 shadow-app-sm">
         <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
           <h2 className="text-section-title text-text-primary">Funnel</h2>
-          <div className="flex items-center gap-2">
+          <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2">
             <select
               value={campaignId ?? '__all__'}
               onChange={(e) => setCampaignId(e.target.value === '__all__' ? null : e.target.value)}
-              className="bg-surface-2 border border-border-subtle rounded-app-md px-3 py-2 text-meta text-text-primary"
+              className="min-w-0 max-w-full bg-surface-2 border border-border-subtle rounded-app-md px-3 py-2 text-meta text-text-primary"
             >
               <option value="__all__">All campaigns</option>
               {campaigns.map((c) => (
@@ -530,7 +530,7 @@ export function Analytics() {
                 <ResponsiveContainer width="100%" height={300}>
                   <BarChart data={summary.callVolumeData}>
                     <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-                    <XAxis dataKey="day" stroke="#B0BEC5" tick={{ fill: '#B0BEC5' }} />
+                    <XAxis dataKey="day" interval={0} stroke="#B0BEC5" tick={{ fill: '#B0BEC5' }} />
                     <YAxis stroke="#B0BEC5" tick={{ fill: '#B0BEC5' }} allowDecimals={false} />
                     <Tooltip
                       contentStyle={{

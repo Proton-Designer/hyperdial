@@ -537,7 +537,7 @@ export function ImportContactsModal({
                     other details are unchanged. Import the file again to retry.
                   </div>
                 )}
-                <Button variant="primary" onClick={handleViewContacts}>
+                <Button variant="primary" className="mt-4" onClick={handleViewContacts}>
                   View contacts
                 </Button>
               </motion.div>
