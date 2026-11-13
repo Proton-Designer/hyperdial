@@ -10,8 +10,10 @@ export function useScreenWakeLock(active: boolean): void {
     if (!active || typeof navigator === 'undefined' || !('wakeLock' in navigator)) return;
     let sentinel: WakeLockSentinel | null = null;
     let cancelled = false;
+    let inFlight = false;
     const acquire = async () => {
-      if (cancelled || document.visibilityState !== 'visible' || sentinel) return;
+      if (cancelled || inFlight || document.visibilityState !== 'visible' || sentinel) return;
+      inFlight = true;
       try {
         const s = await navigator.wakeLock.request('screen');
         if (cancelled) {
@@ -24,6 +26,8 @@ export function useScreenWakeLock(active: boolean): void {
         });
       } catch {
         // Denied (battery saver, unsupported context): the session still works, the screen may just dim.
+      } finally {
+        inFlight = false;
       }
     };
     void acquire();

@@ -741,7 +741,8 @@ function DialerBody({
 
   // TASK-MOB1-B (phones): keep the screen on during a session, and notice when the line was lost while the
   // screen was off or the tab hidden, so the banner can say so (the Reconnect paths themselves are unchanged).
-  useScreenWakeLock(!!parallelSession.session);
+  const liveState = parallelSession.session?.state;
+  useScreenWakeLock(!!liveState && liveState !== 'stopped' && liveState !== 'completed');
   const lastHiddenRef = useRef<number | null>(null);
   const [lineLostWhileHidden, setLineLostWhileHidden] = useState(false);
   useEffect(() => {
@@ -770,9 +771,14 @@ function DialerBody({
       setAudioBlocked(false);
       return;
     }
-    const el = document.getElementById(REMOTE_AUDIO_ID) as HTMLAudioElement | null;
-    if (!el || !el.srcObject || !el.paused) return;
-    el.play().catch(() => setAudioBlocked(true));
+    // The SDK attaches the stream a moment after 'connected', so look again a few times instead of once.
+    const check = () => {
+      const el = document.getElementById(REMOTE_AUDIO_ID) as HTMLAudioElement | null;
+      if (!el || !el.srcObject || !el.paused) return;
+      el.play().catch(() => setAudioBlocked(true));
+    };
+    const timers = [0, 300, 1000, 2500].map((ms) => setTimeout(check, ms));
+    return () => timers.forEach(clearTimeout);
   }, [callState]);
 
   useEffect(() => {
