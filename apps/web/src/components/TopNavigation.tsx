@@ -222,7 +222,7 @@ export function TopNavigation({ activeTab = 'dashboard', onTabChange }: TopNavig
           type="button"
           onClick={() => onTabChange?.('dashboard')}
           aria-label="Go to dashboard"
-          className="flex min-h-11 min-w-11 items-center justify-center rounded-app-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-to md:min-h-0 md:min-w-0 md:justify-start"
+          className="flex touch:min-h-11 touch:min-w-11 items-center touch:justify-center rounded-app-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-to"
         >
           {isMobile ? <LogoMark size={28} /> : <Logo size={28} wordmarkClassName="text-base" />}
         </button>
@@ -233,7 +233,7 @@ export function TopNavigation({ activeTab = 'dashboard', onTabChange }: TopNavig
               type="button"
               onClick={() => onTabChange?.('dashboard')}
               aria-label="Go to dashboard"
-              className="rounded transition-colors hover:text-text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-to"
+              className="rounded touch:min-h-11 touch:px-2 transition-colors hover:text-text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-to"
             >
               Home
             </button>
@@ -316,7 +316,7 @@ export function TopNavigation({ activeTab = 'dashboard', onTabChange }: TopNavig
             type="button"
             onClick={openPalette}
             aria-label="Search"
-            className="ml-auto flex size-11 items-center justify-center rounded-app-md text-text-secondary transition-colors hover:bg-white/5 hover:text-text-primary"
+            className="ml-auto flex size-11 touch:size-11 items-center justify-center rounded-app-md text-text-secondary transition-colors hover:bg-white/5 hover:text-text-primary"
           >
             <Search className="w-5 h-5" />
           </button>
@@ -325,7 +325,7 @@ export function TopNavigation({ activeTab = 'dashboard', onTabChange }: TopNavig
             ref={paletteTriggerRef}
             type="button"
             onClick={openPalette}
-            className="flex w-full max-w-[520px] items-center gap-3 rounded-app-md border border-border-subtle bg-surface-2/60 px-4 py-2 text-left text-sm text-text-muted transition-colors hover:border-border-strong"
+            className="flex w-full max-w-[520px] touch:min-h-11 items-center gap-3 rounded-app-md border border-border-subtle bg-surface-2/60 px-4 py-2 text-left text-sm text-text-muted transition-colors hover:border-border-strong"
           >
             <Search className="w-4 h-4 flex-shrink-0" />
             <span className="flex-1 truncate">
@@ -354,7 +354,7 @@ export function TopNavigation({ activeTab = 'dashboard', onTabChange }: TopNavig
           <button
             type="button"
             onClick={() => setShowNotifications(!showNotifications)}
-            className="relative flex items-center justify-center rounded-app-md p-2 max-md:size-11 transition-colors hover:bg-white/5"
+            className="relative flex items-center justify-center rounded-app-md p-2 touch:size-11 transition-colors hover:bg-white/5"
             aria-label="Notifications"
           >
             <Bell className="w-5 h-5 text-text-secondary" />

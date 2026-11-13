@@ -152,11 +152,11 @@ export function Sidebar({
         </div>
       )}
 
-      <nav className="flex-1 space-y-1 p-2.5 overflow-y-auto">
+      <nav className="flex-1 space-y-1 p-2.5 touch:p-2 overflow-y-auto">
         {visibleTabs.map((tab) => renderItem(tab))}
       </nav>
 
-      <div className="space-y-1 border-t border-border-subtle p-2.5">
+      <div className="space-y-1 border-t border-border-subtle p-2.5 touch:p-2">
         {isManagerOrBetter && renderItem({ id: 'settings', icon: Settings, label: 'Settings' })}
 
         <button
