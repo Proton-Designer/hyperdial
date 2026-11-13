@@ -49,9 +49,11 @@ export function PowerHourLiveBanner() {
     <div className="max-w-2xl mx-auto mb-6 space-y-3">
       {live.map((p) => (
         <div key={p.id} className="rounded-app-lg border border-accent-to/30 bg-accent-to/10 p-4">
-          <div className="flex items-center gap-2 mb-2">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mb-2">
             <Zap className="w-4 h-4 flex-shrink-0 text-accent-to" />
-            <span className="text-body font-medium text-text-primary">{p.name}</span>
+            <span className="min-w-0 break-words text-body font-medium text-text-primary">
+              {p.name}
+            </span>
             <span className="text-meta text-text-secondary">is live</span>
           </div>
           <PowerHourBoard powerHour={p} compact />

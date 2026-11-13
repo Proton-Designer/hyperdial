@@ -71,6 +71,7 @@ export function ResetPassword() {
                   <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-text-secondary" />
                   <input
                     type="password"
+                    autoComplete="new-password"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     className="w-full bg-surface-2 border border-border-subtle rounded-app-md pl-12 pr-4 py-3.5 text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent-to transition-colors"
@@ -88,6 +89,7 @@ export function ResetPassword() {
                   <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-text-secondary" />
                   <input
                     type="password"
+                    autoComplete="new-password"
                     value={confirm}
                     onChange={(e) => setConfirm(e.target.value)}
                     className="w-full bg-surface-2 border border-border-subtle rounded-app-md pl-12 pr-4 py-3.5 text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent-to transition-colors"

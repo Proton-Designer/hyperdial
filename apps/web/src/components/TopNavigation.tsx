@@ -455,7 +455,8 @@ export function TopNavigation({ activeTab = 'dashboard', onTabChange }: TopNavig
         <div className="relative">
           <button
             onClick={() => setShowUserMenu(!showUserMenu)}
-            className="flex items-center gap-2 rounded-app-md p-1 transition-colors hover:bg-white/5 sm:gap-3 sm:px-2 sm:py-1.5"
+            aria-label="Account menu"
+            className="flex items-center justify-center gap-2 rounded-app-md p-1 touch:min-h-11 touch:min-w-11 transition-colors hover:bg-white/5 sm:gap-3 sm:px-2 sm:py-1.5"
           >
             <div className="relative">
               <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-accent-from to-accent-to text-sm font-semibold text-white">

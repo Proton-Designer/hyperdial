@@ -46,7 +46,9 @@ export function BroadcastBanner() {
           className="flex items-start gap-3 rounded-app-lg border border-accent-to/30 bg-accent-to/10 p-4"
         >
           <Megaphone className="w-4 h-4 flex-shrink-0 mt-0.5 text-accent-to" />
-          <p className="flex-1 text-body text-text-primary whitespace-pre-wrap">{b.message}</p>
+          <p className="min-w-0 flex-1 break-words text-body text-text-primary whitespace-pre-wrap">
+            {b.message}
+          </p>
           <button
             type="button"
             onClick={() => handleDismiss(b.id)}

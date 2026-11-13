@@ -50,6 +50,8 @@ export function BottomTabBar({ activeTab, onTabChange, isManager }: BottomTabBar
   const tabs = isManager ? PRIMARY : PRIMARY.filter((t) => t.tab !== 'campaigns');
   // Same visibility rules as Sidebar.tsx (the desktop list): everything not in the bar is in "More".
   // Managers (not only owner/admin) get Analytics, Team and Settings; agents get none of the three.
+  // The active page lives in "More" (not one of the bar's own tabs): light the More tab so the bar still shows where you are.
+  const inMore = !tabs.some((t) => t.tab === activeTab);
   const moreItems: { tab: TabType; label: string; icon: typeof LayoutGrid }[] = [
     ...(isManagerOrBetter
       ? [
@@ -100,7 +102,7 @@ export function BottomTabBar({ activeTab, onTabChange, isManager }: BottomTabBar
           type="button"
           onClick={() => setMoreOpen(true)}
           className={`flex flex-1 flex-col items-center justify-center gap-0.5 text-meta transition-colors ${
-            moreOpen ? 'text-accent-to' : 'text-text-secondary'
+            moreOpen || inMore ? 'text-accent-to' : 'text-text-secondary'
           }`}
         >
           <MoreHorizontal className="w-5 h-5" />
