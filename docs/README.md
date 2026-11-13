@@ -29,10 +29,11 @@ Human-facing documentation. For AI-agent context, start at
 
 ## Validation
 
-| Document                                                                | Contains                                                           |
-| ----------------------------------------------------------------------- | ------------------------------------------------------------------ |
-| [launch-live-test.md](validation/launch-live-test.md)                   | **The** ordered live-verification runbook — run this before launch |
-| [parallel-dialer-checklist.md](validation/parallel-dialer-checklist.md) | Superseded — points to launch-live-test.md                         |
+| Document                                                                      | Contains                                                                                                  |
+| ----------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| [launch-live-test.md](validation/launch-live-test.md)                         | **The** ordered live-verification runbook — run this before launch                                        |
+| [parallel-dialer-checklist.md](validation/parallel-dialer-checklist.md)       | Superseded — points to launch-live-test.md                                                                |
+| [mobile-real-device-checklist.md](validation/mobile-real-device-checklist.md) | Tick-list for a real iPhone and Android: sign-in, Home Screen, mic, screen-on, Reconnect, audio, keyboard |
 
 ## Other
 
