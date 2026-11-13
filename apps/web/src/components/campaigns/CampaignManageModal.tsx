@@ -871,7 +871,7 @@ export function CampaignManageModal({
         tabIndex={-1}
         initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
-        className="fixed inset-8 max-md:inset-0 bg-surface-1 rounded-3xl max-md:rounded-none max-md:border-0 border border-white/10 shadow-xl overflow-hidden flex flex-col outline-none"
+        className={`${typeof window !== 'undefined' && window.matchMedia('(max-width: 767px)').matches ? 'hd-vv ' : ''}fixed inset-8 max-md:inset-0 bg-surface-1 rounded-3xl max-md:rounded-none max-md:border-0 border border-white/10 shadow-xl overflow-hidden flex flex-col outline-none`}
         style={{ zIndex: 1 }}
         onClick={(e) => e.stopPropagation()}
       >
@@ -1859,7 +1859,7 @@ export function CampaignManageModal({
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 flex items-center justify-center p-4"
+            className="hd-vv fixed inset-0 flex items-center justify-center p-4"
             style={{ zIndex: 10000 }}
           >
             <div
@@ -1916,7 +1916,7 @@ export function CampaignManageModal({
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 flex items-center justify-center p-4"
+            className="hd-vv fixed inset-0 flex items-center justify-center p-4"
             style={{ zIndex: 10000 }}
           >
             <div

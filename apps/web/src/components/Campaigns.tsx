@@ -77,7 +77,7 @@ export function Campaigns({
   const isDesktop = breakpoint === 'desktop';
   const [campaigns, setCampaigns] = useState<CampaignWithStats[]>([]);
   const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [filterStatus, setFilterStatus] = useState<'all' | 'active' | 'paused' | 'completed'>(
     'all'
@@ -124,10 +124,13 @@ export function Campaigns({
 
   const fetchCampaigns = useCallback(() => {
     setLoading(true);
-    setLoadError(null);
+    setLoadError(false);
     listCampaigns()
       .then(setCampaigns)
-      .catch((e) => setLoadError(e instanceof Error ? e.message : 'Failed to load campaigns'))
+      .catch((e) => {
+        console.error('Failed to load campaigns', e);
+        setLoadError(true);
+      })
       .finally(() => setLoading(false));
   }, []);
 
@@ -269,6 +272,17 @@ export function Campaigns({
           </div>
         </div>
 
+        {loadError && campaigns.length > 0 && (
+          <div
+            role="alert"
+            className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-app-md border border-danger/30 bg-danger-soft px-3 py-2 text-sm text-danger"
+          >
+            <span>Couldn't refresh campaigns. Showing the last loaded list.</span>
+            <Button variant="fe-secondary" size="sm" onClick={fetchCampaigns}>
+              Try again
+            </Button>
+          </div>
+        )}
         {loading ? (
           isDesktop ? (
             <div className="rounded-app-lg border border-border-subtle bg-surface-1 overflow-hidden">
@@ -290,7 +304,7 @@ export function Campaigns({
           <EmptyState
             icon={ServerCrash}
             title="Couldn't load campaigns"
-            body={loadError}
+            body="Check your connection and try again."
             action={
               <Button variant="fe-secondary" onClick={fetchCampaigns}>
                 <RefreshCw className="w-4 h-4" />
@@ -471,7 +485,7 @@ export function Campaigns({
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             onClick={() => !creating && setNewCampaignOpen(false)}
-            className="hd-touch fixed inset-0 z-[9999] flex items-center justify-center p-4 sm:p-6 bg-black/60 backdrop-blur-sm"
+            className="hd-touch hd-vv fixed inset-0 z-[9999] flex items-center justify-center p-4 sm:p-6 bg-black/60 backdrop-blur-sm"
           >
             {/* B1: `aria-hidden` used to sit on THIS wrapper, which is an ANCESTOR of the
                 `role="dialog"` panel below, not a sibling backdrop like every other modal in

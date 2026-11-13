@@ -165,7 +165,7 @@ export function AddExistingContactsModal({
 
   return createPortal(
     <div
-      className="hd-touch fixed inset-0 flex items-center justify-center p-2 max-md:p-0"
+      className="hd-touch hd-vv fixed inset-0 flex items-center justify-center p-2 max-md:p-0"
       style={{ zIndex: 10000 }}
     >
       <div
@@ -181,7 +181,7 @@ export function AddExistingContactsModal({
         aria-label="Add existing contacts"
         initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
-        className="relative z-[1] w-full max-w-2xl flex flex-col rounded-app-lg border border-border-subtle bg-surface-1 shadow-app-md outline-none max-md:h-[100dvh] max-md:max-w-none max-md:!max-h-none max-md:rounded-none max-md:border-0"
+        className="relative z-[1] w-full max-w-2xl flex flex-col rounded-app-lg border border-border-subtle bg-surface-1 shadow-app-md outline-none max-md:h-full max-md:max-w-none max-md:!max-h-none max-md:rounded-none max-md:border-0"
         style={{ maxHeight: 'calc(100vh - 16px)', minHeight: 0 }}
         onClick={(e) => e.stopPropagation()}
       >

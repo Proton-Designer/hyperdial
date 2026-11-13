@@ -242,7 +242,7 @@ export function ImportContactsModal({
 
   return createPortal(
     <div
-      className="fixed inset-0 flex items-center justify-center p-2 max-md:p-0"
+      className="hd-vv fixed inset-0 flex items-center justify-center p-2 max-md:p-0"
       style={{ zIndex: 10000 }}
       role="dialog"
       aria-modal="true"
@@ -253,7 +253,7 @@ export function ImportContactsModal({
         tabIndex={-1}
         initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
-        className="relative z-[1] w-full max-w-4xl flex flex-col rounded-app-lg border border-border-subtle bg-surface-1 shadow-app-md outline-none max-md:h-[100dvh] max-md:max-w-none max-md:!max-h-none max-md:rounded-none max-md:border-0"
+        className="relative z-[1] w-full max-w-4xl flex flex-col rounded-app-lg border border-border-subtle bg-surface-1 shadow-app-md outline-none max-md:h-full max-md:max-w-none max-md:!max-h-none max-md:rounded-none max-md:border-0"
         style={{ maxHeight: 'calc(100vh - 16px)', minHeight: 0 }}
         onClick={(e) => e.stopPropagation()}
       >
@@ -267,7 +267,7 @@ export function ImportContactsModal({
             type="button"
             onClick={handleClose}
             disabled={loading}
-            className="rounded-app-md p-2 text-text-secondary hover:bg-white/10 hover:text-text-primary disabled:opacity-50 max-lg:flex touch:h-11 touch:w-11 max-lg:items-center max-lg:justify-center"
+            className="rounded-app-md p-2 text-text-secondary hover:bg-white/10 hover:text-text-primary disabled:opacity-50 touch:flex touch:h-11 touch:w-11 touch:items-center touch:justify-center"
             aria-label="Close"
           >
             <X className="w-5 h-5" />

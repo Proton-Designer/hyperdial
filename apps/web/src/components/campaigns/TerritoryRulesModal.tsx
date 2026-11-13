@@ -253,7 +253,7 @@ export function TerritoryRulesModal({
   return createPortal(
     <div
       ref={modalRef}
-      className="hd-touch fixed inset-0 flex items-center justify-center p-4 max-md:p-0 outline-none"
+      className="hd-touch hd-vv fixed inset-0 flex items-center justify-center p-4 max-md:p-0 outline-none"
       style={{ zIndex: 10002 }}
       role="dialog"
       aria-modal="true"
@@ -261,7 +261,7 @@ export function TerritoryRulesModal({
       tabIndex={-1}
     >
       <div className="absolute inset-0 bg-black/70" aria-hidden="true" onClick={onClose} />
-      <div className="relative z-[1] w-full max-w-lg max-h-[85vh] max-md:h-[100dvh] max-md:max-h-none max-md:max-w-none max-md:rounded-none max-md:border-0 overflow-y-auto rounded-app-lg border border-border-subtle bg-surface-1 shadow-app-md">
+      <div className="relative z-[1] w-full max-w-lg max-h-[85vh] max-md:h-full max-md:max-h-none max-md:max-w-none max-md:rounded-none max-md:border-0 overflow-y-auto rounded-app-lg border border-border-subtle bg-surface-1 shadow-app-md">
         <div className="border-b border-border-subtle p-4 max-md:pt-[max(1rem,env(safe-area-inset-top))]">
           <h2 id="territory-rules-title" className="text-page-title text-text-primary">
             Territory rules

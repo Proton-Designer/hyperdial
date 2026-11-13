@@ -1728,7 +1728,7 @@ function OffboardWizardModal({
 
   return createPortal(
     <div
-      className="hd-touch fixed inset-0 flex items-center justify-center p-4"
+      className="hd-touch hd-vv fixed inset-0 flex items-center justify-center p-4"
       style={{ zIndex: 10000 }}
       role="dialog"
       aria-modal="true"
@@ -1740,7 +1740,7 @@ function OffboardWizardModal({
         tabIndex={-1}
         initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
-        className="relative z-[1] w-full max-w-md max-h-[calc(100dvh-2rem)] overflow-y-auto rounded-app-lg border border-border-subtle bg-surface-1 p-5 shadow-app-md outline-none"
+        className="relative z-[1] w-full max-w-md max-h-full overflow-y-auto rounded-app-lg border border-border-subtle bg-surface-1 p-5 shadow-app-md outline-none"
         onClick={(e) => e.stopPropagation()}
       >
         <h2 id="offboard-wizard-title" className="text-page-title text-text-primary mb-1">
@@ -4859,7 +4859,7 @@ export function AddFundsDialog({
 
   return createPortal(
     <div
-      className="hd-touch fixed inset-0 flex items-center justify-center p-4"
+      className="hd-touch hd-vv fixed inset-0 flex items-center justify-center p-4"
       style={{ zIndex: 10000 }}
       role="dialog"
       aria-modal="true"
@@ -4871,7 +4871,7 @@ export function AddFundsDialog({
         tabIndex={-1}
         initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
-        className="relative z-[1] w-full max-w-sm max-h-[calc(100dvh-2rem)] overflow-y-auto rounded-app-lg border border-border-subtle bg-surface-1 p-5 shadow-app-md outline-none"
+        className="relative z-[1] w-full max-w-sm max-h-full overflow-y-auto rounded-app-lg border border-border-subtle bg-surface-1 p-5 shadow-app-md outline-none"
         onClick={(e) => e.stopPropagation()}
       >
         <h2 id="add-funds-title" className="text-page-title text-text-primary mb-4">

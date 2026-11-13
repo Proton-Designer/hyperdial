@@ -81,7 +81,7 @@ export function Contacts({ onNavigateToDialer }: { onNavigateToDialer?: () => vo
   const canManage = role === 'owner' || role === 'admin';
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [categoryFilter, setCategoryFilter] = useState<string>('All');
   const [contactStatusFilter, setContactStatusFilter] = useState<string>('All');
@@ -97,10 +97,13 @@ export function Contacts({ onNavigateToDialer }: { onNavigateToDialer?: () => vo
 
   const fetchContacts = () => {
     setLoading(true);
-    setLoadError(null);
+    setLoadError(false);
     listContacts()
       .then(setContacts)
-      .catch((e) => setLoadError(e instanceof Error ? e.message : 'Failed to load contacts'))
+      .catch((e) => {
+        console.error('Failed to load contacts', e);
+        setLoadError(true);
+      })
       .finally(() => setLoading(false));
   };
 
@@ -342,6 +345,17 @@ export function Contacts({ onNavigateToDialer }: { onNavigateToDialer?: () => vo
         </div>
       )}
 
+      {loadError && contacts.length > 0 && (
+        <div
+          role="alert"
+          className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-app-md border border-danger/30 bg-danger-soft px-3 py-2 text-sm text-danger"
+        >
+          <span>Couldn't refresh contacts. Showing the last loaded list.</span>
+          <Button variant="fe-secondary" size="sm" onClick={fetchContacts}>
+            Try again
+          </Button>
+        </div>
+      )}
       {loading ? (
         isDesktop ? (
           <TableSkeleton rows={8} columns={5} />
@@ -352,7 +366,7 @@ export function Contacts({ onNavigateToDialer }: { onNavigateToDialer?: () => vo
         <EmptyState
           icon={ServerCrash}
           title="Couldn't load contacts"
-          body={loadError}
+          body="Check your connection and try again."
           action={
             <Button variant="fe-secondary" onClick={fetchContacts}>
               <RefreshCw className="w-4 h-4" />

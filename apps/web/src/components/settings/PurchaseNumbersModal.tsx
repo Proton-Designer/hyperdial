@@ -84,7 +84,7 @@ export function PurchaseNumbersModal({ open, onClose }: PurchaseNumbersModalProp
 
   return createPortal(
     <div
-      className="hd-touch fixed inset-0 flex items-center justify-center p-4 max-md:p-0"
+      className="hd-touch hd-vv fixed inset-0 flex items-center justify-center p-4 max-md:p-0"
       style={{ zIndex: 10000 }}
       role="dialog"
       aria-modal="true"
@@ -96,7 +96,7 @@ export function PurchaseNumbersModal({ open, onClose }: PurchaseNumbersModalProp
         tabIndex={-1}
         initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
-        className="relative z-[1] w-full max-w-lg max-h-[85vh] max-md:h-[100dvh] max-md:max-h-none max-md:max-w-none max-md:rounded-none max-md:border-0 flex flex-col rounded-app-lg border border-border-subtle bg-surface-1 shadow-app-md outline-none"
+        className="relative z-[1] w-full max-w-lg max-h-[85vh] max-md:h-full max-md:max-h-none max-md:max-w-none max-md:rounded-none max-md:border-0 flex flex-col rounded-app-lg border border-border-subtle bg-surface-1 shadow-app-md outline-none"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between border-b border-border-subtle p-4 shrink-0 max-md:pt-[max(1rem,env(safe-area-inset-top))]">

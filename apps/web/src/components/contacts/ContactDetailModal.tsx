@@ -227,7 +227,7 @@ export function ContactDetailModal({
 
   return createPortal(
     <div
-      className="fixed inset-0 flex items-center justify-center p-4 max-md:p-0"
+      className="hd-vv fixed inset-0 flex items-center justify-center p-4 max-md:p-0"
       style={{ zIndex: 10000 }}
       role="dialog"
       aria-modal="true"
@@ -236,7 +236,7 @@ export function ContactDetailModal({
       <motion.div
         initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
-        className="relative z-[101] flex max-h-[calc(100dvh-1rem)] w-full max-w-lg flex-col rounded-2xl border border-white/10 bg-surface-1 shadow-xl overflow-hidden max-md:h-[100dvh] max-md:max-h-none max-md:max-w-none max-md:rounded-none max-md:border-0"
+        className="relative z-[101] flex max-h-full w-full max-w-lg flex-col rounded-2xl border border-white/10 bg-surface-1 shadow-xl overflow-hidden max-md:h-full max-md:max-h-none max-md:max-w-none max-md:rounded-none max-md:border-0"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between border-b border-white/10 p-4 max-md:pt-[max(1rem,env(safe-area-inset-top))]">
@@ -257,7 +257,7 @@ export function ContactDetailModal({
             <button
               type="button"
               onClick={handleClose}
-              className="rounded-lg p-2 text-text-secondary hover:bg-white/10 hover:text-white max-lg:flex touch:h-11 touch:w-11 max-lg:items-center max-lg:justify-center"
+              className="rounded-lg p-2 text-text-secondary hover:bg-white/10 hover:text-white touch:flex touch:h-11 touch:w-11 touch:items-center touch:justify-center"
               aria-label="Close"
             >
               <X className="w-5 h-5" />
@@ -387,7 +387,7 @@ export function ContactDetailModal({
                         <Mail className="w-4 h-4 text-accent-to flex-shrink-0 mt-0.5" />
                         <a
                           href={`mailto:${c.owner_contact}`}
-                          className="text-accent-to hover:underline truncate block"
+                          className="text-accent-to hover:underline truncate block touch:-my-3 touch:py-3"
                           title={c.owner_contact}
                         >
                           {truncateUrl(c.owner_contact, 50)}
@@ -401,7 +401,7 @@ export function ContactDetailModal({
                           href={c.website.startsWith('http') ? c.website : `https://${c.website}`}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="text-accent-to hover:underline truncate block"
+                          className="text-accent-to hover:underline truncate block touch:-my-3 touch:py-3"
                           title={c.website}
                         >
                           {truncateUrl(c.website, 50)}
@@ -431,7 +431,7 @@ export function ContactDetailModal({
                           }
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="text-accent-to hover:underline truncate block"
+                          className="text-accent-to hover:underline truncate block touch:-my-3 touch:py-3"
                           title={c.business_link}
                         >
                           {truncateUrl(c.business_link, 50)}

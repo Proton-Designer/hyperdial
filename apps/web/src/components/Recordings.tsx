@@ -234,20 +234,26 @@ export function Recordings() {
           onChange={(e) => setFilters((f) => ({ ...f, maxMinutes: e.target.value }))}
           className={`${inputClass} w-24`}
         />
-        <input
-          type="date"
-          value={filters.start}
-          onChange={(e) => setFilters((f) => ({ ...f, start: e.target.value }))}
-          className={inputClass}
-          title="From"
-        />
-        <input
-          type="date"
-          value={filters.end}
-          onChange={(e) => setFilters((f) => ({ ...f, end: e.target.value }))}
-          className={inputClass}
-          title="To"
-        />
+        <label className="flex items-center gap-1.5 text-sm text-text-secondary">
+          From
+          <input
+            type="date"
+            value={filters.start}
+            onChange={(e) => setFilters((f) => ({ ...f, start: e.target.value }))}
+            className={inputClass}
+            title="From"
+          />
+        </label>
+        <label className="flex items-center gap-1.5 text-sm text-text-secondary">
+          To
+          <input
+            type="date"
+            value={filters.end}
+            onChange={(e) => setFilters((f) => ({ ...f, end: e.target.value }))}
+            className={inputClass}
+            title="To"
+          />
+        </label>
         <label className="flex items-center gap-1.5 text-sm text-text-secondary">
           <input
             type="checkbox"
@@ -823,7 +829,10 @@ function RecordingDetailPanel({
   );
   if (isDesktop) return panel;
   return createPortal(
-    <div className="hd-touch fixed inset-0 overflow-y-auto bg-surface-1" style={{ zIndex: 10000 }}>
+    <div
+      className="hd-touch hd-vv fixed inset-0 overflow-y-auto bg-surface-1"
+      style={{ zIndex: 10000 }}
+    >
       {panel}
     </div>,
     document.body

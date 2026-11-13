@@ -135,7 +135,7 @@ export function AddContactModal({ open, onClose, onSuccess }: AddContactModalPro
 
   return createPortal(
     <div
-      className="fixed inset-0 flex items-center justify-center p-4 max-md:p-0"
+      className="hd-vv fixed inset-0 flex items-center justify-center p-4 max-md:p-0"
       style={{ zIndex: 10000 }}
       role="dialog"
       aria-modal="true"
@@ -146,7 +146,7 @@ export function AddContactModal({ open, onClose, onSuccess }: AddContactModalPro
         tabIndex={-1}
         initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
-        className="relative z-[1] flex max-h-[calc(100dvh-1rem)] w-full max-w-lg flex-col rounded-app-lg border border-border-subtle bg-surface-1 shadow-app-md outline-none max-md:h-[100dvh] max-md:max-h-none max-md:max-w-none max-md:rounded-none max-md:border-0"
+        className="relative z-[1] flex max-h-full w-full max-w-lg flex-col rounded-app-lg border border-border-subtle bg-surface-1 shadow-app-md outline-none max-md:h-full max-md:max-h-none max-md:max-w-none max-md:rounded-none max-md:border-0"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between border-b border-border-subtle p-4 max-md:pt-[max(1rem,env(safe-area-inset-top))]">
@@ -154,7 +154,7 @@ export function AddContactModal({ open, onClose, onSuccess }: AddContactModalPro
           <button
             type="button"
             onClick={handleClose}
-            className="rounded-app-md p-2 text-text-secondary hover:bg-white/10 hover:text-text-primary max-lg:flex touch:h-11 touch:w-11 max-lg:items-center max-lg:justify-center"
+            className="rounded-app-md p-2 text-text-secondary hover:bg-white/10 hover:text-text-primary touch:flex touch:h-11 touch:w-11 touch:items-center touch:justify-center"
             aria-label="Close"
           >
             <X className="w-5 h-5" />
@@ -231,7 +231,7 @@ export function AddContactModal({ open, onClose, onSuccess }: AddContactModalPro
               <button
                 type="button"
                 onClick={() => handleRemoveAdditional(field)}
-                className="mt-6 p-2 text-text-secondary hover:text-danger max-lg:mt-5 max-lg:flex touch:h-11 touch:w-11 max-lg:items-center max-lg:justify-center"
+                className="mt-6 p-2 text-text-secondary hover:text-danger touch:mt-5 touch:flex touch:h-11 touch:w-11 touch:items-center touch:justify-center"
                 aria-label={`Remove ${field}`}
               >
                 <X className="w-4 h-4" />

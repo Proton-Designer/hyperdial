@@ -137,7 +137,7 @@ export function AssignLeadsModal({
   return createPortal(
     <div
       ref={modalRef}
-      className="hd-touch fixed inset-0 flex items-center justify-center p-4 outline-none"
+      className="hd-touch hd-vv fixed inset-0 flex items-center justify-center p-4 outline-none"
       style={{ zIndex: 10002 }}
       role="dialog"
       aria-modal="true"
@@ -145,7 +145,7 @@ export function AssignLeadsModal({
       tabIndex={-1}
     >
       <div className="absolute inset-0 bg-black/70" aria-hidden="true" onClick={onClose} />
-      <div className="relative z-[1] w-full max-w-sm max-h-[calc(100dvh-2rem)] overflow-y-auto rounded-app-lg border border-border-subtle bg-surface-1 shadow-app-md">
+      <div className="relative z-[1] w-full max-w-sm max-h-full overflow-y-auto rounded-app-lg border border-border-subtle bg-surface-1 shadow-app-md">
         <div className="border-b border-border-subtle p-4">
           <h2 id="assign-leads-title" className="text-page-title text-text-primary">
             Assign leads

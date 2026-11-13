@@ -95,7 +95,7 @@ export function NumberHealthPanel() {
         <p className="text-sm text-text-secondary">No numbers in the pool yet.</p>
       ) : (
         <>
-          <div className="space-y-2 md:hidden">
+          <div className="space-y-2 lg:hidden">
             {stats.map((s) => (
               <div
                 key={s.number_id}
@@ -137,7 +137,7 @@ export function NumberHealthPanel() {
               </div>
             ))}
           </div>
-          <div className="hidden md:block hd-scroll-x">
+          <div className="hidden lg:block hd-scroll-x">
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-left text-text-secondary border-b border-border-subtle">

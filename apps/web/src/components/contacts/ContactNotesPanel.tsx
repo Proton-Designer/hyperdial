@@ -271,7 +271,7 @@ export function ContactNotesPanel({
                   <button
                     type="button"
                     onClick={() => startEdit(n)}
-                    className="flex items-center gap-1 text-text-secondary hover:text-white"
+                    className="flex items-center gap-1 text-text-secondary hover:text-white touch:min-h-11 touch:min-w-11 touch:justify-center"
                   >
                     <Pencil className="w-3 h-3" />
                     Edit
@@ -282,7 +282,7 @@ export function ContactNotesPanel({
                     type="button"
                     onClick={() => handleDelete(n.id)}
                     disabled={busyId === n.id}
-                    className="flex items-center gap-1 text-danger/80 hover:text-danger disabled:opacity-50"
+                    className="flex items-center gap-1 text-danger/80 hover:text-danger disabled:opacity-50 touch:min-h-11 touch:min-w-11 touch:justify-center"
                   >
                     <Trash2 className="w-3 h-3" />
                     Delete
