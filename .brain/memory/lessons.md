@@ -276,3 +276,18 @@ quietly ends an older one, and on a Start 409 ends the old session and retries -
 gone. Nothing live is ever hung up: the stop endpoint (no `force`) refuses while a contact leg is
 `claimed`, and then the Dialer opens that session instead. When adding a session state, grep every
 `.in('state', [` list.
+
+**Test mobile on real WebKit, not just Chromium (MOB5, 2026-11-13).** A Playwright WebKit pass plus real
+Mobile Safari in an iOS Simulator (driven with `idb` taps) found four bugs the Chromium sweeps passed:
+(1) `navigator.wakeLock.request()` is refused (`NotAllowedError`) unless it runs inside a tap, in Safari and
+in an installed web app, so a request made from an effect after Start silently never held the screen. The
+hook now retries on the next `pointerup`, and again after the browser drops the lock (tab hidden).
+`'wakeLock' in navigator` is true on iOS, so feature detection alone proves nothing. (2) iOS ignores
+`min-height` on a native `<select>` (33pt tall in the Simulator); an explicit `height: 44px` is honoured.
+(3) With the on-screen keyboard open iOS shrinks and scrolls only the *visual* viewport; `position: fixed`
+boxes (and `100dvh`) keep the layout-viewport size, so a full-screen modal's primary button ended up behind
+the keyboard and its header off the top. `lib/visualViewport.ts` keeps `--vv-h`/`--vv-top` in step and the
+`hd-vv` class (touch.css) or the ui Dialog follows them; give any new fixed modal `hd-vv` and size its card
+with `max-h-[min(<desktop cap>,100%)]`, not `dvh`. (4) The Simulator reads `env(safe-area-inset-*)` as 0 even
+installed, so notch/home-bar spacing needs a real phone (`docs/validation/mobile-real-device-checklist.md`).
+Also: `idb ui text` drops Shift (an `@` types as `2`), so sign in through a throwaway local page, not by typing.
