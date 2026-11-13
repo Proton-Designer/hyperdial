@@ -331,7 +331,7 @@ export function TopNavigation({ activeTab = 'dashboard', onTabChange }: TopNavig
             <span className="flex-1 truncate">
               Search contacts, campaigns, or jump to a screen…
             </span>
-            <kbd className="hidden flex-shrink-0 rounded border border-border-strong bg-surface-1 px-1.5 py-0.5 text-xs text-text-muted sm:inline-block">
+            <kbd className="hidden flex-shrink-0 rounded border border-border-strong bg-surface-1 px-1.5 py-0.5 text-[10px] max-lg:text-xs text-text-muted sm:inline-block">
               ⌘K
             </kbd>
           </button>

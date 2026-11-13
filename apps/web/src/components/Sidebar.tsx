@@ -120,7 +120,7 @@ export function Sidebar({
         <Icon className={`w-[18px] h-[18px] flex-shrink-0 ${isActive ? 'text-accent-to' : ''}`} />
         {!collapsed && <span className="truncate flex-1 text-left">{label}</span>}
         {!collapsed && tab.id === 'inbox' && inboxOpenCount > 0 && (
-          <span className="flex-shrink-0 rounded-full bg-danger px-1.5 py-0.5 text-xs font-medium leading-none text-white">
+          <span className="flex-shrink-0 rounded-full bg-danger px-1.5 py-0.5 text-[10px] max-lg:text-xs font-medium leading-none text-white">
             {inboxOpenCount > 99 ? '99+' : inboxOpenCount}
           </span>
         )}
