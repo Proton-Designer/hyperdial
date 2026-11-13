@@ -9,7 +9,7 @@ import { ConvergeBackground } from '@/components/brand/ConvergeBackground';
  */
 export function AuthSplitLayout({ children }: { children: ReactNode }) {
   return (
-    <div className="min-h-screen flex bg-surface-0 overflow-hidden">
+    <div className="hd-touch min-h-screen min-h-dvh flex bg-surface-0 overflow-x-hidden">
       <div className="hidden lg:flex lg:w-[55%] relative overflow-hidden">
         <ConvergeBackground />
         <div className="relative z-10 flex flex-col justify-center px-16 max-w-xl">
@@ -27,7 +27,7 @@ export function AuthSplitLayout({ children }: { children: ReactNode }) {
         <div className="absolute bottom-0 left-0 right-0 h-32 bg-gradient-to-t from-surface-0 to-transparent" />
       </div>
 
-      <div className="w-full lg:w-[45%] flex items-center justify-center p-6 sm:p-8">
+      <div className="w-full lg:w-[45%] flex items-center justify-center p-6 sm:p-8 pt-[max(1.5rem,env(safe-area-inset-top))] pb-[max(1.5rem,env(safe-area-inset-bottom))]">
         <div className="w-full max-w-[440px]">
           <div className="mb-8 flex justify-center lg:hidden">
             <Logo size={40} wordmarkClassName="text-2xl" />

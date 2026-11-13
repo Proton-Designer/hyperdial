@@ -18,7 +18,7 @@ type Load =
 
 function Shell({ children }: { children: React.ReactNode }) {
   return (
-    <div className="min-h-screen bg-background text-foreground">
+    <div className="hd-touch min-h-screen min-h-dvh bg-background text-foreground pb-[env(safe-area-inset-bottom)]">
       <main className="mx-auto w-full max-w-lg px-4 py-6 sm:py-10">{children}</main>
     </div>
   );
