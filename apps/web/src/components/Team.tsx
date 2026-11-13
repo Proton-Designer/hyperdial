@@ -42,6 +42,7 @@ import { TeamGoalAttainment } from '@/components/goals/TeamGoalAttainment';
 import { PowerHourPanel } from '@/components/power-hour/PowerHourPanel';
 import { OnboardingChecklistPanel } from '@/components/onboarding/OnboardingChecklistPanel';
 import { AgentSchedulesPanel } from '@/components/schedules/AgentSchedulesPanel';
+import '@/styles/touch.css';
 
 type Range = 'today' | 'yesterday' | '7d' | 'custom';
 type TeamView = 'overview' | 'attendance';
@@ -179,7 +180,7 @@ const ROLE_LABEL: Record<TeamMemberRole, string> = {
 
 function RoleChip({ role }: { role: TeamMemberRole }) {
   return (
-    <span className="px-1.5 py-0.5 rounded-full text-[10px] font-medium uppercase tracking-wide bg-surface-3 text-text-muted border border-border-subtle flex-shrink-0">
+    <span className="px-1.5 py-0.5 rounded-full text-xs font-medium uppercase tracking-wide bg-surface-3 text-text-muted border border-border-subtle flex-shrink-0">
       {ROLE_LABEL[role]}
     </span>
   );
@@ -227,7 +228,7 @@ function RemoteActionConfirmDialog({
 
   return createPortal(
     <div
-      className="fixed inset-0 flex items-center justify-center p-4"
+      className="hd-touch fixed inset-0 flex items-center justify-center p-4"
       style={{ zIndex: 10000 }}
       role="dialog"
       aria-modal="true"
@@ -304,7 +305,7 @@ function LiveBoardCard({
              *  or the call ending), never dismissed from here. */}
             {row.raised_hand_at && (
               <span
-                className="flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-warning-soft text-warning flex-shrink-0"
+                className="flex items-center gap-1 px-1.5 py-0.5 rounded-full text-xs font-medium bg-warning-soft text-warning flex-shrink-0"
                 title="This agent raised their hand"
               >
                 <Hand className="w-3 h-3" />
@@ -313,7 +314,7 @@ function LiveBoardCard({
             )}
             {dialingOutsideSchedule && (
               <span
-                className="flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-warning-soft text-warning flex-shrink-0"
+                className="flex items-center gap-1 px-1.5 py-0.5 rounded-full text-xs font-medium bg-warning-soft text-warning flex-shrink-0"
                 title="This agent is dialing outside their scheduled shift"
               >
                 Outside schedule
@@ -660,7 +661,7 @@ function AttendanceTab({ orgTz }: { orgTz: string }) {
   return (
     <div>
       <div className="flex flex-wrap items-center justify-between gap-3 mb-2">
-        <div className="flex items-center gap-1 bg-surface-1 rounded-app-md p-1 border border-border-subtle">
+        <div className="flex max-w-full items-center gap-1 overflow-x-auto bg-surface-1 rounded-app-md p-1 border border-border-subtle">
           {(['today', 'yesterday', '7d', 'custom'] as Range[]).map((r) => (
             <Button
               key={r}
@@ -1130,7 +1131,7 @@ export function Team() {
   }, [daily]);
 
   return (
-    <div className="p-4 sm:p-8 max-w-[1440px] mx-auto">
+    <div className="hd-touch p-4 sm:p-8 max-w-[1440px] mx-auto">
       <PageHeader title="Team" description="Live status and daily performance across your team" />
 
       <div className="flex items-center gap-1 bg-surface-1 rounded-app-md p-1 border border-border-subtle mb-6 w-fit">
@@ -1309,8 +1310,8 @@ export function Team() {
           <div>
             <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
               <h2 className="text-section-title text-text-primary">Daily numbers</h2>
-              <div className="flex items-center gap-3">
-                <div className="flex items-center gap-1 bg-surface-1 rounded-app-md p-1 border border-border-subtle">
+              <div className="flex min-w-0 max-w-full items-center gap-3">
+                <div className="flex max-w-full items-center gap-1 overflow-x-auto bg-surface-1 rounded-app-md p-1 border border-border-subtle">
                   {(['today', 'yesterday', '7d', 'custom'] as Range[]).map((r) => (
                     <Button
                       key={r}

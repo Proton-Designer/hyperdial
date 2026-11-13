@@ -43,6 +43,7 @@ import { PageHeader } from '@/components/app/PageHeader';
 import { EmptyState } from '@/components/app/EmptyState';
 import { ListSkeleton, TableSkeleton } from '@/components/app/skeletons';
 import { useOrg } from '@/contexts/OrgContext';
+import '@/styles/touch.css';
 import { TapCheckbox } from '@/components/mobile/TapCheckbox';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { cn } from '@/components/ui/utils';
@@ -234,7 +235,7 @@ export function Contacts({ onNavigateToDialer }: { onNavigateToDialer?: () => vo
   const mobileActions = canManage && (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="primary" size="sm">
+        <Button variant="primary" size="sm" className="max-lg:min-h-11">
           <Plus className="w-4 h-4" />
           Add
         </Button>
@@ -265,7 +266,7 @@ export function Contacts({ onNavigateToDialer }: { onNavigateToDialer?: () => vo
   );
 
   return (
-    <div className="p-4 sm:p-8 max-w-[1440px] mx-auto">
+    <div className="hd-touch p-4 sm:p-8 max-w-[1440px] mx-auto">
       <PageHeader
         title="Contacts"
         description="Manage your contact database"

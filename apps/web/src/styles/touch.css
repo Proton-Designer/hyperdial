@@ -1,0 +1,34 @@
+/*
+ * TASK-MOB2: opt-in touch sizing for dense admin screens (Team, Settings, Team Shifts ...).
+ * Add the `hd-touch` class to a screen root (or to a portaled modal panel) and every form control
+ * and button inside it reaches 44px on touch widths (<1024px). Desktop is untouched. Add
+ * `hd-touch-skip` to a control that must stay compact (inline text links inside a sentence).
+ * Written unlayered on purpose: raw controls use `.text-body`-style unlayered classes that a
+ * Tailwind utility cannot beat.
+ */
+@media (max-width: 1023px) {
+  .hd-touch
+    :is(
+      select,
+      textarea,
+      input:not([type='checkbox'], [type='radio'], [type='range'], [type='file'], [type='hidden'])
+    ):not(.hd-touch-skip) {
+    min-height: 44px;
+    font-size: 16px;
+  }
+  .hd-touch :is(button, [role='button'], summary):not(.hd-touch-skip) {
+    min-height: 44px;
+    min-width: 44px;
+  }
+  .hd-touch label:has(input[type='checkbox'], input[type='radio']):not(.hd-touch-skip) {
+    min-height: 44px;
+    min-width: 44px;
+    display: inline-flex;
+    align-items: center;
+  }
+  .hd-touch input[type='checkbox']:not(.hd-touch-skip),
+  .hd-touch input[type='radio']:not(.hd-touch-skip) {
+    min-width: 20px;
+    min-height: 20px;
+  }
+}
