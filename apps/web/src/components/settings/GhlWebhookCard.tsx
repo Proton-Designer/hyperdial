@@ -127,7 +127,7 @@ function RecentLeads({ intake }: { intake: GhlIntakeSummary | undefined }) {
               >
                 <div className="min-w-0">
                   <div className="text-xs text-white truncate">{who}</div>
-                  <div className="text-[11px] text-text-muted">{when(r.receivedAt)}</div>
+                  <div className="text-xs text-text-muted">{when(r.receivedAt)}</div>
                 </div>
                 <div className={`text-xs sm:text-right ${TONE_CLASS[d.tone]}`}>{d.text}</div>
               </li>

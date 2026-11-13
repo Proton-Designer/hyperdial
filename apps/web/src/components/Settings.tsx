@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import '@/styles/touch.css';
 import { ViewAsButton } from '@/components/settings/ViewAsButton';
 import { createPortal } from 'react-dom';
 import { toast } from 'sonner';
@@ -1003,7 +1004,7 @@ function TeamTab({ scrollTo }: { scrollTo?: SettingsSection }) {
                       <span className="text-text-primary">{r.email}</span>
                       <span
                         className={cn(
-                          'px-1.5 py-0.5 rounded-full text-[10px] uppercase',
+                          'px-1.5 py-0.5 rounded-full text-xs uppercase',
                           r.status === 'invalid' || r.emailStatus === 'failed'
                             ? 'bg-danger/10 text-danger'
                             : r.status === 'sent'
@@ -1728,7 +1729,7 @@ function OffboardWizardModal({
 
   return createPortal(
     <div
-      className="fixed inset-0 flex items-center justify-center p-4"
+      className="hd-touch fixed inset-0 flex items-center justify-center p-4"
       style={{ zIndex: 10000 }}
       role="dialog"
       aria-modal="true"
@@ -1740,7 +1741,7 @@ function OffboardWizardModal({
         tabIndex={-1}
         initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
-        className="relative z-[1] w-full max-w-md rounded-app-lg border border-border-subtle bg-surface-1 p-5 shadow-app-md outline-none"
+        className="relative z-[1] w-full max-w-md max-h-[calc(100dvh-2rem)] overflow-y-auto rounded-app-lg border border-border-subtle bg-surface-1 p-5 shadow-app-md outline-none"
         onClick={(e) => e.stopPropagation()}
       >
         <h2 id="offboard-wizard-title" className="text-page-title text-text-primary mb-1">
@@ -4794,7 +4795,7 @@ export function AddFundsDialog({
 
   return createPortal(
     <div
-      className="fixed inset-0 flex items-center justify-center p-4"
+      className="hd-touch fixed inset-0 flex items-center justify-center p-4"
       style={{ zIndex: 10000 }}
       role="dialog"
       aria-modal="true"
@@ -4806,7 +4807,7 @@ export function AddFundsDialog({
         tabIndex={-1}
         initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
-        className="relative z-[1] w-full max-w-sm rounded-app-lg border border-border-subtle bg-surface-1 p-5 shadow-app-md outline-none"
+        className="relative z-[1] w-full max-w-sm max-h-[calc(100dvh-2rem)] overflow-y-auto rounded-app-lg border border-border-subtle bg-surface-1 p-5 shadow-app-md outline-none"
         onClick={(e) => e.stopPropagation()}
       >
         <h2 id="add-funds-title" className="text-page-title text-text-primary mb-4">
@@ -5546,7 +5547,7 @@ export function Settings({ section }: { section?: SettingsSection } = {}) {
 
       {/* Main Content */}
       <div className="flex-1 overflow-y-auto p-4 sm:p-8">
-        <div className="max-w-4xl">
+        <div className="hd-touch max-w-4xl">
           {orgLoading ? (
             <div>
               <Skeleton className="h-8 w-40 mb-8" />
