@@ -94,7 +94,7 @@ export function NumberHealthPanel() {
       ) : stats.length === 0 ? (
         <p className="text-sm text-text-secondary">No numbers in the pool yet.</p>
       ) : (
-        <div className="overflow-x-auto">
+        <div className="hd-scroll-x">
           <table className="w-full text-sm">
             <thead>
               <tr className="text-left text-text-secondary border-b border-border-subtle">

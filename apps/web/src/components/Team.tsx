@@ -728,7 +728,7 @@ function AttendanceTab({ orgTz }: { orgTz: string }) {
           body="Once your team dials during this window, attendance will show up here."
         />
       ) : (
-        <div className="rounded-app-lg border border-border-subtle bg-surface-1 overflow-x-auto">
+        <div className="hd-scroll-x rounded-app-lg border border-border-subtle">
           <table className="w-full text-left text-sm">
             <thead>
               <tr className="border-b border-border-subtle text-text-secondary">
@@ -1377,7 +1377,7 @@ export function Team() {
             ) : (
               <>
                 {/* Desktop/tablet: real table. Mobile (<768): stacked cards. */}
-                <div className="hidden md:block rounded-app-lg border border-border-subtle bg-surface-1 overflow-x-auto">
+                <div className="hidden md:block hd-scroll-x rounded-app-lg border border-border-subtle">
                   <table className="w-full text-left text-sm">
                     <thead>
                       <tr className="border-b border-border-subtle text-text-secondary">

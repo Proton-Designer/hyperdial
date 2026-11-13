@@ -100,7 +100,7 @@ export function SystemHealthPanel() {
             {failures.length === 1 ? '' : 's'} in the last 7 days.
           </p>
           {expanded && (
-            <div className="overflow-x-auto">
+            <div className="hd-scroll-x">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="text-left text-text-secondary border-b border-border-subtle">

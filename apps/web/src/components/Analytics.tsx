@@ -275,40 +275,47 @@ function FunnelAndInsights({ start, end }: { start: Date; end: Date }) {
         {!heatmap || heatmap.length === 0 ? (
           <p className="text-meta text-text-secondary">No dials in this range.</p>
         ) : (
-          <table className="text-meta border-collapse">
-            <thead>
-              <tr>
-                <th className="p-1" />
-                {Array.from({ length: 24 }).map((_, h) => (
-                  <th key={h} className="p-1 font-normal text-text-secondary text-center w-8">
-                    {h}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {WEEKDAY_LABELS.map((label, weekday) => (
-                <tr key={label}>
-                  <td className="p-1 pr-2 text-text-secondary whitespace-nowrap">{label}</td>
-                  {Array.from({ length: 24 }).map((_, hour) => {
-                    const r = heatCellRate(weekday, hour);
-                    return (
-                      <td key={hour} className="p-0.5">
-                        <div
-                          className="w-8 h-6 rounded-app-sm"
-                          title={r === null ? 'No data' : `${r}% human-answer rate`}
-                          style={{
-                            backgroundColor:
-                              r === null ? 'rgba(255,255,255,0.03)' : `rgba(0,230,118,${r / 100})`,
-                          }}
-                        />
-                      </td>
-                    );
-                  })}
+          <>
+            <p className="text-meta text-text-muted mb-2 md:hidden">
+              Swipe sideways to see all 24 hours.
+            </p>
+            <table className="text-meta border-collapse">
+              <thead>
+                <tr>
+                  <th className="p-1" />
+                  {Array.from({ length: 24 }).map((_, h) => (
+                    <th key={h} className="p-1 font-normal text-text-secondary text-center w-8">
+                      {h}
+                    </th>
+                  ))}
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {WEEKDAY_LABELS.map((label, weekday) => (
+                  <tr key={label}>
+                    <td className="p-1 pr-2 text-text-secondary whitespace-nowrap">{label}</td>
+                    {Array.from({ length: 24 }).map((_, hour) => {
+                      const r = heatCellRate(weekday, hour);
+                      return (
+                        <td key={hour} className="p-0.5">
+                          <div
+                            className="w-8 h-6 rounded-app-sm"
+                            title={r === null ? 'No data' : `${r}% human-answer rate`}
+                            style={{
+                              backgroundColor:
+                                r === null
+                                  ? 'rgba(255,255,255,0.03)'
+                                  : `rgba(0,230,118,${r / 100})`,
+                            }}
+                          />
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </>
         )}
       </div>
 

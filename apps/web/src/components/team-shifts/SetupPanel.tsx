@@ -117,7 +117,7 @@ export function SetupPanel({
       />
 
       <AlertDialog open={confirmOff} onOpenChange={setConfirmOff}>
-        <AlertDialogContent className="border-border-subtle bg-surface-1 text-text-primary">
+        <AlertDialogContent className="hd-touch border-border-subtle bg-surface-1 text-text-primary">
           <AlertDialogHeader>
             <AlertDialogTitle>Turn Shifts off?</AlertDialogTitle>
             <AlertDialogDescription className="text-text-secondary">

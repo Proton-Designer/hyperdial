@@ -430,7 +430,7 @@ export function Pros() {
           ) : (
             <>
               {/* Desktop table */}
-              <div className="hidden md:block rounded-app-lg border border-border-subtle bg-surface-1 overflow-x-auto">
+              <div className="hidden md:block hd-scroll-x rounded-app-lg border border-border-subtle">
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="text-left text-meta text-text-secondary border-b border-border-subtle">

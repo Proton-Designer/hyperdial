@@ -28,7 +28,7 @@ export function Pill({
   return (
     <span
       className={cn(
-        'inline-flex items-center gap-1 whitespace-nowrap rounded-full border px-2 py-0.5 text-[11px] font-medium leading-4 [&>svg]:h-3 [&>svg]:w-3',
+        'inline-flex items-center gap-1 whitespace-nowrap rounded-full border px-2 py-0.5 text-xs font-medium leading-4 [&>svg]:h-3 [&>svg]:w-3',
         TONE[tone],
         className
       )}

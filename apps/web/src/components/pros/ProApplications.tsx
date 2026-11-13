@@ -98,7 +98,7 @@ function Detail({
   const [dncAsked, setDncAsked] = useState(false);
   return (
     <Dialog open onOpenChange={(o) => !o && !busy && onClose()}>
-      <DialogContent className="border-border-subtle bg-surface-1 text-text-primary max-h-[90vh] overflow-y-auto sm:max-w-lg">
+      <DialogContent className="hd-touch border-border-subtle bg-surface-1 text-text-primary max-h-[90vh] overflow-y-auto sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>{label(a)}</DialogTitle>
           <DialogDescription className="text-text-secondary">
@@ -387,7 +387,7 @@ export function ProApplications({
       )}
 
       <AlertDialog open={confirmReject !== null} onOpenChange={(o) => !o && setConfirmReject(null)}>
-        <AlertDialogContent className="border-border-subtle bg-surface-1 text-text-primary">
+        <AlertDialogContent className="hd-touch border-border-subtle bg-surface-1 text-text-primary">
           <AlertDialogHeader>
             <AlertDialogTitle>Reject this application?</AlertDialogTitle>
             <AlertDialogDescription className="text-text-secondary">
@@ -411,7 +411,7 @@ export function ProApplications({
       </AlertDialog>
 
       <AlertDialog open={confirmRotate} onOpenChange={setConfirmRotate}>
-        <AlertDialogContent className="border-border-subtle bg-surface-1 text-text-primary">
+        <AlertDialogContent className="hd-touch border-border-subtle bg-surface-1 text-text-primary">
           <AlertDialogHeader>
             <AlertDialogTitle>Create a new form link?</AlertDialogTitle>
             <AlertDialogDescription className="text-text-secondary">

@@ -1242,7 +1242,7 @@ function TeamTab({ scrollTo }: { scrollTo?: SettingsSection }) {
       {canManage && pendingInvites.length > 0 && (
         <div className="mb-8">
           <h3 className="text-section-title text-text-primary mb-3">Pending invites</h3>
-          <div className="rounded-app-lg border border-border-subtle bg-surface-1 overflow-x-auto">
+          <div className="hd-scroll-x rounded-app-lg border border-border-subtle">
             <Table>
               <TableHeader>
                 <TableRow className="border-border-subtle hover:bg-transparent">
@@ -4092,7 +4092,7 @@ function ActivityTab() {
         />
       ) : (
         <>
-          <div className="bg-surface-1 rounded-app-lg border border-border-subtle overflow-x-auto">
+          <div className="hd-scroll-x rounded-app-lg border border-border-subtle">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -4583,77 +4583,140 @@ function NumberPoolCard() {
           </p>
         </div>
       ) : (
-        <div className="bg-surface-1 rounded-app-lg border border-border-subtle overflow-x-auto">
-          <table className="w-full text-left text-sm">
-            <thead>
-              <tr className="border-b border-border-subtle text-text-secondary">
-                <th className="p-3 font-medium">Number</th>
-                <th className="p-3 font-medium">Assigned to</th>
-                <th className="p-3 font-medium">Status</th>
-                <th className="p-3 font-medium">Dials today / cap</th>
-                <th className="p-3 font-medium">Resting until</th>
-                <th className="p-3 font-medium" />
-              </tr>
-            </thead>
-            <tbody>
-              {numbers.map((n) => (
-                <tr key={n.id} className="border-b border-border-subtle last:border-0">
-                  <td className="p-3 text-white font-medium">{n.phone_number}</td>
-                  <td className="p-3">
-                    {isAdmin ? (
-                      <select
-                        value={n.assigned_user_id ?? ''}
-                        disabled={rowBusyId === n.id}
-                        onChange={(e) => void handleAssign(n.id, e.target.value || null)}
-                        className="bg-surface-2 border border-white/10 rounded-app-md px-2 py-1.5 text-white focus:outline-none focus:border-accent-to"
-                      >
-                        <option value="">Team pool</option>
-                        {members.map((m) => (
-                          <option key={m.user_id} value={m.user_id}>
-                            {memberLabel(m.user_id)}
-                          </option>
-                        ))}
-                      </select>
-                    ) : (
-                      <span className="text-text-secondary">{memberLabel(n.assigned_user_id)}</span>
-                    )}
-                  </td>
-                  <td className="p-3">
-                    <span
-                      className={`px-2 py-1 rounded-full text-xs border ${
-                        n.status === 'active'
-                          ? 'bg-success/10 text-success border-success/20'
-                          : n.status === 'resting'
-                            ? 'bg-warning/10 text-warning border-warning/20'
-                            : 'bg-white/5 text-text-secondary border-white/10'
-                      }`}
+        <>
+          <div className="space-y-2 md:hidden">
+            {numbers.map((n) => (
+              <div
+                key={n.id}
+                className="rounded-app-lg border border-border-subtle bg-surface-1 p-3 space-y-2"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-medium text-white">{n.phone_number}</span>
+                  <span
+                    className={`px-2 py-1 rounded-full text-xs border ${
+                      n.status === 'active'
+                        ? 'bg-success/10 text-success border-success/20'
+                        : n.status === 'resting'
+                          ? 'bg-warning/10 text-warning border-warning/20'
+                          : 'bg-white/5 text-text-secondary border-white/10'
+                    }`}
+                  >
+                    {n.status}
+                  </span>
+                </div>
+                <div className="text-meta text-text-secondary">
+                  Dials today {n.dials_today} / {n.daily_cap}
+                  {n.resting_until
+                    ? ` · Resting until ${new Date(n.resting_until).toLocaleString()}`
+                    : ''}
+                </div>
+                {isAdmin ? (
+                  <div className="flex items-center gap-2">
+                    <select
+                      value={n.assigned_user_id ?? ''}
+                      disabled={rowBusyId === n.id}
+                      onChange={(e) => void handleAssign(n.id, e.target.value || null)}
+                      aria-label={`Assign ${n.phone_number}`}
+                      className="min-w-0 flex-1 bg-surface-2 border border-white/10 rounded-app-md px-2 py-1.5 text-white focus:outline-none focus:border-accent-to"
                     >
-                      {n.status}
-                    </span>
-                  </td>
-                  <td className="p-3 text-text-secondary">
-                    {n.dials_today} / {n.daily_cap}
-                  </td>
-                  <td className="p-3 text-text-secondary">
-                    {n.resting_until ? new Date(n.resting_until).toLocaleString() : '—'}
-                  </td>
-                  <td className="p-3">
-                    {isAdmin && (
-                      <button
-                        type="button"
-                        disabled={rowBusyId === n.id}
-                        onClick={() => void handleRetireToggle(n.id, n.status)}
-                        className="text-meta text-text-secondary hover:text-text-primary disabled:opacity-50"
-                      >
-                        {n.status === 'retired' ? 'Reactivate' : 'Retire'}
-                      </button>
-                    )}
-                  </td>
+                      <option value="">Team pool</option>
+                      {members.map((m) => (
+                        <option key={m.user_id} value={m.user_id}>
+                          {memberLabel(m.user_id)}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      disabled={rowBusyId === n.id}
+                      onClick={() => void handleRetireToggle(n.id, n.status)}
+                      className="flex-shrink-0 rounded-app-md border border-white/10 px-3 text-meta text-text-secondary hover:text-text-primary disabled:opacity-50"
+                    >
+                      {n.status === 'retired' ? 'Reactivate' : 'Retire'}
+                    </button>
+                  </div>
+                ) : (
+                  <div className="text-meta text-text-secondary">
+                    Assigned to {memberLabel(n.assigned_user_id)}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+          <div className="hidden md:block hd-scroll-x rounded-app-lg border border-border-subtle">
+            <table className="w-full text-left text-sm">
+              <thead>
+                <tr className="border-b border-border-subtle text-text-secondary">
+                  <th className="p-3 font-medium">Number</th>
+                  <th className="p-3 font-medium">Assigned to</th>
+                  <th className="p-3 font-medium">Status</th>
+                  <th className="p-3 font-medium">Dials today / cap</th>
+                  <th className="p-3 font-medium">Resting until</th>
+                  <th className="p-3 font-medium" />
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody>
+                {numbers.map((n) => (
+                  <tr key={n.id} className="border-b border-border-subtle last:border-0">
+                    <td className="p-3 text-white font-medium">{n.phone_number}</td>
+                    <td className="p-3">
+                      {isAdmin ? (
+                        <select
+                          value={n.assigned_user_id ?? ''}
+                          disabled={rowBusyId === n.id}
+                          onChange={(e) => void handleAssign(n.id, e.target.value || null)}
+                          className="bg-surface-2 border border-white/10 rounded-app-md px-2 py-1.5 text-white focus:outline-none focus:border-accent-to"
+                        >
+                          <option value="">Team pool</option>
+                          {members.map((m) => (
+                            <option key={m.user_id} value={m.user_id}>
+                              {memberLabel(m.user_id)}
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        <span className="text-text-secondary">
+                          {memberLabel(n.assigned_user_id)}
+                        </span>
+                      )}
+                    </td>
+                    <td className="p-3">
+                      <span
+                        className={`px-2 py-1 rounded-full text-xs border ${
+                          n.status === 'active'
+                            ? 'bg-success/10 text-success border-success/20'
+                            : n.status === 'resting'
+                              ? 'bg-warning/10 text-warning border-warning/20'
+                              : 'bg-white/5 text-text-secondary border-white/10'
+                        }`}
+                      >
+                        {n.status}
+                      </span>
+                    </td>
+                    <td className="p-3 text-text-secondary">
+                      {n.dials_today} / {n.daily_cap}
+                    </td>
+                    <td className="p-3 text-text-secondary">
+                      {n.resting_until ? new Date(n.resting_until).toLocaleString() : '—'}
+                    </td>
+                    <td className="p-3">
+                      {isAdmin && (
+                        <button
+                          type="button"
+                          disabled={rowBusyId === n.id}
+                          onClick={() => void handleRetireToggle(n.id, n.status)}
+                          className="text-meta text-text-secondary hover:text-text-primary disabled:opacity-50"
+                        >
+                          {n.status === 'retired' ? 'Reactivate' : 'Retire'}
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
       )}
     </>
   );

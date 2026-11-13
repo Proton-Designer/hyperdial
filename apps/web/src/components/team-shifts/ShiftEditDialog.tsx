@@ -117,7 +117,7 @@ export function ShiftEditDialog(props: Props) {
         <SheetContent
           onCloseAutoFocus={restoreFocus}
           side="bottom"
-          className="max-h-[92dvh] gap-0 overflow-hidden rounded-t-app-lg border-border-subtle bg-surface-1 p-0 text-text-primary"
+          className="hd-touch max-h-[92dvh] gap-0 overflow-hidden rounded-t-app-lg border-border-subtle bg-surface-1 p-0 text-text-primary"
         >
           <SheetHeader className="border-b border-border-subtle px-4 py-3 text-left">
             <SheetTitle className="text-section-title text-text-primary">{title}</SheetTitle>
@@ -134,7 +134,7 @@ export function ShiftEditDialog(props: Props) {
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         onCloseAutoFocus={restoreFocus}
-        className="flex max-h-[90dvh] flex-col gap-0 overflow-hidden border-border-subtle bg-surface-1 p-0 text-text-primary sm:max-w-lg"
+        className="hd-touch flex max-h-[90dvh] flex-col gap-0 overflow-hidden border-border-subtle bg-surface-1 p-0 text-text-primary sm:max-w-lg"
       >
         <DialogHeader className="border-b border-border-subtle px-6 py-4 text-left">
           <DialogTitle className="text-section-title text-text-primary">{title}</DialogTitle>

@@ -156,7 +156,7 @@ export function ShiftKpiTable({ overview, onRefreshed }: Props) {
         <>
           <section aria-label="Weekly rollup" className="space-y-2">
             <h2 className="text-section-title text-text-primary">Weekly rollup</h2>
-            <div className="overflow-x-auto rounded-app-lg border border-border-subtle bg-surface-1">
+            <div className="hd-scroll-x rounded-app-lg border border-border-subtle">
               <table className="w-full min-w-[640px] border-collapse text-body">
                 <thead>
                   <tr className="border-b border-border-subtle text-meta text-text-muted">
@@ -238,7 +238,7 @@ export function ShiftKpiTable({ overview, onRefreshed }: Props) {
                   : 'No shifts match these filters.'}
               </p>
             ) : (
-              <div className="overflow-x-auto rounded-app-lg border border-border-subtle bg-surface-1">
+              <div className="hd-scroll-x rounded-app-lg border border-border-subtle">
                 <table className="w-full min-w-[1250px] border-collapse text-body">
                   <thead>
                     <tr className="border-b border-border-subtle text-meta text-text-muted">

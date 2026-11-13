@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { useBreakpoint } from '@/hooks/useBreakpoint';
 import '@/styles/touch.css';
 import { Headphones, Flag, MessageSquare, ClipboardList, X } from 'lucide-react';
 import {
@@ -290,7 +292,45 @@ export function Recordings() {
       {rows && rows.length > 0 && (
         <div className="grid grid-cols-1 lg:grid-cols-[1fr_420px] gap-4 items-start">
           <div className="rounded-app-lg border border-border-subtle bg-surface-1 overflow-hidden">
-            <table className="w-full text-sm">
+            <div className="md:hidden divide-y divide-border-subtle">
+              {rows.map((r) => (
+                <button
+                  key={r.call_leg_id}
+                  type="button"
+                  onClick={() => setSelectedId(r.call_leg_id)}
+                  className={`block w-full min-h-11 px-3 py-3 text-left ${
+                    selectedId === r.call_leg_id ? 'bg-accent-to/10' : ''
+                  }`}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      {!isAgent && (
+                        <div className="truncate font-medium text-text-primary">{r.agent_name}</div>
+                      )}
+                      <div className="truncate text-meta text-text-secondary">
+                        {r.campaign_name ?? '—'}
+                      </div>
+                    </div>
+                    <div className="flex flex-shrink-0 items-center gap-2 text-text-muted">
+                      {r.is_flagged && <Flag className="w-3.5 h-3.5 text-danger" />}
+                      {r.comment_count > 0 && (
+                        <span className="flex items-center gap-0.5 text-meta">
+                          <MessageSquare className="w-3.5 h-3.5" />
+                          {r.comment_count}
+                        </span>
+                      )}
+                      {r.has_scorecard && <ClipboardList className="w-3.5 h-3.5 text-success" />}
+                    </div>
+                  </div>
+                  <div className="mt-1 flex flex-wrap gap-x-3 text-meta text-text-secondary">
+                    <span>{r.disposition_label ?? '—'}</span>
+                    <span>{formatDuration(r.duration_seconds)}</span>
+                    <span>{formatWhen(r.ended_at)}</span>
+                  </div>
+                </button>
+              ))}
+            </div>
+            <table className="hidden w-full text-sm md:table">
               <thead className="bg-surface-2 text-text-secondary text-left">
                 <tr>
                   {!isAgent && <th className="px-3 py-2 font-medium">Agent</th>}
@@ -372,6 +412,7 @@ function RecordingDetailPanel({
   onClose: () => void;
   onFlagChanged: () => void;
 }) {
+  const isDesktop = useBreakpoint() === 'desktop';
   const [url, setUrl] = useState<string | null>(null);
   const [urlError, setUrlError] = useState<string | null>(null);
 
@@ -522,8 +563,8 @@ function RecordingDetailPanel({
     }
   };
 
-  return (
-    <div className="rounded-app-lg border border-border-subtle bg-surface-1 p-4 space-y-5 sticky top-4">
+  const panel = (
+    <div className="rounded-app-lg border border-border-subtle bg-surface-1 p-4 space-y-5 lg:sticky lg:top-4 max-lg:rounded-none max-lg:border-0 max-lg:pt-[max(1rem,env(safe-area-inset-top))] max-lg:pb-[max(1rem,env(safe-area-inset-bottom))]">
       <div className="flex items-start justify-between">
         <div>
           <div className="text-body font-medium text-text-primary">{row.agent_name}</div>
@@ -531,7 +572,11 @@ function RecordingDetailPanel({
             {row.campaign_name ?? '—'} · {formatWhen(row.ended_at)}
           </div>
         </div>
-        <button onClick={onClose} className="text-text-muted hover:text-text-primary">
+        <button
+          onClick={onClose}
+          aria-label="Close recording"
+          className="text-text-muted hover:text-text-primary"
+        >
           <X className="w-4 h-4" />
         </button>
       </div>
@@ -776,6 +821,13 @@ function RecordingDetailPanel({
         )}
       </div>
     </div>
+  );
+  if (isDesktop) return panel;
+  return createPortal(
+    <div className="hd-touch fixed inset-0 overflow-y-auto bg-surface-1" style={{ zIndex: 10000 }}>
+      {panel}
+    </div>,
+    document.body
   );
 }
 

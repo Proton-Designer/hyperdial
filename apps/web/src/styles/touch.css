@@ -32,3 +32,25 @@
     min-height: 20px;
   }
 }
+
+/*
+ * Scroll cue for a table/strip that scrolls sideways inside its own container: a soft shadow on
+ * the edge that still has content. Works on any background via --hd-scroll-bg (default surface-1).
+ * Usage: <div className="hd-scroll-x"> ... </div> (it also sets overflow-x: auto).
+ */
+.hd-scroll-x {
+  overflow-x: auto;
+  background:
+    linear-gradient(to right, var(--hd-scroll-bg, var(--surface-1)) 30%, transparent) left center,
+    linear-gradient(to left, var(--hd-scroll-bg, var(--surface-1)) 30%, transparent) right center,
+    radial-gradient(farthest-side at 0 50%, rgb(0 0 0 / 0.45), transparent) left center,
+    radial-gradient(farthest-side at 100% 50%, rgb(0 0 0 / 0.45), transparent) right center;
+  background-repeat: no-repeat;
+  background-size:
+    24px 100%,
+    24px 100%,
+    10px 100%,
+    10px 100%;
+  background-attachment: local, local, scroll, scroll;
+  background-color: var(--hd-scroll-bg, var(--surface-1));
+}

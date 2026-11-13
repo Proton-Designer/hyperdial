@@ -54,7 +54,7 @@ export function OnboardingChecklistPanel() {
   return (
     <div className="mb-8">
       <h2 className="text-section-title text-text-primary mb-4">Onboarding checklist</h2>
-      <div className="rounded-app-lg border border-border-subtle bg-surface-1 overflow-x-auto">
+      <div className="hd-scroll-x rounded-app-lg border border-border-subtle">
         <table className="w-full text-left text-sm">
           <thead>
             <tr className="border-b border-border-subtle text-text-secondary">
