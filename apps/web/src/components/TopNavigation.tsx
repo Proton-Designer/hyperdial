@@ -289,7 +289,7 @@ export function TopNavigation({ activeTab = 'dashboard', onTabChange }: TopNavig
                         type="button"
                         onClick={() => handleSwitchOrg(o.orgId)}
                         disabled={switchingOrgId !== null}
-                        className="flex w-full items-center justify-between gap-2 rounded-app-md px-3 py-2.5 text-left text-sm text-text-primary hover:bg-white/5 disabled:opacity-60"
+                        className="flex w-full touch:min-h-11 items-center justify-between gap-2 rounded-app-md px-3 py-2.5 text-left text-sm text-text-primary hover:bg-white/5 disabled:opacity-60"
                       >
                         <span className="truncate">{o.orgName}</span>
                         {switchingOrgId === o.orgId ? (
@@ -331,7 +331,7 @@ export function TopNavigation({ activeTab = 'dashboard', onTabChange }: TopNavig
             <span className="flex-1 truncate">
               Search contacts, campaigns, or jump to a screen…
             </span>
-            <kbd className="hidden flex-shrink-0 rounded border border-border-strong bg-surface-1 px-1.5 py-0.5 text-[10px] text-text-muted sm:inline-block">
+            <kbd className="hidden flex-shrink-0 rounded border border-border-strong bg-surface-1 px-1.5 py-0.5 text-xs text-text-muted sm:inline-block">
               ⌘K
             </kbd>
           </button>
@@ -497,7 +497,7 @@ export function TopNavigation({ activeTab = 'dashboard', onTabChange }: TopNavig
                           setShowUserMenu(false);
                           onTabChange?.('settings');
                         }}
-                        className="flex w-full items-center gap-3 rounded-app-md px-3 py-2.5 text-text-primary transition-colors hover:bg-white/5"
+                        className="flex w-full touch:min-h-11 items-center gap-3 rounded-app-md px-3 py-2.5 text-text-primary transition-colors hover:bg-white/5"
                       >
                         <User className="w-4 h-4 text-text-secondary" />
                         Profile
@@ -508,7 +508,7 @@ export function TopNavigation({ activeTab = 'dashboard', onTabChange }: TopNavig
                           setShowUserMenu(false);
                           onTabChange?.('settings');
                         }}
-                        className="flex w-full items-center gap-3 rounded-app-md px-3 py-2.5 text-text-primary transition-colors hover:bg-white/5"
+                        className="flex w-full touch:min-h-11 items-center gap-3 rounded-app-md px-3 py-2.5 text-text-primary transition-colors hover:bg-white/5"
                       >
                         <Settings className="w-4 h-4 text-text-secondary" />
                         Settings

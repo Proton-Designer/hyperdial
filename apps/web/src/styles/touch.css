@@ -6,7 +6,7 @@
  * Written unlayered on purpose: raw controls use `.text-body`-style unlayered classes that a
  * Tailwind utility cannot beat.
  */
-@media (max-width: 1023px) {
+@media (max-width: 1023px), (pointer: coarse) {
   .hd-touch
     :is(
       select,

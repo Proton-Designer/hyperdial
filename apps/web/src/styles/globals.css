@@ -1,6 +1,9 @@
 @import 'tailwindcss';
 @import 'tw-animate-css';
 
+/* TASK-MOB1: one touch rule for every primitive: narrower than 1024px (phones, tablets) OR a coarse pointer (iPad Pro, any touch screen). */
+@custom-variant touch (@media (max-width: 1023px), (pointer: coarse));
+
 @custom-variant dark (&:is(.dark *));
 
 :root {

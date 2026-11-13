@@ -106,7 +106,7 @@ export function Sidebar({
         }}
         aria-current={isActive ? 'page' : undefined}
         className={`
-          relative flex w-full items-center gap-3 rounded-app-md px-3 py-2.5 text-sm transition-colors group
+          relative flex w-full touch:min-h-11 items-center gap-3 rounded-app-md px-3 py-2.5 text-sm transition-colors group
           ${isActive ? 'bg-accent-to/10 text-text-primary font-medium' : 'text-text-secondary hover:bg-white/5 hover:text-text-primary'}
         `}
       >
@@ -120,7 +120,7 @@ export function Sidebar({
         <Icon className={`w-[18px] h-[18px] flex-shrink-0 ${isActive ? 'text-accent-to' : ''}`} />
         {!collapsed && <span className="truncate flex-1 text-left">{label}</span>}
         {!collapsed && tab.id === 'inbox' && inboxOpenCount > 0 && (
-          <span className="flex-shrink-0 rounded-full bg-danger px-1.5 py-0.5 text-[10px] font-medium leading-none text-white">
+          <span className="flex-shrink-0 rounded-full bg-danger px-1.5 py-0.5 text-xs font-medium leading-none text-white">
             {inboxOpenCount > 99 ? '99+' : inboxOpenCount}
           </span>
         )}
@@ -161,7 +161,7 @@ export function Sidebar({
 
         <button
           onClick={onToggleCollapse}
-          className="flex w-full items-center justify-center gap-2 rounded-app-md px-3 py-2 text-text-secondary transition-colors hover:bg-white/5 hover:text-text-primary"
+          className="flex w-full touch:min-h-11 items-center justify-center gap-2 rounded-app-md px-3 py-2 text-text-secondary transition-colors hover:bg-white/5 hover:text-text-primary"
           aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
         >
           {collapsed ? (
