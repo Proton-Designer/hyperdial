@@ -6,7 +6,13 @@ const KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '*', '0', '#'];
 
 /** TASK-H11: keypad for the live call, so an agent can answer "press 1 to be connected" menus.
  *  Collapsed by default (the call controls stay compact); each tap sends that one tone. */
-export function DtmfKeypad({ sessionId }: { sessionId: string | null }) {
+export function DtmfKeypad({
+  sessionId,
+  defaultOpen = false,
+}: {
+  sessionId: string | null;
+  defaultOpen?: boolean;
+}) {
   const [sent, setSent] = useState('');
   const [error, setError] = useState<string | null>(null);
   // TASK-H15: keys tapped while a request is in flight are queued and sent in order (up to 16 per request, the server's
@@ -44,7 +50,10 @@ export function DtmfKeypad({ sessionId }: { sessionId: string | null }) {
   };
 
   return (
-    <details className="rounded-xl border border-white/10 bg-surface-1 p-3">
+    <details
+      open={defaultOpen || undefined}
+      className="rounded-xl border border-white/10 bg-surface-1 p-3"
+    >
       <summary className="flex cursor-pointer select-none items-center gap-2 text-sm font-medium text-white">
         <Grid3x3 className="w-4 h-4" />
         Keypad

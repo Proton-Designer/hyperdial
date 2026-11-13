@@ -3,7 +3,17 @@
 @import './touch.css';
 
 /* TASK-MOB1: one touch rule for every primitive: narrower than 1024px (phones, tablets) OR a coarse pointer (iPad Pro, any touch screen). */
-@custom-variant touch (@media (max-width: 1023px), (pointer: coarse));
+@custom-variant touch {
+  @media (max-width: 1023px), (pointer: coarse) {
+    @slot;
+  }
+}
+/* TASK-MOB6: a phone, portrait (narrow) or landscape (touch and short). Used by the pinned call-controls bar. */
+@custom-variant phone {
+  @media (max-width: 767px), (pointer: coarse) and (max-height: 500px) {
+    @slot;
+  }
+}
 
 @custom-variant dark (&:is(.dark *));
 

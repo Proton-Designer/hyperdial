@@ -1,7 +1,18 @@
 import { useEffect, useState } from 'react';
-import { Disc, Mic, MicOff, PauseCircle, PhoneForwarded, PhoneOff, User } from 'lucide-react';
+import {
+  Disc,
+  Grid3x3,
+  Mic,
+  MicOff,
+  PauseCircle,
+  PhoneForwarded,
+  PhoneOff,
+  Play,
+  User,
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import type { CallLegRecord } from '@/lib/api';
+import { BarAction, CallControlsBar } from './CallControlsBar';
 
 /** TASK-T4: a plain "mm:ss since this timestamp" ticker -- shared by the call-duration timer
  *  above and the new on-hold timer below (LiveCallPanel's own original inline version, factored
@@ -72,6 +83,8 @@ interface LiveCallPanelProps {
    *  shouldn't offer this at all (same optional-callback shape as `onHold`/`onResume`). */
   recordingStatus?: CallLegRecord['recording_status'];
   onToggleRecording?: () => void;
+  /** TASK-MOB6: opens the keypad from the phone call-controls bar (omit for a panel without DTMF). */
+  onOpenKeypad?: () => void;
   onEndCall: () => void;
 }
 
@@ -92,6 +105,7 @@ export function LiveCallPanel({
   onToggleMute,
   recordingStatus,
   onToggleRecording,
+  onOpenKeypad,
   onEndCall,
 }: LiveCallPanelProps) {
   const callTimer = useElapsedSince(answeredAt);
@@ -189,6 +203,66 @@ export function LiveCallPanel({
         placeholder="Quick notes for this contact..."
         className="mt-6 w-full min-h-[90px] rounded-app-md bg-surface-2 border border-border-subtle px-3 py-2 text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent-to"
       />
+      {/* TASK-MOB6: phone-only pinned bar with the same handlers (the caller adds the spacer at the end of the page). */}
+      <CallControlsBar name={contactName} timer={heldAt ? holdTimer : callTimer}>
+        {activeTransfer?.type === 'warm' && activeTransfer.status === 'connected' ? (
+          <>
+            <BarAction
+              icon={<PhoneOff className="w-4 h-4" />}
+              label="Cancel transfer"
+              onClick={() => onCancelTransfer?.()}
+            />
+            <BarAction
+              icon={<PhoneForwarded className="w-4 h-4" />}
+              label="Complete"
+              tone="primary"
+              grow
+              onClick={() => onCompleteTransfer?.()}
+            />
+          </>
+        ) : heldAt ? (
+          <BarAction
+            icon={<Play className="w-4 h-4" />}
+            label="Resume"
+            tone="primary"
+            grow
+            onClick={() => onResume?.()}
+          />
+        ) : (
+          <>
+            <BarAction
+              icon={muted ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+              label={muted ? 'Unmute' : 'Mute'}
+              pressed={muted}
+              onClick={() => onToggleMute(!muted)}
+            />
+            {onHold && (
+              <BarAction icon={<PauseCircle className="w-4 h-4" />} label="Hold" onClick={onHold} />
+            )}
+            {onOpenKeypad && (
+              <BarAction
+                icon={<Grid3x3 className="w-4 h-4" />}
+                label="Keypad"
+                onClick={onOpenKeypad}
+              />
+            )}
+            {onOpenTransfer && !activeTransfer && (
+              <BarAction
+                icon={<PhoneForwarded className="w-4 h-4" />}
+                label="Transfer"
+                onClick={onOpenTransfer}
+              />
+            )}
+            <BarAction
+              icon={<PhoneOff className="w-4 h-4" />}
+              label="Hang up"
+              tone="danger"
+              grow
+              onClick={onEndCall}
+            />
+          </>
+        )}
+      </CallControlsBar>
     </div>
   );
 }

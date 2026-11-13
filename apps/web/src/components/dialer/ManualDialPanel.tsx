@@ -95,6 +95,7 @@ export function ManualDialPanel(props: ManualDialPanelProps) {
           duration={callDurationFormatted}
           onEndCall={onEndCall}
           onMuteChange={onMuteChange}
+          showPhoneBar={!isMobile}
         />
       )}
     </AnimatePresence>

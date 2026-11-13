@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { motion } from 'motion/react';
 import { Mic, MicOff, PhoneOff } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { BarAction, CallControlsBar, CallControlsSpacer } from './CallControlsBar';
 
 interface ActiveCallProps {
   outboundNumber: string;
@@ -9,6 +10,8 @@ interface ActiveCallProps {
   duration: string;
   onEndCall: () => void;
   onMuteChange: (muted: boolean) => void;
+  /** TASK-MOB6: false when this card already sits inside the phone's manual-dial sheet (its own buttons are on screen). */
+  showPhoneBar?: boolean;
 }
 
 export function ActiveCall({
@@ -17,6 +20,7 @@ export function ActiveCall({
   duration,
   onEndCall,
   onMuteChange,
+  showPhoneBar = true,
 }: ActiveCallProps) {
   const [muted, setMuted] = useState(false);
 
@@ -67,6 +71,26 @@ export function ActiveCall({
           Hang up
         </Button>
       </div>
+      {showPhoneBar && (
+        <>
+          <CallControlsSpacer />
+          <CallControlsBar name={outboundNumber} timer={duration}>
+            <BarAction
+              icon={muted ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+              label={muted ? 'Unmute' : 'Mute'}
+              pressed={muted}
+              onClick={handleMuteToggle}
+            />
+            <BarAction
+              icon={<PhoneOff className="w-4 h-4" />}
+              label="Hang up"
+              tone="danger"
+              grow
+              onClick={onEndCall}
+            />
+          </CallControlsBar>
+        </>
+      )}
     </motion.div>
   );
 }

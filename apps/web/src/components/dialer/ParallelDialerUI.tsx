@@ -10,6 +10,7 @@ import { useCloseDraft } from '@/lib/closeDraft';
 import { TransferModal } from './TransferModal';
 import { ContactNotesPanel } from '@/components/contacts/ContactNotesPanel';
 import { Button } from '@/components/ui/button';
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -254,6 +255,8 @@ export function ParallelDialerUI({
   onToggleRaiseHand,
 }: ParallelDialerUIProps) {
   const [showTransferModal, setShowTransferModal] = useState(false);
+  // TASK-MOB6: the keypad opens from the phone call-controls bar.
+  const [showKeypad, setShowKeypad] = useState(false);
   const activeTransferForPanel = activeTransfer
     ? {
         type: activeTransfer.type,
@@ -298,7 +301,8 @@ export function ParallelDialerUI({
   };
 
   return (
-    <div className="space-y-4">
+    // TASK-MOB6: while a call is live, phones get bottom padding so the pinned call-controls bar never covers the last card.
+    <div className={cn('space-y-4', (connectedCallCard || inboundCall) && 'phone:pb-28')}>
       {/* Header strip: status chip + timer (on_call only) + the stat row + Pause/Stop. */}
       <div className="rounded-app-lg border border-border-subtle bg-surface-1 p-4 sm:p-5">
         <div className="flex flex-wrap items-center gap-3 justify-between">
@@ -416,9 +420,20 @@ export function ParallelDialerUI({
             onCancelTransfer={onCancelTransfer}
             muted={muted}
             onToggleMute={onMuteChange}
+            onOpenKeypad={sessionId ? () => setShowKeypad(true) : undefined}
             onEndCall={onEndLiveCall}
           />
           <DtmfKeypad sessionId={sessionId} />
+          <Sheet open={showKeypad} onOpenChange={setShowKeypad}>
+            <SheetContent side="bottom" className="bg-surface-1 border-border-subtle">
+              <SheetHeader>
+                <SheetTitle className="text-text-primary">Keypad</SheetTitle>
+              </SheetHeader>
+              <div className="px-4 pb-6">
+                <DtmfKeypad sessionId={sessionId} defaultOpen />
+              </div>
+            </SheetContent>
+          </Sheet>
           {connectedContact && <ContactDetailsPanel contact={connectedContact} />}
           {connectedContact && (
             <LogCloseCard
