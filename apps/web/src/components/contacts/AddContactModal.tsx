@@ -135,7 +135,7 @@ export function AddContactModal({ open, onClose, onSuccess }: AddContactModalPro
 
   return createPortal(
     <div
-      className="fixed inset-0 flex items-center justify-center p-4"
+      className="fixed inset-0 flex items-center justify-center p-4 max-md:p-0"
       style={{ zIndex: 10000 }}
       role="dialog"
       aria-modal="true"
@@ -146,20 +146,21 @@ export function AddContactModal({ open, onClose, onSuccess }: AddContactModalPro
         tabIndex={-1}
         initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
-        className="relative z-[1] w-full max-w-lg rounded-app-lg border border-border-subtle bg-surface-1 shadow-app-md outline-none"
+        className="relative z-[1] w-full max-w-lg rounded-app-lg border border-border-subtle bg-surface-1 shadow-app-md outline-none max-md:flex max-md:h-[100dvh] max-md:max-w-none max-md:flex-col max-md:rounded-none max-md:border-0"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between border-b border-border-subtle p-4">
+        <div className="flex items-center justify-between border-b border-border-subtle p-4 max-md:pt-[max(1rem,env(safe-area-inset-top))]">
           <h2 className="text-page-title text-text-primary">Add contact</h2>
           <button
             type="button"
             onClick={handleClose}
-            className="rounded-app-md p-2 text-text-secondary hover:bg-white/10 hover:text-text-primary"
+            className="rounded-app-md p-2 text-text-secondary hover:bg-white/10 hover:text-text-primary max-lg:flex max-lg:h-11 max-lg:w-11 max-lg:items-center max-lg:justify-center"
+            aria-label="Close"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
-        <div className="p-4 space-y-4 max-h-[70vh] overflow-y-auto">
+        <div className="p-4 space-y-4 max-h-[70vh] overflow-y-auto max-md:max-h-none max-md:min-h-0 max-md:flex-1">
           {error && (
             <div className="rounded-app-md bg-danger-soft border border-danger/30 text-danger text-body p-3">
               {error}
@@ -181,7 +182,7 @@ export function AddContactModal({ open, onClose, onSuccess }: AddContactModalPro
             <button
               type="button"
               onClick={() => setExpandAdditional(!expandAdditional)}
-              className="flex items-center gap-2 text-body text-accent-to hover:underline"
+              className="flex items-center gap-2 text-body text-accent-to hover:underline max-lg:min-h-11"
             >
               <Plus className="w-4 h-4" />
               Add field
@@ -203,7 +204,7 @@ export function AddContactModal({ open, onClose, onSuccess }: AddContactModalPro
                         key={f}
                         type="button"
                         onClick={() => handleAddField(f)}
-                        className="px-3 py-1.5 rounded-app-md bg-surface-2 border border-border-subtle text-text-primary text-body hover:border-accent-to/50"
+                        className="px-3 py-1.5 rounded-app-md bg-surface-2 border border-border-subtle text-text-primary text-body hover:border-accent-to/50 max-lg:min-h-11"
                       >
                         {f}
                       </button>
@@ -230,7 +231,7 @@ export function AddContactModal({ open, onClose, onSuccess }: AddContactModalPro
               <button
                 type="button"
                 onClick={() => handleRemoveAdditional(field)}
-                className="mt-6 p-2 text-text-secondary hover:text-danger"
+                className="mt-6 p-2 text-text-secondary hover:text-danger max-lg:mt-5 max-lg:flex max-lg:h-11 max-lg:w-11 max-lg:items-center max-lg:justify-center"
                 aria-label={`Remove ${field}`}
               >
                 <X className="w-4 h-4" />
@@ -238,7 +239,7 @@ export function AddContactModal({ open, onClose, onSuccess }: AddContactModalPro
             </div>
           ))}
         </div>
-        <div className="flex justify-end gap-2 border-t border-border-subtle p-4">
+        <div className="flex justify-end gap-2 border-t border-border-subtle p-4 max-md:pb-[max(1rem,env(safe-area-inset-bottom))]">
           <Button variant="fe-ghost" onClick={handleClose}>
             Cancel
           </Button>

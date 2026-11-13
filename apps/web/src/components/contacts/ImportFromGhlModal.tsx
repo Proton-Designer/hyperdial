@@ -125,7 +125,7 @@ export function ImportFromGhlModal({
 
   return createPortal(
     <div
-      className="fixed inset-0 flex items-center justify-center p-2"
+      className="fixed inset-0 flex items-center justify-center p-2 max-md:p-0"
       style={{ zIndex: 10000 }}
       role="dialog"
       aria-modal="true"
@@ -134,10 +134,10 @@ export function ImportFromGhlModal({
       <motion.div
         initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
-        className="relative z-[1] w-full max-w-lg rounded-2xl border border-white/10 bg-surface-1 shadow-xl"
+        className="relative z-[1] w-full max-w-lg rounded-2xl border border-white/10 bg-surface-1 shadow-xl max-md:flex max-md:h-[100dvh] max-md:max-w-none max-md:flex-col max-md:rounded-none max-md:border-0"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between border-b border-white/10 p-4">
+        <div className="flex items-center justify-between border-b border-white/10 p-4 max-md:pt-[max(1rem,env(safe-area-inset-top))]">
           <h2 className="text-xl font-bold text-white">
             {result ? 'Import Complete' : 'Import from GHL'}
           </h2>
@@ -145,13 +145,14 @@ export function ImportFromGhlModal({
             type="button"
             onClick={handleClose}
             disabled={loading}
-            className="rounded-lg p-2 text-text-secondary hover:bg-white/10 hover:text-white disabled:opacity-50"
+            className="rounded-lg p-2 text-text-secondary hover:bg-white/10 hover:text-white disabled:opacity-50 max-lg:flex max-lg:h-11 max-lg:w-11 max-lg:items-center max-lg:justify-center"
+            aria-label="Close"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
-        <div className="p-6 space-y-4">
+        <div className="p-6 space-y-4 max-md:min-h-0 max-md:flex-1 max-md:overflow-y-auto max-md:p-4 max-md:pb-[max(1rem,env(safe-area-inset-bottom))]">
           <AnimatePresence mode="wait">
             {result ? (
               <motion.div
@@ -254,7 +255,7 @@ export function ImportFromGhlModal({
                   <button
                     type="button"
                     onClick={() => setMode('tag')}
-                    className={`flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-xl text-sm font-medium transition-all ${
+                    className={`flex-1 flex items-center justify-center gap-2 px-4 py-2 max-lg:min-h-11 rounded-xl text-sm font-medium transition-all ${
                       mode === 'tag'
                         ? 'bg-accent-from text-white'
                         : 'bg-surface-2 text-text-secondary hover:bg-surface-3'
@@ -266,7 +267,7 @@ export function ImportFromGhlModal({
                   <button
                     type="button"
                     onClick={() => setMode('search')}
-                    className={`flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-xl text-sm font-medium transition-all ${
+                    className={`flex-1 flex items-center justify-center gap-2 px-4 py-2 max-lg:min-h-11 rounded-xl text-sm font-medium transition-all ${
                       mode === 'search'
                         ? 'bg-accent-from text-white'
                         : 'bg-surface-2 text-text-secondary hover:bg-surface-3'

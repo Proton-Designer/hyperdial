@@ -208,9 +208,41 @@ export function ImportContactsModal({
     (c) => c.status === 'incomplete' || !c.mapped_field || c.mapped_field === ''
   ).length;
 
+  const renderMappingSelect = (col: (typeof columns)[number], index: number) => (
+    <Select value={col.mapped_field ?? ''} onValueChange={(v) => setMappedField(index, v)}>
+      <SelectTrigger className="w-full min-w-[200px] cursor-pointer bg-surface-2 border-border-subtle text-text-primary h-10 rounded-app-md transition-all duration-200 hover:border-accent-to/30 focus:ring-2 focus:ring-accent-to/20">
+        <SelectValue placeholder="Please Select" />
+      </SelectTrigger>
+      <SelectContent
+        className="bg-surface-2 border border-border-subtle rounded-app-md shadow-app-md overflow-y-auto [&_.select-viewport]:!max-h-[14rem] [&_.select-viewport]:!h-auto p-1.5 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 duration-200 data-[side=bottom]:slide-in-from-top-1"
+        style={{ zIndex: 10001, maxHeight: '14rem' }}
+      >
+        {FIELD_OPTIONS.map((opt) => {
+          const isCurrentSelection = col.mapped_field === opt;
+          const isMappedElsewhere = isFieldMappedElsewhere(opt, index);
+          return (
+            <SelectItem
+              key={opt}
+              value={opt}
+              disabled={isMappedElsewhere}
+              className={cn(
+                'rounded-app-sm py-2.5 pl-3 pr-3 text-sm transition-colors duration-150 cursor-pointer [&>span:first-of-type]:!hidden',
+                'bg-transparent hover:bg-white/10 focus:bg-white/10 focus:text-text-primary focus:outline-none',
+                isCurrentSelection && 'text-accent-to bg-accent-to/5',
+                isMappedElsewhere && 'text-text-muted opacity-70 cursor-not-allowed'
+              )}
+            >
+              {optionLabel(opt)}
+            </SelectItem>
+          );
+        })}
+      </SelectContent>
+    </Select>
+  );
+
   return createPortal(
     <div
-      className="fixed inset-0 flex items-center justify-center p-2"
+      className="fixed inset-0 flex items-center justify-center p-2 max-md:p-0"
       style={{ zIndex: 10000 }}
       role="dialog"
       aria-modal="true"
@@ -221,11 +253,11 @@ export function ImportContactsModal({
         tabIndex={-1}
         initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
-        className="relative z-[1] w-full max-w-4xl flex flex-col rounded-app-lg border border-border-subtle bg-surface-1 shadow-app-md outline-none"
+        className="relative z-[1] w-full max-w-4xl flex flex-col rounded-app-lg border border-border-subtle bg-surface-1 shadow-app-md outline-none max-md:h-[100dvh] max-md:max-w-none max-md:!max-h-none max-md:rounded-none max-md:border-0"
         style={{ maxHeight: 'calc(100vh - 16px)', minHeight: 0 }}
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between border-b border-border-subtle p-4 flex-shrink-0">
+        <div className="flex items-center justify-between border-b border-border-subtle p-4 flex-shrink-0 max-md:pt-[max(1rem,env(safe-area-inset-top))]">
           <h2 className="text-page-title text-text-primary">
             {step === 1 && 'Import contacts'}
             {step === 2 && 'Map your columns'}
@@ -235,13 +267,14 @@ export function ImportContactsModal({
             type="button"
             onClick={handleClose}
             disabled={loading}
-            className="rounded-app-md p-2 text-text-secondary hover:bg-white/10 hover:text-text-primary disabled:opacity-50"
+            className="rounded-app-md p-2 text-text-secondary hover:bg-white/10 hover:text-text-primary disabled:opacity-50 max-lg:flex max-lg:h-11 max-lg:w-11 max-lg:items-center max-lg:justify-center"
+            aria-label="Close"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
-        <div className="p-6 overflow-y-auto flex-1 min-h-0">
+        <div className="p-6 max-md:p-4 max-md:pb-[max(1rem,env(safe-area-inset-bottom))] overflow-y-auto flex-1 min-h-0">
           <AnimatePresence mode="wait">
             {step === 1 && (
               <motion.div
@@ -266,7 +299,7 @@ export function ImportContactsModal({
                   }}
                   onDragLeave={() => setDragOver(false)}
                   onDrop={handleDrop}
-                  className={`border-2 border-dashed rounded-app-lg p-12 text-center transition-colors ${
+                  className={`border-2 border-dashed rounded-app-lg p-12 max-md:p-6 text-center transition-colors ${
                     dragOver
                       ? 'border-accent-to bg-accent-to/5'
                       : 'border-border-strong hover:border-text-muted'
@@ -281,7 +314,7 @@ export function ImportContactsModal({
                     {loading ? 'Parsing CSV...' : 'Drag and drop your CSV here'}
                   </p>
                   <p className="text-body text-text-secondary mb-4">or</p>
-                  <label className="inline-flex items-center gap-2 px-4 py-2 rounded-app-md bg-accent-from/20 text-accent-to font-medium cursor-pointer hover:bg-accent-from/30">
+                  <label className="inline-flex items-center gap-2 px-4 py-2 max-lg:min-h-11 rounded-app-md bg-accent-from/20 text-accent-to font-medium cursor-pointer hover:bg-accent-from/30">
                     <Upload className="w-4 h-4" />
                     Choose file
                     <input
@@ -336,7 +369,7 @@ export function ImportContactsModal({
                     maxLength={120}
                     onChange={(e) => setListName(e.target.value)}
                     placeholder="e.g. Austin HVAC scrape, Oct 12"
-                    className="w-full bg-surface-2 border border-border-subtle rounded-app-md px-3 py-2 text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent-to"
+                    className="w-full bg-surface-2 border border-border-subtle rounded-app-md px-3 py-2 max-lg:min-h-11 text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent-to"
                   />
                   <p className="text-meta text-text-muted">
                     Sent to GoHighLevel as the lead list for calls to these contacts.
@@ -369,7 +402,39 @@ export function ImportContactsModal({
                     {error}
                   </div>
                 )}
-                <div className="border border-border-subtle rounded-app-lg overflow-hidden">
+                <div className="md:hidden space-y-2">
+                  {columns.map((col, index) => (
+                    <div
+                      key={col.original_header}
+                      className="rounded-app-lg border border-border-subtle bg-surface-2/50 p-3 space-y-2"
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0 font-medium text-text-primary break-words">
+                          {col.original_header}
+                        </div>
+                        {col.mapped_field && col.mapped_field !== SKIP_OPTION ? (
+                          <span className="inline-flex flex-shrink-0 items-center gap-1 px-2 py-1 rounded-full text-xs font-medium bg-success-soft text-success">
+                            <CheckCircle className="w-3 h-3" />{' '}
+                            {col.mapped_field === CUSTOM_FIELD_OPTION ? 'Custom field' : 'Mapped'}
+                          </span>
+                        ) : (
+                          <span className="inline-flex flex-shrink-0 px-2 py-1 rounded-full text-xs font-medium bg-surface-3 text-text-secondary">
+                            Pending
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex flex-col gap-0.5 text-meta text-text-secondary">
+                        {col.preview_data.slice(0, 3).map((v, i) => (
+                          <span key={i} className="truncate" title={v}>
+                            {v}
+                          </span>
+                        ))}
+                      </div>
+                      {renderMappingSelect(col, index)}
+                    </div>
+                  ))}
+                </div>
+                <div className="hidden md:block border border-border-subtle rounded-app-lg overflow-x-auto">
                   <table className="w-full text-left">
                     <thead>
                       <tr className="bg-surface-2 border-b border-border-subtle">
@@ -415,47 +480,13 @@ export function ImportContactsModal({
                             )}
                           </td>
                           <td className="p-3 text-text-secondary text-meta">Contact</td>
-                          <td className="p-3 w-[220px]">
-                            <Select
-                              value={col.mapped_field ?? ''}
-                              onValueChange={(v) => setMappedField(index, v)}
-                            >
-                              <SelectTrigger className="w-full min-w-[200px] cursor-pointer bg-surface-2 border-border-subtle text-text-primary h-10 rounded-app-md transition-all duration-200 hover:border-accent-to/30 focus:ring-2 focus:ring-accent-to/20">
-                                <SelectValue placeholder="Please Select" />
-                              </SelectTrigger>
-                              <SelectContent
-                                className="bg-surface-2 border border-border-subtle rounded-app-md shadow-app-md overflow-y-auto [&_.select-viewport]:!max-h-[14rem] [&_.select-viewport]:!h-auto p-1.5 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 duration-200 data-[side=bottom]:slide-in-from-top-1"
-                                style={{ zIndex: 10001, maxHeight: '14rem' }}
-                              >
-                                {FIELD_OPTIONS.map((opt) => {
-                                  const isCurrentSelection = col.mapped_field === opt;
-                                  const isMappedElsewhere = isFieldMappedElsewhere(opt, index);
-                                  return (
-                                    <SelectItem
-                                      key={opt}
-                                      value={opt}
-                                      disabled={isMappedElsewhere}
-                                      className={cn(
-                                        'rounded-app-sm py-2.5 pl-3 pr-3 text-sm transition-colors duration-150 cursor-pointer [&>span:first-of-type]:!hidden',
-                                        'bg-transparent hover:bg-white/10 focus:bg-white/10 focus:text-text-primary focus:outline-none',
-                                        isCurrentSelection && 'text-accent-to bg-accent-to/5',
-                                        isMappedElsewhere &&
-                                          'text-text-muted opacity-70 cursor-not-allowed'
-                                      )}
-                                    >
-                                      {optionLabel(opt)}
-                                    </SelectItem>
-                                  );
-                                })}
-                              </SelectContent>
-                            </Select>
-                          </td>
+                          <td className="p-3 w-[220px]">{renderMappingSelect(col, index)}</td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
                 </div>
-                <div className="flex justify-end gap-2 pt-4">
+                <div className="flex justify-end gap-2 pt-4 max-md:sticky max-md:bottom-0 max-md:bg-surface-1 max-md:pb-2">
                   <Button variant="fe-ghost" onClick={handleClose}>
                     Cancel
                   </Button>

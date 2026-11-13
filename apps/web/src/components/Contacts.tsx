@@ -43,6 +43,7 @@ import { PageHeader } from '@/components/app/PageHeader';
 import { EmptyState } from '@/components/app/EmptyState';
 import { ListSkeleton, TableSkeleton } from '@/components/app/skeletons';
 import { useOrg } from '@/contexts/OrgContext';
+import { TapCheckbox } from '@/components/mobile/TapCheckbox';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { cn } from '@/components/ui/utils';
 
@@ -281,11 +282,11 @@ export function Contacts({ onNavigateToDialer }: { onNavigateToDialer?: () => vo
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Search contacts..."
-              className="w-full bg-surface-2 border border-border-subtle rounded-app-md pl-9 pr-3 py-2 text-body text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent-to transition-colors"
+              className="w-full bg-surface-2 border border-border-subtle rounded-app-md pl-9 pr-3 py-2 text-body max-lg:min-h-11 text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent-to transition-colors"
             />
           </div>
-          <div className="flex flex-wrap gap-1.5 items-center">
-            <span className="text-[11px] uppercase tracking-wide text-text-muted mr-0.5">
+          <div className="flex flex-wrap gap-1.5 items-center max-lg:w-full max-lg:flex-nowrap max-lg:overflow-x-auto max-lg:pb-1">
+            <span className="text-[12px] uppercase tracking-wide text-text-muted mr-0.5 max-lg:shrink-0">
               Category
             </span>
             {CATEGORIES.map((cat) => (
@@ -293,7 +294,7 @@ export function Contacts({ onNavigateToDialer }: { onNavigateToDialer?: () => vo
                 key={cat}
                 onClick={() => setCategoryFilter(cat)}
                 className={cn(
-                  'px-2.5 py-1.5 rounded-app-sm text-[13px] font-medium transition-colors',
+                  'px-2.5 py-1.5 rounded-app-sm text-[13px] font-medium transition-colors max-lg:min-h-11 max-lg:min-w-11 max-lg:px-3 max-lg:shrink-0',
                   categoryFilter === cat
                     ? 'bg-accent-from/20 text-accent-to'
                     : 'bg-surface-2 text-text-secondary hover:bg-surface-3'
@@ -303,8 +304,8 @@ export function Contacts({ onNavigateToDialer }: { onNavigateToDialer?: () => vo
               </button>
             ))}
           </div>
-          <div className="flex flex-wrap gap-1.5 items-center">
-            <span className="text-[11px] uppercase tracking-wide text-text-muted mr-0.5">
+          <div className="flex flex-wrap gap-1.5 items-center max-lg:w-full max-lg:flex-nowrap max-lg:overflow-x-auto max-lg:pb-1">
+            <span className="text-[12px] uppercase tracking-wide text-text-muted mr-0.5 max-lg:shrink-0">
               Status
             </span>
             {CONTACT_STATUSES.map((status) => (
@@ -312,7 +313,7 @@ export function Contacts({ onNavigateToDialer }: { onNavigateToDialer?: () => vo
                 key={status}
                 onClick={() => setContactStatusFilter(status)}
                 className={cn(
-                  'px-2.5 py-1.5 rounded-app-sm text-[13px] font-medium transition-colors',
+                  'px-2.5 py-1.5 rounded-app-sm text-[13px] font-medium transition-colors max-lg:min-h-11 max-lg:min-w-11 max-lg:px-3 max-lg:shrink-0',
                   contactStatusFilter === status
                     ? 'bg-accent-from/20 text-accent-to'
                     : 'bg-surface-2 text-text-secondary hover:bg-surface-3'
@@ -358,11 +359,9 @@ export function Contacts({ onNavigateToDialer }: { onNavigateToDialer?: () => vo
                 <TableRow className="border-border-subtle hover:bg-transparent">
                   {canManage && (
                     <TableHead className="w-10">
-                      <input
-                        type="checkbox"
+                      <TapCheckbox
                         checked={allOnPageSelected}
                         onChange={toggleSelectAllOnPage}
-                        className="rounded border-border-strong bg-surface-2 accent-[var(--accent-to)]"
                         aria-label="Select all on page"
                       />
                     </TableHead>
@@ -393,11 +392,10 @@ export function Contacts({ onNavigateToDialer }: { onNavigateToDialer?: () => vo
                     >
                       {canManage && (
                         <TableCell onClick={(e) => e.stopPropagation()}>
-                          <input
-                            type="checkbox"
+                          <TapCheckbox
                             checked={isSelected}
                             onChange={() => toggleSelect(contact.id)}
-                            className="rounded border-border-strong bg-surface-2 accent-[var(--accent-to)]"
+                            aria-label={`Select ${name}`}
                           />
                         </TableCell>
                       )}
@@ -466,15 +464,17 @@ export function Contacts({ onNavigateToDialer }: { onNavigateToDialer?: () => vo
       ) : (
         <div className="space-y-2">
           {canManage && (
-            <label className="flex items-center gap-2 cursor-pointer text-meta text-text-secondary px-1 pb-1">
-              <input
-                type="checkbox"
+            <div
+              className="flex items-center gap-2 text-meta text-text-secondary px-1 pb-1 cursor-pointer"
+              onClick={toggleSelectAllOnPage}
+            >
+              <TapCheckbox
                 checked={allOnPageSelected}
                 onChange={toggleSelectAllOnPage}
-                className="rounded border-border-strong bg-surface-2 accent-[var(--accent-to)]"
+                stopRowClick
               />
               Select all on page
-            </label>
+            </div>
           )}
           {paginatedContacts.map((contact) => {
             const name = contactHeadline(contact);
@@ -491,12 +491,11 @@ export function Contacts({ onNavigateToDialer }: { onNavigateToDialer?: () => vo
                 className="flex items-center gap-3 rounded-app-lg border border-border-subtle bg-surface-1 p-3 cursor-pointer"
               >
                 {canManage && (
-                  <input
-                    type="checkbox"
+                  <TapCheckbox
                     checked={isSelected}
                     onChange={() => toggleSelect(contact.id)}
-                    onClick={(e) => e.stopPropagation()}
-                    className="rounded border-border-strong bg-surface-2 accent-[var(--accent-to)] flex-shrink-0"
+                    stopRowClick
+                    aria-label={`Select ${name}`}
                   />
                 )}
                 <div className="flex-1 min-w-0">
@@ -511,7 +510,7 @@ export function Contacts({ onNavigateToDialer }: { onNavigateToDialer?: () => vo
                 </div>
                 <button
                   onClick={(e) => e.stopPropagation()}
-                  className="w-9 h-9 rounded-full bg-accent-to/15 text-accent-to flex items-center justify-center flex-shrink-0"
+                  className="w-9 h-9 max-lg:w-11 max-lg:h-11 rounded-full bg-accent-to/15 text-accent-to flex items-center justify-center flex-shrink-0"
                   aria-label="Call"
                 >
                   <Phone className="w-4 h-4" />

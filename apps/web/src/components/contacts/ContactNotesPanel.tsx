@@ -341,7 +341,7 @@ export function ContactNotesPanel({
             type="button"
             onClick={submit}
             disabled={posting || !draft.trim()}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-gradient-to-r from-accent-from to-accent-to text-white disabled:opacity-50"
+            className="flex items-center gap-1.5 px-3 py-1.5 max-lg:min-h-11 rounded-lg text-xs font-semibold bg-gradient-to-r from-accent-from to-accent-to text-white disabled:opacity-50"
           >
             <Send className="w-3.5 h-3.5" />
             Post
