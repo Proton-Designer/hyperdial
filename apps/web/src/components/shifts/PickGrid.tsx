@@ -238,7 +238,7 @@ export function PickGrid({ days, picks, locked, headcount, onChange }: PickGridP
             return (
               <div
                 key={m}
-                className="pr-2 text-right text-[10px] leading-none text-text-muted"
+                className="pr-2 text-right text-xs leading-none text-text-muted"
                 style={{ height: ROW_H }}
               >
                 {m % 60 === 0 ? <span className="relative -top-[1px]">{minLabel(m)}</span> : null}
@@ -356,7 +356,7 @@ const SlotCell = memo(function SlotCell({
       }}
       onBlur={() => setHover(null)}
       className={cn(
-        'relative block w-full overflow-hidden text-left outline-none',
+        'hd-touch-skip relative block w-full overflow-hidden text-left outline-none',
         'border-t focus-visible:z-[2] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent-to',
         m % 60 === 0 ? 'border-white/10' : 'border-border-subtle',
         act === undefined &&
@@ -377,7 +377,7 @@ const SlotCell = memo(function SlotCell({
       {blockLabel && (
         <span
           className={cn(
-            'pointer-events-none absolute left-1.5 top-[5px] truncate text-[10px] font-medium leading-none text-white/95',
+            'pointer-events-none absolute left-1.5 top-[5px] truncate text-xs font-medium leading-none text-white/95',
             // Leave room for the headcount digit on the right so the two never collide.
             names ? 'right-5' : 'right-1.5'
           )}
@@ -386,14 +386,14 @@ const SlotCell = memo(function SlotCell({
         </span>
       )}
       {act === undefined && windowStart && (
-        <span className="pointer-events-none absolute left-1.5 top-[5px] text-[9px] font-medium uppercase leading-none tracking-wide text-warning/80">
+        <span className="pointer-events-none absolute left-1.5 top-[5px] text-xs font-medium uppercase leading-none tracking-wide text-warning/80">
           {windowStart.label}
         </span>
       )}
       {names && (
         <span
           className={cn(
-            'pointer-events-none absolute right-1.5 top-[5px] text-[10px] font-medium leading-none',
+            'pointer-events-none absolute right-1.5 top-[5px] text-xs font-medium leading-none',
             act !== undefined ? 'text-white/80' : 'text-text-secondary'
           )}
         >

@@ -125,7 +125,7 @@ export function Shifts() {
 
   if (state === 'disabled') {
     return (
-      <div className="mx-auto max-w-4xl p-4 sm:p-6">
+      <div className="hd-touch mx-auto max-w-4xl p-4 sm:p-6">
         <PageHeader title="Shifts" />
         <EmptyState
           icon={CalendarClock}
@@ -138,7 +138,7 @@ export function Shifts() {
 
   if (state === 'error' || !current) {
     return (
-      <div className="mx-auto max-w-4xl p-4 sm:p-6">
+      <div className="hd-touch mx-auto max-w-4xl p-4 sm:p-6">
         <PageHeader title="Shifts" />
         <EmptyState
           icon={ServerCrash}
@@ -160,7 +160,7 @@ export function Shifts() {
   const pendingCount = requests.filter((r) => r.status === 'pending').length;
 
   return (
-    <div className="mx-auto max-w-4xl p-4 sm:p-6">
+    <div className="hd-touch mx-auto max-w-4xl p-4 sm:p-6">
       <PageHeader
         title="Shifts"
         description={
@@ -182,7 +182,7 @@ export function Shifts() {
           <TabsTrigger value="requests" className={TRIGGER_CLASS}>
             Requests
             {pendingCount > 0 && (
-              <span className="rounded-full bg-warning-soft px-1.5 text-[11px] font-medium leading-4 text-warning">
+              <span className="rounded-full bg-warning-soft px-1.5 text-xs font-medium leading-4 text-warning">
                 {pendingCount}
               </span>
             )}

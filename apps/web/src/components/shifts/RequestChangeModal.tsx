@@ -125,7 +125,7 @@ export function RequestChangeModal(props: RequestChangeModalProps) {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="flex max-h-[90dvh] flex-col gap-0 overflow-hidden border-border-subtle bg-surface-1 p-0 text-text-primary sm:max-w-xl">
+      <DialogContent className="hd-touch flex max-h-[90dvh] flex-col gap-0 overflow-hidden border-border-subtle bg-surface-1 p-0 text-text-primary sm:max-w-xl">
         <DialogHeader className="border-b border-border-subtle px-6 py-4 text-left">
           <DialogTitle className="text-section-title text-text-primary">{title}</DialogTitle>
           <DialogDescription className="text-meta text-text-secondary">
