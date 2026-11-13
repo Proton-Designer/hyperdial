@@ -248,7 +248,7 @@ export function ContactDetailModal({
               <button
                 type="button"
                 onClick={startEdit}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm text-accent-to hover:bg-accent-to/10 max-lg:min-h-11"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm text-accent-to hover:bg-accent-to/10 touch:min-h-11"
               >
                 <Pencil className="w-4 h-4" />
                 Edit
@@ -257,7 +257,7 @@ export function ContactDetailModal({
             <button
               type="button"
               onClick={handleClose}
-              className="rounded-lg p-2 text-text-secondary hover:bg-white/10 hover:text-white max-lg:flex max-lg:h-11 max-lg:w-11 max-lg:items-center max-lg:justify-center"
+              className="rounded-lg p-2 text-text-secondary hover:bg-white/10 hover:text-white max-lg:flex touch:h-11 touch:w-11 max-lg:items-center max-lg:justify-center"
               aria-label="Close"
             >
               <X className="w-5 h-5" />
@@ -278,7 +278,7 @@ export function ContactDetailModal({
             onClick={toggleDnc}
             disabled={dncSaving || dncLocked}
             title={dncLocked ? 'Only an owner or admin can clear do-not-call' : undefined}
-            className={`w-full flex items-center justify-between gap-2 rounded-xl border p-3 text-sm font-medium max-lg:min-h-11 transition-colors disabled:opacity-50 ${
+            className={`w-full flex items-center justify-between gap-2 rounded-xl border p-3 text-sm font-medium touch:min-h-11 transition-colors disabled:opacity-50 ${
               c.dnc
                 ? 'bg-danger/10 border-danger/30 text-danger'
                 : 'bg-white/5 border-white/10 text-text-secondary hover:bg-white/10'
@@ -306,7 +306,7 @@ export function ContactDetailModal({
                   key={t}
                   type="button"
                   onClick={() => setTab(t)}
-                  className={`px-3 py-2 text-sm font-medium capitalize border-b-2 -mb-px max-lg:min-h-11 ${
+                  className={`px-3 py-2 text-sm font-medium capitalize border-b-2 -mb-px touch:min-h-11 ${
                     tab === t
                       ? 'border-accent-to text-white'
                       : 'border-transparent text-text-secondary hover:text-white'
@@ -367,7 +367,7 @@ export function ContactDetailModal({
                           onClick={placeCall}
                           disabled={!canCall}
                           title={callDisabledReason ?? 'Call in HyperDial'}
-                          className="text-accent-to hover:underline truncate block max-lg:min-h-11 max-lg:py-2.5 disabled:text-text-muted disabled:no-underline disabled:cursor-not-allowed"
+                          className="text-accent-to hover:underline truncate block touch:min-h-11 max-lg:py-2.5 disabled:text-text-muted disabled:no-underline disabled:cursor-not-allowed"
                         >
                           {c.phone_number}
                         </button>
@@ -605,7 +605,7 @@ export function ContactDetailModal({
                 type="button"
                 onClick={cancelEdit}
                 disabled={saving}
-                className="px-4 py-2 rounded-xl border border-white/10 text-text-secondary hover:bg-white/5 disabled:opacity-50 max-lg:min-h-11"
+                className="px-4 py-2 rounded-xl border border-white/10 text-text-secondary hover:bg-white/5 disabled:opacity-50 touch:min-h-11"
               >
                 Cancel
               </button>
@@ -613,7 +613,7 @@ export function ContactDetailModal({
                 type="button"
                 onClick={handleSave}
                 disabled={saving}
-                className="px-4 py-2 rounded-xl bg-gradient-to-r from-accent-from to-accent-to text-white font-semibold text-sm disabled:opacity-50 max-lg:min-h-11"
+                className="px-4 py-2 rounded-xl bg-gradient-to-r from-accent-from to-accent-to text-white font-semibold text-sm disabled:opacity-50 touch:min-h-11"
               >
                 {saving ? 'Saving...' : 'Save'}
               </button>
@@ -630,7 +630,7 @@ export function ContactDetailModal({
                   onClick={() => setLogCloseOpen(true)}
                   disabled={isViewOnly}
                   title={isViewOnly ? 'View-only' : undefined}
-                  className="px-4 py-2 rounded-xl border border-white/10 text-text-primary hover:bg-white/5 text-sm font-semibold disabled:opacity-50 disabled:cursor-not-allowed max-lg:min-h-11"
+                  className="px-4 py-2 rounded-xl border border-white/10 text-text-primary hover:bg-white/5 text-sm font-semibold disabled:opacity-50 disabled:cursor-not-allowed touch:min-h-11"
                 >
                   Log close
                 </button>
@@ -642,7 +642,7 @@ export function ContactDetailModal({
                     onClick={placeCall}
                     disabled={!canCall}
                     title={callDisabledReason ?? undefined}
-                    className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-accent-from to-accent-to text-white font-semibold text-sm disabled:opacity-50 disabled:cursor-not-allowed max-lg:min-h-11"
+                    className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-accent-from to-accent-to text-white font-semibold text-sm disabled:opacity-50 disabled:cursor-not-allowed touch:min-h-11"
                   >
                     <Phone className="w-4 h-4" />
                     Call
@@ -655,7 +655,7 @@ export function ContactDetailModal({
               <button
                 type="button"
                 onClick={handleClose}
-                className="px-4 py-2 rounded-xl border border-white/10 text-text-secondary hover:bg-white/5 max-lg:min-h-11"
+                className="px-4 py-2 rounded-xl border border-white/10 text-text-secondary hover:bg-white/5 touch:min-h-11"
               >
                 Close
               </button>

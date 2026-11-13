@@ -154,7 +154,7 @@ export function AddContactModal({ open, onClose, onSuccess }: AddContactModalPro
           <button
             type="button"
             onClick={handleClose}
-            className="rounded-app-md p-2 text-text-secondary hover:bg-white/10 hover:text-text-primary max-lg:flex max-lg:h-11 max-lg:w-11 max-lg:items-center max-lg:justify-center"
+            className="rounded-app-md p-2 text-text-secondary hover:bg-white/10 hover:text-text-primary max-lg:flex touch:h-11 touch:w-11 max-lg:items-center max-lg:justify-center"
             aria-label="Close"
           >
             <X className="w-5 h-5" />
@@ -182,7 +182,7 @@ export function AddContactModal({ open, onClose, onSuccess }: AddContactModalPro
             <button
               type="button"
               onClick={() => setExpandAdditional(!expandAdditional)}
-              className="flex items-center gap-2 text-body text-accent-to hover:underline max-lg:min-h-11"
+              className="flex items-center gap-2 text-body text-accent-to hover:underline touch:min-h-11"
             >
               <Plus className="w-4 h-4" />
               Add field
@@ -204,7 +204,7 @@ export function AddContactModal({ open, onClose, onSuccess }: AddContactModalPro
                         key={f}
                         type="button"
                         onClick={() => handleAddField(f)}
-                        className="px-3 py-1.5 rounded-app-md bg-surface-2 border border-border-subtle text-text-primary text-body hover:border-accent-to/50 max-lg:min-h-11"
+                        className="px-3 py-1.5 rounded-app-md bg-surface-2 border border-border-subtle text-text-primary text-body hover:border-accent-to/50 touch:min-h-11"
                       >
                         {f}
                       </button>
@@ -231,7 +231,7 @@ export function AddContactModal({ open, onClose, onSuccess }: AddContactModalPro
               <button
                 type="button"
                 onClick={() => handleRemoveAdditional(field)}
-                className="mt-6 p-2 text-text-secondary hover:text-danger max-lg:mt-5 max-lg:flex max-lg:h-11 max-lg:w-11 max-lg:items-center max-lg:justify-center"
+                className="mt-6 p-2 text-text-secondary hover:text-danger max-lg:mt-5 max-lg:flex touch:h-11 touch:w-11 max-lg:items-center max-lg:justify-center"
                 aria-label={`Remove ${field}`}
               >
                 <X className="w-4 h-4" />

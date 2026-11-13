@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import '@/styles/touch.css';
 import { createPortal } from 'react-dom';
 import { motion } from 'motion/react';
 import { Loader2, X } from 'lucide-react';

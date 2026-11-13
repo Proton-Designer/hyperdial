@@ -1,5 +1,4 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import '@/styles/touch.css';
 import { motion, AnimatePresence } from 'motion/react';
 import { Search, Plus, Target, Play, RefreshCw } from 'lucide-react';
 import {

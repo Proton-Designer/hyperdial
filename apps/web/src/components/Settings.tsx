@@ -1,5 +1,4 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import '@/styles/touch.css';
 import { ViewAsButton } from '@/components/settings/ViewAsButton';
 import { createPortal } from 'react-dom';
 import { toast } from 'sonner';
@@ -5586,7 +5585,7 @@ export function Settings({ section }: { section?: SettingsSection } = {}) {
           </nav>
         </div>
       ) : (
-        <div className="flex-shrink-0 border-b border-border-subtle bg-surface-1 px-4 pt-3">
+        <div className="hd-touch flex-shrink-0 border-b border-border-subtle bg-surface-1 px-4 pt-3">
           <nav className="flex gap-1 overflow-x-auto pb-3 -mx-1 px-1">
             {tabs.map((tab) => {
               const Icon = tab.icon;

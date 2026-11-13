@@ -1,5 +1,4 @@
 import { useState, useEffect, useCallback } from 'react';
-import '@/styles/touch.css';
 import { motion, useReducedMotion } from 'motion/react';
 import {
   Phone,

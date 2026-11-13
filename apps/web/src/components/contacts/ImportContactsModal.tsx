@@ -267,7 +267,7 @@ export function ImportContactsModal({
             type="button"
             onClick={handleClose}
             disabled={loading}
-            className="rounded-app-md p-2 text-text-secondary hover:bg-white/10 hover:text-text-primary disabled:opacity-50 max-lg:flex max-lg:h-11 max-lg:w-11 max-lg:items-center max-lg:justify-center"
+            className="rounded-app-md p-2 text-text-secondary hover:bg-white/10 hover:text-text-primary disabled:opacity-50 max-lg:flex touch:h-11 touch:w-11 max-lg:items-center max-lg:justify-center"
             aria-label="Close"
           >
             <X className="w-5 h-5" />
@@ -314,7 +314,7 @@ export function ImportContactsModal({
                     {loading ? 'Parsing CSV...' : 'Drag and drop your CSV here'}
                   </p>
                   <p className="text-body text-text-secondary mb-4">or</p>
-                  <label className="inline-flex items-center gap-2 px-4 py-2 max-lg:min-h-11 rounded-app-md bg-accent-from/20 text-accent-to font-medium cursor-pointer hover:bg-accent-from/30">
+                  <label className="inline-flex items-center gap-2 px-4 py-2 touch:min-h-11 rounded-app-md bg-accent-from/20 text-accent-to font-medium cursor-pointer hover:bg-accent-from/30">
                     <Upload className="w-4 h-4" />
                     Choose file
                     <input
@@ -369,7 +369,7 @@ export function ImportContactsModal({
                     maxLength={120}
                     onChange={(e) => setListName(e.target.value)}
                     placeholder="e.g. Austin HVAC scrape, Oct 12"
-                    className="w-full bg-surface-2 border border-border-subtle rounded-app-md px-3 py-2 max-lg:min-h-11 text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent-to"
+                    className="w-full bg-surface-2 border border-border-subtle rounded-app-md px-3 py-2 touch:min-h-11 text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent-to"
                   />
                   <p className="text-meta text-text-muted">
                     Sent to GoHighLevel as the lead list for calls to these contacts.

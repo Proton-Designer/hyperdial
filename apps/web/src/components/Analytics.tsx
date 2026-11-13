@@ -1,5 +1,4 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import '@/styles/touch.css';
 import { motion, useReducedMotion } from 'motion/react';
 import { TrendingUp, TrendingDown, Phone, Clock, Target, Gauge, Download } from 'lucide-react';
 import {

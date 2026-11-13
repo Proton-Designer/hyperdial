@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import '@/styles/touch.css';
 import { BadgeCheck, Download, Search, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { getContactById, listOnboardedPros, type Contact, type OnboardedPro } from '@/lib/api';

@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
-import '@/styles/touch.css';
 import { Headphones, Flag, MessageSquare, ClipboardList, X } from 'lucide-react';
 import {
   searchRecordings,

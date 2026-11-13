@@ -42,7 +42,6 @@ import { TeamGoalAttainment } from '@/components/goals/TeamGoalAttainment';
 import { PowerHourPanel } from '@/components/power-hour/PowerHourPanel';
 import { OnboardingChecklistPanel } from '@/components/onboarding/OnboardingChecklistPanel';
 import { AgentSchedulesPanel } from '@/components/schedules/AgentSchedulesPanel';
-import '@/styles/touch.css';
 
 type Range = 'today' | 'yesterday' | '7d' | 'custom';
 type TeamView = 'overview' | 'attendance';

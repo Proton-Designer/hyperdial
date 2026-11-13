@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useState } from 'react';
-import '@/styles/touch.css';
 import { Inbox as InboxIcon, Phone, Check, X, RotateCcw, Copy } from 'lucide-react';
 import { toast } from 'sonner';
 import {

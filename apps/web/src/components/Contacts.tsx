@@ -43,7 +43,6 @@ import { PageHeader } from '@/components/app/PageHeader';
 import { EmptyState } from '@/components/app/EmptyState';
 import { ListSkeleton, TableSkeleton } from '@/components/app/skeletons';
 import { useOrg } from '@/contexts/OrgContext';
-import '@/styles/touch.css';
 import { TapCheckbox } from '@/components/mobile/TapCheckbox';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { cn } from '@/components/ui/utils';
@@ -235,7 +234,7 @@ export function Contacts({ onNavigateToDialer }: { onNavigateToDialer?: () => vo
   const mobileActions = canManage && (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="primary" size="sm" className="max-lg:min-h-11">
+        <Button variant="primary" size="sm" className="touch:min-h-11">
           <Plus className="w-4 h-4" />
           Add
         </Button>
@@ -283,7 +282,7 @@ export function Contacts({ onNavigateToDialer }: { onNavigateToDialer?: () => vo
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Search contacts..."
-              className="w-full bg-surface-2 border border-border-subtle rounded-app-md pl-9 pr-3 py-2 text-body max-lg:min-h-11 text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent-to transition-colors"
+              className="w-full bg-surface-2 border border-border-subtle rounded-app-md pl-9 pr-3 py-2 text-body touch:min-h-11 text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent-to transition-colors"
             />
           </div>
           <div className="flex flex-wrap gap-1.5 items-center max-lg:w-full max-lg:flex-nowrap max-lg:overflow-x-auto max-lg:pb-1">
@@ -295,7 +294,7 @@ export function Contacts({ onNavigateToDialer }: { onNavigateToDialer?: () => vo
                 key={cat}
                 onClick={() => setCategoryFilter(cat)}
                 className={cn(
-                  'px-2.5 py-1.5 rounded-app-sm text-[13px] font-medium transition-colors max-lg:min-h-11 max-lg:min-w-11 max-lg:px-3 max-lg:shrink-0',
+                  'px-2.5 py-1.5 rounded-app-sm text-[13px] font-medium transition-colors touch:min-h-11 touch:min-w-11 max-lg:px-3 max-lg:shrink-0',
                   categoryFilter === cat
                     ? 'bg-accent-from/20 text-accent-to'
                     : 'bg-surface-2 text-text-secondary hover:bg-surface-3'
@@ -314,7 +313,7 @@ export function Contacts({ onNavigateToDialer }: { onNavigateToDialer?: () => vo
                 key={status}
                 onClick={() => setContactStatusFilter(status)}
                 className={cn(
-                  'px-2.5 py-1.5 rounded-app-sm text-[13px] font-medium transition-colors max-lg:min-h-11 max-lg:min-w-11 max-lg:px-3 max-lg:shrink-0',
+                  'px-2.5 py-1.5 rounded-app-sm text-[13px] font-medium transition-colors touch:min-h-11 touch:min-w-11 max-lg:px-3 max-lg:shrink-0',
                   contactStatusFilter === status
                     ? 'bg-accent-from/20 text-accent-to'
                     : 'bg-surface-2 text-text-secondary hover:bg-surface-3'
@@ -511,7 +510,7 @@ export function Contacts({ onNavigateToDialer }: { onNavigateToDialer?: () => vo
                 </div>
                 <button
                   onClick={(e) => e.stopPropagation()}
-                  className="w-9 h-9 max-lg:w-11 max-lg:h-11 rounded-full bg-accent-to/15 text-accent-to flex items-center justify-center flex-shrink-0"
+                  className="w-9 h-9 touch:w-11 touch:h-11 rounded-full bg-accent-to/15 text-accent-to flex items-center justify-center flex-shrink-0"
                   aria-label="Call"
                 >
                   <Phone className="w-4 h-4" />

@@ -1,5 +1,4 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import '@/styles/touch.css';
 import { TapCheckbox } from '@/components/mobile/TapCheckbox';
 import { contactHeadline, contactSecondaryName } from '@/lib/contactName';
 import { createPortal } from 'react-dom';

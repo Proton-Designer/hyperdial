@@ -145,7 +145,7 @@ export function ImportFromGhlModal({
             type="button"
             onClick={handleClose}
             disabled={loading}
-            className="rounded-lg p-2 text-text-secondary hover:bg-white/10 hover:text-white disabled:opacity-50 max-lg:flex max-lg:h-11 max-lg:w-11 max-lg:items-center max-lg:justify-center"
+            className="rounded-lg p-2 text-text-secondary hover:bg-white/10 hover:text-white disabled:opacity-50 max-lg:flex touch:h-11 touch:w-11 max-lg:items-center max-lg:justify-center"
             aria-label="Close"
           >
             <X className="w-5 h-5" />
@@ -255,7 +255,7 @@ export function ImportFromGhlModal({
                   <button
                     type="button"
                     onClick={() => setMode('tag')}
-                    className={`flex-1 flex items-center justify-center gap-2 px-4 py-2 max-lg:min-h-11 rounded-xl text-sm font-medium transition-all ${
+                    className={`flex-1 flex items-center justify-center gap-2 px-4 py-2 touch:min-h-11 rounded-xl text-sm font-medium transition-all ${
                       mode === 'tag'
                         ? 'bg-accent-from text-white'
                         : 'bg-surface-2 text-text-secondary hover:bg-surface-3'
@@ -267,7 +267,7 @@ export function ImportFromGhlModal({
                   <button
                     type="button"
                     onClick={() => setMode('search')}
-                    className={`flex-1 flex items-center justify-center gap-2 px-4 py-2 max-lg:min-h-11 rounded-xl text-sm font-medium transition-all ${
+                    className={`flex-1 flex items-center justify-center gap-2 px-4 py-2 touch:min-h-11 rounded-xl text-sm font-medium transition-all ${
                       mode === 'search'
                         ? 'bg-accent-from text-white'
                         : 'bg-surface-2 text-text-secondary hover:bg-surface-3'

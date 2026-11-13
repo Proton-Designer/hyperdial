@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from 'react';
-import '@/styles/touch.css';
 import { createPortal } from 'react-dom';
 import { toast } from 'sonner';
 import {
