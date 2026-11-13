@@ -256,9 +256,9 @@ function ProfileTab() {
     <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
       <PageHeader title="Profile" />
 
-      <div className="bg-surface-1 rounded-app-lg p-8 border border-border-subtle shadow-app-sm mb-8">
-        <div className="flex items-center gap-6 mb-8">
-          <div className="w-24 h-24 rounded-full bg-gradient-to-br from-accent-from to-accent-to flex items-center justify-center text-white text-3xl font-bold">
+      <div className="bg-surface-1 rounded-app-lg p-8 max-sm:p-4 border border-border-subtle shadow-app-sm mb-8">
+        <div className="flex items-center gap-6 max-sm:gap-4 mb-8">
+          <div className="w-24 h-24 max-sm:h-16 max-sm:w-16 max-sm:text-xl flex-shrink-0 rounded-full bg-gradient-to-br from-accent-from to-accent-to flex items-center justify-center text-white text-3xl font-bold">
             {initials.toUpperCase() || (ctxFirstName?.[0] ?? '') + (ctxLastName?.[0] ?? '')}
           </div>
           <div>
@@ -278,7 +278,7 @@ function ProfileTab() {
         <div className="space-y-6">
           <div>
             <h4 className="text-section-title text-text-primary mb-4">Personal Information</h4>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-2 max-sm:grid-cols-1 gap-4">
               <div>
                 <label className="block text-sm text-text-secondary mb-2">First Name</label>
                 <input
@@ -311,7 +311,7 @@ function ProfileTab() {
 
           <div>
             <h4 className="text-section-title text-text-primary mb-4">Call Forwarding</h4>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-2 max-sm:grid-cols-1 gap-4">
               <div>
                 <label className="block text-sm text-text-secondary mb-2">Your cell number</label>
                 <input
@@ -779,7 +779,7 @@ function TeamTab({ scrollTo }: { scrollTo?: SettingsSection }) {
     return (
       <div
         key={m.user_id}
-        className="flex items-center justify-between p-4 bg-surface-1 rounded-app-md border border-border-subtle"
+        className="flex items-center justify-between p-4 bg-surface-1 rounded-app-md border border-border-subtle max-md:flex-col max-md:items-stretch max-md:gap-3"
       >
         <div className="flex items-center gap-4 min-w-0">
           <div className="w-10 h-10 rounded-full bg-gradient-to-br from-accent-from to-accent-to flex items-center justify-center text-white text-sm font-semibold flex-shrink-0">
@@ -792,7 +792,7 @@ function TeamTab({ scrollTo }: { scrollTo?: SettingsSection }) {
             <div className="text-sm text-text-secondary truncate">{m.email}</div>
           </div>
         </div>
-        <div className="flex items-center gap-3 flex-shrink-0">
+        <div className="flex items-center gap-3 flex-shrink-0 max-md:flex-wrap max-md:justify-between">
           <div className="flex flex-col items-end">
             <span
               className={cn(
@@ -3042,7 +3042,7 @@ function DispositionsTab() {
                     </div>
                   </div>
                 ) : (
-                  <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center justify-between gap-3 max-md:flex-col max-md:items-stretch">
                     <div className="min-w-0">
                       <div
                         className={`text-sm font-medium flex items-center gap-1.5 ${d.active ? 'text-white' : 'text-text-secondary line-through'}`}
@@ -3065,7 +3065,7 @@ function DispositionsTab() {
                         {d.ghl_pipeline_stage_id ? ' · moves GHL pipeline stage' : ''}
                       </div>
                     </div>
-                    <div className="flex items-center gap-1 flex-shrink-0">
+                    <div className="flex items-center gap-1 flex-shrink-0 max-md:flex-wrap">
                       <div className="flex flex-col">
                         <button
                           onClick={() => moveDisposition(index, -1)}
@@ -4231,9 +4231,11 @@ function DncTab() {
         <Skeleton className="h-[220px] w-full max-w-2xl rounded-app-lg" />
       ) : (
         <div className="bg-surface-1 rounded-app-lg p-6 border border-border-subtle max-w-2xl">
-          <form onSubmit={handleAdd} className="flex gap-2 mb-4">
+          <form onSubmit={handleAdd} className="flex gap-2 mb-4 max-md:flex-col">
             <input
-              type="text"
+              type="tel"
+              inputMode="tel"
+              autoComplete="off"
               value={newNumber}
               onChange={(e) => setNewNumber(e.target.value)}
               required

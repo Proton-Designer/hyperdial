@@ -148,7 +148,7 @@ export function CoverageGrid({ model, alertBelow, selected, onSelect }: Coverage
       <div className="overflow-x-auto">
         <div
           className="grid min-w-[640px] gap-px rounded-app-md border border-border-subtle bg-border-subtle"
-          style={{ gridTemplateColumns: `56px repeat(${days.length}, minmax(0, 1fr))` }}
+          style={{ gridTemplateColumns: `64px repeat(${days.length}, minmax(0, 1fr))` }}
           role="group"
           aria-label="Team coverage by 30-minute slot. Arrow keys move between slots, Enter edits."
           ref={gridRef}
@@ -206,7 +206,7 @@ const GridRow = memo(function GridRow({
 }) {
   return (
     <>
-      <div className="flex items-start justify-end bg-surface-1 pr-2 text-xs leading-none text-text-muted">
+      <div className="flex items-start justify-end bg-surface-1 pr-2 text-xs leading-none whitespace-nowrap text-text-muted">
         {min % 60 === 0 ? minLabel(min) : ''}
       </div>
       {model.days.map((day) => {

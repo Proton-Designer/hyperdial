@@ -242,7 +242,7 @@ export function TeamGoalsAndBroadcastPanel() {
         className="rounded-app-lg border border-border-subtle bg-surface-1 p-4 space-y-3"
       >
         <h3 className="text-body font-medium text-text-primary">Set a daily goal</h3>
-        <div className="grid grid-cols-2 gap-2">
+        <div className="grid grid-cols-2 max-sm:grid-cols-1 gap-2">
           <select
             value={goalScope}
             onChange={(e) => setGoalScope(e.target.value as GoalScope)}
@@ -324,7 +324,7 @@ export function TeamGoalsAndBroadcastPanel() {
           maxLength={1000}
           className={`${inputClass} resize-none`}
         />
-        <div className="grid grid-cols-2 gap-2">
+        <div className="grid grid-cols-2 max-sm:grid-cols-1 gap-2">
           <select
             value={broadcastPodId}
             onChange={(e) => setBroadcastPodId(e.target.value)}
