@@ -81,7 +81,7 @@ export function TransferModal({ onClose, onStart }: TransferModalProps) {
   return createPortal(
     <div
       ref={modalRef}
-      className="fixed inset-0 flex items-center justify-center p-4 outline-none"
+      className="hd-touch fixed inset-0 flex items-center justify-center p-4 outline-none"
       style={{ zIndex: 10000 }}
       role="dialog"
       aria-modal="true"

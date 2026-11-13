@@ -1140,7 +1140,7 @@ function DialerBody({
   ]);
 
   return (
-    <div className="flex h-full">
+    <div className="hd-touch flex h-full">
       {/* Remote audio is created in useEffect (outside React tree) to avoid circular ref in Telnyx SDK */}
 
       {/* TASK-T3: a portal, not a normal child -- this component's own wrapper div is

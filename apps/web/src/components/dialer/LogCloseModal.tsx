@@ -23,7 +23,7 @@ export function LogCloseModal({ onClose, ...form }: LogCloseModalProps) {
   return createPortal(
     <div
       ref={modalRef}
-      className="fixed inset-0 flex items-center justify-center p-4 outline-none"
+      className="hd-touch fixed inset-0 flex items-center justify-center p-4 outline-none"
       style={{ zIndex: 10001 }}
       role="dialog"
       aria-modal="true"

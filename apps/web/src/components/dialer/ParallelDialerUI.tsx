@@ -138,7 +138,7 @@ function StopConfirmDialog({
 
   return createPortal(
     <div
-      className="fixed inset-0 flex items-center justify-center p-4"
+      className="hd-touch fixed inset-0 flex items-center justify-center p-4"
       style={{ zIndex: 10000 }}
       role="dialog"
       aria-modal="true"
