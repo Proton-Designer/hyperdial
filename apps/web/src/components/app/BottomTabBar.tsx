@@ -48,6 +48,28 @@ export function BottomTabBar({ activeTab, onTabChange, isManager }: BottomTabBar
   const { role } = useOrg();
   const isManagerOrBetter = isManager || role === 'manager';
   const tabs = isManager ? PRIMARY : PRIMARY.filter((t) => t.tab !== 'campaigns');
+  // Same visibility rules as Sidebar.tsx (the desktop list): everything not in the bar is in "More".
+  // Managers (not only owner/admin) get Analytics, Team and Settings; agents get none of the three.
+  const moreItems: { tab: TabType; label: string; icon: typeof LayoutGrid }[] = [
+    ...(isManagerOrBetter
+      ? [
+          { tab: 'analytics' as TabType, label: 'Analytics', icon: BarChart3 },
+          { tab: 'team' as TabType, label: 'Team', icon: UsersRound },
+        ]
+      : []),
+    { tab: 'recordings', label: 'Recordings', icon: Headphones },
+    { tab: 'inbox', label: 'Inbox', icon: InboxIcon },
+    ...(isManagerOrBetter
+      ? [{ tab: 'pros' as TabType, label: 'Onboarded pros', icon: BadgeCheck }]
+      : []),
+    ...(shiftsEnabled ? [{ tab: 'shifts' as TabType, label: 'Shifts', icon: CalendarClock }] : []),
+    ...(isManagerOrBetter
+      ? [
+          { tab: 'team_shifts' as TabType, label: 'Team Shifts', icon: CalendarRange },
+          { tab: 'settings' as TabType, label: 'Settings', icon: Settings },
+        ]
+      : []),
+  ];
 
   return (
     <>
@@ -70,7 +92,7 @@ export function BottomTabBar({ activeTab, onTabChange, isManager }: BottomTabBar
               aria-current={isActive ? 'page' : undefined}
             >
               <Icon className="w-5 h-5" />
-              {t.label}
+              {t.tab === 'dashboard' && role === 'agent' ? 'My stats' : t.label}
             </button>
           );
         })}
@@ -92,104 +114,23 @@ export function BottomTabBar({ activeTab, onTabChange, isManager }: BottomTabBar
             <SheetTitle className="text-text-primary">More</SheetTitle>
           </SheetHeader>
           <div className="flex flex-col gap-1 px-4 pb-4">
-            {isManager && (
-              <>
+            {moreItems.map((item) => {
+              const Icon = item.icon;
+              return (
                 <button
+                  key={item.tab}
                   type="button"
                   onClick={() => {
-                    onTabChange('analytics');
+                    onTabChange(item.tab);
                     setMoreOpen(false);
                   }}
-                  className="flex items-center gap-3 rounded-app-md px-3 py-3 text-text-primary hover:bg-white/5"
+                  className="flex min-h-12 items-center gap-3 rounded-app-md px-3 py-3 text-left text-text-primary active:bg-white/10 hover:bg-white/5"
                 >
-                  <BarChart3 className="w-5 h-5 text-text-secondary" />
-                  Analytics
+                  <Icon className="w-5 h-5 text-text-secondary" />
+                  {item.label}
                 </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    onTabChange('team');
-                    setMoreOpen(false);
-                  }}
-                  className="flex items-center gap-3 rounded-app-md px-3 py-3 text-text-primary hover:bg-white/5"
-                >
-                  <UsersRound className="w-5 h-5 text-text-secondary" />
-                  Team
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    onTabChange('settings');
-                    setMoreOpen(false);
-                  }}
-                  className="flex items-center gap-3 rounded-app-md px-3 py-3 text-text-primary hover:bg-white/5"
-                >
-                  <Settings className="w-5 h-5 text-text-secondary" />
-                  Settings
-                </button>
-              </>
-            )}
-            {shiftsEnabled && (
-              <button
-                type="button"
-                onClick={() => {
-                  onTabChange('shifts');
-                  setMoreOpen(false);
-                }}
-                className="flex items-center gap-3 rounded-app-md px-3 py-3 text-text-primary hover:bg-white/5"
-              >
-                <CalendarClock className="w-5 h-5 text-text-secondary" />
-                Shifts
-              </button>
-            )}
-            {isManagerOrBetter && (
-              <button
-                type="button"
-                onClick={() => {
-                  onTabChange('team_shifts');
-                  setMoreOpen(false);
-                }}
-                className="flex items-center gap-3 rounded-app-md px-3 py-3 text-text-primary hover:bg-white/5"
-              >
-                <CalendarRange className="w-5 h-5 text-text-secondary" />
-                Team Shifts
-              </button>
-            )}
-            <button
-              type="button"
-              onClick={() => {
-                onTabChange('recordings');
-                setMoreOpen(false);
-              }}
-              className="flex items-center gap-3 rounded-app-md px-3 py-3 text-text-primary hover:bg-white/5"
-            >
-              <Headphones className="w-5 h-5 text-text-secondary" />
-              Recordings
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                onTabChange('inbox');
-                setMoreOpen(false);
-              }}
-              className="flex items-center gap-3 rounded-app-md px-3 py-3 text-text-primary hover:bg-white/5"
-            >
-              <InboxIcon className="w-5 h-5 text-text-secondary" />
-              Inbox
-            </button>
-            {isManagerOrBetter && (
-              <button
-                type="button"
-                onClick={() => {
-                  onTabChange('pros');
-                  setMoreOpen(false);
-                }}
-                className="flex items-center gap-3 rounded-app-md px-3 py-3 text-text-primary hover:bg-white/5"
-              >
-                <BadgeCheck className="w-5 h-5 text-text-secondary" />
-                Onboarded pros
-              </button>
-            )}
+              );
+            })}
             <button
               type="button"
               onClick={() => {
@@ -200,7 +141,7 @@ export function BottomTabBar({ activeTab, onTabChange, isManager }: BottomTabBar
                 }
                 signOut();
               }}
-              className="flex items-center gap-3 rounded-app-md px-3 py-3 text-danger hover:bg-white/5"
+              className="flex min-h-12 items-center gap-3 rounded-app-md px-3 py-3 text-left text-danger active:bg-white/10 hover:bg-white/5"
             >
               <LogOut className="w-5 h-5" />
               Sign out
