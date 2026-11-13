@@ -52,6 +52,8 @@ import { dialableNumbers, pickCallerId, decidePendingDial } from '@/lib/dialNumb
 import { useAuth } from '@/contexts/AuthContext';
 import { useOrg } from '@/contexts/OrgContext';
 import { useSingleTabLock } from '@/lib/useSingleTabLock';
+import { useScreenWakeLock } from '@/lib/useWakeLock';
+import { Button } from '@/components/ui/button';
 import {
   WEBRTC_RETRY_BASE_MS,
   nextWebrtcRetryDelayMs,
@@ -614,7 +616,9 @@ function DialerBody({
           stream.getTracks().forEach((t) => t.stop());
         } catch {
           setStartError(
-            'Microphone access is required to take calls. Allow microphone access and try again.'
+            window.matchMedia('(pointer: coarse)').matches
+              ? 'Microphone access is blocked. iPhone: Settings > Safari > Microphone > Allow (or tap aA in the address bar > Website Settings > Microphone). Android: tap the lock icon in the address bar > Permissions > Microphone > Allow. Then tap Start again.'
+              : 'Microphone access is required to take calls. Allow microphone access and try again.'
           );
           return;
         }
@@ -734,6 +738,42 @@ function DialerBody({
       remoteAudioCreated.current = false;
     };
   }, []);
+
+  // TASK-MOB1-B (phones): keep the screen on during a session, and notice when the line was lost while the
+  // screen was off or the tab hidden, so the banner can say so (the Reconnect paths themselves are unchanged).
+  useScreenWakeLock(!!parallelSession.session);
+  const lastHiddenRef = useRef<number | null>(null);
+  const [lineLostWhileHidden, setLineLostWhileHidden] = useState(false);
+  useEffect(() => {
+    const onVis = () => {
+      lastHiddenRef.current = Date.now();
+    };
+    document.addEventListener('visibilitychange', onVis);
+    return () => document.removeEventListener('visibilitychange', onVis);
+  }, []);
+  const parallelStateNow = parallelSession.session?.state ?? null;
+  useEffect(() => {
+    if (parallelStateNow !== 'paused_agent_lost') {
+      setLineLostWhileHidden(false);
+      return;
+    }
+    const t = lastHiddenRef.current;
+    setLineLostWhileHidden(
+      document.visibilityState === 'hidden' || (t !== null && Date.now() - t < 120_000)
+    );
+  }, [parallelStateNow]);
+
+  // iOS/Android only start remote audio from a user gesture; if the browser refuses, offer a tap.
+  const [audioBlocked, setAudioBlocked] = useState(false);
+  useEffect(() => {
+    if (callState !== 'connected') {
+      setAudioBlocked(false);
+      return;
+    }
+    const el = document.getElementById(REMOTE_AUDIO_ID) as HTMLAudioElement | null;
+    if (!el || !el.srcObject || !el.paused) return;
+    el.play().catch(() => setAudioBlocked(true));
+  }, [callState]);
 
   useEffect(() => {
     let timer: ReturnType<typeof setInterval> | null = null;
@@ -1129,6 +1169,23 @@ function DialerBody({
           <MyGoalHeader />
         </div>
         <BroadcastBanner />
+        {audioBlocked && (
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-app-lg border border-warning/30 bg-warning-soft p-4">
+            <p className="text-body text-text-primary">Your phone is blocking call audio.</p>
+            <Button
+              variant="primary"
+              onClick={() => {
+                const el = document.getElementById(REMOTE_AUDIO_ID) as HTMLAudioElement | null;
+                void el
+                  ?.play()
+                  .then(() => setAudioBlocked(false))
+                  .catch(() => undefined);
+              }}
+            >
+              Tap to turn on call audio
+            </Button>
+          </div>
+        )}
         <ShiftDialerBanner
           sessionActive={
             isParallelMode &&
@@ -1202,6 +1259,7 @@ function DialerBody({
                 webrtcConnecting={agentLineConnecting}
                 webrtcError={error}
                 onReconnect={() => void handleReconnectAgentLine()}
+                lostWhileScreenOff={lineLostWhileHidden}
                 reconnecting={parallelSession.loading}
                 onResume={() => void handleParallelResume()}
                 resuming={parallelSession.loading}

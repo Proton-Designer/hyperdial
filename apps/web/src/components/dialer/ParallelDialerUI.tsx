@@ -320,7 +320,7 @@ export function ParallelDialerUI({
               {lines} line{lines === 1 ? '' : 's'} · AMD {amdMode}
             </span>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3">
             <AutoResumePrefControl onChange={onAutoResumePrefChange} />
             {sessionState === 'paused' ? (
               <Button variant="primary" size="sm" onClick={onResume}>

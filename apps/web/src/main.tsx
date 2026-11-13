@@ -19,12 +19,24 @@ if (proFormToken) {
   // TASK-L2a: WrapUpModal in isolation, fixture dispositions. `?dev_wrapup=1`
   // (`&dev_wrapup_fail=1` to exercise the submit-error retry path).
   import('./dev/WrapUpModalHarness.tsx').then(({ WrapUpModalHarness }) => {
-    root.render(<WrapUpModalHarness />);
+    import('./dev/DevAuth.tsx').then(({ DevAuth }) =>
+      root.render(
+        <DevAuth>
+          <WrapUpModalHarness />
+        </DevAuth>
+      )
+    );
   });
 } else if (devHarness?.has('dev_log_close')) {
   // TASK-H03: LogCloseModal with fixture data. `?dev_log_close=1&scenario=normal|nocats|slow|fail|badprefill|notconfigured|failed`.
   import('./dev/LogCloseHarness.tsx').then(({ LogCloseHarness }) => {
-    root.render(<LogCloseHarness />);
+    import('./dev/DevAuth.tsx').then(({ DevAuth }) =>
+      root.render(
+        <DevAuth>
+          <LogCloseHarness />
+        </DevAuth>
+      )
+    );
   });
 } else if (devHarness?.has('dev_dialer_states')) {
   // TASK-L2b: every dial_sessions.state rendered against ParallelDialerUI/DialerStateBanner/
@@ -36,13 +48,25 @@ if (proFormToken) {
   // TASK-L7: StartSessionPanel's own states (no campaigns/list/pre-flight failing/starting/
   // 409 conflict) with fixture data, no live session/DB. `?dev_start_session=1`.
   import('./dev/StartSessionHarness.tsx').then(({ StartSessionHarness }) => {
-    root.render(<StartSessionHarness />);
+    import('./dev/DevAuth.tsx').then(({ DevAuth }) =>
+      root.render(
+        <DevAuth>
+          <StartSessionHarness />
+        </DevAuth>
+      )
+    );
   });
 } else if (devHarness?.has('dev_incoming_call')) {
   // TASK-I1 (INB-2): IncomingCallBanner in isolation, fixture caller, no live WebRTC/DB.
   // `?dev_incoming_call=1`.
   import('./dev/IncomingCallHarness.tsx').then(({ IncomingCallHarness }) => {
-    root.render(<IncomingCallHarness />);
+    import('./dev/DevAuth.tsx').then(({ DevAuth }) =>
+      root.render(
+        <DevAuth>
+          <IncomingCallHarness />
+        </DevAuth>
+      )
+    );
   });
 } else if (devHarness?.has('dev_webrtc_retry')) {
   // TASK-I1 review fix (eng1 finding #2): the WebRTC connect-retry backoff's pure math,
@@ -88,7 +112,13 @@ if (proFormToken) {
 } else if (devHarness?.has('dev_post_call')) {
   // TASK-H27: the post-call card (outcome chips, notes, Save). `?dev_post_call=1&record=ok|fail`.
   import('./dev/PostCallHarness.tsx').then(({ PostCallHarness }) => {
-    root.render(<PostCallHarness />);
+    import('./dev/DevAuth.tsx').then(({ DevAuth }) =>
+      root.render(
+        <DevAuth>
+          <PostCallHarness />
+        </DevAuth>
+      )
+    );
   });
 } else if (devHarness?.has('dev_shifts')) {
   // TASK-F01: the intern Shifts screen against fixture data, no live backend.

@@ -42,6 +42,8 @@ interface DialerStateBannerProps {
   webrtcConnecting: boolean;
   webrtcError: string | null;
   onReconnect: () => void;
+  /** TASK-MOB1-B: the line dropped while the phone's screen was off or the tab hidden. */
+  lostWhileScreenOff?: boolean;
   reconnecting: boolean;
   onResume: () => void;
   resuming: boolean;
@@ -63,6 +65,7 @@ export function DialerStateBanner({
   webrtcConnecting,
   webrtcError,
   onReconnect,
+  lostWhileScreenOff,
   reconnecting,
   onResume,
   resuming,
@@ -85,8 +88,16 @@ export function DialerStateBanner({
       <StatusBanner
         tone="error"
         icon={<PhoneOff className="w-5 h-5" />}
-        title="Agent audio lost — Reconnect"
-        detail="The customer is still on the call. Reconnect to rejoin -- they have not been hung up on."
+        title={
+          lostWhileScreenOff
+            ? 'Your phone line dropped while the screen was off — Reconnect'
+            : 'Agent audio lost — Reconnect'
+        }
+        detail={
+          lostWhileScreenOff
+            ? 'Keep HyperDial open and the screen on during a session. The customer is still on the call; tap Reconnect to rejoin.'
+            : 'The customer is still on the call. Reconnect to rejoin -- they have not been hung up on.'
+        }
         action={
           <Button variant="primary" onClick={onReconnect} disabled={reconnecting}>
             {reconnecting ? 'Reconnecting…' : 'Reconnect'}

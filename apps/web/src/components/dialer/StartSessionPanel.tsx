@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { Phone, Play, Users } from 'lucide-react';
 import { isViewOnly, VIEW_ONLY_MESSAGE } from '@/lib/viewAs';
 import type { CampaignWithStats } from '@/lib/api';
@@ -32,6 +33,45 @@ function callerIdLabel(campaign: CampaignWithStats, userNumbers: UserPhoneNumber
   return match?.phone_number ?? 'Unknown number';
 }
 
+const PHONE_TIP_KEY = 'hd_phone_tip_seen';
+
+/** TASK-MOB1-B: shown once per device on a phone before the first Start. */
+function PhoneTip() {
+  const [show, setShow] = useState(() => {
+    try {
+      return window.matchMedia('(pointer: coarse)').matches && !localStorage.getItem(PHONE_TIP_KEY);
+    } catch {
+      return false;
+    }
+  });
+  if (!show) return null;
+  return (
+    <div role="note" className="mb-6 rounded-app-lg border border-accent-to/30 bg-accent-to/10 p-4">
+      <p className="text-body font-medium text-text-primary mb-1">Dialing from your phone?</p>
+      <ul className="text-body text-text-secondary list-disc pl-5 space-y-1">
+        <li>Keep the screen on and HyperDial open while you dial.</li>
+        <li>Use headphones with a microphone.</li>
+        <li>If the line drops, tap Reconnect and the customer stays on the call.</li>
+      </ul>
+      <Button
+        variant="fe-secondary"
+        size="sm"
+        className="mt-3"
+        onClick={() => {
+          try {
+            localStorage.setItem(PHONE_TIP_KEY, '1');
+          } catch {
+            // private mode: the tip simply shows again next time
+          }
+          setShow(false);
+        }}
+      >
+        Got it
+      </Button>
+    </div>
+  );
+}
+
 export function StartSessionPanel({
   campaigns,
   campaignsError,
@@ -56,6 +96,8 @@ export function StartSessionPanel({
       <p className="text-body text-text-secondary mb-6">
         Pick a campaign below. We'll register your phone line first, then start dialing.
       </p>
+
+      <PhoneTip />
 
       {myNumbers.length > 0 && (
         <p className="text-meta text-text-muted mb-6">
