@@ -445,7 +445,7 @@ export function WrapUpModal({
     >
       {/* No onClick here on purpose: a backdrop click must do nothing (unskippable). */}
       <div className="absolute inset-0 bg-black/70" aria-hidden="true" />
-      <div className="relative z-[1] flex max-h-[calc(100dvh-1rem)] max-sm:max-h-[calc(100%-0.5rem)] w-full max-w-lg flex-col rounded-app-lg border border-border-subtle bg-surface-1 shadow-app-md">
+      <div className="relative z-[1] flex max-h-[min(calc(100dvh-1rem),100%)] w-full max-w-lg flex-col rounded-app-lg border border-border-subtle bg-surface-1 shadow-app-md">
         <div className="border-b border-border-subtle p-4">
           <h2 id="wrapup-title" className="text-page-title text-text-primary">
             Wrap up the call
