@@ -146,7 +146,7 @@ export function AddContactModal({ open, onClose, onSuccess }: AddContactModalPro
         tabIndex={-1}
         initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
-        className="relative z-[1] w-full max-w-lg rounded-app-lg border border-border-subtle bg-surface-1 shadow-app-md outline-none max-md:flex max-md:h-[100dvh] max-md:max-w-none max-md:flex-col max-md:rounded-none max-md:border-0"
+        className="relative z-[1] flex max-h-[calc(100dvh-1rem)] w-full max-w-lg flex-col rounded-app-lg border border-border-subtle bg-surface-1 shadow-app-md outline-none max-md:h-[100dvh] max-md:max-h-none max-md:max-w-none max-md:rounded-none max-md:border-0"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between border-b border-border-subtle p-4 max-md:pt-[max(1rem,env(safe-area-inset-top))]">
@@ -160,7 +160,7 @@ export function AddContactModal({ open, onClose, onSuccess }: AddContactModalPro
             <X className="w-5 h-5" />
           </button>
         </div>
-        <div className="p-4 space-y-4 max-h-[70vh] overflow-y-auto max-md:max-h-none max-md:min-h-0 max-md:flex-1">
+        <div className="p-4 space-y-4 min-h-0 flex-1 overflow-y-auto md:max-h-[70vh]">
           {error && (
             <div className="rounded-app-md bg-danger-soft border border-danger/30 text-danger text-body p-3">
               {error}

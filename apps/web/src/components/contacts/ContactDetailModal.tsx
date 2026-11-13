@@ -236,7 +236,7 @@ export function ContactDetailModal({
       <motion.div
         initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
-        className="relative z-[101] w-full max-w-lg rounded-2xl border border-white/10 bg-surface-1 shadow-xl overflow-hidden max-md:flex max-md:h-[100dvh] max-md:max-w-none max-md:flex-col max-md:rounded-none max-md:border-0"
+        className="relative z-[101] flex max-h-[calc(100dvh-1rem)] w-full max-w-lg flex-col rounded-2xl border border-white/10 bg-surface-1 shadow-xl overflow-hidden max-md:h-[100dvh] max-md:max-h-none max-md:max-w-none max-md:rounded-none max-md:border-0"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between border-b border-white/10 p-4 max-md:pt-[max(1rem,env(safe-area-inset-top))]">
@@ -265,7 +265,7 @@ export function ContactDetailModal({
           </div>
         </div>
 
-        <div className="p-6 space-y-4 max-h-[70vh] overflow-y-auto max-md:max-h-none max-md:min-h-0 max-md:flex-1 max-md:p-4">
+        <div className="p-6 space-y-4 min-h-0 flex-1 overflow-y-auto md:max-h-[70vh] max-md:p-4">
           {error && (
             <div className="rounded-lg bg-danger/10 border border-danger/30 text-danger text-sm p-3">
               {error}

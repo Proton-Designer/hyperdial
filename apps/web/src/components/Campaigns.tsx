@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Search, Plus, Target, Play, RefreshCw } from 'lucide-react';
+import { Search, Plus, Target, Play, RefreshCw, ServerCrash } from 'lucide-react';
 import {
   listCampaigns,
   createCampaign,
@@ -77,6 +77,7 @@ export function Campaigns({
   const isDesktop = breakpoint === 'desktop';
   const [campaigns, setCampaigns] = useState<CampaignWithStats[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [filterStatus, setFilterStatus] = useState<'all' | 'active' | 'paused' | 'completed'>(
     'all'
@@ -123,9 +124,10 @@ export function Campaigns({
 
   const fetchCampaigns = useCallback(() => {
     setLoading(true);
+    setLoadError(null);
     listCampaigns()
       .then(setCampaigns)
-      .catch(() => setCampaigns([]))
+      .catch((e) => setLoadError(e instanceof Error ? e.message : 'Failed to load campaigns'))
       .finally(() => setLoading(false));
   }, []);
 
@@ -284,6 +286,18 @@ export function Campaigns({
               ))}
             </div>
           )
+        ) : loadError && campaigns.length === 0 ? (
+          <EmptyState
+            icon={ServerCrash}
+            title="Couldn't load campaigns"
+            body={loadError}
+            action={
+              <Button variant="fe-secondary" onClick={fetchCampaigns}>
+                <RefreshCw className="w-4 h-4" />
+                Try again
+              </Button>
+            }
+          />
         ) : filteredCampaigns.length === 0 ? (
           <EmptyState
             icon={Target}

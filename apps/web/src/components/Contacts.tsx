@@ -12,6 +12,7 @@ import {
   Download,
   RefreshCw,
   Users,
+  ServerCrash,
 } from 'lucide-react';
 import {
   listContacts,
@@ -80,6 +81,7 @@ export function Contacts({ onNavigateToDialer }: { onNavigateToDialer?: () => vo
   const canManage = role === 'owner' || role === 'admin';
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [categoryFilter, setCategoryFilter] = useState<string>('All');
   const [contactStatusFilter, setContactStatusFilter] = useState<string>('All');
@@ -95,9 +97,10 @@ export function Contacts({ onNavigateToDialer }: { onNavigateToDialer?: () => vo
 
   const fetchContacts = () => {
     setLoading(true);
+    setLoadError(null);
     listContacts()
       .then(setContacts)
-      .catch(() => setContacts([]))
+      .catch((e) => setLoadError(e instanceof Error ? e.message : 'Failed to load contacts'))
       .finally(() => setLoading(false));
   };
 
@@ -345,6 +348,18 @@ export function Contacts({ onNavigateToDialer }: { onNavigateToDialer?: () => vo
         ) : (
           <ListSkeleton rows={8} />
         )
+      ) : loadError && contacts.length === 0 ? (
+        <EmptyState
+          icon={ServerCrash}
+          title="Couldn't load contacts"
+          body={loadError}
+          action={
+            <Button variant="fe-secondary" onClick={fetchContacts}>
+              <RefreshCw className="w-4 h-4" />
+              Try again
+            </Button>
+          }
+        />
       ) : filteredContacts.length === 0 ? (
         <EmptyState
           icon={Users}
