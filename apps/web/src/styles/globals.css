@@ -371,3 +371,13 @@ html {
 .h-safe-bottom {
   height: env(safe-area-inset-bottom, 0px);
 }
+
+/* TASK-MOB1: iOS zooms the page when a focused field is under 16px. Unlayered utilities such as .text-body
+   beat Tailwind's max-md:text-base, so force 16px for text-like fields on phones. Desktop (>=768) is untouched. */
+@media (max-width: 767px) {
+  input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='file']),
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+}

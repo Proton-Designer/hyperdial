@@ -222,7 +222,7 @@ export function TopNavigation({ activeTab = 'dashboard', onTabChange }: TopNavig
           type="button"
           onClick={() => onTabChange?.('dashboard')}
           aria-label="Go to dashboard"
-          className="flex items-center rounded-app-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-to"
+          className="flex min-h-11 min-w-11 items-center justify-center rounded-app-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-to md:min-h-0 md:min-w-0 md:justify-start"
         >
           {isMobile ? <LogoMark size={28} /> : <Logo size={28} wordmarkClassName="text-base" />}
         </button>
@@ -316,7 +316,7 @@ export function TopNavigation({ activeTab = 'dashboard', onTabChange }: TopNavig
             type="button"
             onClick={openPalette}
             aria-label="Search"
-            className="ml-auto rounded-app-md p-2 text-text-secondary transition-colors hover:bg-white/5 hover:text-text-primary"
+            className="ml-auto flex size-11 items-center justify-center rounded-app-md text-text-secondary transition-colors hover:bg-white/5 hover:text-text-primary"
           >
             <Search className="w-5 h-5" />
           </button>
@@ -354,7 +354,7 @@ export function TopNavigation({ activeTab = 'dashboard', onTabChange }: TopNavig
           <button
             type="button"
             onClick={() => setShowNotifications(!showNotifications)}
-            className="relative rounded-app-md p-2 transition-colors hover:bg-white/5"
+            className="relative flex items-center justify-center rounded-app-md p-2 max-md:size-11 transition-colors hover:bg-white/5"
             aria-label="Notifications"
           >
             <Bell className="w-5 h-5 text-text-secondary" />
@@ -382,7 +382,7 @@ export function TopNavigation({ activeTab = 'dashboard', onTabChange }: TopNavig
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: -10 }}
                   transition={{ duration: 0.2 }}
-                  className="absolute right-0 top-full mt-2 flex max-h-[420px] w-[92vw] max-w-[360px] flex-col overflow-hidden rounded-app-lg border border-border-strong bg-surface-1/95 shadow-app-md backdrop-blur-xl z-50"
+                  className="absolute right-0 top-full mt-2 flex max-h-[420px] w-[92vw] max-w-[360px] max-md:fixed max-md:inset-x-3 max-md:right-3 max-md:w-auto max-md:max-w-none max-md:max-h-[calc(100dvh-140px)] flex-col overflow-hidden rounded-app-lg border border-border-strong bg-surface-1/95 shadow-app-md backdrop-blur-xl z-50"
                 >
                   <div className="flex items-center justify-between border-b border-border-subtle p-3">
                     <span className="font-semibold text-text-primary">Notifications</span>
