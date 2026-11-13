@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import '@/styles/touch.css';
 import { motion, AnimatePresence } from 'motion/react';
 import { Search, Plus, Target, Play, RefreshCw } from 'lucide-react';
 import {
@@ -216,7 +217,7 @@ export function Campaigns({
 
   return (
     <div className="h-full bg-surface-0">
-      <div className="p-4 sm:p-8 max-w-[1600px] mx-auto">
+      <div className="hd-touch p-4 sm:p-8 max-w-[1600px] mx-auto">
         <PageHeader
           title="Campaigns"
           description="Manage your outreach campaigns"
@@ -457,7 +458,7 @@ export function Campaigns({
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             onClick={() => !creating && setNewCampaignOpen(false)}
-            className="fixed inset-0 z-[9999] flex items-center justify-center p-4 sm:p-6 bg-black/60 backdrop-blur-sm"
+            className="hd-touch fixed inset-0 z-[9999] flex items-center justify-center p-4 sm:p-6 bg-black/60 backdrop-blur-sm"
           >
             {/* B1: `aria-hidden` used to sit on THIS wrapper, which is an ANCESTOR of the
                 `role="dialog"` panel below, not a sibling backdrop like every other modal in

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import '@/styles/touch.css';
 import { createPortal } from 'react-dom';
 import { motion } from 'motion/react';
 import { Loader2, X } from 'lucide-react';
@@ -164,7 +165,10 @@ export function AddExistingContactsModal({
         : 'Add contacts';
 
   return createPortal(
-    <div className="fixed inset-0 flex items-center justify-center p-2" style={{ zIndex: 10000 }}>
+    <div
+      className="hd-touch fixed inset-0 flex items-center justify-center p-2 max-md:p-0"
+      style={{ zIndex: 10000 }}
+    >
       <div
         className="absolute inset-0 bg-black/60"
         onClick={submitting ? undefined : onClose}
@@ -178,11 +182,11 @@ export function AddExistingContactsModal({
         aria-label="Add existing contacts"
         initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
-        className="relative z-[1] w-full max-w-2xl flex flex-col rounded-app-lg border border-border-subtle bg-surface-1 shadow-app-md outline-none"
+        className="relative z-[1] w-full max-w-2xl flex flex-col rounded-app-lg border border-border-subtle bg-surface-1 shadow-app-md outline-none max-md:h-[100dvh] max-md:max-w-none max-md:!max-h-none max-md:rounded-none max-md:border-0"
         style={{ maxHeight: 'calc(100vh - 16px)', minHeight: 0 }}
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between border-b border-border-subtle p-4 flex-shrink-0">
+        <div className="flex items-center justify-between border-b border-border-subtle p-4 flex-shrink-0 max-md:pt-[max(1rem,env(safe-area-inset-top))]">
           <h2 className="text-page-title text-text-primary">Add existing contacts</h2>
           <button
             type="button"

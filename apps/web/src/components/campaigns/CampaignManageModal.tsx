@@ -1,4 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import '@/styles/touch.css';
+import { TapCheckbox } from '@/components/mobile/TapCheckbox';
 import { contactHeadline, contactSecondaryName } from '@/lib/contactName';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'motion/react';
@@ -455,6 +457,13 @@ function RetryRulesCard({ campaignId }: { campaignId: string }) {
   );
 }
 
+function leadStatusClass(status: string): string {
+  if (status === 'completed') return 'bg-success/10 text-success';
+  if (status === 'passthrough') return 'bg-accent-to/10 text-accent-to';
+  if (status === 'removed') return 'bg-text-secondary/10 text-text-secondary';
+  return 'bg-warning/10 text-warning';
+}
+
 export function CampaignManageModal({
   open,
   campaignId,
@@ -853,19 +862,22 @@ export function CampaignManageModal({
   if (!open) return null;
 
   return createPortal(
-    <div style={{ position: 'fixed', inset: 0, zIndex: 9999, isolation: 'isolate' }}>
+    <div
+      className="hd-touch"
+      style={{ position: 'fixed', inset: 0, zIndex: 9999, isolation: 'isolate' }}
+    >
       <div className="fixed inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} aria-hidden />
       <motion.div
         ref={modalRef}
         tabIndex={-1}
         initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
-        className="fixed inset-8 bg-surface-1 rounded-3xl border border-white/10 shadow-xl overflow-hidden flex flex-col outline-none"
+        className="fixed inset-8 max-md:inset-0 bg-surface-1 rounded-3xl max-md:rounded-none max-md:border-0 border border-white/10 shadow-xl overflow-hidden flex flex-col outline-none"
         style={{ zIndex: 1 }}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="flex items-center justify-between p-6 border-b border-white/5 flex-shrink-0">
+        <div className="flex items-center justify-between p-6 max-md:p-4 max-md:pt-[max(1rem,env(safe-area-inset-top))] border-b border-white/5 flex-shrink-0">
           <div>
             {loading ? (
               <div className="flex items-center gap-2 text-white">
@@ -1522,13 +1534,112 @@ export function CampaignManageModal({
                   </div>
                 ) : (
                   <>
-                    <div className="overflow-x-auto">
+                    <div className="md:hidden space-y-2">
+                      {paginatedLeads.length > 0 && (
+                        <div className="flex items-center gap-2 px-1 text-xs text-text-secondary">
+                          <TapCheckbox
+                            checked={paginatedLeads.every((l) => selectedLeadIds.has(l.contact_id))}
+                            onChange={(e) => {
+                              if (e.target.checked) selectAllOnPage();
+                              else setSelectedLeadIds(new Set());
+                            }}
+                            aria-label="Select all on page"
+                          />
+                          Select all on page
+                        </div>
+                      )}
+                      {paginatedLeads.map((lead) => (
+                        <div
+                          key={lead.id}
+                          className="rounded-app-lg border border-white/10 bg-surface-2/40 p-3 space-y-2"
+                        >
+                          <div className="flex items-start gap-2">
+                            <TapCheckbox
+                              checked={selectedLeadIds.has(lead.contact_id)}
+                              onChange={() => toggleSelectLead(lead.contact_id)}
+                              aria-label={`Select ${contactHeadline(lead.contact)}`}
+                            />
+                            <div className="min-w-0 flex-1">
+                              <div className="truncate font-medium text-white">
+                                {contactHeadline(lead.contact)}
+                              </div>
+                              {contactSecondaryName(lead.contact) && (
+                                <div className="truncate text-xs text-text-secondary">
+                                  {contactSecondaryName(lead.contact)}
+                                </div>
+                              )}
+                              <div className="truncate text-accent-to">
+                                {lead.contact?.phone_number ?? '—'}
+                              </div>
+                            </div>
+                            <span
+                              className={`flex-shrink-0 px-2 py-0.5 rounded text-xs ${leadStatusClass(lead.status)}`}
+                            >
+                              {lead.status}
+                            </span>
+                          </div>
+                          <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-text-secondary">
+                            <span>{lead.contact?.business_type ?? '—'}</span>
+                            <span>{lead.contact?.category ?? '—'}</span>
+                            <span>{lead.contact?.contact_status ?? '—'}</span>
+                            <span>{lead.list_name ?? lead.contact?.import_list ?? '—'}</span>
+                            <span>{formatDate(lead.added_at)}</span>
+                          </div>
+                          <div className="flex items-center justify-between gap-2">
+                            <select
+                              value={lead.priority}
+                              onChange={(e) =>
+                                void handlePriorityChange(
+                                  lead.id,
+                                  e.target.value as CampaignLeadPriority
+                                )
+                              }
+                              aria-label="Priority"
+                              className="rounded-app-md bg-surface-1 border border-white/10 px-2 py-1 text-xs text-white focus:outline-none"
+                            >
+                              <option value="low">Low</option>
+                              <option value="normal">Normal</option>
+                              <option value="high">High</option>
+                            </select>
+                            <div className="flex items-center gap-1">
+                              <button
+                                type="button"
+                                onClick={() => handleCallLead(lead.contact?.phone_number ?? null)}
+                                className="p-2 rounded-lg hover:bg-accent-to/20 text-accent-to"
+                                aria-label="Call"
+                              >
+                                <Phone className="w-4 h-4" />
+                              </button>
+                              {lead.status === 'queued' && (
+                                <button
+                                  type="button"
+                                  onClick={() => void handleSkipLead(lead.id)}
+                                  className="p-2 rounded-lg hover:bg-white/10 text-text-secondary"
+                                  aria-label="Skip for now"
+                                >
+                                  <SkipForward className="w-4 h-4" />
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => handleRemoveLead(lead.contact_id)}
+                                className="p-2 rounded-lg hover:bg-danger/20 text-danger"
+                                aria-label="Remove from campaign"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="hidden md:block overflow-x-auto">
                       <table className="w-full text-sm">
                         <thead>
                           <tr className="text-left text-text-secondary border-b border-white/5">
                             <th className="pb-2 pr-2">
-                              <input
-                                type="checkbox"
+                              <TapCheckbox
+                                aria-label="Select all on page"
                                 checked={
                                   paginatedLeads.length > 0 &&
                                   paginatedLeads.every((l) => selectedLeadIds.has(l.contact_id))
@@ -1555,8 +1666,8 @@ export function CampaignManageModal({
                           {paginatedLeads.map((lead) => (
                             <tr key={lead.id} className="border-b border-white/5 hover:bg-white/5">
                               <td className="py-3 pr-2">
-                                <input
-                                  type="checkbox"
+                                <TapCheckbox
+                                  aria-label={`Select ${contactHeadline(lead.contact)}`}
                                   checked={selectedLeadIds.has(lead.contact_id)}
                                   onChange={() => toggleSelectLead(lead.contact_id)}
                                 />
