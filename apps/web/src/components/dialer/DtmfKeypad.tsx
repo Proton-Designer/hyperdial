@@ -1,53 +1,20 @@
-import { useRef, useState } from 'react';
 import { Grid3x3 } from 'lucide-react';
-import { sendDialerDtmf } from '@/lib/api';
+import type { DtmfQueue } from '@/lib/useDtmfQueue';
 
 const KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '*', '0', '#'];
 
 /** TASK-H11: keypad for the live call, so an agent can answer "press 1 to be connected" menus.
- *  Collapsed by default (the call controls stay compact); each tap sends that one tone. */
+ *  Collapsed by default (the call controls stay compact); each tap sends that one tone.
+ *  The queue lives in `useDtmfQueue` (one instance per dialer, shared with the phone Keypad sheet). */
 export function DtmfKeypad({
-  sessionId,
+  dtmf,
   defaultOpen = false,
 }: {
-  sessionId: string | null;
+  dtmf: DtmfQueue;
   defaultOpen?: boolean;
 }) {
-  const [sent, setSent] = useState('');
-  const [error, setError] = useState<string | null>(null);
-  // TASK-H15: keys tapped while a request is in flight are queued and sent in order (up to 16 per request, the server's
-  // cap), one request at a time, so quick multi-digit presses are never dropped.
-  const pending = useRef('');
-  const flushing = useRef(false);
-
+  const { sessionId, sent, error, press } = dtmf;
   if (!sessionId) return null;
-
-  const flush = async () => {
-    if (flushing.current) return;
-    flushing.current = true;
-    try {
-      while (pending.current) {
-        const batch = pending.current.slice(0, 16);
-        pending.current = pending.current.slice(batch.length);
-        try {
-          await sendDialerDtmf(sessionId, batch);
-          setSent((prev) => (prev + batch).slice(-16));
-        } catch (err) {
-          // Later queued keys would be out of sequence after a failed one: drop them and tell the agent.
-          pending.current = '';
-          setError(err instanceof Error ? err.message : 'Failed to send keypad tones');
-        }
-      }
-    } finally {
-      flushing.current = false;
-    }
-  };
-
-  const press = (key: string) => {
-    setError(null);
-    pending.current += key;
-    void flush();
-  };
 
   return (
     <details

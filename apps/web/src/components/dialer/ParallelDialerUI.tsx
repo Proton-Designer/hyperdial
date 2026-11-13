@@ -5,6 +5,7 @@ import { Play } from 'lucide-react';
 import { ContactBatchCard } from './ContactBatchCard';
 import { LiveCallPanel } from './LiveCallPanel';
 import { DtmfKeypad } from './DtmfKeypad';
+import { useDtmfQueue } from '@/lib/useDtmfQueue';
 import { LogCloseForm } from './LogCloseForm';
 import { useCloseDraft } from '@/lib/closeDraft';
 import { TransferModal } from './TransferModal';
@@ -257,6 +258,8 @@ export function ParallelDialerUI({
   const [showTransferModal, setShowTransferModal] = useState(false);
   // TASK-MOB6: the keypad opens from the phone call-controls bar.
   const [showKeypad, setShowKeypad] = useState(false);
+  // TASK-MOB6b: ONE tone queue for the inline keypad and the Keypad sheet (digits cannot interleave or double-send).
+  const dtmf = useDtmfQueue(sessionId);
   const activeTransferForPanel = activeTransfer
     ? {
         type: activeTransfer.type,
@@ -272,6 +275,11 @@ export function ParallelDialerUI({
   // it loads, same graceful-degradation spirit as every other nullable CRD-1 field.
   const connectedContactPreview = batchContacts.find((c) => c.id === connectedContactId) ?? null;
   const connectedCallCard = connectedContact ?? connectedContactPreview;
+  const hasLiveCall = !!connectedCallCard;
+  const resetDtmf = dtmf.reset;
+  useEffect(() => {
+    if (!hasLiveCall) resetDtmf();
+  }, [hasLiveCall, resetDtmf]);
   const inboundContactName = inboundCall
     ? inboundCall.contact
       ? inboundCall.contact.business_name ||
@@ -423,14 +431,14 @@ export function ParallelDialerUI({
             onOpenKeypad={sessionId ? () => setShowKeypad(true) : undefined}
             onEndCall={onEndLiveCall}
           />
-          <DtmfKeypad sessionId={sessionId} />
+          <DtmfKeypad dtmf={dtmf} />
           <Sheet open={showKeypad} onOpenChange={setShowKeypad}>
             <SheetContent side="bottom" className="bg-surface-1 border-border-subtle">
               <SheetHeader>
                 <SheetTitle className="text-text-primary">Keypad</SheetTitle>
               </SheetHeader>
               <div className="px-4 pb-6">
-                <DtmfKeypad sessionId={sessionId} defaultOpen />
+                <DtmfKeypad dtmf={dtmf} defaultOpen />
               </div>
             </SheetContent>
           </Sheet>

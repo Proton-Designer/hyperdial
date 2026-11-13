@@ -1,9 +1,16 @@
 import { useEffect, useMemo, useState } from 'react';
 import { ParallelDialerUI } from '@/components/dialer/ParallelDialerUI';
 import { DialerStateBanner } from '@/components/dialer/DialerStateBanner';
+import { ActiveCall } from '@/components/dialer/ActiveCall';
 import { WrapUpModal } from '@/components/dialer/WrapUpModal';
 import type { BatchContactPreview } from '@/hooks/useDialerSession';
-import type { Disposition, DialSessionState, SubmitDispositionResult } from '@/lib/api';
+import type {
+  ActiveTransfer,
+  InboundCallInfo,
+  Disposition,
+  DialSessionState,
+  SubmitDispositionResult,
+} from '@/lib/api';
 
 /**
  * Dev-only fixture harness for TASK-L2b's own acceptance line ("dev render of each state
@@ -65,6 +72,10 @@ const FIXTURE_DISPOSITIONS: Disposition[] = [
   },
 ];
 
+/** TASK-MOB6b: sub-variants of the on_call state (and a manual-dial call), picked by buttons or `&fx=`. */
+const CALL_FIXTURES = ['live', 'recording', 'held', 'warm', 'inbound', 'manual'] as const;
+type CallFixture = (typeof CALL_FIXTURES)[number];
+
 const ANSWERED_2MIN_AGO = new Date(Date.now() - 2 * 60_000 - 15_000).toISOString();
 
 export function DialerStatesHarness() {
@@ -102,6 +113,11 @@ export function DialerStatesHarness() {
   }, [autoResumeSecondsLeft]);
   // TASK-T7: real fixture state (not a no-op) so the Mute button visually toggles in this harness.
   const [muted, setMuted] = useState(false);
+  const [fx, setFx] = useState<CallFixture>(() => {
+    const v = new URLSearchParams(window.location.search).get('fx');
+    return (CALL_FIXTURES as readonly string[]).includes(v ?? '') ? (v as CallFixture) : 'live';
+  });
+  const [recPaused, setRecPaused] = useState(false);
 
   const scenario = useMemo(() => {
     switch (selectedState) {
@@ -121,12 +137,12 @@ export function DialerStatesHarness() {
         return {
           batchContacts: FIXTURE_CONTACTS,
           answeredContactId: null,
-          connectedContactId: FIXTURE_CONTACTS[0].id,
+          connectedContactId: fx === 'inbound' || fx === 'manual' ? null : FIXTURE_CONTACTS[0].id,
         };
       default:
         return { batchContacts: [], answeredContactId: null, connectedContactId: null };
     }
-  }, [selectedState]);
+  }, [selectedState, fx]);
 
   const fixtureLoadDispositions = () => Promise.resolve(FIXTURE_DISPOSITIONS);
   const fixtureLoadHistory = () => Promise.resolve([]);
@@ -165,6 +181,24 @@ export function DialerStatesHarness() {
             </button>
           ))}
         </div>
+        {selectedState === 'on_call' && (
+          <div className="mt-3 flex flex-wrap gap-2">
+            {CALL_FIXTURES.map((f) => (
+              <button
+                key={f}
+                type="button"
+                onClick={() => setFx(f)}
+                className={`px-3 py-1.5 rounded-lg text-sm border ${
+                  fx === f
+                    ? 'border-[#00D9FF] bg-[#00D9FF]/10 text-white'
+                    : 'border-white/10 text-[#B0BEC5] hover:text-white'
+                }`}
+              >
+                call: {f}
+              </button>
+            ))}
+          </div>
+        )}
         {wrapUpResult && (
           <p className="text-[#00E676] text-sm mt-3">
             Wrap-up submitted → session returns to "dialing" (real backend behavior; this harness
@@ -270,11 +304,44 @@ export function DialerStatesHarness() {
           connectedContactId={scenario.connectedContactId}
           connectedLegId={scenario.connectedContactId ? 'dev-leg' : null}
           connectedAnsweredAt={scenario.connectedContactId ? ANSWERED_2MIN_AGO : null}
-          inboundCall={null}
+          sessionId={selectedState === 'on_call' ? 'dev-session' : null}
+          inboundCall={
+            selectedState === 'on_call' && fx === 'inbound'
+              ? ({
+                  id: 'dev-inbound',
+                  from_e164: '+15125550199',
+                  contact_id: null,
+                  answered_at: ANSWERED_2MIN_AGO,
+                  contact: {
+                    business_name: 'Riverside Realty',
+                    first_name: null,
+                    last_name: null,
+                    phone_number: '+15125550199',
+                  },
+                } satisfies InboundCallInfo)
+              : null
+          }
           coachingMode={null}
-          heldAt={null}
-          recordingStatus={null}
-          activeTransfer={null}
+          heldAt={selectedState === 'on_call' && fx === 'held' ? ANSWERED_2MIN_AGO : null}
+          recordingStatus={
+            selectedState === 'on_call' && (fx === 'recording' || fx === 'live')
+              ? recPaused
+                ? 'paused'
+                : 'recording'
+              : null
+          }
+          activeTransfer={
+            selectedState === 'on_call' && fx === 'warm'
+              ? ({
+                  id: 'dev-transfer',
+                  type: 'warm',
+                  target_kind: 'external',
+                  target_user_id: null,
+                  target_number: '+15125550177',
+                  status: 'connected',
+                } satisfies ActiveTransfer)
+              : null
+          }
           connectedContact={
             scenario.connectedContactId
               ? {
@@ -328,12 +395,24 @@ export function DialerStatesHarness() {
           onEndLiveCall={() => window.alert('End live call clicked (fixture, no-op)')}
           onHoldCall={() => window.alert('Hold clicked (fixture, no-op)')}
           onResumeCall={() => window.alert('Resume call clicked (fixture, no-op)')}
-          onToggleRecording={() => window.alert('Toggle recording clicked (fixture, no-op)')}
+          onToggleRecording={() => setRecPaused((p) => !p)}
           onStartTransfer={async () => window.alert('Start transfer (fixture, no-op)')}
           onCompleteTransfer={() => window.alert('Complete transfer clicked (fixture, no-op)')}
           onCancelTransfer={() => window.alert('Cancel transfer clicked (fixture, no-op)')}
         />
       </div>
+
+      {selectedState === 'on_call' && fx === 'manual' && (
+        <div className="mt-6 px-4">
+          <ActiveCall
+            outboundNumber="+15125550123"
+            fromNumber="+15125550000"
+            duration="01:12"
+            onEndCall={() => window.alert('End manual call (fixture, no-op)')}
+            onMuteChange={() => undefined}
+          />
+        </div>
+      )}
 
       {selectedState === 'wrap_up' && !wrapUpResult && (
         <WrapUpModal

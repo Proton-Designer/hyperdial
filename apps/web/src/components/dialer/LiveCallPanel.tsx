@@ -204,7 +204,18 @@ export function LiveCallPanel({
         className="mt-6 w-full min-h-[90px] rounded-app-md bg-surface-2 border border-border-subtle px-3 py-2 text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent-to"
       />
       {/* TASK-MOB6: phone-only pinned bar with the same handlers (the caller adds the spacer at the end of the page). */}
-      <CallControlsBar name={contactName} timer={heldAt ? holdTimer : callTimer}>
+      <CallControlsBar
+        name={contactName}
+        timer={heldAt ? holdTimer : callTimer}
+        recording={
+          onToggleRecording &&
+          !heldAt &&
+          !(activeTransfer?.type === 'warm' && activeTransfer.status === 'connected') &&
+          (recordingStatus === 'recording' || recordingStatus === 'paused')
+            ? { paused: recordingStatus === 'paused', onToggle: onToggleRecording }
+            : undefined
+        }
+      >
         {activeTransfer?.type === 'warm' && activeTransfer.status === 'connected' ? (
           <>
             <BarAction
