@@ -617,7 +617,10 @@ function DialerBody({
         } catch {
           setStartError(
             window.matchMedia('(pointer: coarse)').matches
-              ? 'Microphone access is blocked. iPhone: Settings > Safari > Microphone > Allow (or tap aA in the address bar > Website Settings > Microphone). Android: tap the lock icon in the address bar > Permissions > Microphone > Allow. Then tap Start again.'
+              ? /iPhone|iPad|iPod/.test(navigator.userAgent) ||
+                (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
+                ? 'Microphone access is blocked. On iPhone: tap aA in the address bar > Website Settings > Microphone > Allow (or Settings > Apps > Safari > Microphone). Then tap Start again.'
+                : 'Microphone access is blocked. On Android: tap the lock icon in the address bar > Permissions > Microphone > Allow. Then tap Start again.'
               : 'Microphone access is required to take calls. Allow microphone access and try again.'
           );
           return;

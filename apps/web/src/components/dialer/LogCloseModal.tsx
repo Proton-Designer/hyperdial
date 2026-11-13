@@ -23,7 +23,7 @@ export function LogCloseModal({ onClose, ...form }: LogCloseModalProps) {
   return createPortal(
     <div
       ref={modalRef}
-      className="hd-touch fixed inset-0 flex items-center justify-center p-4 outline-none"
+      className="hd-touch hd-vv fixed inset-0 flex items-center justify-center p-4 outline-none"
       style={{ zIndex: 10001 }}
       role="dialog"
       aria-modal="true"
@@ -36,7 +36,7 @@ export function LogCloseModal({ onClose, ...form }: LogCloseModalProps) {
       }}
     >
       <div className="absolute inset-0 bg-black/70" aria-hidden="true" />
-      <div className="relative z-[1] w-full max-w-lg max-h-[92vh] flex flex-col rounded-app-lg border border-border-subtle bg-surface-1 shadow-app-md">
+      <div className="relative z-[1] w-full max-w-lg max-h-[92vh] max-sm:max-h-[calc(100%-0.5rem)] flex flex-col rounded-app-lg border border-border-subtle bg-surface-1 shadow-app-md">
         <div className="flex items-start justify-between gap-3 border-b border-border-subtle p-4">
           <div className="min-w-0">
             <h2 id="logclose-title" className="text-page-title text-text-primary">

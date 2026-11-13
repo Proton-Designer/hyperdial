@@ -1,7 +1,9 @@
 import { createRoot } from 'react-dom/client';
 import { proFormTokenFromPath } from './lib/proForm.ts';
 import './styles/globals.css';
+import { installVisualViewportVars } from './lib/visualViewport.ts';
 
+installVisualViewportVars();
 const root = createRoot(document.getElementById('root')!);
 
 // Dev-only harness entry points: `import.meta.env.DEV` is statically `false` in a production
@@ -119,6 +121,11 @@ if (proFormToken) {
         </DevAuth>
       )
     );
+  });
+} else if (devHarness?.has('dev_wakelock')) {
+  // TASK-MOB5: useScreenWakeLock on real iOS Safari. `?dev_wakelock=1`.
+  import('./dev/WakeLockHarness.tsx').then(({ WakeLockHarness }) => {
+    root.render(<WakeLockHarness />);
   });
 } else if (devHarness?.has('dev_shifts')) {
   // TASK-F01: the intern Shifts screen against fixture data, no live backend.

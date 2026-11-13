@@ -16,6 +16,10 @@
     min-height: 44px;
     font-size: 16px;
   }
+  /* iOS Safari ignores min-height on a native <select> (found in the Simulator: 33pt tall); height is honoured. */
+  .hd-touch select:not(.hd-touch-skip) {
+    height: 44px;
+  }
   .hd-touch :is(button, [role='button'], summary):not(.hd-touch-skip) {
     min-height: 44px;
     min-width: 44px;
@@ -53,4 +57,15 @@
     10px 100%;
   background-attachment: local, local, scroll, scroll;
   background-color: var(--hd-scroll-bg, var(--surface-1));
+}
+
+/*
+ * TASK-MOB5: a full-screen fixed modal that must stay above the on-screen keyboard (iOS keeps fixed boxes at the
+ * layout viewport size). Add `hd-vv` to its `fixed inset-0` root; --vv-h/--vv-top come from lib/visualViewport.ts and
+ * fall back to the full dynamic viewport where there is no keyboard or no visualViewport.
+ */
+.hd-vv {
+  top: var(--vv-top, 0px) !important;
+  bottom: auto !important;
+  height: var(--vv-h, 100dvh) !important;
 }

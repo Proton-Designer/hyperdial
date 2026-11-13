@@ -32,20 +32,26 @@ export function IncomingCallBanner({
   onDecline,
 }: IncomingCallBannerProps) {
   return (
-    <div className="max-w-2xl mx-auto rounded-app-lg border border-accent-to/30 bg-accent-to/10 p-4 mb-6 flex items-center gap-3">
+    <div className="max-w-2xl mx-auto rounded-app-lg border border-accent-to/30 bg-accent-to/10 p-4 mb-6 flex flex-wrap items-center gap-3">
       <div className="text-accent-to">
         <PhoneIncoming className="w-5 h-5 animate-pulse" />
       </div>
-      <div className="flex-1">
-        <p className="font-medium text-text-primary">{contactName ?? 'Unknown caller'}</p>
-        <p className="text-body text-text-secondary mt-0.5">{fromE164 ?? 'Unknown number'}</p>
+      <div className="min-w-0 flex-1 basis-40">
+        <p className="break-words font-medium text-text-primary">
+          {contactName ?? 'Unknown caller'}
+        </p>
+        <p className="break-words text-body text-text-secondary mt-0.5">
+          {fromE164 ?? 'Unknown number'}
+        </p>
       </div>
-      <Button variant="danger-ghost" onClick={onDecline}>
-        Decline
-      </Button>
-      <Button variant="primary" onClick={onAnswer}>
-        Answer
-      </Button>
+      <div className="flex gap-2 max-sm:w-full">
+        <Button variant="danger-ghost" onClick={onDecline} className="max-sm:flex-1">
+          Decline
+        </Button>
+        <Button variant="primary" onClick={onAnswer} className="max-sm:flex-1">
+          Answer
+        </Button>
+      </div>
     </div>
   );
 }

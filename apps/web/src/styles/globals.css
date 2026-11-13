@@ -384,4 +384,8 @@ html {
   textarea {
     font-size: 16px !important;
   }
+  /* iOS Safari ignores min-height on a native select (33pt tall in the Simulator); height is honoured. */
+  select:not([multiple]):not([size]):not(.hd-touch-skip) {
+    height: 44px;
+  }
 }
