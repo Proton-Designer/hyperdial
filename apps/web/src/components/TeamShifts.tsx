@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import '@/styles/touch.css';
 import { CalendarRange, ChevronLeft, ChevronRight, RefreshCw, ServerCrash } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -147,7 +148,7 @@ export function TeamShifts({ canEnable = false, viewerId, onNavigateToSettings }
       : 'Week of';
 
   return (
-    <div className="mx-auto max-w-6xl p-4 sm:p-6">
+    <div className="hd-touch mx-auto max-w-6xl p-4 sm:p-6">
       <PageHeader
         title="Team Shifts"
         description="Coverage, requests and shift results."
@@ -198,7 +199,7 @@ export function TeamShifts({ canEnable = false, viewerId, onNavigateToSettings }
           <TabsTrigger value="requests" className={TRIGGER_CLASS}>
             Requests
             {pending > 0 && (
-              <span className="rounded-full bg-warning-soft px-1.5 text-[11px] font-medium leading-4 text-warning">
+              <span className="rounded-full bg-warning-soft px-1.5 text-xs font-medium leading-4 text-warning">
                 {pending}
               </span>
             )}
@@ -255,7 +256,7 @@ export function TeamShifts({ canEnable = false, viewerId, onNavigateToSettings }
 function TeamSkeleton() {
   return (
     <div
-      className="mx-auto max-w-6xl space-y-4 p-4 sm:p-6"
+      className="hd-touch mx-auto max-w-6xl space-y-4 p-4 sm:p-6"
       aria-busy="true"
       aria-label="Loading team shifts"
     >

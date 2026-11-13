@@ -47,7 +47,7 @@ export function CoverageLegend({ alertBelow, max }: { alertBelow: number; max: n
         {steps.map((n, i) => (
           <span
             key={i}
-            className="inline-flex h-4 min-w-6 items-center justify-center rounded-sm px-1 text-[10px] font-medium text-white"
+            className="inline-flex h-4 min-w-6 items-center justify-center rounded-sm px-1 text-xs font-medium text-white"
             style={{ background: heatColor(n, max) }}
           >
             {n}
@@ -206,7 +206,7 @@ const GridRow = memo(function GridRow({
 }) {
   return (
     <>
-      <div className="flex items-start justify-end bg-surface-1 pr-2 text-[11px] leading-none text-text-muted">
+      <div className="flex items-start justify-end bg-surface-1 pr-2 text-xs leading-none text-text-muted">
         {min % 60 === 0 ? minLabel(min) : ''}
       </div>
       {model.days.map((day) => {
@@ -239,7 +239,7 @@ const GridRow = memo(function GridRow({
             onBlur={() => onHover(null)}
             style={{ background: flagged ? undefined : (heatColor(count, max) ?? undefined) }}
             className={cn(
-              'relative h-[22px] bg-surface-1 text-[11px] font-medium leading-none outline-none transition-colors focus-visible:z-10 focus-visible:ring-2 focus-visible:ring-accent-to',
+              'relative h-[22px] bg-surface-1 text-xs font-medium leading-none outline-none transition-colors focus-visible:z-10 focus-visible:ring-2 focus-visible:ring-accent-to',
               count > 0 ? 'text-white' : 'text-transparent hover:bg-white/5',
               power && 'border-x border-warning/50',
               power && !prevPower && 'border-t',

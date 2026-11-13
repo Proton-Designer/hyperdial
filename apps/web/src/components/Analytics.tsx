@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
+import '@/styles/touch.css';
 import { motion, useReducedMotion } from 'motion/react';
 import { TrendingUp, TrendingDown, Phone, Clock, Target, Gauge, Download } from 'lucide-react';
 import {
@@ -451,7 +452,7 @@ export function Analytics() {
     : [];
 
   return (
-    <div className="p-4 sm:p-8 max-w-[1440px] mx-auto">
+    <div className="hd-touch p-4 sm:p-8 max-w-[1440px] mx-auto">
       <PageHeader
         title="Analytics"
         description="Track your team's performance and insights"

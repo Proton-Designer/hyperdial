@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import '@/styles/touch.css';
 import { Inbox as InboxIcon, Phone, Check, X, RotateCcw, Copy } from 'lucide-react';
 import { toast } from 'sonner';
 import {
@@ -146,7 +147,7 @@ export function Inbox({ onNavigateToDialer }: InboxProps) {
   const openCount = items?.filter((i) => i.status === 'open').length ?? 0;
 
   return (
-    <div className="p-6 max-w-4xl mx-auto">
+    <div className="hd-touch p-6 max-w-4xl mx-auto">
       <PageHeader
         title="Inbox"
         description="Missed calls and voicemails the team hasn't followed up on yet."

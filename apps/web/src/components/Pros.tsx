@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import '@/styles/touch.css';
 import { BadgeCheck, Download, Search, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { getContactById, listOnboardedPros, type Contact, type OnboardedPro } from '@/lib/api';
@@ -142,7 +143,7 @@ function Tags({ items }: { items: string[] }) {
       {items.map((t) => (
         <span
           key={t}
-          className="px-1.5 py-0.5 rounded bg-surface-2 border border-border-subtle text-[11px] text-text-secondary"
+          className="px-1.5 py-0.5 rounded bg-surface-2 border border-border-subtle text-xs text-text-secondary"
         >
           {t}
         </span>
@@ -262,7 +263,7 @@ export function Pros() {
   const scopeNote = isManagerRole ? 'Pros closed by your pods only.' : null;
 
   return (
-    <div className="p-4 sm:p-8 max-w-[1440px] mx-auto">
+    <div className="hd-touch p-4 sm:p-8 max-w-[1440px] mx-auto">
       <PageHeader
         title="Onboarded pros"
         description={

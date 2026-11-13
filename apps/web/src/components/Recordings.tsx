@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import '@/styles/touch.css';
 import { Headphones, Flag, MessageSquare, ClipboardList, X } from 'lucide-react';
 import {
   searchRecordings,
@@ -167,7 +168,7 @@ export function Recordings() {
   const selectedRow = rows?.find((r) => r.call_leg_id === selectedId) ?? null;
 
   return (
-    <div className="p-4 sm:p-8 max-w-[1440px] mx-auto">
+    <div className="hd-touch p-4 sm:p-8 max-w-[1440px] mx-auto">
       <PageHeader
         title="Recordings"
         description={

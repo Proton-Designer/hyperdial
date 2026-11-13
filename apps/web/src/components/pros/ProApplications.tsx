@@ -46,7 +46,7 @@ const money = (n: number | null) =>
 function Pill({ tone, children }: { tone: 'warn' | 'info'; children: React.ReactNode }) {
   return (
     <span
-      className={`px-1.5 py-0.5 rounded text-[11px] border ${
+      className={`px-1.5 py-0.5 rounded text-xs border ${
         tone === 'warn'
           ? 'bg-warning-soft text-warning border-warning/30'
           : 'bg-surface-2 text-text-secondary border-border-subtle'

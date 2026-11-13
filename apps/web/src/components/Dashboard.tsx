@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import '@/styles/touch.css';
 import { motion, useReducedMotion } from 'motion/react';
 import {
   Phone,
@@ -225,7 +226,7 @@ export function Dashboard({
   });
 
   return (
-    <div className="p-6 sm:p-8 max-w-[1440px] mx-auto">
+    <div className="hd-touch p-6 sm:p-8 max-w-[1440px] mx-auto">
       <PageHeader
         title={`${greeting()}${firstName ? `, ${firstName}` : ''}`}
         description={today}
