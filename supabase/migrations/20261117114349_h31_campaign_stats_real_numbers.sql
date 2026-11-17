@@ -10,6 +10,10 @@
 --   last_called_at   newest contact leg created_at
 -- Legs and leads are aggregated in separate lateral subqueries (no fan-out join).
 
+create index if not exists call_legs_campaign_contact_created_idx
+  on public.call_legs (campaign_id, created_at)
+  where kind = 'contact';
+
 drop view public.campaigns_with_stats;
 
 create view public.campaigns_with_stats as
