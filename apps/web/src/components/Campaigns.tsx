@@ -341,7 +341,7 @@ export function Campaigns({
               <TableBody>
                 {filteredCampaigns.map((campaign) => {
                   const total = campaign.total_contacts ?? 0;
-                  const done = campaign.completed ?? 0;
+                  const done = campaign.called ?? 0;
                   const pct = total > 0 ? Math.round((done / total) * 100) : 0;
                   return (
                     <TableRow
@@ -380,7 +380,7 @@ export function Campaigns({
                             />
                           </div>
                           <span className="text-meta text-text-secondary whitespace-nowrap">
-                            {done}/{total}
+                            {done}/{total} called
                           </span>
                         </div>
                       </TableCell>
@@ -414,7 +414,7 @@ export function Campaigns({
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             {filteredCampaigns.map((campaign, index) => {
               const total = campaign.total_contacts ?? 0;
-              const done = campaign.completed ?? 0;
+              const done = campaign.called ?? 0;
               const pct = total > 0 ? Math.round((done / total) * 100) : 0;
               return (
                 <motion.div
@@ -453,7 +453,7 @@ export function Campaigns({
                       />
                     </div>
                     <span className="text-meta text-text-secondary whitespace-nowrap">
-                      {done}/{total}
+                      {done}/{total} called
                     </span>
                   </div>
                   {total > 0 && (

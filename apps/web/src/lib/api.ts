@@ -2645,6 +2645,8 @@ export interface CampaignWithStats extends Campaign {
   queued: number;
   completed: number;
   passthrough: number;
+  /** TASK-H31: leads with attempts > 0 -- how far through the list the team is (Progress). */
+  called: number;
 }
 
 export type CampaignLeadPriority = 'low' | 'normal' | 'high';

@@ -62,6 +62,7 @@ const FIXTURE_CAMPAIGNS: CampaignWithStats[] = [
     queued: 87,
     completed: 20,
     passthrough: 13,
+    called: 20,
   },
   {
     id: 'campaign-2',
@@ -93,6 +94,7 @@ const FIXTURE_CAMPAIGNS: CampaignWithStats[] = [
     queued: 40,
     completed: 0,
     passthrough: 0,
+    called: 2,
   },
 ];
 
