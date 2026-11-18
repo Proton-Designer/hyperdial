@@ -180,8 +180,11 @@ export const legEndMs = (l: Pick<KpiLeg, 'created_at' | 'ended_at'>, nowMs: numb
   l.ended_at ? t(l.ended_at) : Math.min(nowMs, t(l.created_at) + OPEN_LEG_CAP_MINUTES * MIN);
 
 const HUMAN_AMD = ['human', 'not_sure', 'human_residence', 'human_business'];
+// TASK-H32: call_legs.amd_result is now written by the engine. A human-answered leg that LOST the claim
+// race (outcome 'abandoned') was never bridged to an agent, so it is not a connect for the agent's shift.
 export const isConnect = (l: Pick<KpiLeg, 'outcome' | 'amd_result'>) =>
-  l.outcome === 'connected' || (l.amd_result !== null && HUMAN_AMD.includes(l.amd_result));
+  l.outcome === 'connected' ||
+  (l.outcome !== 'abandoned' && l.amd_result !== null && HUMAN_AMD.includes(l.amd_result));
 
 export function computeShiftKpi(i: KpiInput): KpiResult {
   const { shift, settings: s, nowMs } = i;

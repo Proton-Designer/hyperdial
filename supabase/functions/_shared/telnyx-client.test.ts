@@ -55,7 +55,7 @@ Deno.test('buildDialPayload: premium AMD and a custom timeout override the defau
   });
   assertEquals(payload.answering_machine_detection, 'premium');
   assertEquals(payload.timeout_secs, 20);
-  assertEquals(payload.answering_machine_detection_config, { total_analysis_time_millis: 5000 });
+  assertEquals(payload.answering_machine_detection_config, { total_analysis_time_millis: 8000 });
 });
 
 Deno.test('buildDialPayload: TASK-H19 -- AMD config is sent for premium only', () => {

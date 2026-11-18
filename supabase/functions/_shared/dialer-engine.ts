@@ -1208,6 +1208,20 @@ function decisionFor(
   return null;
 }
 
+/** TASK-H32: the raw Telnyx detection result to persist on call_legs.amd_result (nothing wrote
+ *  it before). Only the two detection-ended events carry one; every other event leaves the
+ *  column alone (the key is omitted from transition_leg's p_fields). Observability only: no
+ *  claim/reject decision reads this. */
+function amdResultFields(event: TelnyxDialerEvent): { amd_result?: string } {
+  if (
+    event.eventType === 'call.machine.detection.ended' ||
+    event.eventType === 'call.machine.premium.detection.ended'
+  ) {
+    return typeof event.result === 'string' && event.result ? { amd_result: event.result } : {};
+  }
+  return {};
+}
+
 /** See this file's header for the full reasoning. Only ever matters for a still-ringing/
  *  initiated loser's silent hangup and the session-stop cleanup path -- every other case
  *  (winner's own hangup, AMD-machine hangup, an already-abandoned/dropped loser's hangup)
@@ -1421,7 +1435,7 @@ async function applyLegTransition(
       return null;
     }
 
-    const fields: Record<string, unknown> = {};
+    const fields: Record<string, unknown> = { ...amdResultFields(event) };
     if (result.outcome) fields.outcome = result.outcome;
     if (event.eventType === 'call.answered') fields.answered_at = new Date().toISOString();
     if (result.next === 'claimed') fields.claimed_at = new Date().toISOString();
@@ -1515,7 +1529,7 @@ async function processContactLegEvent(
       p_call_control_id: leg.call_control_id,
       p_expected_states: ['claimed'],
       p_new_state: 'claimed',
-      p_fields: { outcome: 'connected' },
+      p_fields: { outcome: 'connected', ...amdResultFields(event) },
     });
     if (transitionError)
       throw new Error(`transition_leg (win outcome): ${transitionError.message}`);

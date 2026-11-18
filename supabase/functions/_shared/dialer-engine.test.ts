@@ -2298,10 +2298,42 @@ Deno.test('VMD-4: voicemail_drop_mode=never -> plain hangup, no drop armed', asy
 
     const legRow = db.table('call_legs').get(legId)!;
     assertEquals(legRow.voicemail_drop_path ?? null, null, 'never mode must never arm a drop');
+    assertEquals(legRow.amd_result, 'machine', 'H32: the raw detection result is persisted');
     const hangupReq = server.requests.find(
       (r) => r.method === 'POST' && r.path === `/v2/calls/${callControlId}/actions/hangup`
     );
     assertExists(hangupReq, 'must hang up immediately, exactly like before this task');
+  } finally {
+    restoreFetch();
+  }
+});
+
+Deno.test('H32: a premium not_sure claim persists amd_result on the winning leg', async () => {
+  const db = new FakeDb();
+  const server = new FakeTelnyxServer();
+  const restoreFetch = stubTelnyxFetch(server);
+  const supabase = createFakeSupabase(db);
+  const { orgId, campaignId, agentId } = seedFixtures(db);
+  try {
+    const { sessionId, legId, callControlId } = await bootstrapToMachineCandidate(db, supabase, {
+      orgId,
+      campaignId,
+      agentId,
+      amdMode: 'premium',
+    });
+    await processTelnyxDialerEvent(
+      supabase,
+      contactEvent(orgId, sessionId, legId, callControlId, 'call.answered')
+    );
+    await processTelnyxDialerEvent(
+      supabase,
+      contactEvent(orgId, sessionId, legId, callControlId, 'call.machine.premium.detection.ended', {
+        result: 'not_sure',
+      })
+    );
+    const legRow = db.table('call_legs').get(legId)!;
+    assertEquals(legRow.amd_result, 'not_sure');
+    assertEquals(legRow.outcome, 'connected', 'claim behaviour unchanged: not_sure still claims');
   } finally {
     restoreFetch();
   }

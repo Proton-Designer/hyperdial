@@ -162,8 +162,10 @@ export interface TelnyxDialPayload {
   answering_machine_detection_config?: { total_analysis_time_millis: number };
 }
 
-/** A slow premium decision ends as not_sure (= claim) after this long, not Telnyx's own default. */
-export const PREMIUM_AMD_TOTAL_ANALYSIS_MILLIS = 5000;
+/** A slow premium decision ends as not_sure (= claim) after this long, not Telnyx's own default.
+ *  TASK-H32: 5000 -> 8000; business IVRs / hold queues were the most common not_sure and 5 s let
+ *  too many voicemails through to agents. */
+export const PREMIUM_AMD_TOTAL_ANALYSIS_MILLIS = 8000;
 
 /** off -> 'disabled', every other value passes straight through -- all 4 are verified members
  *  of CallRequest.answering_machine_detection's enum (spec3.json). */

@@ -198,6 +198,9 @@ Deno.test(
     assertEquals(k.dials_per_active_hour, 3.5);
     assertEquals(isConnect({ outcome: 'busy', amd_result: 'not_sure' }), true);
     assertEquals(isConnect({ outcome: 'busy', amd_result: 'silence' }), false);
+    // TASK-H32: a human who lost the claim race was never bridged to the agent.
+    assertEquals(isConnect({ outcome: 'abandoned', amd_result: 'human' }), false);
+    assertEquals(isConnect({ outcome: 'abandoned', amd_result: 'not_sure' }), false);
   }
 );
 
