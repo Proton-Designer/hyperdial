@@ -1,3 +1,4 @@
+import { invalidateVoicemailDropSummary } from '@/lib/useVoicemailDropStatus';
 import { RecordingPlayer } from '@/components/RecordingPlayer';
 import { VoicemailRecorder } from '@/components/settings/VoicemailRecorder';
 import { useState, useEffect, useCallback, useRef } from 'react';
@@ -3718,6 +3719,7 @@ function VoicemailDropSubCard({
             hasSaved={!!info?.hasFile}
             onSave={async (file) => {
               setInfo(await upload(file));
+              invalidateVoicemailDropSummary();
             }}
           />
           <label className="inline-flex items-center gap-2 px-3 py-2 bg-surface-2 border border-white/10 rounded-lg text-sm text-white cursor-pointer w-fit hover:bg-white/10">
@@ -5813,19 +5815,6 @@ export function Settings({ section }: { section?: SettingsSection } = {}) {
                   <CollapsibleSection title="Call handling">
                     <RecordingSettingsCard />
                     <ExternalTransferSettingsCard />
-                    <div className="bg-surface-1 rounded-app-lg p-6 border border-border-subtle max-w-2xl mt-6">
-                      <h3 className="text-section-title text-text-primary mb-1">Voicemail drop</h3>
-                      <p className="text-sm text-text-secondary">
-                        Recording and the team default moved to their own tab.{' '}
-                        <button
-                          type="button"
-                          className="text-accent-to underline underline-offset-2 touch:min-h-11"
-                          onClick={() => setActiveTab('voicemail')}
-                        >
-                          Open Voicemail drop
-                        </button>
-                      </p>
-                    </div>
                     <AutoResumeSettingsCard />
                   </CollapsibleSection>
                 </motion.div>

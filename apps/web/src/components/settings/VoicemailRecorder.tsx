@@ -120,8 +120,12 @@ export function VoicemailRecorder({
           if (e.data.size > 0) chunks.push(e.data);
         };
         rec.onerror = () => {
+          // A recorder error leaves a partial, untrustworthy recording: drop it and say so.
+          discard.current = true;
+          setPhase('idle');
           setError('The recording stopped unexpectedly. Try again, or upload a file instead.');
           stop();
+          releaseMic();
         };
         rec.onstop = () => {
           const seconds = elapsedRef.current;
