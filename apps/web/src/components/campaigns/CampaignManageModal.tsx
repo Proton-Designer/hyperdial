@@ -1,3 +1,4 @@
+import { useHasVoicemailDrop } from '@/lib/useVoicemailDropStatus';
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { TapCheckbox } from '@/components/mobile/TapCheckbox';
 import { contactHeadline, contactSecondaryName } from '@/lib/contactName';
@@ -91,6 +92,8 @@ interface CampaignManageModalProps {
   onClose: () => void;
   onRefreshList: () => void;
   onNavigateToDialer: () => void;
+  /** TASK-H34: lets the Voicemail Drop hint link to Settings. */
+  onNavigateToSettings?: () => void;
   onStartParallelDial: (ctx: { sessionId: string; campaignId: string }) => void;
   onOpenDialerWithSession?: (ctx: { sessionId: string; campaignId: string }) => void;
 }
@@ -469,7 +472,9 @@ export function CampaignManageModal({
   onClose,
   onRefreshList,
   onNavigateToDialer,
+  onNavigateToSettings,
 }: CampaignManageModalProps) {
+  const hasVoicemailDrop = useHasVoicemailDrop(open);
   const { numbers: userNumbers } = usePhoneNumbers();
   const { role } = useOrg();
   const canManage = role === 'owner' || role === 'admin';
@@ -1155,6 +1160,25 @@ export function CampaignManageModal({
                         Plays each agent's own drop file (Settings), or the org default, when a
                         machine is detected. Set up the file in Settings first.
                       </p>
+                      {hasVoicemailDrop === false && (
+                        <p className="text-xs text-warning mt-1">
+                          No voicemail recorded yet.{' '}
+                          {onNavigateToSettings ? (
+                            <button
+                              type="button"
+                              className="underline underline-offset-2 touch:min-h-11"
+                              onClick={() => {
+                                onClose();
+                                onNavigateToSettings();
+                              }}
+                            >
+                              Record one
+                            </button>
+                          ) : (
+                            'Record one in Settings.'
+                          )}
+                        </p>
+                      )}
                     </div>
                     <div>
                       <label className="text-sm text-text-secondary block mb-1">

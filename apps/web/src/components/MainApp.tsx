@@ -318,6 +318,7 @@ export function MainApp() {
             <PageTransition>
               <Campaigns
                 onNavigateToDialer={() => setActiveTab('dialer')}
+                onNavigateToSettings={() => setActiveTab('settings')}
                 onStartParallelDial={(ctx) => {
                   setParallelDialContext(ctx);
                   setActiveTab('dialer');

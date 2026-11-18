@@ -1351,6 +1351,7 @@ function DialerBody({
             micRegistering={agentLineConnecting}
             startError={startError}
             onStart={(campaign) => void handleStartSessionForCampaign(campaign)}
+            onNavigateToSettings={onNavigateToSettings}
           />
         )}
 

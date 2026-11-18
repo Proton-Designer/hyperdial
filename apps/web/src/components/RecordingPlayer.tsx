@@ -42,6 +42,8 @@ export function RecordingPlayer({ src, className }: { src: string; className?: s
     }
   };
 
+  // closeGraph only touches refs, so the cleanup never goes stale.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => closeGraph, []);
 
   const fallBack = (reason: string) => {

@@ -1,3 +1,5 @@
+import { RecordingPlayer } from '@/components/RecordingPlayer';
+import { VoicemailRecorder } from '@/components/settings/VoicemailRecorder';
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { ViewAsButton } from '@/components/settings/ViewAsButton';
 import { createPortal } from 'react-dom';
@@ -3702,12 +3704,25 @@ function VoicemailDropSubCard({
         <Skeleton className="h-9 w-full max-w-sm" />
       ) : (
         <div className="flex flex-col gap-2">
-          {info?.hasFile && info.url && (
-            <audio controls src={info.url} className="w-full max-w-sm h-9" />
+          {info?.hasFile && info.url ? (
+            <div className="flex flex-col gap-1">
+              <p className="text-xs text-text-secondary">Current voicemail</p>
+              <RecordingPlayer src={info.url} className="w-full max-w-sm h-9" />
+            </div>
+          ) : (
+            <p className="text-xs text-text-secondary">No voicemail recorded yet.</p>
           )}
+          <VoicemailRecorder
+            hasSaved={!!info?.hasFile}
+            onSave={async (file) => {
+              setInfo(await upload(file));
+            }}
+          />
           <label className="inline-flex items-center gap-2 px-3 py-2 bg-surface-2 border border-white/10 rounded-lg text-sm text-white cursor-pointer w-fit hover:bg-white/10">
             {uploading ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
-            {info?.hasFile ? 'Replace file (mp3/wav, max 5MB)' : 'Upload a file (mp3/wav, max 5MB)'}
+            {info?.hasFile
+              ? 'Or replace with a file (mp3/wav, max 5MB)'
+              : 'Or upload a file (mp3/wav, max 5MB)'}
             <input
               type="file"
               accept="audio/mpeg,audio/mp3,audio/wav,audio/wave,audio/x-wav"
