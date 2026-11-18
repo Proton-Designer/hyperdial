@@ -202,6 +202,8 @@ export interface NumberHealthBadge {
   peak_day_dials: number;
   avg_day_dials: number;
   daily_cap: number;
+  /** Busiest day this week reached the number's daily cap (the cap doing its job: an info note, not a warning). */
+  at_daily_cap: boolean;
 }
 
 export async function getNumberHealthBadges(): Promise<NumberHealthBadge[]> {

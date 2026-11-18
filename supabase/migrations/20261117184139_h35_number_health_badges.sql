@@ -9,12 +9,20 @@
 --   pool median   median this-week rate of the org's numbers that have enough dials
 --   quick hangups share of connected legs shorter than 5 s (a person picked up and left: the pattern a
 --                 spam label produces)
---   pacing        busiest UTC day this week (calls from this number) against 100 / 150 calls a day,
---                 the usual thresholds where carrier analytics start labelling a number; daily_cap
---                 (existing per-number pool cap) is shown next to it
--- Minimum sample: org_number_health_settings.min_sample_dials (default 20) dials this week, else 'unknown'
--- ("Not enough calls yet"). A baseline comparison also needs that many dials in the baseline window.
--- Level is the worst signal that fired; reason is that signal's one-line sentence, reasons[] lists all.
+--   absolute floor 100+ dials this week and under 5% answered (a whole pool can decay together, and a
+--                 new number has no baseline): Watch
+--   pacing        busiest UTC day this week against the number's own daily_cap (the pool already enforces
+--                 it): ABOVE the cap = At risk (the cap leaked); AT the cap = an info note only (at_daily_cap,
+--                 no level change: the cap is doing its job); a cap raised to 150+ also warns (Watch) at 150
+-- Minimums: org_number_health_settings.min_sample_dials (default 20) dials this week to show a level at all,
+-- else 'unknown' ("Not enough calls yet"). The RELATIVE signals (trend, pool) need 50+ dials this week (and
+-- 50+ in the baseline for trend), and quick hang-ups need 10+ connected calls: at 20 dials the answer rate
+-- is too noisy to compare. Level is the worst signal that fired; reasons[] is ordered worst first and
+-- reason is reasons[1], so the sentence shown is the one that set the level.
+
+create index if not exists call_legs_number_contact_created_idx
+  on public.call_legs (from_number_id, created_at)
+  where kind = 'contact';
 
 create view public.number_health_badges with (security_invoker = on) as
 with legs as (
@@ -89,25 +97,25 @@ scored as (
   select
     r.*,
     m.median_7d,
-    case when r.connected_7d >= 5 then r.quick_7d::numeric / r.connected_7d end as quick_share,
-    -- one boolean per signal: 2 = at risk, 1 = watch, 0 = fine (only judged with enough dials)
-    case when r.dials_7d < r.min_sample then null
-      when r.status = 'resting' and r.flagged_reason is not null then 2
-      else 0 end as flagged_level,
-    case when r.dials_7d < r.min_sample or m.median_7d is null or m.median_7d <= 0 then 0
+    greatest(r.min_sample, 50) as rel_min,
+    case when r.connected_7d >= 10 then r.quick_7d::numeric / r.connected_7d end as quick_share,
+    -- one level per signal: 2 = at risk, 1 = watch, 0 = fine
+    case when r.dials_7d < greatest(r.min_sample, 50) or m.median_7d is null or m.median_7d <= 0 then 0
       when r.rate_7d < m.median_7d * 0.5 then 2
       when r.rate_7d < m.median_7d * 0.75 then 1
       else 0 end as pool_level,
-    case when r.dials_7d < r.min_sample or r.dials_base < r.min_sample or r.rate_base is null or r.rate_base <= 0 then 0
+    case when r.dials_7d < greatest(r.min_sample, 50) or r.dials_base < greatest(r.min_sample, 50)
+        or r.rate_base is null or r.rate_base <= 0 then 0
       when r.rate_7d < r.rate_base * 0.5 and r.rate_base - r.rate_7d >= 0.05 then 2
       when r.rate_7d < r.rate_base * 0.75 and r.rate_base - r.rate_7d >= 0.03 then 1
       else 0 end as trend_level,
-    case when r.dials_7d < r.min_sample or r.connected_7d < 5 then 0
+    case when r.dials_7d < r.min_sample or r.connected_7d < 10 then 0
       when r.quick_7d::numeric / r.connected_7d >= 0.6 then 2
       when r.quick_7d::numeric / r.connected_7d >= 0.4 then 1
       else 0 end as quick_level,
-    case when r.peak_day_dials >= 150 then 2
-      when r.peak_day_dials >= 100 then 1
+    case when r.dials_7d >= 100 and r.rate_7d < 0.05 then 1 else 0 end as floor_level,
+    case when r.peak_day_dials > r.daily_cap then 2
+      when r.peak_day_dials >= 150 then 1
       else 0 end as pacing_level
   from rates r
   left join medians m on m.org_id = r.org_id
@@ -115,17 +123,18 @@ scored as (
 reasoned as (
   select
     s.*,
-    array_remove(array[
-      case when s.flagged_level = 2 then s.flagged_reason end,
-      case when s.trend_level > 0 then format('Answer rate fell from %s%% to %s%% this week',
-        round(s.rate_base * 100), round(s.rate_7d * 100)) end,
-      case when s.pool_level > 0 then format('Answer rate %s%% is well below your other numbers (median %s%%)',
-        round(s.rate_7d * 100), round(s.median_7d * 100)) end,
-      case when s.quick_level > 0 then format('%s%% of answered calls hung up within 5 seconds',
-        round(100.0 * s.quick_7d / s.connected_7d)) end,
-      case when s.pacing_level > 0 then format('%s calls from this number on its busiest day this week; spread calls across more numbers',
-        s.peak_day_dials) end
-    ], null) as reasons
+    (s.peak_day_dials >= s.daily_cap and s.pacing_level = 0) as at_daily_cap,
+    (select coalesce(array_agg(v.txt order by v.lvl desc, v.ord), array[]::text[])
+     from (values
+       (1, case when s.status = 'resting' and s.flagged_reason is not null then 2 else 0 end, s.flagged_reason),
+       (2, s.pacing_level, format('%s calls from this number on its busiest day this week%s; spread calls across more numbers',
+          s.peak_day_dials, case when s.pacing_level = 2 then ', above its daily limit of ' || s.daily_cap else '' end)),
+       (3, s.trend_level, format('Answer rate fell from %s%% to %s%% this week', round(s.rate_base * 100), round(s.rate_7d * 100))),
+       (4, s.pool_level, format('Answer rate %s%% is well below your other numbers (median %s%%)', round(s.rate_7d * 100), round(s.median_7d * 100))),
+       (5, s.quick_level, format('%s%% of answered calls hung up within 5 seconds', round(100.0 * s.quick_7d / nullif(s.connected_7d, 0)))),
+       (6, s.floor_level, format('Only %s%% of calls were answered this week (%s dials)', round(s.rate_7d * 100), s.dials_7d))
+     ) as v(ord, lvl, txt)
+     where v.lvl > 0 and v.txt is not null) as reasons
   from scored s
 )
 select
@@ -136,14 +145,15 @@ select
   case
     when status = 'resting' and flagged_reason is not null then 'at_risk'
     when dials_7d < min_sample then 'unknown'
-    when greatest(trend_level, pool_level, quick_level, pacing_level) = 2 then 'at_risk'
-    when greatest(trend_level, pool_level, quick_level, pacing_level) = 1 then 'watch'
+    when greatest(trend_level, pool_level, quick_level, floor_level, pacing_level) = 2 then 'at_risk'
+    when greatest(trend_level, pool_level, quick_level, floor_level, pacing_level) = 1 then 'watch'
     else 'good'
   end as level,
   case
     when dials_7d < min_sample and not (status = 'resting' and flagged_reason is not null)
       then format('Not enough calls yet (%s of %s needed this week)', dials_7d, min_sample)
     when cardinality(reasons) > 0 then reasons[1]
+    when at_daily_cap then 'Reached its daily call limit; add numbers if you need more volume'
     else 'Answer rate and pacing look normal'
   end as reason,
   reasons,
@@ -154,7 +164,8 @@ select
   round(quick_share, 4) as quick_hangup_share,
   peak_day_dials::integer as peak_day_dials,
   avg_day_dials::integer as avg_day_dials,
-  daily_cap
+  daily_cap,
+  at_daily_cap
 from reasoned;
 
 alter view public.number_health_badges set (security_invoker = on);

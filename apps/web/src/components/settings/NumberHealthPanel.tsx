@@ -186,7 +186,7 @@ export function NumberHealthPanel() {
                       <Detail label="Pool median" value={pct(b.pool_median_7d)} />
                       <Detail label="Quick hang-ups" value={pct(b.quick_hangup_share)} />
                       <Detail
-                        label="Calls / day (busiest)"
+                        label="Calls / day (busiest, UTC)"
                         value={`${b.peak_day_dials} (cap ${b.daily_cap})`}
                       />
                       <Detail
