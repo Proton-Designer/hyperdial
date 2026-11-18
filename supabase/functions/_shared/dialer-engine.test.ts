@@ -72,6 +72,8 @@ class FakeTelnyxServer {
   /** TASK-N1 fix-forward (finding L) regression test hook: makes the NEXT `POST /v2/calls`
    *  (a real dial attempt) fail outright, simulating Telnyx rejecting it -- then resets itself. */
   failNextDial = false;
+  /** TASK-H34: makes the NEXT playback_start fail (Telnyx rejecting the drop), then resets. */
+  failNextPlayback = false;
   /** TASK-F-T2: fake "recording download" URLs (an entirely different host than the Telnyx API
    *  itself) -- checked before any path-based Telnyx routing below, since these aren't
    *  `/v2/...` paths at all. */
@@ -107,6 +109,10 @@ class FakeTelnyxServer {
       return Response.json({ data: {} });
     }
     if (method === 'POST' && /\/v2\/calls\/[^/]+\/actions\/playback_start$/.test(path)) {
+      if (this.failNextPlayback) {
+        this.failNextPlayback = false;
+        return Response.json({ errors: [{ detail: 'bad audio' }] }, { status: 422 });
+      }
       return Response.json({ data: {} });
     }
     if (method === 'POST' && path === '/v2/conferences') {
@@ -2307,6 +2313,137 @@ Deno.test('VMD-4: voicemail_drop_mode=never -> plain hangup, no drop armed', asy
     restoreFetch();
   }
 });
+
+function dropSeed(db: FakeDb, orgId: string, campaignId: string) {
+  db.table('campaigns').get(campaignId)!.voicemail_drop_mode = 'first_attempt';
+  db.insert('voicemail_drop_settings', {
+    id: 'vd-org-default',
+    org_id: orgId,
+    user_id: null,
+    storage_path: `${orgId}/org-default.wav`,
+  });
+}
+
+Deno.test(
+  'H34-B: a human win in the same session does not hang up an armed or dropping machine leg',
+  async () => {
+    const db = new FakeDb();
+    const server = new FakeTelnyxServer();
+    const restoreFetch = stubTelnyxFetch(server);
+    const supabase = createFakeSupabase(db);
+    const { orgId, campaignId, agentId } = seedFixtures(db);
+    dropSeed(db, orgId, campaignId);
+    try {
+      const { sessionId } = await bootstrapToMachineCandidate(db, supabase, {
+        orgId,
+        campaignId,
+        agentId,
+        amdMode: 'detect_words',
+      });
+      const legs = [...db.table('call_legs').values()].filter((l) => l.kind === 'contact');
+      const [dropping, armed, human] = legs.map((l) => ({
+        id: l.id as string,
+        cc: l.call_control_id as string,
+      }));
+      for (const l of [dropping, armed, human]) {
+        await processTelnyxDialerEvent(
+          supabase,
+          contactEvent(orgId, sessionId, l.id, l.cc, 'call.answered')
+        );
+      }
+      for (const l of [dropping, armed]) {
+        await processTelnyxDialerEvent(
+          supabase,
+          contactEvent(orgId, sessionId, l.id, l.cc, 'call.machine.detection.ended', {
+            result: 'machine',
+          })
+        );
+      }
+      await processTelnyxDialerEvent(
+        supabase,
+        contactEvent(orgId, sessionId, dropping.id, '', 'call.machine.greeting.ended')
+      );
+      assertEquals(db.table('call_legs').get(dropping.id)!.state, 'voicemail_dropping');
+      assertEquals(db.table('call_legs').get(armed.id)!.state, 'machine');
+
+      await processTelnyxDialerEvent(
+        supabase,
+        contactEvent(orgId, sessionId, human.id, human.cc, 'call.machine.detection.ended', {
+          result: 'human',
+        })
+      );
+      assertEquals(db.table('call_legs').get(human.id)!.outcome, 'connected');
+
+      assertEquals(db.table('call_legs').get(dropping.id)!.state, 'voicemail_dropping');
+      assertEquals(db.table('call_legs').get(armed.id)!.state, 'machine');
+      for (const l of [dropping, armed]) {
+        assertEquals(
+          server.requests.some((r) => r.path === `/v2/calls/${l.cc}/actions/hangup`),
+          false,
+          'the winner must not hang up a machine leg that is armed or mid-drop'
+        );
+      }
+    } finally {
+      restoreFetch();
+    }
+  }
+);
+
+Deno.test(
+  'H34-B: a failed playback_start puts the leg back to machine and hangs up (truthful outcome)',
+  async () => {
+    const db = new FakeDb();
+    const server = new FakeTelnyxServer();
+    const restoreFetch = stubTelnyxFetch(server);
+    const supabase = createFakeSupabase(db);
+    const { orgId, campaignId, agentId } = seedFixtures(db);
+    dropSeed(db, orgId, campaignId);
+    try {
+      const { sessionId, legId, callControlId } = await bootstrapToMachineCandidate(db, supabase, {
+        orgId,
+        campaignId,
+        agentId,
+        amdMode: 'premium',
+      });
+      await processTelnyxDialerEvent(
+        supabase,
+        contactEvent(orgId, sessionId, legId, callControlId, 'call.answered')
+      );
+      await processTelnyxDialerEvent(
+        supabase,
+        contactEvent(
+          orgId,
+          sessionId,
+          legId,
+          callControlId,
+          'call.machine.premium.detection.ended',
+          {
+            result: 'machine',
+          }
+        )
+      );
+      server.failNextPlayback = true;
+      await processTelnyxDialerEvent(
+        supabase,
+        contactEvent(orgId, sessionId, legId, '', 'call.machine.greeting.ended')
+      );
+      assertEquals(db.table('call_legs').get(legId)!.state, 'machine');
+      assertExists(
+        server.requests.find((r) => r.path === `/v2/calls/${callControlId}/actions/hangup`),
+        'must hang up instead of holding the line'
+      );
+      await processTelnyxDialerEvent(
+        supabase,
+        contactEvent(orgId, sessionId, legId, callControlId, 'call.hangup', {
+          hangup_cause: 'normal_clearing',
+        })
+      );
+      assertEquals(db.table('call_legs').get(legId)!.outcome, 'machine');
+    } finally {
+      restoreFetch();
+    }
+  }
+);
 
 Deno.test('H32: a premium not_sure claim persists amd_result on the winning leg', async () => {
   const db = new FakeDb();

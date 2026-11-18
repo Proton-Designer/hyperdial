@@ -319,6 +319,9 @@ async function loadCampaign(
   return data as CampaignRow | null;
 }
 
+/** TASK-H34 (B): contact-leg states where AMD already decided "machine" -- never a losing human. */
+const MACHINE_RESOLVED_STATES: LegState[] = ['machine', 'voicemail_dropping'];
+
 async function loadActiveLegs(supabase: SupabaseClient, sessionId: string): Promise<CallLegRow[]> {
   const { data, error } = await supabase
     .from('call_legs')
@@ -2063,7 +2066,9 @@ async function handleAgentLegLost(
   const campaign = await loadCampaign(supabase, session.campaign_id);
   const activeLegs = await loadActiveLegs(supabase, session.id);
   const stillUnresolvedContactLegs = activeLegs.filter(
-    (l) => l.kind === 'contact' && !['claimed', 'abandoned', 'dropped', 'machine'].includes(l.state)
+    (l) =>
+      l.kind === 'contact' &&
+      !['claimed', 'abandoned', 'dropped', ...MACHINE_RESOLVED_STATES].includes(l.state)
   );
   const coreLegs: DialerLeg[] = stillUnresolvedContactLegs.map((l) => ({
     id: l.id,
@@ -2239,7 +2244,10 @@ async function startVoicemailPlayback(
   if (!path) return;
   try {
     const { client } = await getConnectedOrgTelnyxContext(supabase, session.org_id);
-    if (!client) return;
+    if (!client) {
+      await abortVoicemailDrop(supabase, session, leg, 'no_client');
+      return;
+    }
     const { data: signed, error: signError } = await supabase.storage
       .from('voicemail-drops')
       .createSignedUrl(path, VOICEMAIL_DROP_SIGNED_URL_TTL_SECONDS);
@@ -2264,6 +2272,39 @@ async function startVoicemailPlayback(
     dialerLog('voicemail_playback_started', { legId: leg.id, sessionId: session.id });
   } catch (err) {
     dialerLog('voicemail_playback_failed', { legId: leg.id, error: String(err) });
+    await abortVoicemailDrop(supabase, session, leg, 'playback_failed');
+  }
+}
+
+/** TASK-H34 (B): the drop could not start (no Telnyx client, signing failed, playback_start
+ *  rejected). Before: the leg sat in 'voicemail_dropping' with the call still live until the
+ *  voicemail hung up or the ~90 s sweeper, and was then recorded as 'voicemail_left' though nothing
+ *  was left. Now: put it back to 'machine' and hang up like the no-drop path, so the outcome is
+ *  the truthful 'machine'. Never throws. */
+async function abortVoicemailDrop(
+  supabase: SupabaseClient,
+  session: DialSessionRow,
+  leg: CallLegRow,
+  reason: string
+): Promise<void> {
+  try {
+    const { data: reverted } = await supabase.rpc('transition_leg', {
+      p_call_control_id: leg.call_control_id,
+      p_expected_states: ['voicemail_dropping'],
+      p_new_state: 'machine',
+      p_fields: {},
+    });
+    dialerLog('voicemail_drop_aborted', { legId: leg.id, reason, reverted: Boolean(reverted) });
+    if (reverted) {
+      await hangupLeg(
+        supabase,
+        session.org_id,
+        leg.call_control_id,
+        'voicemail_drop_abort_hangup_failed'
+      );
+    }
+  } catch (err) {
+    dialerLog('voicemail_drop_abort_failed', { legId: leg.id, error: String(err) });
   }
 }
 
@@ -2449,7 +2490,13 @@ async function handleWin(
   // up the agent leg too). loserActions (dialer-core.ts) predates the agent leg entirely and
   // has no concept of `kind` -- filter to CONTACT legs before computing it, or the agent's own
   // still-'answered' leg gets treated as a losing contact and gets spoken to / hung up here.
-  const legs = (await loadActiveLegs(supabase, session.id)).filter((l) => l.kind === 'contact');
+  // TASK-H34 (B): a leg already resolved as a machine ('machine', possibly armed to drop a
+  // voicemail) or mid-drop ('voicemail_dropping') is NOT a losing human. Since TASK-F-T3 those legs
+  // stay up for the whole greeting + playback, so a human win in the same session would
+  // otherwise hang the drop up mid-message and relabel the leg 'dropped'.
+  const legs = (await loadActiveLegs(supabase, session.id)).filter(
+    (l) => l.kind === 'contact' && !MACHINE_RESOLVED_STATES.includes(l.state)
+  );
   const coreLegs: DialerLeg[] = legs.map((l) => ({ id: l.id, state: l.state }));
   const actions = loserActions(coreLegs, winnerLeg.id, campaign?.abandon_message_enabled ?? true);
   const orgName = await loadOrgName(supabase, session.org_id);
