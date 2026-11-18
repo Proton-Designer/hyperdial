@@ -59,6 +59,8 @@ const AGENT_ALLOWED_TABS: readonly TabType[] = [
   // Shifts (TASK-F01): every role; the tab itself only appears once the org has switched Shifts on
   // (ShiftsContext), and a deep link while it's off lands on the screen's own "not turned on" state.
   'shifts',
+  // TASK-H34d: every role reaches Settings; an agent only gets Profile + Voicemail drop there (Settings.tsx gates the rest).
+  'settings',
 ];
 
 // MISSION-5 TASK-M5-A5: a manager gets Analytics (reports) and Team, plus Settings (internally
@@ -186,6 +188,10 @@ export function MainApp() {
     setActiveTabState(resolved);
     syncUrl(resolved);
   };
+  const openVoicemailSettings = () => {
+    setActiveTab('settings');
+    setSettingsSection('voicemail');
+  };
 
   // Guards against role loading in after a hidden tab was already selected (e.g. `role` starts
   // null while OrgContext's own fetch is still in flight) -- not just new navigation attempts.
@@ -307,6 +313,7 @@ export function MainApp() {
               parallelCampaignId={parallelDialContext?.campaignId ?? null}
               onClearParallelContext={() => setParallelDialContext(null)}
               onNavigateToSettings={() => setActiveTab('settings')}
+              onNavigateToVoicemail={openVoicemailSettings}
             />
           </div>
           {activeTab === 'contacts' && (
@@ -318,7 +325,7 @@ export function MainApp() {
             <PageTransition>
               <Campaigns
                 onNavigateToDialer={() => setActiveTab('dialer')}
-                onNavigateToSettings={() => setActiveTab('settings')}
+                onNavigateToVoicemail={openVoicemailSettings}
                 onStartParallelDial={(ctx) => {
                   setParallelDialContext(ctx);
                   setActiveTab('dialer');

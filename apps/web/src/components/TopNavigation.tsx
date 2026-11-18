@@ -490,32 +490,30 @@ export function TopNavigation({ activeTab = 'dashboard', onTabChange }: TopNavig
                     </div>
                   </div>
 
-                  {isManager && (
-                    <div className="p-2">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setShowUserMenu(false);
-                          onTabChange?.('settings');
-                        }}
-                        className="flex w-full touch:min-h-11 items-center gap-3 rounded-app-md px-3 py-2.5 text-text-primary transition-colors hover:bg-white/5"
-                      >
-                        <User className="w-4 h-4 text-text-secondary" />
-                        Profile
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setShowUserMenu(false);
-                          onTabChange?.('settings');
-                        }}
-                        className="flex w-full touch:min-h-11 items-center gap-3 rounded-app-md px-3 py-2.5 text-text-primary transition-colors hover:bg-white/5"
-                      >
-                        <Settings className="w-4 h-4 text-text-secondary" />
-                        Settings
-                      </button>
-                    </div>
-                  )}
+                  <div className="p-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowUserMenu(false);
+                        onTabChange?.('settings');
+                      }}
+                      className="flex w-full touch:min-h-11 items-center gap-3 rounded-app-md px-3 py-2.5 text-text-primary transition-colors hover:bg-white/5"
+                    >
+                      <User className="w-4 h-4 text-text-secondary" />
+                      Profile
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowUserMenu(false);
+                        onTabChange?.('settings');
+                      }}
+                      className="flex w-full touch:min-h-11 items-center gap-3 rounded-app-md px-3 py-2.5 text-text-primary transition-colors hover:bg-white/5"
+                    >
+                      <Settings className="w-4 h-4 text-text-secondary" />
+                      Settings
+                    </button>
+                  </div>
 
                   <div className="border-t border-border-subtle p-2">
                     <button

@@ -40,7 +40,7 @@ const SCREENS: ScreenEntry[] = [
   { tab: 'contacts', label: 'Contacts', icon: Users },
   { tab: 'campaigns', label: 'Campaigns', icon: Target, managerOnly: true },
   { tab: 'analytics', label: 'Analytics', icon: BarChart3, managerOnly: true },
-  { tab: 'settings', label: 'Settings', icon: SettingsIcon, managerOnly: true },
+  { tab: 'settings', label: 'Settings', icon: SettingsIcon },
 ];
 
 function contactLabel(c: Contact): string {

@@ -1,4 +1,4 @@
-import { useHasVoicemailDrop } from '@/lib/useVoicemailDropStatus';
+import { VoicemailDropStatusRow } from '@/components/settings/VoicemailDropStatusRow';
 import { useState } from 'react';
 import { Phone, Play, Users } from 'lucide-react';
 import { isViewOnly, VIEW_ONLY_MESSAGE } from '@/lib/viewAs';
@@ -26,8 +26,8 @@ interface StartSessionPanelProps {
   micRegistering: boolean;
   startError: string | null;
   onStart: (campaign: CampaignWithStats) => void;
-  /** TASK-H34: where the "No voicemail recorded yet" hint sends the agent. */
-  onNavigateToSettings?: () => void;
+  /** TASK-H34d: opens Settings -> Voicemail drop. */
+  onNavigateToVoicemail?: () => void;
 }
 
 function callerIdLabel(campaign: CampaignWithStats, userNumbers: UserPhoneNumber[]): string {
@@ -83,9 +83,8 @@ export function StartSessionPanel({
   micRegistering,
   startError,
   onStart,
-  onNavigateToSettings,
+  onNavigateToVoicemail,
 }: StartSessionPanelProps) {
-  const hasVoicemailDrop = useHasVoicemailDrop();
   const { user } = useAuth();
   // TASK-N1: numbers this intern could actually dial from -- assigned to them, or unassigned
   // (the team pool). RLS lets every org member SEE the whole org's numbers (needed to pick a
@@ -103,24 +102,7 @@ export function StartSessionPanel({
       </p>
 
       <PhoneTip />
-      {hasVoicemailDrop === false && onNavigateToSettings && (
-        <div
-          role="note"
-          className="mb-6 rounded-app-lg border border-border-subtle bg-surface-1 p-4"
-        >
-          <p className="text-body text-text-secondary">
-            No voicemail recorded yet. When a call goes to voicemail, a recorded message can play
-            for you automatically.{' '}
-            <button
-              type="button"
-              className="text-accent-to underline underline-offset-2 touch:min-h-11"
-              onClick={onNavigateToSettings}
-            >
-              Record one
-            </button>
-          </p>
-        </div>
-      )}
+      <VoicemailDropStatusRow className="mb-6" onOpen={onNavigateToVoicemail} />
 
       {myNumbers.length > 0 && (
         <p className="text-meta text-text-muted mb-6">

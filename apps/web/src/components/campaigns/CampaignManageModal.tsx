@@ -1,4 +1,4 @@
-import { useHasVoicemailDrop } from '@/lib/useVoicemailDropStatus';
+import { VoicemailDropStatusRow } from '@/components/settings/VoicemailDropStatusRow';
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { TapCheckbox } from '@/components/mobile/TapCheckbox';
 import { contactHeadline, contactSecondaryName } from '@/lib/contactName';
@@ -92,8 +92,8 @@ interface CampaignManageModalProps {
   onClose: () => void;
   onRefreshList: () => void;
   onNavigateToDialer: () => void;
-  /** TASK-H34: lets the Voicemail Drop hint link to Settings. */
-  onNavigateToSettings?: () => void;
+  /** TASK-H34d: opens Settings -> Voicemail drop. */
+  onNavigateToVoicemail?: () => void;
   onStartParallelDial: (ctx: { sessionId: string; campaignId: string }) => void;
   onOpenDialerWithSession?: (ctx: { sessionId: string; campaignId: string }) => void;
 }
@@ -472,9 +472,8 @@ export function CampaignManageModal({
   onClose,
   onRefreshList,
   onNavigateToDialer,
-  onNavigateToSettings,
+  onNavigateToVoicemail,
 }: CampaignManageModalProps) {
-  const hasVoicemailDrop = useHasVoicemailDrop(open);
   const { numbers: userNumbers } = usePhoneNumbers();
   const { role } = useOrg();
   const canManage = role === 'owner' || role === 'admin';
@@ -1157,27 +1156,22 @@ export function CampaignManageModal({
                         </SelectContent>
                       </Select>
                       <p className="text-xs text-text-secondary/70 mt-1">
-                        Plays each agent's own drop file (Settings), or the org default, when a
-                        machine is detected. Set up the file in Settings first.
+                        Plays each agent's own recorded voicemail, or the team default, when a
+                        machine is detected and the beep is heard.
                       </p>
-                      {hasVoicemailDrop === false && (
-                        <p className="text-xs text-warning mt-1">
-                          No voicemail recorded yet.{' '}
-                          {onNavigateToSettings ? (
-                            <button
-                              type="button"
-                              className="underline underline-offset-2 touch:min-h-11"
-                              onClick={() => {
-                                onClose();
-                                onNavigateToSettings();
-                              }}
-                            >
-                              Record one
-                            </button>
-                          ) : (
-                            'Record one in Settings.'
-                          )}
-                        </p>
+                      {settingsForm.voicemail_drop_mode !== 'never' && (
+                        <VoicemailDropStatusRow
+                          label="Your voicemail drop"
+                          className="mt-2"
+                          onOpen={
+                            onNavigateToVoicemail
+                              ? () => {
+                                  onClose();
+                                  onNavigateToVoicemail();
+                                }
+                              : undefined
+                          }
+                        />
                       )}
                     </div>
                     <div>

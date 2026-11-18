@@ -66,11 +66,10 @@ export function BottomTabBar({ activeTab, onTabChange, isManager }: BottomTabBar
       : []),
     ...(shiftsEnabled ? [{ tab: 'shifts' as TabType, label: 'Shifts', icon: CalendarClock }] : []),
     ...(isManagerOrBetter
-      ? [
-          { tab: 'team_shifts' as TabType, label: 'Team Shifts', icon: CalendarRange },
-          { tab: 'settings' as TabType, label: 'Settings', icon: Settings },
-        ]
+      ? [{ tab: 'team_shifts' as TabType, label: 'Team Shifts', icon: CalendarRange }]
       : []),
+    // TASK-H34d: every role (an agent's own voicemail drop lives here).
+    { tab: 'settings' as TabType, label: 'Settings', icon: Settings },
   ];
 
   return (

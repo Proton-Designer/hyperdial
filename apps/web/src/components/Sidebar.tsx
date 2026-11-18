@@ -157,7 +157,7 @@ export function Sidebar({
       </nav>
 
       <div className="space-y-1 border-t border-border-subtle p-2.5 touch:p-2">
-        {isManagerOrBetter && renderItem({ id: 'settings', icon: Settings, label: 'Settings' })}
+        {renderItem({ id: 'settings', icon: Settings, label: 'Settings' })}
 
         <button
           onClick={onToggleCollapse}

@@ -64,14 +64,14 @@ function CampaignTagChips({ tags }: { tags: GhlCampaignMapping[] }) {
 
 interface CampaignsProps {
   onNavigateToDialer?: () => void;
-  onNavigateToSettings?: () => void;
+  onNavigateToVoicemail?: () => void;
   onStartParallelDial?: (ctx: { sessionId: string; campaignId: string }) => void;
   onOpenDialerWithSession?: (ctx: { sessionId: string; campaignId: string }) => void;
 }
 
 export function Campaigns({
   onNavigateToDialer,
-  onNavigateToSettings,
+  onNavigateToVoicemail,
   onStartParallelDial,
   onOpenDialerWithSession,
 }: CampaignsProps) {
@@ -583,7 +583,7 @@ export function Campaigns({
         onClose={() => setManageCampaignId(null)}
         onRefreshList={fetchCampaigns}
         onNavigateToDialer={onNavigateToDialer ?? (() => {})}
-        onNavigateToSettings={onNavigateToSettings}
+        onNavigateToVoicemail={onNavigateToVoicemail}
         onStartParallelDial={onStartParallelDial ?? (() => {})}
         onOpenDialerWithSession={onOpenDialerWithSession ?? (() => {})}
       />

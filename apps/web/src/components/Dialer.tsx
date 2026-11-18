@@ -89,6 +89,8 @@ interface DialerProps {
   parallelCampaignId?: string | null;
   onClearParallelContext?: () => void;
   onNavigateToSettings?: () => void;
+  /** TASK-H34d: opens Settings -> Voicemail drop. */
+  onNavigateToVoicemail?: () => void;
 }
 
 /**
@@ -108,6 +110,7 @@ export function Dialer({
   parallelCampaignId = null,
   onClearParallelContext,
   onNavigateToSettings,
+  onNavigateToVoicemail,
 }: DialerProps) {
   const { isOwner: isAgentLineOwner, otherTabOpen } = useSingleTabLock();
 
@@ -137,6 +140,7 @@ export function Dialer({
       parallelCampaignId={parallelCampaignId}
       onClearParallelContext={onClearParallelContext}
       onNavigateToSettings={onNavigateToSettings}
+      onNavigateToVoicemail={onNavigateToVoicemail}
       isAgentLineOwner={isAgentLineOwner}
     />
   );
@@ -151,6 +155,7 @@ function DialerBody({
   parallelCampaignId = null,
   onClearParallelContext,
   onNavigateToSettings,
+  onNavigateToVoicemail,
   isAgentLineOwner,
 }: DialerBodyProps) {
   const { numbers: allNumbers, loading: numbersLoading } = usePhoneNumbers();
@@ -1351,7 +1356,7 @@ function DialerBody({
             micRegistering={agentLineConnecting}
             startError={startError}
             onStart={(campaign) => void handleStartSessionForCampaign(campaign)}
-            onNavigateToSettings={onNavigateToSettings}
+            onNavigateToVoicemail={onNavigateToVoicemail}
           />
         )}
 

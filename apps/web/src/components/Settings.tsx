@@ -31,6 +31,7 @@ import {
   Bell,
   AlertTriangle,
   UserCog,
+  Voicemail,
 } from 'lucide-react';
 import { usePhoneNumbers } from '@/contexts/PhoneNumbersContext';
 import { useAuth } from '@/contexts/AuthContext';
@@ -184,6 +185,7 @@ import { normalizePhoneStrict } from '@/lib/phone-normalize';
 
 type SettingsTab =
   | 'profile'
+  | 'voicemail'
   | 'phone'
   | 'team'
   | 'integrations'
@@ -358,7 +360,7 @@ const ROLE_LABEL: Record<string, string> = {
 };
 
 /** Optional deep-link target inside the Team tab (used by Team Shifts -> Manage pods). */
-export type SettingsSection = 'pods' | 'integrations';
+export type SettingsSection = 'pods' | 'integrations' | 'voicemail';
 
 function TeamTab({ scrollTo }: { scrollTo?: SettingsSection }) {
   const { user } = useAuth();
@@ -3748,19 +3750,19 @@ function VoicemailDropCard() {
     <div className="bg-surface-1 rounded-app-lg p-6 border border-border-subtle max-w-2xl mt-6">
       <h3 className="text-section-title text-text-primary mb-1">Voicemail drop</h3>
       <p className="text-sm text-text-secondary mb-4">
-        Played automatically when the dialer detects an answering machine (campaign-dependent -- see
-        the campaign's own Dialer Settings for the voicemail mode and AMD mode).
+        When the dialer reaches an answering machine, it waits for the beep and plays this message,
+        then moves on. Turn it on per campaign (Campaign settings, Voicemail Drop).
       </p>
       <VoicemailDropSubCard
         title="Your voicemail drop"
-        description="Used when you're the agent on the session, before falling back to the org default."
+        description="Played on your calls. If you have not recorded one, the team default plays."
         load={getMyVoicemailDrop}
         upload={uploadMyVoicemailDrop}
       />
       {isAdmin && (
         <VoicemailDropSubCard
-          title="Org default"
-          description="Used for any agent who hasn't set their own voicemail drop."
+          title="Team default"
+          description="Played for any agent who has not recorded their own."
           load={getOrgDefaultVoicemailDrop}
           upload={uploadOrgDefaultVoicemailDrop}
         />
@@ -5449,10 +5451,25 @@ function InboundSettingsCard() {
   );
 }
 
+/** TASK-H34d: deep link `/settings?tab=voicemail`. */
+function initialTabFromUrl(): string | null {
+  try {
+    return new URLSearchParams(window.location.search).get('tab');
+  } catch {
+    return null;
+  }
+}
+
 export function Settings({ section }: { section?: SettingsSection } = {}) {
   const { role, loading: orgLoading } = useOrg();
   const [activeTab, setActiveTab] = useState<SettingsTab>(
-    section === 'pods' ? 'team' : section === 'integrations' ? 'integrations' : 'profile'
+    section === 'pods'
+      ? 'team'
+      : section === 'integrations'
+        ? 'integrations'
+        : section === 'voicemail' || initialTabFromUrl() === 'voicemail'
+          ? 'voicemail'
+          : 'profile'
   );
   const [purchaseModalOpen, setPurchaseModalOpen] = useState(false);
 
@@ -5523,6 +5540,8 @@ export function Settings({ section }: { section?: SettingsSection } = {}) {
   const hideFromManager = isAgent || isManagerRole;
   const tabs = [
     { id: 'profile' as SettingsTab, label: 'Profile', icon: User },
+    // TASK-H34d: every role (an agent's own drop used to be unreachable under owner/admin-only Telephony).
+    { id: 'voicemail' as SettingsTab, label: 'Voicemail drop', icon: Voicemail },
     // "Phone Numbers" mount point: eng2 owns the Telephony/BYO-Telnyx backend (org_telephony,
     // telnyx-connect/-disconnect) and is expected to extend this tab -- coordinate through this
     // task's log rather than restructuring it here.
@@ -5636,6 +5655,8 @@ export function Settings({ section }: { section?: SettingsSection } = {}) {
           ) : (
             <>
               {activeTab === 'profile' && <ProfileTab />}
+
+              {activeTab === 'voicemail' && <VoicemailDropCard />}
 
               {activeTab === 'phone' && !hideFromManager && (
                 <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
@@ -5792,7 +5813,19 @@ export function Settings({ section }: { section?: SettingsSection } = {}) {
                   <CollapsibleSection title="Call handling">
                     <RecordingSettingsCard />
                     <ExternalTransferSettingsCard />
-                    <VoicemailDropCard />
+                    <div className="bg-surface-1 rounded-app-lg p-6 border border-border-subtle max-w-2xl mt-6">
+                      <h3 className="text-section-title text-text-primary mb-1">Voicemail drop</h3>
+                      <p className="text-sm text-text-secondary">
+                        Recording and the team default moved to their own tab.{' '}
+                        <button
+                          type="button"
+                          className="text-accent-to underline underline-offset-2 touch:min-h-11"
+                          onClick={() => setActiveTab('voicemail')}
+                        >
+                          Open Voicemail drop
+                        </button>
+                      </p>
+                    </div>
                     <AutoResumeSettingsCard />
                   </CollapsibleSection>
                 </motion.div>
