@@ -1,3 +1,4 @@
+import { RecordingPlayer } from '@/components/RecordingPlayer';
 import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
@@ -587,7 +588,7 @@ function RecordingDetailPanel({
       </div>
 
       <div>
-        {url && <audio controls src={url} className="w-full h-9" />}
+        {url && <RecordingPlayer src={url} className="w-full h-9" />}
         {!url && urlError && <p className="text-meta text-text-secondary">{urlError}</p>}
         {!url && !urlError && <p className="text-meta text-text-secondary">Loading recording…</p>}
       </div>

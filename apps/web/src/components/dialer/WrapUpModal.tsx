@@ -1,3 +1,4 @@
+import { RecordingPlayer } from '@/components/RecordingPlayer';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Play } from 'lucide-react';
@@ -55,11 +56,7 @@ function RecordingButton({ legId }: { legId: string }) {
   }, [legId]);
 
   if (url) {
-    return (
-      <audio controls src={url} className="w-full h-8">
-        <track kind="captions" />
-      </audio>
-    );
+    return <RecordingPlayer src={url} className="w-full h-8" />;
   }
   if (checking) {
     return <p className="text-xs text-text-muted">Recording processing…</p>;
@@ -155,9 +152,7 @@ function DispositionHistory({
             {entry.has_recording && (
               <div className="mt-1.5">
                 {recordingUrl?.legId === entry.leg_id ? (
-                  <audio controls src={recordingUrl.url} className="w-full h-8">
-                    <track kind="captions" />
-                  </audio>
+                  <RecordingPlayer src={recordingUrl.url} className="w-full h-8" />
                 ) : (
                   <button
                     type="button"

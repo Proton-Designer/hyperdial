@@ -122,6 +122,11 @@ if (proFormToken) {
       )
     );
   });
+} else if (devHarness?.has('dev_recording_player')) {
+  // TASK-H33: the shared RecordingPlayer alone. `?dev_recording_player=1&src=<mp3 url>`.
+  import('./dev/RecordingPlayerHarness.tsx').then(({ RecordingPlayerHarness }) => {
+    root.render(<RecordingPlayerHarness />);
+  });
 } else if (devHarness?.has('dev_wakelock')) {
   // TASK-MOB5: useScreenWakeLock on real iOS Safari. `?dev_wakelock=1`.
   import('./dev/WakeLockHarness.tsx').then(({ WakeLockHarness }) => {

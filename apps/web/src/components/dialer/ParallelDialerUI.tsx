@@ -1,3 +1,4 @@
+import { RecordingPlayer } from '@/components/RecordingPlayer';
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { motion } from 'motion/react';
@@ -750,9 +751,7 @@ function ContactHistoryPanel({ history }: { history: ContactHistoryEntry[] }) {
               {entry.hasRecording && (
                 <div className="mt-1.5">
                   {recordingUrl?.legId === entry.legId ? (
-                    <audio controls src={recordingUrl.url} className="w-full h-8">
-                      <track kind="captions" />
-                    </audio>
+                    <RecordingPlayer src={recordingUrl.url} className="w-full h-8" />
                   ) : (
                     <button
                       type="button"
