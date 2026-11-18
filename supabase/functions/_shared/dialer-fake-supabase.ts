@@ -319,6 +319,16 @@ function rpc(
       if (!session || !leg || session.state !== 'dialing' || session.active_leg_id) {
         return { data: false, error: null };
       }
+      // Mirrors the real claim_leg (20260924001000 section C): only a still-undecided contact
+      // leg of this session can be claimed (TASK-H34c review: a late human result must not claim
+      // a leg that is already 'machine' / 'voicemail_dropping').
+      if (
+        leg.session_id !== session.id ||
+        leg.kind !== 'contact' ||
+        !['initiated', 'ringing', 'answered', 'amd_pending'].includes(leg.state as string)
+      ) {
+        return { data: false, error: null };
+      }
       session.active_leg_id = leg.id;
       session.state = 'connecting';
       leg.state = 'claimed';

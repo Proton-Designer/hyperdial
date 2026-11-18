@@ -1907,15 +1907,17 @@ Deno.test(
       announce_recording_mode: 'all_party_consent_states',
       all_party_consent_states: ['CA'],
     });
-    for (const contact of db.table('contacts').values()) {
-      contact.phone_number = null;
-    }
     try {
-      const { winnerCallControlId } = await bootstrapToOnCall(db, supabase, {
-        orgId,
-        campaignId,
-        agentId,
-      });
+      // Blank the numbers only AFTER the legs are dialed (a contact with no number cannot be dialed;
+      // the real claim_leg refuses an ended leg, which this test used to rely on the fake not checking).
+      const { winnerCallControlId } = await bootstrapToOnCall(
+        db,
+        supabase,
+        { orgId, campaignId, agentId },
+        () => {
+          for (const contact of db.table('contacts').values()) contact.phone_number = null;
+        }
+      );
       const speakReq = server.requests.find(
         (r) => r.method === 'POST' && r.path === `/v2/calls/${winnerCallControlId}/actions/speak`
       );
@@ -2445,13 +2447,23 @@ Deno.test(
   }
 );
 
-async function h34cSetup(opts: { drop: boolean; amdMode: string }) {
+async function h34cSetup(opts: { drop: boolean; amdMode: string; extraLead?: boolean }) {
   const db = new FakeDb();
   const server = new FakeTelnyxServer();
   const restoreFetch = stubTelnyxFetch(server);
   const supabase = createFakeSupabase(db);
   const { orgId, campaignId, agentId } = seedFixtures(db);
   if (opts.drop) dropSeed(db, orgId, campaignId);
+  if (opts.extraLead) {
+    db.insert('contacts', { id: 'contact-4', phone_number: '+15550001004' });
+    db.insert('campaign_leads', {
+      id: 'lead-4',
+      campaign_id: campaignId,
+      contact_id: 'contact-4',
+      status: 'queued',
+      position: 4,
+    });
+  }
   const { sessionId } = await bootstrapToMachineCandidate(db, supabase, {
     orgId,
     campaignId,
@@ -2599,6 +2611,83 @@ Deno.test(
       assertEquals(t.db.table('call_legs').get(l.id)!.amd_result, 'human', 'hangup omits the key');
       await t.ev(l2, 'call.machine.detection.ended', { result: 'x'.repeat(100) });
       assertEquals(t.db.table('call_legs').get(l2.id)!.amd_result, 'x'.repeat(64));
+    } finally {
+      t.restoreFetch();
+    }
+  }
+);
+
+Deno.test(
+  'H34c review: STANDARD greeting.ended before detection.ended (detect_words) drops the voicemail',
+  async () => {
+    const t = await h34cSetup({ drop: true, amdMode: 'detect_words' });
+    try {
+      const [l] = t.legs;
+      await t.ev(l, 'call.answered');
+      await t.ev(l, 'call.machine.greeting.ended', { result: 'ended' });
+      assertEquals(t.db.table('call_legs').get(l.id)!.state, 'voicemail_dropping');
+      assertEquals(t.played(l), true);
+    } finally {
+      t.restoreFetch();
+    }
+  }
+);
+
+Deno.test(
+  'H34c review: early beep with no drop hangs up and the leg end refills the line',
+  async () => {
+    const t = await h34cSetup({ drop: false, amdMode: 'premium', extraLead: true });
+    try {
+      const [l] = t.legs;
+      const dials = () =>
+        t.server.requests.filter((r) => r.method === 'POST' && r.path === '/v2/calls').length;
+      await t.ev(l, 'call.answered');
+      await t.ev(l, 'call.machine.premium.greeting.ended', { result: 'beep_detected' });
+      assertEquals(t.hung(l), true);
+      const before = dials();
+      await t.ev(l, 'call.hangup', { hangup_cause: 'normal_clearing' });
+      assertEquals(dials() > before, true, 'the ended machine leg must be replaced by a new dial');
+    } finally {
+      t.restoreFetch();
+    }
+  }
+);
+
+Deno.test(
+  'H34c review: greeting.ended is ignored before a decision under detect and off',
+  async () => {
+    for (const amdMode of ['detect', 'off']) {
+      const t = await h34cSetup({ drop: true, amdMode });
+      try {
+        const [l] = t.legs;
+        if (amdMode === 'detect') await t.ev(l, 'call.answered');
+        const before = t.db.table('call_legs').get(l.id)!.state;
+        await t.ev(l, 'call.machine.greeting.ended', { result: 'ended' });
+        await t.ev(l, 'call.machine.premium.greeting.ended', { result: 'beep_detected' });
+        assertEquals(t.db.table('call_legs').get(l.id)!.state, before, amdMode);
+        assertEquals(t.played(l), false, amdMode);
+        assertEquals(t.hung(l), false, amdMode);
+      } finally {
+        t.restoreFetch();
+      }
+    }
+  }
+);
+
+Deno.test(
+  'H34c review: a late human result cannot claim a leg already dropping a voicemail',
+  async () => {
+    const t = await h34cSetup({ drop: true, amdMode: 'premium' });
+    try {
+      const [l] = t.legs;
+      await t.ev(l, 'call.answered');
+      await t.ev(l, 'call.machine.premium.greeting.ended', { result: 'beep_detected' });
+      assertEquals(t.db.table('call_legs').get(l.id)!.state, 'voicemail_dropping');
+      await t.ev(l, 'call.machine.premium.detection.ended', { result: 'human_residence' });
+      assertEquals(t.db.table('call_legs').get(l.id)!.state, 'voicemail_dropping');
+      assertEquals(t.db.table('call_legs').get(l.id)!.amd_result, 'human_residence');
+      assertEquals(t.hung(l), false, 'no abandon message / hangup for a leg mid-drop');
+      // claim_leg's own state check (SQL 20260924001000 C) is mirrored by the fake since this test.
     } finally {
       t.restoreFetch();
     }
@@ -2887,7 +2976,9 @@ Deno.test(
 async function bootstrapToOnCall(
   db: FakeDb,
   supabase: ReturnType<typeof createFakeSupabase>,
-  args: { orgId: string; campaignId: string; agentId: string }
+  args: { orgId: string; campaignId: string; agentId: string },
+  /** Runs after the contact legs are dialed, right before the winner answers. */
+  beforeAnswer?: () => void
 ): Promise<{ sessionId: string; winnerLegId: string; winnerCallControlId: string }> {
   const { sessionId } = await startSession(supabase, {
     orgId: args.orgId,
@@ -2907,6 +2998,7 @@ async function bootstrapToOnCall(
       'call.answered'
     )
   );
+  beforeAnswer?.();
   const winnerLeg = [...db.table('call_legs').values()].find((l) => l.kind === 'contact')!;
   await processTelnyxDialerEvent(
     supabase,

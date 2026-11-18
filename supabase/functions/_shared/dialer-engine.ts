@@ -319,7 +319,10 @@ async function loadCampaign(
   return data as CampaignRow | null;
 }
 
-/** TASK-H34 (B): contact-leg states where AMD already decided "machine" -- never a losing human. */
+/** TASK-H34 (B): contact-leg states where AMD already decided "machine" -- never a losing human.
+ *  Side effect: an UNARMED 'machine' leg whose own hangup failed is no longer re-hung-up by a later
+ *  win; it waits for the sweeper. A STANDARD-AMD greeting.ended with result `not_sure` (30 s, no beep
+ *  heard) still counts as "greeting over" and may drop; only premium results are beep-gated. */
 const MACHINE_RESOLVED_STATES: LegState[] = ['machine', 'voicemail_dropping'];
 
 async function loadActiveLegs(supabase: SupabaseClient, sessionId: string): Promise<CallLegRow[]> {
@@ -1539,6 +1542,10 @@ async function handleGreetingEndedSpecialCases(
 
   const dropPath = await resolveVoicemailDropPath(supabase, session, leg);
   if (dropPath) {
+    // Written BEFORE the transition on purpose (transition_leg cannot carry this column, and writing
+    // it after leaves a crash window where a leg is 'voicemail_dropping' with no path, which
+    // startVoicemailPlayback ignores until the sweeper reaps it). If the transition then loses the
+    // race (claimed/abandoned), the leg keeps an unused path: nothing reads it outside 'machine'.
     await supabase.from('call_legs').update({ voicemail_drop_path: dropPath }).eq('id', leg.id);
   }
   const next: LegState = dropPath ? 'voicemail_dropping' : 'machine';
