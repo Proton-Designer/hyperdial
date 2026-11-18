@@ -183,6 +183,38 @@ export async function getNumberHealthStats(): Promise<NumberHealthStat[]> {
   return (data ?? []) as NumberHealthStat[];
 }
 
+/** TASK-H35: the Good / Watch / At risk badge per number (view `number_health_badges`, free signals
+ *  only). `level` 'unknown' means not enough calls this week to judge. Rates are 0-1. */
+export interface NumberHealthBadge {
+  number_id: string;
+  org_id: string;
+  phone_number: string;
+  status: 'active' | 'resting' | 'retired';
+  level: 'good' | 'watch' | 'at_risk' | 'unknown';
+  /** One plain sentence: the worst signal, or "Not enough calls yet (x of y needed this week)". */
+  reason: string;
+  reasons: string[];
+  dials_7d: number;
+  answer_rate_7d: number | null;
+  answer_rate_prior: number | null;
+  pool_median_7d: number | null;
+  quick_hangup_share: number | null;
+  peak_day_dials: number;
+  avg_day_dials: number;
+  daily_cap: number;
+}
+
+export async function getNumberHealthBadges(): Promise<NumberHealthBadge[]> {
+  const orgId = await getActiveOrgId();
+  const { data, error } = await supabase
+    .from('number_health_badges')
+    .select('*')
+    .eq('org_id', orgId)
+    .order('phone_number', { ascending: true });
+  if (error) throw new Error(error.message);
+  return (data ?? []) as NumberHealthBadge[];
+}
+
 export interface NumberHealthCheckResult {
   numberId: string;
   phoneNumber: string;

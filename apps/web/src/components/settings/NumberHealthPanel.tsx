@@ -1,31 +1,59 @@
 import { useEffect, useState } from 'react';
+import { ChevronDown, ExternalLink } from 'lucide-react';
+import { cn } from '@/components/ui/utils';
 import { useOrg } from '@/contexts/OrgContext';
-import { getNumberHealthStats, runNumberHealthCheck, type NumberHealthStat } from '@/lib/api';
+import {
+  getNumberHealthBadges,
+  getNumberHealthStats,
+  runNumberHealthCheck,
+  type NumberHealthBadge,
+  type NumberHealthStat,
+} from '@/lib/api';
 
 /**
- * MISSION-4 TASK-T9 (CID-4): per-number dial/answer-rate/talk-time stats + an on-demand health
- * check button, for Settings -> Telephony -> Numbers. Mounted in `Settings.tsx` right after
- * `<NumberPoolCard />` (was built standalone in its own commit while `Settings.tsx` was held by
- * eng2's concurrent TASK-T8-m4; wired in once that claim released).
+ * MISSION-4 TASK-T9 (CID-4) + TASK-H35: one plain badge per number (Good / Watch / At risk, or
+ * "Not enough calls yet") with a one-line reason, details behind a tap, an on-demand health check, and
+ * a "Protect your numbers" box. For Settings -> Telephony -> Numbers, owner/admin only (an agent never
+ * sees this: the health check rests numbers org-wide).
  *
- * Owner/admin only, same gate as NumberPoolCard's own `isAdmin` check -- an agent never sees
- * this (the health check flags/rests numbers org-wide, an owner/admin concern, not a per-agent
- * one).
+ * The badge is defined once in SQL (`number_health_badges`) from free signals only: this week's
+ * answer rate against the number's own earlier baseline and the pool median, quick hang-ups, and calls
+ * per day. It is NOT a carrier spam label; the box at the bottom says how to check those for free.
  */
+const LEVEL_UI: Record<NumberHealthBadge['level'], { label: string; chip: string }> = {
+  good: { label: 'Good', chip: 'bg-success/10 text-success' },
+  watch: { label: 'Watch', chip: 'bg-warning/10 text-warning' },
+  at_risk: { label: 'At risk', chip: 'bg-danger/10 text-danger' },
+  unknown: { label: 'Not enough calls yet', chip: 'bg-surface-3 text-text-secondary' },
+};
+
+const pct = (rate: number | null) => (rate == null ? '—' : `${Math.round(rate * 100)}%`);
+const secs = (s: number | null) => (s == null ? '—' : `${Math.round(s)}s`);
+
 export function NumberHealthPanel() {
   const { role } = useOrg();
   const isAdmin = role === 'owner' || role === 'admin';
-  const [stats, setStats] = useState<NumberHealthStat[]>([]);
+  const [badges, setBadges] = useState<NumberHealthBadge[]>([]);
+  const [stats, setStats] = useState<Record<string, NumberHealthStat>>({});
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState(false);
+  const [checkError, setCheckError] = useState(false);
   const [checking, setChecking] = useState(false);
   const [lastCheckMessage, setLastCheckMessage] = useState<string | null>(null);
+  const [openId, setOpenId] = useState<string | null>(null);
 
   const load = () => {
     setLoading(true);
-    getNumberHealthStats()
-      .then(setStats)
-      .catch((e) => setError(String(e)))
+    setLoadError(false);
+    Promise.all([getNumberHealthBadges(), getNumberHealthStats()])
+      .then(([b, s]) => {
+        setBadges(b);
+        setStats(Object.fromEntries(s.map((x) => [x.number_id, x])));
+      })
+      .catch((e) => {
+        console.error('Failed to load number health', e);
+        setLoadError(true);
+      })
       .finally(() => setLoading(false));
   };
 
@@ -37,7 +65,7 @@ export function NumberHealthPanel() {
 
   const handleCheckNow = async () => {
     setChecking(true);
-    setError(null);
+    setCheckError(false);
     setLastCheckMessage(null);
     try {
       const flagged = await runNumberHealthCheck();
@@ -49,38 +77,40 @@ export function NumberHealthPanel() {
       );
       load();
     } catch (e) {
-      setError(String(e));
+      console.error('Number health check failed', e);
+      setCheckError(true);
     } finally {
       setChecking(false);
     }
   };
 
-  const formatPct = (rate: number | null) => (rate == null ? '—' : `${Math.round(rate * 100)}%`);
-  const formatSeconds = (s: number | null) => (s == null ? '—' : `${Math.round(s)}s`);
-
   return (
     <div className="bg-surface-1 rounded-app-lg p-6 border border-border-subtle max-w-4xl mt-6">
-      <div className="flex items-center justify-between mb-1">
+      <div className="flex flex-wrap items-center justify-between gap-2 mb-1">
         <h3 className="text-section-title text-text-primary">Number health</h3>
         <button
           type="button"
           onClick={() => void handleCheckNow()}
           disabled={checking}
-          className="text-sm px-3 py-1.5 rounded-app-md border border-border-subtle text-text-primary hover:bg-surface-2 disabled:opacity-50"
+          className="hd-touch text-sm px-3 py-1.5 rounded-app-md border border-border-subtle text-text-primary hover:bg-surface-2 disabled:opacity-50"
         >
           {checking ? 'Checking…' : 'Run check now'}
         </button>
       </div>
       <p className="text-sm text-text-secondary mb-4">
-        Weekly (and on demand): a number whose human-answer rate falls well below the pool median,
-        with enough dials sampled, is automatically rested and flagged below. Rested numbers are
-        excluded from dialing until reactivated (the existing rest-day cooldown, same as a daily-cap
-        rest).
+        A quick read on each number from your own call data: this week&apos;s answer rate against
+        its earlier weeks and your other numbers, people hanging up right away, and how many calls a
+        day it makes. Too many calls from one number is the most common reason it gets labelled as
+        spam. This is not a carrier spam label; see &quot;Protect your numbers&quot; below. Numbers
+        far below the pool median are rested automatically when alerts are turned on.
       </p>
 
-      {error && (
-        <div className="mb-4 p-3 rounded-app-md bg-danger/10 border border-danger/30 text-danger text-sm">
-          {error}
+      {checkError && (
+        <div
+          role="alert"
+          className="mb-4 p-3 rounded-app-md bg-danger/10 border border-danger/30 text-danger text-sm"
+        >
+          The health check didn&apos;t run. Check your connection and try again.
         </div>
       )}
       {lastCheckMessage && (
@@ -91,95 +121,127 @@ export function NumberHealthPanel() {
 
       {loading ? (
         <p className="text-sm text-text-secondary">Loading…</p>
-      ) : stats.length === 0 ? (
+      ) : loadError ? (
+        <div className="flex flex-wrap items-center gap-3 text-sm text-text-secondary">
+          <span>Couldn&apos;t load number health. Check your connection and try again.</span>
+          <button
+            type="button"
+            onClick={load}
+            className="hd-touch px-3 py-1.5 rounded-app-md border border-border-subtle text-text-primary hover:bg-surface-2"
+          >
+            Try again
+          </button>
+        </div>
+      ) : badges.length === 0 ? (
         <p className="text-sm text-text-secondary">No numbers in the pool yet.</p>
       ) : (
-        <>
-          <div className="space-y-2 lg:hidden">
-            {stats.map((s) => (
-              <div
-                key={s.number_id}
-                className="rounded-app-md border border-border-subtle bg-surface-2/40 p-3 space-y-1"
+        <ul className="space-y-2">
+          {badges.map((b) => {
+            const ui = LEVEL_UI[b.level];
+            const st = stats[b.number_id];
+            const open = openId === b.number_id;
+            return (
+              <li
+                key={b.number_id}
+                className="rounded-app-md border border-border-subtle bg-surface-2/40"
               >
-                <div className="flex items-center justify-between gap-2">
-                  <span className="font-medium text-text-primary">{s.phone_number}</span>
-                  {s.status === 'resting' && s.flagged_reason ? (
-                    <span className="px-2 py-0.5 rounded-full bg-danger/10 text-danger text-xs">
-                      Flagged
-                    </span>
-                  ) : (
-                    <span className="text-text-secondary text-sm capitalize">{s.status}</span>
-                  )}
-                </div>
-                {s.status === 'resting' && s.flagged_reason && (
-                  <div className="text-meta text-danger">{s.flagged_reason}</div>
-                )}
-                <div className="grid grid-cols-3 gap-2 text-meta text-text-secondary">
-                  <div>
-                    Dials 7d / 30d
-                    <div className="text-sm text-text-primary">
-                      {s.dials_7d} / {s.dials_30d}
-                    </div>
-                  </div>
-                  <div>
-                    Answer rate
-                    <div className="text-sm text-text-primary">
-                      {formatPct(s.human_answer_rate_7d)} / {formatPct(s.human_answer_rate_30d)}
-                    </div>
-                  </div>
-                  <div>
-                    Avg talk 30d
-                    <div className="text-sm text-text-primary">
-                      {formatSeconds(s.avg_talk_seconds_30d)}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-          <div className="hidden lg:block hd-scroll-x">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-left text-text-secondary border-b border-border-subtle">
-                  <th className="py-2 pr-4">Number</th>
-                  <th className="py-2 pr-4">Status</th>
-                  <th className="py-2 pr-4">Dials (7d / 30d)</th>
-                  <th className="py-2 pr-4">Answer rate (7d / 30d)</th>
-                  <th className="py-2 pr-4">Avg talk (30d)</th>
-                </tr>
-              </thead>
-              <tbody>
-                {stats.map((s) => (
-                  <tr key={s.number_id} className="border-b border-border-subtle last:border-0">
-                    <td className="py-2 pr-4 text-text-primary">{s.phone_number}</td>
-                    <td className="py-2 pr-4">
-                      {s.status === 'resting' && s.flagged_reason ? (
-                        <span
-                          className="px-2 py-0.5 rounded-full bg-danger/10 text-danger text-xs"
-                          title={s.flagged_reason}
-                        >
-                          Flagged
-                        </span>
-                      ) : (
-                        <span className="text-text-secondary capitalize">{s.status}</span>
+                <button
+                  type="button"
+                  aria-expanded={open}
+                  onClick={() => setOpenId(open ? null : b.number_id)}
+                  className="hd-touch flex w-full items-start gap-3 p-3 text-left"
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-medium text-text-primary">{b.phone_number}</span>
+                      <span className={cn('px-2 py-0.5 rounded-full text-xs font-medium', ui.chip)}>
+                        {ui.label}
+                      </span>
+                      {b.status === 'resting' && (
+                        <span className="text-xs text-text-secondary">Resting</span>
                       )}
-                    </td>
-                    <td className="py-2 pr-4 text-text-primary">
-                      {s.dials_7d} / {s.dials_30d}
-                    </td>
-                    <td className="py-2 pr-4 text-text-primary">
-                      {formatPct(s.human_answer_rate_7d)} / {formatPct(s.human_answer_rate_30d)}
-                    </td>
-                    <td className="py-2 pr-4 text-text-primary">
-                      {formatSeconds(s.avg_talk_seconds_30d)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </>
+                    </div>
+                    <div className="mt-1 text-meta text-text-secondary">{b.reason}</div>
+                  </div>
+                  <ChevronDown
+                    className={cn(
+                      'mt-1 h-4 w-4 flex-shrink-0 text-text-secondary transition-transform',
+                      open && 'rotate-180'
+                    )}
+                    aria-hidden
+                  />
+                </button>
+                {open && (
+                  <div className="border-t border-border-subtle p-3 space-y-3">
+                    {b.reasons.length > 1 && (
+                      <ul className="list-disc pl-5 text-meta text-text-secondary space-y-0.5">
+                        {b.reasons.map((r) => (
+                          <li key={r}>{r}</li>
+                        ))}
+                      </ul>
+                    )}
+                    <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-meta text-text-secondary sm:grid-cols-3">
+                      <Detail label="Answer rate this week" value={pct(b.answer_rate_7d)} />
+                      <Detail label="Earlier weeks" value={pct(b.answer_rate_prior)} />
+                      <Detail label="Pool median" value={pct(b.pool_median_7d)} />
+                      <Detail label="Quick hang-ups" value={pct(b.quick_hangup_share)} />
+                      <Detail
+                        label="Calls / day (busiest)"
+                        value={`${b.peak_day_dials} (cap ${b.daily_cap})`}
+                      />
+                      <Detail
+                        label="Dials 7d / 30d"
+                        value={`${b.dials_7d} / ${st?.dials_30d ?? '—'}`}
+                      />
+                      <Detail label="Avg talk 30d" value={secs(st?.avg_talk_seconds_30d ?? null)} />
+                    </dl>
+                  </div>
+                )}
+              </li>
+            );
+          })}
+        </ul>
       )}
+
+      <div className="mt-6 rounded-app-md border border-border-subtle bg-surface-2/40 p-4">
+        <h4 className="text-sm font-semibold text-text-primary mb-1">Protect your numbers</h4>
+        <p className="text-meta text-text-secondary mb-3">
+          Phone carriers label calls using three analytics companies. You can register your numbers
+          with all three for free. It improves how your calls look; it doesn&apos;t guarantee they
+          won&apos;t be labelled.
+        </p>
+        <ol className="list-decimal pl-5 space-y-1 text-meta text-text-secondary mb-3">
+          <li>
+            Open the free registry and enter your business name and each phone number you dial from.
+          </li>
+          <li>
+            Use the same business name everywhere, and set it as the caller name (CNAM) for the
+            number with your phone provider.
+          </li>
+          <li>
+            Come back to this page after a week of calling: the badges above show whether the answer
+            rate held up.
+          </li>
+        </ol>
+        <a
+          href="https://www.freecallerregistry.com"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-1.5 text-sm text-accent-from hover:underline touch:min-h-11"
+        >
+          Open freecallerregistry.com
+          <ExternalLink className="h-3.5 w-3.5" aria-hidden />
+        </a>
+      </div>
+    </div>
+  );
+}
+
+function Detail({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <dt>{label}</dt>
+      <dd className="text-sm text-text-primary">{value}</dd>
     </div>
   );
 }
