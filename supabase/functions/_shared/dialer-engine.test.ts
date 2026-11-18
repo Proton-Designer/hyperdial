@@ -2445,6 +2445,166 @@ Deno.test(
   }
 );
 
+async function h34cSetup(opts: { drop: boolean; amdMode: string }) {
+  const db = new FakeDb();
+  const server = new FakeTelnyxServer();
+  const restoreFetch = stubTelnyxFetch(server);
+  const supabase = createFakeSupabase(db);
+  const { orgId, campaignId, agentId } = seedFixtures(db);
+  if (opts.drop) dropSeed(db, orgId, campaignId);
+  const { sessionId } = await bootstrapToMachineCandidate(db, supabase, {
+    orgId,
+    campaignId,
+    agentId,
+    amdMode: opts.amdMode,
+  });
+  const legs = [...db.table('call_legs').values()]
+    .filter((l) => l.kind === 'contact')
+    .map((l) => ({ id: l.id as string, cc: l.call_control_id as string }));
+  const ev = (l: { id: string; cc: string }, type: string, extra: Record<string, unknown> = {}) =>
+    processTelnyxDialerEvent(supabase, contactEvent(orgId, sessionId, l.id, l.cc, type, extra));
+  const hung = (l: { cc: string }) =>
+    server.requests.some((r) => r.path === `/v2/calls/${l.cc}/actions/hangup`);
+  const played = (l: { cc: string }) =>
+    server.requests.some((r) => r.path === `/v2/calls/${l.cc}/actions/playback_start`);
+  return { db, server, restoreFetch, legs, ev, hung, played };
+}
+
+Deno.test(
+  'H34c S1: premium no_beep_detected on an armed leg -> plain hangup, outcome machine',
+  async () => {
+    const t = await h34cSetup({ drop: true, amdMode: 'premium' });
+    try {
+      const [l] = t.legs;
+      await t.ev(l, 'call.answered');
+      await t.ev(l, 'call.machine.premium.detection.ended', { result: 'machine' });
+      assertEquals(t.db.table('call_legs').get(l.id)!.state, 'machine');
+      await t.ev(l, 'call.machine.premium.greeting.ended', { result: 'no_beep_detected' });
+      assertEquals(t.played(l), false, 'never play over the greeting');
+      assertEquals(t.hung(l), true);
+      assertEquals(t.db.table('call_legs').get(l.id)!.state, 'machine');
+      await t.ev(l, 'call.hangup', { hangup_cause: 'normal_clearing' });
+      assertEquals(t.db.table('call_legs').get(l.id)!.outcome, 'machine');
+    } finally {
+      t.restoreFetch();
+    }
+  }
+);
+
+Deno.test('H34c S1: premium beep_detected on an armed leg still drops the voicemail', async () => {
+  const t = await h34cSetup({ drop: true, amdMode: 'premium' });
+  try {
+    const [l] = t.legs;
+    await t.ev(l, 'call.answered');
+    await t.ev(l, 'call.machine.premium.detection.ended', { result: 'machine' });
+    await t.ev(l, 'call.machine.premium.greeting.ended', { result: 'beep_detected' });
+    assertEquals(t.db.table('call_legs').get(l.id)!.state, 'voicemail_dropping');
+    assertEquals(t.played(l), true);
+  } finally {
+    t.restoreFetch();
+  }
+});
+
+Deno.test(
+  'H34c S2: a beep before detection.ended is treated as a machine and dropped; the late detection only stores amd_result',
+  async () => {
+    const t = await h34cSetup({ drop: true, amdMode: 'premium' });
+    try {
+      const [l] = t.legs;
+      await t.ev(l, 'call.answered');
+      await t.ev(l, 'call.machine.premium.greeting.ended', { result: 'beep_detected' });
+      assertEquals(t.db.table('call_legs').get(l.id)!.state, 'voicemail_dropping');
+      assertEquals(t.played(l), true);
+      await t.ev(l, 'call.machine.premium.detection.ended', { result: 'machine' });
+      assertEquals(t.db.table('call_legs').get(l.id)!.state, 'voicemail_dropping');
+      assertEquals(t.db.table('call_legs').get(l.id)!.amd_result, 'machine');
+      await t.ev(l, 'call.playback.ended');
+      await t.ev(l, 'call.hangup', { hangup_cause: 'normal_clearing' });
+      assertEquals(t.db.table('call_legs').get(l.id)!.outcome, 'voicemail_left');
+    } finally {
+      t.restoreFetch();
+    }
+  }
+);
+
+Deno.test('H34c S2: early beep with no drop file -> machine, plain hangup', async () => {
+  const t = await h34cSetup({ drop: false, amdMode: 'premium' });
+  try {
+    const [l] = t.legs;
+    await t.ev(l, 'call.answered');
+    await t.ev(l, 'call.machine.premium.greeting.ended', { result: 'beep_detected' });
+    assertEquals(t.db.table('call_legs').get(l.id)!.state, 'machine');
+    assertEquals(t.hung(l), true);
+    assertEquals(t.played(l), false);
+    await t.ev(l, 'call.hangup', { hangup_cause: 'normal_clearing' });
+    assertEquals(t.db.table('call_legs').get(l.id)!.outcome, 'machine');
+  } finally {
+    t.restoreFetch();
+  }
+});
+
+Deno.test('H34c S2: a beep event never touches a claimed (won) leg', async () => {
+  const t = await h34cSetup({ drop: true, amdMode: 'premium' });
+  try {
+    const [l] = t.legs;
+    await t.ev(l, 'call.answered');
+    await t.ev(l, 'call.machine.premium.detection.ended', { result: 'human_residence' });
+    assertEquals(t.db.table('call_legs').get(l.id)!.state, 'claimed');
+    await t.ev(l, 'call.machine.premium.greeting.ended', { result: 'beep_detected' });
+    assertEquals(t.db.table('call_legs').get(l.id)!.state, 'claimed');
+    assertEquals(t.hung(l), false);
+    assertEquals(t.played(l), false);
+  } finally {
+    t.restoreFetch();
+  }
+});
+
+Deno.test(
+  'H34c H32-review: lost-race human keeps amd_result; late detection on a dropped leg is stored; first value wins',
+  async () => {
+    const t = await h34cSetup({ drop: false, amdMode: 'premium' });
+    try {
+      const [winner, loser, late] = t.legs;
+      for (const l of [winner, loser, late]) await t.ev(l, 'call.answered');
+      await t.ev(winner, 'call.machine.premium.detection.ended', { result: 'human_business' });
+      assertEquals(t.db.table('call_legs').get(winner.id)!.amd_result, 'human_business');
+      // `late` was resolved by the winner's loser loop before its own detection arrives.
+      assertEquals(
+        ['abandoned', 'dropped'].includes(t.db.table('call_legs').get(late.id)!.state as string),
+        true
+      );
+      const lateState = t.db.table('call_legs').get(late.id)!.state;
+      await t.ev(late, 'call.machine.premium.detection.ended', { result: 'machine' });
+      assertEquals(t.db.table('call_legs').get(late.id)!.state, lateState, 'state untouched');
+      assertEquals(t.db.table('call_legs').get(late.id)!.amd_result, 'machine');
+      await t.ev(late, 'call.machine.premium.detection.ended', { result: 'human_business' });
+      assertEquals(t.db.table('call_legs').get(late.id)!.amd_result, 'machine', 'first value wins');
+      assertEquals(typeof t.db.table('call_legs').get(loser.id)!.state, 'string');
+    } finally {
+      t.restoreFetch();
+    }
+  }
+);
+
+Deno.test(
+  'H34c H32-review: standard AMD result is stored, survives hangup, and is capped at 64 chars',
+  async () => {
+    const t = await h34cSetup({ drop: false, amdMode: 'detect_words' });
+    try {
+      const [l, l2] = t.legs;
+      await t.ev(l, 'call.answered');
+      await t.ev(l, 'call.machine.detection.ended', { result: 'human' });
+      assertEquals(t.db.table('call_legs').get(l.id)!.amd_result, 'human');
+      await t.ev(l, 'call.hangup', { hangup_cause: 'normal_clearing' });
+      assertEquals(t.db.table('call_legs').get(l.id)!.amd_result, 'human', 'hangup omits the key');
+      await t.ev(l2, 'call.machine.detection.ended', { result: 'x'.repeat(100) });
+      assertEquals(t.db.table('call_legs').get(l2.id)!.amd_result, 'x'.repeat(64));
+    } finally {
+      t.restoreFetch();
+    }
+  }
+);
+
 Deno.test('H32: a premium not_sure claim persists amd_result on the winning leg', async () => {
   const db = new FakeDb();
   const server = new FakeTelnyxServer();

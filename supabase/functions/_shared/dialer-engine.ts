@@ -1178,8 +1178,14 @@ function mapToDialerEvent(raw: RawTelnyxEvent): TelnyxDialerEvent | null {
     // the SAME core event -- see dialer-core.ts's header for why the leg-level decision is
     // identical either way.
     case 'call.machine.greeting.ended':
-    case 'call.machine.premium.greeting.ended':
       return { eventType: 'call.machine.greeting.ended' };
+    case 'call.machine.premium.greeting.ended':
+      // TASK-H34c: premium results are beep_detected | no_beep_detected | prompt_ended; only a
+      // detected beep means "the greeting is over, safe to leave a message".
+      return {
+        eventType: 'call.machine.greeting.ended',
+        beepDetected: String(raw.payload.result ?? '') === 'beep_detected',
+      };
     case 'call.playback.ended':
       return { eventType: 'call.playback.ended' };
     case 'call.hangup':
@@ -1220,7 +1226,9 @@ function amdResultFields(event: TelnyxDialerEvent): { amd_result?: string } {
     event.eventType === 'call.machine.detection.ended' ||
     event.eventType === 'call.machine.premium.detection.ended'
   ) {
-    return typeof event.result === 'string' && event.result ? { amd_result: event.result } : {};
+    return typeof event.result === 'string' && event.result
+      ? { amd_result: event.result.slice(0, 64) }
+      : {};
   }
   return {};
 }
@@ -1503,12 +1511,69 @@ async function applyLegTransition(
   return null;
 }
 
+/** TASK-H34c. Two cases legTransition cannot express because they need the engine's own lookups.
+ *  Returns true when the event was fully handled here.
+ *  1. A premium greeting-ended that is not `beep_detected` on an ARMED machine leg: no voicemail
+ *     is left (a message over the greeting is worse than none) -- plain hangup, outcome 'machine'.
+ *  2. A beep-detected greeting-ended that arrives while the leg is NOT yet 'machine' (Telnyx sends only
+ *     greeting.ended when the beep comes before detection.ended): it is a machine. Drop if a drop
+ *     exists, else plain hangup. Only from a pre-decision state, via transition_leg's expected-state
+ *     check, so a leg that was claimed/won is never touched. */
+async function handleGreetingEndedSpecialCases(
+  supabase: SupabaseClient,
+  session: DialSessionRow,
+  leg: CallLegRow,
+  event: Extract<TelnyxDialerEvent, { eventType: 'call.machine.greeting.ended' }>
+): Promise<boolean> {
+  if (leg.state === 'machine') {
+    if (event.beepDetected === false && leg.voicemail_drop_path) {
+      dialerLog('voicemail_drop_skipped_no_beep', { legId: leg.id });
+      await hangupLeg(supabase, session.org_id, leg.call_control_id, 'machine_hangup_failed');
+      return true;
+    }
+    return false;
+  }
+  if (event.beepDetected === false) return false;
+  if (!['initiated', 'ringing', 'answered', 'amd_pending'].includes(leg.state)) return false;
+  if (session.amd_mode === 'off' || session.amd_mode === 'detect') return false;
+
+  const dropPath = await resolveVoicemailDropPath(supabase, session, leg);
+  if (dropPath) {
+    await supabase.from('call_legs').update({ voicemail_drop_path: dropPath }).eq('id', leg.id);
+  }
+  const next: LegState = dropPath ? 'voicemail_dropping' : 'machine';
+  const { data: applied, error } = await supabase.rpc('transition_leg', {
+    p_call_control_id: leg.call_control_id,
+    p_expected_states: [leg.state],
+    p_new_state: next,
+    p_fields: {},
+  });
+  if (error) throw new Error(`transition_leg (early beep): ${error.message}`);
+  if (!applied) {
+    // Claimed or moved by another event first: whatever it resolved to is authoritative.
+    dialerLog('early_beep_race_skip', { legId: leg.id, state: leg.state });
+    return true;
+  }
+  dialerLog('early_beep_machine', { legId: leg.id, from: leg.state, drop: Boolean(dropPath) });
+  if (dropPath) {
+    if (session.state === 'dialing') await refillSession(supabase, session.org_id, session.id);
+    await startVoicemailPlayback(supabase, session, { ...leg, voicemail_drop_path: dropPath });
+  } else {
+    await hangupLeg(supabase, session.org_id, leg.call_control_id, 'machine_hangup_failed');
+  }
+  return true;
+}
+
 async function processContactLegEvent(
   supabase: SupabaseClient,
   session: DialSessionRow,
   leg: CallLegRow,
   event: TelnyxDialerEvent
 ): Promise<void> {
+  if (event.eventType === 'call.machine.greeting.ended') {
+    if (await handleGreetingEndedSpecialCases(supabase, session, leg, event)) return;
+  }
+
   let claim: 'won' | 'lost' | undefined;
   const decision = decisionFor(event, session.amd_mode);
   if (decision === 'claim') {
@@ -1551,7 +1616,20 @@ async function processContactLegEvent(
   }
 
   const applied = await applyLegTransition(supabase, session, leg, event, claim);
-  if (!applied) return;
+  if (!applied) {
+    // TASK-H34c: a detection result that reaches a leg which already left the state machine (it lost
+    // the race, was dropped, or ended) is still worth keeping. State untouched; first value wins.
+    const late = amdResultFields(event);
+    if (late.amd_result) {
+      await supabase
+        .from('call_legs')
+        .update({ amd_result: late.amd_result })
+        .eq('id', leg.id)
+        .is('amd_result', null);
+      dialerLog('amd_result_late', { legId: leg.id, state: leg.state });
+    }
+    return;
+  }
   const currentLeg = applied.leg;
   const result = applied.result;
 

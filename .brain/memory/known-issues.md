@@ -1444,3 +1444,9 @@ PATCHing `active:true` on both. Diagnose fast: `GET /v2/credential_connections/<
 `/v2/call_control_applications/<id>` and check `active`. Trap: the SDK's `telnyx.error` payload is
 a plain object, not an Error, so the UI showed only a generic message; b559858 turns it into a
 readable Error and stops the retry loop on a refused login.
+
+## 2026-11-17 — Sweeper reaps a silent armed voicemail-drop leg as 'failed' (OPEN, low likelihood; TASK-H34 audit S3)
+`run_dialer_sweep` block 1 reaps any non-terminal contact leg after 60 s without a webhook, with outcome `failed` when
+`answered_at` is set. A leg armed for a voicemail drop (state `machine`, `voicemail_drop_path` set) waits for
+`greeting.ended`; if that webhook is lost AND the call never hangs up for 60 s, the leg is reaped as `failed` and the lead
+becomes `exhausted`. Fix = a new migration mapping state `machine` to outcome `machine`. Not done (decision 2026-11-17).

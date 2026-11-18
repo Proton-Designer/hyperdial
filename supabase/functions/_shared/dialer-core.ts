@@ -138,7 +138,14 @@ export type TelnyxDialerEvent =
    *  calling legTransition -- the leg-level decision ("greeting's over, safe to play the drop
    *  now") is identical either way; only dialer-engine.ts's mapToDialerEvent needs to know which
    *  raw webhook it came from. */
-  | { eventType: 'call.machine.greeting.ended' }
+  | {
+      eventType: 'call.machine.greeting.ended';
+      /** TASK-H34c: false when a PREMIUM greeting-ended carries any result other than
+       *  `beep_detected` (`no_beep_detected` fires at the AMD timeout, possibly mid-greeting, so a drop
+       *  would play over the owner's greeting). Undefined/true = safe to play (standard AMD's own
+       *  greeting-ended, or a detected beep). Set only by dialer-engine.ts's mapToDialerEvent. */
+      beepDetected?: boolean;
+    }
   /** VMD-2/VMD-5: confirms the voicemail drop audio finished playing on a machine leg -- same
    *  "no state change, the engine issues the actual hangup command next" shape as
    *  call.speak.ended's own abandoned-message confirmation. */
@@ -255,7 +262,7 @@ export function legTransition(
       // that case, so a genuinely LATE arrival of this event here almost always finds the leg
       // no longer 'machine' at all (returns null below); this branch is defensive, not the
       // normal path for "not dropping".
-      if (current !== 'machine' || !ctx.voicemailDrop) return null;
+      if (current !== 'machine' || !ctx.voicemailDrop || event.beepDetected === false) return null;
       return { next: 'voicemail_dropping' };
 
     case 'call.playback.ended':
