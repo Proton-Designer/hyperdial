@@ -265,6 +265,12 @@ export async function resumeInboundPausedSession(
     .neq('id', inboundCallId)
     .limit(1);
   if ((others ?? []).length > 0) return false;
+  // Same result as the Resume button (dialer-session-resume -> resumeToDialing: state 'dialing',
+  // pause_reason cleared, then refill; that endpoint makes no presence check either), but with an
+  // atomic guard on pause_reason so it can only undo OUR pause.
+  // Same result as the Resume button (dialer-session-resume -> resumeToDialing: state 'dialing',
+  // pause_reason cleared, then refill; that endpoint makes no presence check either), but with an
+  // atomic guard on pause_reason so it can only undo OUR pause.
   const { data, error } = await supabase
     .from('dial_sessions')
     .update({ state: 'dialing', pause_reason: null })
@@ -781,10 +787,13 @@ export async function handleOriginalLegEvent(
     return;
   }
 
-  // TASK-H36: a bridged/answered ORIGINAL leg while we are ringing a fallback target means the
-  // transfer connected, even if Leg B's own call.answered was lost or dropped. Record it (once).
+  // TASK-H36: an ORIGINAL-leg call.answered while we are ringing a fallback target means the
+  // transfer connected, even if Leg B's own call.answered was lost. Recorded once. Deliberately
+  // NOT call.bridged: live data shows Telnyx sends call.bridged on a transfer leg that never
+  // connects (the intern SIP leg: initiated -> bridged -> hangup within ~1 s, no answered), and
+  // treating that as a connection would end the call as answered_by_agent without trying the cell.
   if (
-    (args.eventType === 'call.bridged' || args.eventType === 'call.answered') &&
+    args.eventType === 'call.answered' &&
     (row.state === 'ringing_intern' ||
       row.state === 'ringing_cell' ||
       row.state === 'ringing_shared')
@@ -794,17 +803,6 @@ export async function handleOriginalLegEvent(
         callControlId: args.callControlId,
         expectedStates: [row.state],
         newState: row.state,
-        fields: { answered_at: new Date().toISOString() },
-      });
-    }
-    return;
-  }
-  if (args.eventType === 'call.bridged' && row.state === 'bridging_session') {
-    if (!row.answered_at) {
-      await transitionInboundCall(supabase, {
-        callControlId: args.callControlId,
-        expectedStates: ['bridging_session'],
-        newState: 'bridging_session',
         fields: { answered_at: new Date().toISOString() },
       });
     }
@@ -974,7 +972,7 @@ export async function handleClientStateEvent(
     return;
   }
 
-  if (args.eventType === 'call.answered' || args.eventType === 'call.bridged') {
+  if (args.eventType === 'call.answered') {
     // Leg B picked up -- Telnyx has ALREADY bridged it to the original leg (that's what
     // `transfer` does; no separate bridge command needed). The call is now live; stay in
     // `mappedStep` and just record when it connected -- the eventual hangup (of EITHER leg)
@@ -1218,14 +1216,12 @@ export async function reapStaleInboundCalls(
     }
     if (status.isAlive) {
       const ageSecs = (Date.now() - new Date(row.created_at).getTime()) / 1000;
-      const neverConnected =
-        !row.answered_at &&
-        (row.state === 'ringing' ||
-          row.state === 'ringing_intern' ||
-          row.state === 'ringing_cell' ||
-          row.state === 'ringing_shared' ||
-          row.state === 'voicemail');
-      if (!(neverConnected && ageSecs > INBOUND_RINGING_HANGUP_AFTER_SECS)) {
+      // Only a row that was never routed ('ringing') or never got its voicemail answer
+      // ('voicemail', unanswered) may be hung up. ringing_intern/cell/shared and bridging_session
+      // can hold a LIVE conversation whose answer webhook was lost, so an alive call there is
+      // always left alone (and logged), however old.
+      const hangupable = !row.answered_at && (row.state === 'ringing' || row.state === 'voicemail');
+      if (!(hangupable && ageSecs > INBOUND_RINGING_HANGUP_AFTER_SECS)) {
         result.leftAlive++;
         inboundLog('reap_inbound_left_alive', { inboundCallId: row.id, state: row.state });
         continue;

@@ -1084,21 +1084,60 @@ Deno.test(
   }
 );
 
-Deno.test('H36r2 reaper: alive + never connected + >10 min -> hangup + missed', async () => {
-  const h = h36Setup({ forward: '+18305635638' });
-  try {
-    await handleFreshInboundCall(h.supabase, h.client, freshInboundArgs({ callControlId: 'r-c' }));
-    for (const r of h.db.table('inbound_calls').values()) r.created_at = agoIso(700);
-    h.server.callStatus.set('r-c', 'alive');
-    const res = await reap(h);
-    assertEquals(res.hungUp, 1);
-    assertEquals(h.server.hangups, ['r-c']);
-    assertEquals(loadRow(h.db, 'r-c').state, 'ended');
-    assertEquals(loadRow(h.db, 'r-c').outcome, 'missed');
-  } finally {
-    h.restore();
+Deno.test(
+  'H36r2 reaper: alive + never routed (ringing) or unanswered voicemail, >10 min -> hangup + missed',
+  async () => {
+    for (const state of ['ringing', 'voicemail']) {
+      const h = h36Setup({ forward: '+18305635638' });
+      try {
+        await handleFreshInboundCall(
+          h.supabase,
+          h.client,
+          freshInboundArgs({ callControlId: 'r-c' })
+        );
+        for (const r of h.db.table('inbound_calls').values()) {
+          r.created_at = agoIso(700);
+          r.state = state;
+        }
+        h.server.callStatus.set('r-c', 'alive');
+        const res = await reap(h);
+        assertEquals(res.hungUp, 1, state);
+        assertEquals(h.server.hangups, ['r-c']);
+        assertEquals(loadRow(h.db, 'r-c').state, 'ended');
+        assertEquals(loadRow(h.db, 'r-c').outcome, 'missed');
+      } finally {
+        h.restore();
+      }
+    }
   }
-});
+);
+
+Deno.test(
+  'H36r3 reaper: an ALIVE ringing_intern/cell/shared/bridging_session row is never hung up, however old',
+  async () => {
+    for (const state of ['ringing_intern', 'ringing_cell', 'ringing_shared', 'bridging_session']) {
+      const h = h36Setup({ forward: '+18305635638' });
+      try {
+        await handleFreshInboundCall(
+          h.supabase,
+          h.client,
+          freshInboundArgs({ callControlId: 'r-g' })
+        );
+        for (const r of h.db.table('inbound_calls').values()) {
+          r.created_at = agoIso(3600);
+          r.state = state;
+        }
+        h.server.callStatus.set('r-g', 'alive');
+        const res = await reap(h);
+        assertEquals(res.leftAlive, 1, state);
+        assertEquals(h.server.hangups.length, 0, state);
+        assertEquals(loadRow(h.db, 'r-g').state, state);
+      } finally {
+        h.restore();
+      }
+    }
+  }
+);
 
 Deno.test('H36r2 reaper: Telnyx error/unknown, or no Telnyx key -> left alone', async () => {
   const h = h36Setup({ forward: '+18305635638' });
@@ -1180,7 +1219,7 @@ Deno.test(
 );
 
 Deno.test(
-  'H36r2 call.bridged / call.answered on the ORIGINAL leg while ringing sets answered_at once',
+  'H36r3 original-leg call.answered while ringing sets answered_at once; call.bridged does NOT',
   async () => {
     const h = h36Setup({ forward: '+18305635638' });
     try {
@@ -1195,9 +1234,15 @@ Deno.test(
         origEvent('call.bridged', 'b-a'),
         loadRow(h.db, 'b-a')
       );
+      assertEquals(!!loadRow(h.db, 'b-a').answered_at, false, 'bridged is not an answer');
+      await handleOriginalLegEvent(
+        h.supabase,
+        h.client,
+        origEvent('call.answered', 'b-a'),
+        loadRow(h.db, 'b-a')
+      );
       const first = loadRow(h.db, 'b-a').answered_at;
       assertExists(first);
-      assertEquals(loadRow(h.db, 'b-a').state, 'ringing_cell');
       await handleOriginalLegEvent(
         h.supabase,
         h.client,
@@ -1205,7 +1250,6 @@ Deno.test(
         loadRow(h.db, 'b-a')
       );
       assertEquals(loadRow(h.db, 'b-a').answered_at, first, 'idempotent');
-      // now the caller hanging up ends it as a connected (forwarded) call
       await handleOriginalLegEvent(
         h.supabase,
         h.client,
@@ -1219,22 +1263,39 @@ Deno.test(
   }
 );
 
-Deno.test('H36r2 call.bridged on Leg B (client_state) sets answered_at', async () => {
-  const h = h36Setup({ forward: '+18305635638' });
-  try {
-    await handleFreshInboundCall(h.supabase, h.client, freshInboundArgs({ callControlId: 'b-b' }));
-    const row = loadRow(h.db, 'b-b');
-    await handleClientStateEvent(
-      h.supabase,
-      h.client,
-      { ...origEvent('call.bridged', 'leg-b-1'), payload: {} },
-      { org: ORG_ID, inbound: row.id, step: 'cell' as InboundCallStep }
-    );
-    assertExists(loadRow(h.db, 'b-b').answered_at);
-  } finally {
-    h.restore();
+Deno.test(
+  'H36r3 real sequence: intern SIP leg initiated -> bridged -> hangup (no answered) falls through to the cell',
+  async () => {
+    // Live webhook_events (4 of 5 forwarded rows): Telnyx sends call.bridged on the intern leg a
+    // fraction of a second after call.initiated and call.hangup ~1 s later, with NO call.answered.
+    const h = h36Setup({ online: true, forward: '+18305635638', shared: '+19995550002' });
+    try {
+      await handleFreshInboundCall(
+        h.supabase,
+        h.client,
+        freshInboundArgs({ callControlId: 'b-c' })
+      );
+      assertEquals(loadRow(h.db, 'b-c').state, 'ringing_intern');
+      const row = loadRow(h.db, 'b-c');
+      const cs = { org: ORG_ID, inbound: row.id, step: 'intern' as InboundCallStep };
+      for (const type of ['call.initiated', 'call.bridged', 'call.hangup']) {
+        await handleClientStateEvent(
+          h.supabase,
+          h.client,
+          { ...origEvent(type, 'leg-b-intern'), payload: {} },
+          cs
+        );
+      }
+      const after = loadRow(h.db, 'b-c');
+      assertEquals(!!after.answered_at, false, 'bridged without answered is not a connection');
+      assertEquals(after.state, 'ringing_cell', 'the chain continues to the cell');
+      assertEquals(h.server.transfers.length, 2);
+      assertEquals(h.server.transfers[1].body.to, '+18305635638');
+    } finally {
+      h.restore();
+    }
   }
-});
+);
 
 Deno.test(
   'H36r2 bridging failures resume the agent session: answer fail, join fail, no conference, caller left first',
