@@ -36,6 +36,7 @@ import {
   isAgentInJoinableSession,
   isAgentOnline,
   isPlausibleE164,
+  normalizeToE164,
   INBOUND_RING_TIMEOUT_SECS,
   type InboundStep,
   type InboundRoutingInputs,
@@ -266,6 +267,24 @@ async function enterStep(
   }
   inboundLog('enter_step', { inboundCallId: args.inboundCallId, step });
 
+  // TASK-H36: the row is already CAS'd into `step` above, so a command that THROWS (e.g. Telnyx
+  // 422 on a malformed forward number) would otherwise leave the row parked in `step` forever
+  // and the caller ringing into nothing. Any failure here advances to the next step instead;
+  // the chain always ends in voicemail, and voicemail's own failure ends the call as missed.
+  const failAndAdvance = async (reason: string, err: unknown): Promise<void> => {
+    inboundLog('step_command_failed', {
+      inboundCallId: args.inboundCallId,
+      step,
+      reason,
+      error: String(err).slice(0, 300),
+    });
+    if (step === 'voicemail') {
+      await failVoicemail(supabase, client, args);
+      return;
+    }
+    await advanceInboundCall(supabase, client, args, step);
+  };
+
   if (step === 'bridging_session') {
     if (!args.joinableSessionId) {
       inboundLog('bridging_session_no_joinable_session', { inboundCallId: args.inboundCallId });
@@ -287,14 +306,24 @@ async function enterStep(
       await advanceInboundCall(supabase, client, args, step);
       return;
     }
-    await client.answer(args.callControlId);
+    try {
+      await client.answer(args.callControlId);
+    } catch (err) {
+      await failAndAdvance('answer', err);
+    }
     return;
   }
 
   if (step === 'ringing_intern') {
-    const sipUri = args.routedToUserId
-      ? await resolveInternSipUri(client, supabase, args.orgId, args.routedToUserId)
-      : null;
+    let sipUri: string | null = null;
+    try {
+      sipUri = args.routedToUserId
+        ? await resolveInternSipUri(client, supabase, args.orgId, args.routedToUserId)
+        : null;
+    } catch (err) {
+      await failAndAdvance('resolve_sip_uri', err);
+      return;
+    }
     if (!sipUri) {
       inboundLog('ringing_intern_no_sip_uri', { inboundCallId: args.inboundCallId });
       await advanceInboundCall(supabase, client, args, step);
@@ -304,16 +333,20 @@ async function enterStep(
     // from is "the caller id presented to the destination," and real call-forwarding always
     // shows the original caller, not the forwarding line, so the intern's incoming-call banner
     // (Dialer.tsx/useTelnyxCall.ts) shows who's actually calling.
-    await client.transfer(args.callControlId, {
-      to: sipUri,
-      from: args.fromE164,
-      timeoutSecs: INBOUND_RING_TIMEOUT_SECS,
-      targetLegClientState: encodeInboundClientState({
-        org: args.orgId,
-        inbound: args.inboundCallId,
-        step: 'intern',
-      }),
-    });
+    try {
+      await client.transfer(args.callControlId, {
+        to: sipUri,
+        from: args.fromE164,
+        timeoutSecs: INBOUND_RING_TIMEOUT_SECS,
+        targetLegClientState: encodeInboundClientState({
+          org: args.orgId,
+          inbound: args.inboundCallId,
+          step: 'intern',
+        }),
+      });
+    } catch (err) {
+      await failAndAdvance('transfer', err);
+    }
     return;
   }
 
@@ -327,36 +360,75 @@ async function enterStep(
           .maybeSingle()
       : { data: null };
     const { sharedDestinationNumber } = await loadOrgInboundGreeting(supabase, args.orgId);
-    const to =
+    const rawTo =
       step === 'ringing_cell'
         ? ((member?.forward_phone_number as string | null) ?? null)
         : sharedDestinationNumber;
+    // TASK-H36: a stored number that isn't E.164 ("8305635638") made Telnyx answer 422 10016 --
+    // normalise at use time; a value that cannot be normalised is treated as "no destination".
+    const to = normalizeToE164(rawTo);
     if (!to) {
-      inboundLog('ringing_step_no_destination', { inboundCallId: args.inboundCallId, step });
+      inboundLog(rawTo ? 'ringing_step_invalid_destination' : 'ringing_step_no_destination', {
+        inboundCallId: args.inboundCallId,
+        step,
+      });
       await advanceInboundCall(supabase, client, args, step);
       return;
     }
-    await client.transfer(args.callControlId, {
-      to,
-      from: args.fromE164,
-      timeoutSecs: INBOUND_RING_TIMEOUT_SECS,
-      targetLegClientState: encodeInboundClientState({
-        org: args.orgId,
-        inbound: args.inboundCallId,
-        step: step === 'ringing_cell' ? 'cell' : 'shared',
-      }),
-    });
+    try {
+      await client.transfer(args.callControlId, {
+        to,
+        from: args.fromE164,
+        timeoutSecs: INBOUND_RING_TIMEOUT_SECS,
+        targetLegClientState: encodeInboundClientState({
+          org: args.orgId,
+          inbound: args.inboundCallId,
+          step: step === 'ringing_cell' ? 'cell' : 'shared',
+        }),
+      });
+    } catch (err) {
+      await failAndAdvance('transfer', err);
+    }
     return;
   }
 
   // step === 'voicemail'
-  await client.answer(args.callControlId, {
-    clientState: encodeInboundClientState({
-      org: args.orgId,
-      inbound: args.inboundCallId,
-      step: 'voicemail',
-    }),
+  try {
+    await client.answer(args.callControlId, {
+      clientState: encodeInboundClientState({
+        org: args.orgId,
+        inbound: args.inboundCallId,
+        step: 'voicemail',
+      }),
+    });
+  } catch (err) {
+    await failAndAdvance('answer', err);
+  }
+}
+
+/** TASK-H36: the end of the chain failed (voicemail could not be answered / spoken / recorded):
+ *  nothing left to try, so end the row as missed (fires the Inbox trigger) and hang the caller
+ *  up best-effort instead of leaving them on a dead line. */
+async function failVoicemail(
+  supabase: SupabaseClient,
+  client: TelnyxClient,
+  args: { inboundCallId: string; callControlId: string }
+): Promise<void> {
+  await endInboundCall(supabase, {
+    inboundCallId: args.inboundCallId,
+    callControlId: args.callControlId,
+    fromState: 'voicemail',
+    lastStep: 'voicemail',
+    connected: false,
   });
+  try {
+    await client.hangup(args.callControlId);
+  } catch (err) {
+    inboundLog('voicemail_failure_hangup_failed', {
+      inboundCallId: args.inboundCallId,
+      error: String(err).slice(0, 200),
+    });
+  }
 }
 
 /** Computes fresh routing inputs, finds the next step after `currentStep` (or the FIRST step,
@@ -639,7 +711,30 @@ export async function handleOriginalLegEvent(
         );
         return;
       }
-      await client.joinConference(conferenceId, { callControlId: args.callControlId });
+      try {
+        await client.joinConference(conferenceId, { callControlId: args.callControlId });
+      } catch (err) {
+        // TASK-H36: the caller is answered but cannot be put in the agent's conference -- fall
+        // through to the next step (cell/shared/voicemail) rather than leaving them on hold.
+        inboundLog('bridging_session_join_failed', {
+          inboundCallId: row.id,
+          error: String(err).slice(0, 300),
+        });
+        await advanceInboundCall(
+          supabase,
+          client,
+          {
+            orgId: args.orgId,
+            inboundCallId: row.id,
+            callControlId: args.callControlId,
+            toE164: asString(args.payload.to) || row.from_e164,
+            fromE164: row.from_e164,
+            routedToUserId: row.routed_to_user_id,
+            joinableSessionId: null,
+          },
+          'bridging_session'
+        );
+      }
       return;
     }
     if (row.state === 'voicemail') {
@@ -650,21 +745,43 @@ export async function handleOriginalLegEvent(
         newState: 'voicemail',
         fields: { answered_at: new Date().toISOString() },
       });
-      await client.speak(args.callControlId, { payload: greetingText, voice: 'female' });
+      try {
+        await client.speak(args.callControlId, { payload: greetingText, voice: 'female' });
+      } catch (err) {
+        inboundLog('voicemail_speak_failed', {
+          inboundCallId: row.id,
+          error: String(err).slice(0, 300),
+        });
+        await failVoicemail(supabase, client, {
+          inboundCallId: row.id,
+          callControlId: args.callControlId,
+        });
+      }
       return;
     }
     return;
   }
 
   if (args.eventType === 'call.speak.ended' && row.state === 'voicemail') {
-    await client.recordStart(args.callControlId, {
-      channels: 'single',
-      clientState: encodeInboundClientState({
-        org: args.orgId,
-        inbound: row.id,
-        step: 'voicemail',
-      }),
-    });
+    try {
+      await client.recordStart(args.callControlId, {
+        channels: 'single',
+        clientState: encodeInboundClientState({
+          org: args.orgId,
+          inbound: row.id,
+          step: 'voicemail',
+        }),
+      });
+    } catch (err) {
+      inboundLog('voicemail_record_failed', {
+        inboundCallId: row.id,
+        error: String(err).slice(0, 300),
+      });
+      await failVoicemail(supabase, client, {
+        inboundCallId: row.id,
+        callControlId: args.callControlId,
+      });
+    }
     return;
   }
 

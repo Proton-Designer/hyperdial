@@ -102,7 +102,8 @@ async function processWebhook(
   dialClientState: DialClientState | null,
   inboundClientState: InboundClientState | null,
   coachingClientState: CoachingClientState | null,
-  transferTargetClientState: TransferTargetClientState | null
+  transferTargetClientState: TransferTargetClientState | null,
+  isOpenInboundOriginalLeg = false
 ): Promise<void> {
   const eventType = body?.data?.event_type ?? '';
   const eventId = body?.data?.id ?? '';
@@ -174,7 +175,7 @@ async function processWebhook(
   }
 
   const isFresh = isFreshInboundCall(eventType, payload);
-  if (inboundClientState || isFresh) {
+  if (inboundClientState || isFresh || isOpenInboundOriginalLeg) {
     if (!eventId) {
       webhookLog('inbound_event_ignored_missing_event_id', { eventType });
       return;
@@ -293,7 +294,26 @@ Deno.serve(async (req: Request) => {
       (coachingClientState && coachingClientState.org === orgId) ||
       (transferTargetClientState && transferTargetClientState.org === orgId) ||
       isFreshInboundCall(eventType, payloadForGate);
-    if (eventType.startsWith('call.') && !recognized) {
+    // TASK-H36: the inbound CALLER's own leg carries no client_state while we ring/transfer/join
+    // it (only the voicemail answer sets one), so its call.hangup/call.answered used to be
+    // ignored here and the inbound_calls row never ended. Accept a call.* event with no
+    // recognizable client_state when its call_control_id is the original leg of an OPEN
+    // inbound_calls row of THIS org (call_control_id is UNIQUE, so one indexed lookup). Nothing
+    // else is widened: dial/coaching/transfer shapes are tried first, and the signature check
+    // above is unchanged.
+    const originalLegCallControlId = asString(payloadForGate.call_control_id);
+    let isOpenInboundOriginalLeg = false;
+    if (eventType.startsWith('call.') && !recognized && originalLegCallControlId) {
+      const { data: openInbound } = await supabase
+        .from('inbound_calls')
+        .select('id')
+        .eq('org_id', orgId)
+        .eq('call_control_id', originalLegCallControlId)
+        .neq('state', 'ended')
+        .maybeSingle();
+      isOpenInboundOriginalLeg = Boolean(openInbound);
+    }
+    if (eventType.startsWith('call.') && !recognized && !isOpenInboundOriginalLeg) {
       webhookLog('ignored_client_state_missing_or_org_mismatch', {
         orgId,
         eventType,
@@ -322,7 +342,8 @@ Deno.serve(async (req: Request) => {
       dialClientState,
       inboundClientState,
       coachingClientState,
-      transferTargetClientState
+      transferTargetClientState,
+      isOpenInboundOriginalLeg
     ).catch((err) => {
       console.error('telnyx-webhook async processing error:', err);
       // TASK-T10 review fix-forward (eng2, review-eng2.md SHOULD): this `return` is load-bearing

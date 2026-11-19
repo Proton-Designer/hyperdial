@@ -7,6 +7,7 @@ import {
   nextInboundStep,
   outcomeForEndedCall,
   isPlausibleE164,
+  normalizeToE164,
   INBOUND_PRESENCE_WINDOW_MS,
   type InboundRoutingInputs,
 } from './inbound-core.ts';
@@ -275,4 +276,18 @@ Deno.test('isPlausibleE164: a real E.164 passes, garbage does not', () => {
   assertEquals(isPlausibleE164(null), false);
   assertEquals(isPlausibleE164(undefined), false);
   assertEquals(isPlausibleE164(''), false);
+});
+
+Deno.test('normalizeToE164: US numbers typed any way become +1..., anything unsafe is null', () => {
+  assertEquals(normalizeToE164('8305635638'), '+18305635638');
+  assertEquals(normalizeToE164('(830) 563-5638'), '+18305635638');
+  assertEquals(normalizeToE164('1 830 563 5638'), '+18305635638');
+  assertEquals(normalizeToE164('+18305635638'), '+18305635638');
+  assertEquals(normalizeToE164('+44 20 7946 0958'), '+442079460958');
+  assertEquals(normalizeToE164(''), null);
+  assertEquals(normalizeToE164(null), null);
+  assertEquals(normalizeToE164('call me'), null);
+  assertEquals(normalizeToE164('12345'), null);
+  assertEquals(normalizeToE164('0305635638'), null, 'NANP area codes never start with 0/1');
+  assertEquals(normalizeToE164('sip:agent@sip.telnyx.com'), null);
 });

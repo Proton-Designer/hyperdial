@@ -288,10 +288,11 @@ export async function getInboundSettings(): Promise<InboundSettings> {
 }
 
 export async function updateInboundSettings(settings: InboundSettings): Promise<void> {
+  const sharedDestination = normalizeForwardNumberInput(settings.shared_destination_number);
   const orgId = await getActiveOrgId();
   const { error } = await supabase.from('org_inbound_settings').upsert({
     org_id: orgId,
-    shared_destination_number: settings.shared_destination_number,
+    shared_destination_number: sharedDestination,
     voicemail_greeting_text: settings.voicemail_greeting_text,
     updated_at: new Date().toISOString(),
   });
@@ -317,7 +318,20 @@ export async function getMyForwardNumber(): Promise<string | null> {
   return (data?.forward_phone_number as string | null) ?? null;
 }
 
+/** TASK-H36: a forward/shared number that is not E.164 made Telnyx reject the inbound transfer
+ *  (422 10016) and strand the caller, so both are normalised on save. Blank clears the field; a
+ *  value that cannot be read as a phone number is rejected with a plain message. */
+export const INVALID_PHONE_MESSAGE =
+  'Enter a valid phone number, for example +1 555 123 4567 (US numbers can be typed without +1).';
+export function normalizeForwardNumberInput(raw: string | null | undefined): string | null {
+  if (!raw || !raw.trim()) return null;
+  const normalized = normalizePhoneStrict(raw);
+  if (!normalized) throw new Error(INVALID_PHONE_MESSAGE);
+  return normalized.e164;
+}
+
 export async function setMyForwardNumber(forwardPhoneNumber: string | null): Promise<void> {
+  forwardPhoneNumber = normalizeForwardNumberInput(forwardPhoneNumber);
   const orgId = await getActiveOrgId();
   const {
     data: { user },

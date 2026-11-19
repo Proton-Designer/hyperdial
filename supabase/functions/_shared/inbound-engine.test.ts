@@ -27,11 +27,37 @@ class FakeTelnyxServer {
   recordStarts: { callControlId: string; body: Record<string, unknown> }[] = [];
   joins: { conferenceId: string; callControlId: string }[] = [];
   sipUsernames = new Map<string, string>();
+  hangups: string[] = [];
+  /** TASK-H36: action name ('transfer' | 'answer' | 'speak' | 'record_start' | 'join' |
+   *  'hangup') -> how many upcoming calls of it answer 422 instead of succeeding. */
+  failNext = new Map<string, number>();
+
+  private shouldFail(action: string): boolean {
+    const n = this.failNext.get(action) ?? 0;
+    if (n <= 0) return false;
+    this.failNext.set(action, n - 1);
+    return true;
+  }
 
   handle(url: string, init?: RequestInit): Response {
     const path = new URL(url).pathname;
     const method = init?.method ?? 'GET';
     const body = init?.body ? JSON.parse(String(init.body)) : {};
+    const action = path.match(/\/actions\/([a-z_]+)$/)?.[1];
+    if (method === 'POST' && action && this.shouldFail(action)) {
+      return Response.json(
+        {
+          errors: [
+            { code: '10016', title: 'Phone number must be in +E164 format', detail: 'test 422' },
+          ],
+        },
+        { status: 422 }
+      );
+    }
+    if (method === 'POST' && /\/calls\/([^/]+)\/actions\/hangup$/.test(path)) {
+      this.hangups.push(path.match(/\/calls\/([^/]+)\/actions\/hangup$/)![1]);
+      return Response.json({ data: {} });
+    }
 
     if (method === 'POST' && /\/calls\/[^/]+\/actions\/answer$/.test(path)) {
       this.answers.push(path);
@@ -682,6 +708,267 @@ Deno.test(
       );
       assertEquals(jobs.length, 1);
       assertEquals(jobs[0].contact_id, 'contact-1');
+    } finally {
+      restore();
+    }
+  }
+);
+
+// ---------------------------------------------------------------------------
+// TASK-H36: stuck inbound calls
+// ---------------------------------------------------------------------------
+
+function h36Setup(opts: { forward?: string | null; shared?: string | null; online?: boolean }) {
+  const db = new FakeDb();
+  const server = new FakeTelnyxServer();
+  const restore = stubTelnyxFetch(server);
+  const supabase = createFakeSupabase(db, makeExtraRpc(db));
+  const client = createTelnyxClient('fake-key');
+  seedOrg(db, { sharedDestinationNumber: opts.shared ?? null });
+  seedIntern(db, {
+    userId: 'intern-1',
+    lastSeenAt: opts.online ? new Date().toISOString() : null,
+    forwardPhoneNumber: opts.forward ?? null,
+  });
+  db.insert('user_phone_numbers', {
+    id: 'num-1',
+    org_id: ORG_ID,
+    phone_number: '+12145550000',
+    assigned_user_id: 'intern-1',
+  });
+  return { db, server, restore, supabase, client };
+}
+
+const origEvent = (type: string, cc: string) => ({
+  orgId: ORG_ID,
+  eventId: crypto.randomUUID(),
+  eventType: type,
+  callControlId: cc,
+  payload: {},
+});
+
+Deno.test(
+  'H36: a bare 10-digit forward number is normalised to E.164 before the transfer',
+  async () => {
+    const { db, server, restore, supabase, client } = h36Setup({ forward: '(830) 563-5638' });
+    try {
+      await handleFreshInboundCall(supabase, client, freshInboundArgs({ callControlId: 'h36-a' }));
+      assertEquals(loadRow(db, 'h36-a').state, 'ringing_cell');
+      assertEquals(server.transfers[0].body.to, '+18305635638');
+    } finally {
+      restore();
+    }
+  }
+);
+
+Deno.test(
+  'H36: an unusable forward number is skipped (not stuck): next step is voicemail',
+  async () => {
+    const { db, server, restore, supabase, client } = h36Setup({ forward: 'call me maybe' });
+    try {
+      await handleFreshInboundCall(supabase, client, freshInboundArgs({ callControlId: 'h36-b' }));
+      assertEquals(loadRow(db, 'h36-b').state, 'voicemail');
+      assertEquals(server.transfers.length, 0);
+      assertEquals(server.answers.length, 1);
+    } finally {
+      restore();
+    }
+  }
+);
+
+Deno.test(
+  'H36: transfer to the cell fails (422) -> advances to the shared line, then voicemail',
+  async () => {
+    const { db, server, restore, supabase, client } = h36Setup({
+      forward: '+18305635638',
+      shared: '+19995550002',
+    });
+    try {
+      server.failNext.set('transfer', 2); // cell AND shared transfers both rejected
+      await handleFreshInboundCall(supabase, client, freshInboundArgs({ callControlId: 'h36-c' }));
+      const row = loadRow(db, 'h36-c');
+      assertEquals(row.state, 'voicemail', 'never left parked in ringing_cell');
+      assertEquals(server.answers.length, 1, 'caller reaches voicemail instead of dead air');
+    } finally {
+      restore();
+    }
+  }
+);
+
+Deno.test('H36: cell transfer fails, shared line works -> rings the shared line', async () => {
+  const { db, server, restore, supabase, client } = h36Setup({
+    forward: '+18305635638',
+    shared: '+19995550002',
+  });
+  try {
+    server.failNext.set('transfer', 1);
+    await handleFreshInboundCall(supabase, client, freshInboundArgs({ callControlId: 'h36-d' }));
+    assertEquals(loadRow(db, 'h36-d').state, 'ringing_shared');
+    assertEquals(server.transfers.length, 1);
+    assertEquals(server.transfers[0].body.to, '+19995550002');
+  } finally {
+    restore();
+  }
+});
+
+Deno.test(
+  'H36: voicemail answer fails -> row ends as missed and the caller is hung up',
+  async () => {
+    const { db, server, restore, supabase, client } = h36Setup({});
+    try {
+      server.failNext.set('answer', 1);
+      await handleFreshInboundCall(supabase, client, freshInboundArgs({ callControlId: 'h36-e' }));
+      const row = loadRow(db, 'h36-e');
+      assertEquals(row.state, 'ended');
+      assertEquals(row.outcome, 'missed');
+      assertEquals(server.hangups, ['h36-e']);
+    } finally {
+      restore();
+    }
+  }
+);
+
+Deno.test(
+  'H36: voicemail speak fails -> ends as missed + hangup (not stuck in voicemail)',
+  async () => {
+    const { db, server, restore, supabase, client } = h36Setup({});
+    try {
+      await handleFreshInboundCall(supabase, client, freshInboundArgs({ callControlId: 'h36-f' }));
+      server.failNext.set('speak', 1);
+      await handleOriginalLegEvent(
+        supabase,
+        client,
+        origEvent('call.answered', 'h36-f'),
+        loadRow(db, 'h36-f')
+      );
+      const row = loadRow(db, 'h36-f');
+      assertEquals(row.state, 'ended');
+      assertEquals(row.outcome, 'missed');
+      assertEquals(server.hangups, ['h36-f']);
+    } finally {
+      restore();
+    }
+  }
+);
+
+Deno.test('H36: record_start fails -> ends as missed + hangup', async () => {
+  const { db, server, restore, supabase, client } = h36Setup({});
+  try {
+    await handleFreshInboundCall(supabase, client, freshInboundArgs({ callControlId: 'h36-g' }));
+    await handleOriginalLegEvent(
+      supabase,
+      client,
+      origEvent('call.answered', 'h36-g'),
+      loadRow(db, 'h36-g')
+    );
+    server.failNext.set('record_start', 1);
+    await handleOriginalLegEvent(
+      supabase,
+      client,
+      origEvent('call.speak.ended', 'h36-g'),
+      loadRow(db, 'h36-g')
+    );
+    assertEquals(loadRow(db, 'h36-g').state, 'ended');
+    assertEquals(loadRow(db, 'h36-g').outcome, 'missed');
+  } finally {
+    restore();
+  }
+});
+
+Deno.test(
+  'H36: bridging_session answer fails (Repuvance row) -> advances instead of sticking',
+  async () => {
+    const { db, server, restore, supabase, client } = h36Setup({
+      online: true,
+      forward: '+18305635638',
+    });
+    db.insert('dial_sessions', {
+      id: 'sess-h36',
+      org_id: ORG_ID,
+      campaign_id: CAMPAIGN_ID,
+      agent_id: 'intern-1',
+      state: 'dialing',
+      conference_id: 'conf-h36',
+    });
+    try {
+      server.failNext.set('answer', 1);
+      await handleFreshInboundCall(supabase, client, freshInboundArgs({ callControlId: 'h36-h' }));
+      assertEquals(
+        loadRow(db, 'h36-h').state,
+        'ringing_cell',
+        'moved on to the cell, not stuck in bridging_session'
+      );
+      assertEquals(server.transfers.length, 1);
+    } finally {
+      restore();
+    }
+  }
+);
+
+Deno.test(
+  'H36: bridging_session -- caller leg answered WITHOUT client_state still joins the conference; join failure advances',
+  async () => {
+    for (const joinFails of [false, true]) {
+      const cc = joinFails ? 'h36-i2' : 'h36-i1';
+      const { db, server, restore, supabase, client } = h36Setup({
+        online: true,
+        forward: '+18305635638',
+      });
+      db.insert('dial_sessions', {
+        id: 'sess-h36',
+        org_id: ORG_ID,
+        campaign_id: CAMPAIGN_ID,
+        agent_id: 'intern-1',
+        state: 'dialing',
+        conference_id: 'conf-h36',
+      });
+      try {
+        await handleFreshInboundCall(supabase, client, freshInboundArgs({ callControlId: cc }));
+        assertEquals(loadRow(db, cc).state, 'bridging_session');
+        if (joinFails) server.failNext.set('join', 1);
+        // The webhook gate (telnyx-webhook/index.ts) now delivers this original-leg event even
+        // though it has no client_state; the engine matches it by call_control_id.
+        await handleOriginalLegEvent(
+          supabase,
+          client,
+          origEvent('call.answered', cc),
+          loadRow(db, cc)
+        );
+        if (!joinFails) {
+          assertEquals(server.joins.length, 1);
+          assertEquals(loadRow(db, cc).state, 'bridging_session');
+        } else {
+          assertEquals(server.joins.length, 0);
+          assertEquals(
+            loadRow(db, cc).state,
+            'ringing_cell',
+            'join failure falls through to the cell'
+          );
+        }
+      } finally {
+        restore();
+      }
+    }
+  }
+);
+
+Deno.test(
+  'H36: caller hangs up while the cell is ringing (original-leg hangup, no client_state) -> ended missed',
+  async () => {
+    const { db, server, restore, supabase, client } = h36Setup({ forward: '+18305635638' });
+    try {
+      await handleFreshInboundCall(supabase, client, freshInboundArgs({ callControlId: 'h36-j' }));
+      assertEquals(loadRow(db, 'h36-j').state, 'ringing_cell');
+      await handleOriginalLegEvent(
+        supabase,
+        client,
+        origEvent('call.hangup', 'h36-j'),
+        loadRow(db, 'h36-j')
+      );
+      const row = loadRow(db, 'h36-j');
+      assertEquals(row.state, 'ended');
+      assertEquals(row.outcome, 'missed');
+      assertEquals(server.hangups.length, 0);
     } finally {
       restore();
     }

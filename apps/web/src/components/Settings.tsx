@@ -144,6 +144,7 @@ import {
   updateInboundSettings,
   getMyForwardNumber,
   setMyForwardNumber,
+  normalizeForwardNumberInput,
   getBillingInfo,
   updateAutoRecharge,
   addFunds,
@@ -230,13 +231,16 @@ function ProfileTab() {
     setError(null);
     setSaved(false);
     try {
+      // TASK-H36: validate the cell number BEFORE saving anything, so a typo never half-saves.
+      const forwardE164 = normalizeForwardNumberInput(forwardNumber);
       await updateMyProfile({ first_name: firstName, last_name: lastName });
-      await setMyForwardNumber(forwardNumber.trim() || null);
+      await setMyForwardNumber(forwardE164);
+      setForwardNumber(forwardE164 ?? '');
       await refetchOrg();
       setSaved(true);
       setTimeout(() => setSaved(false), 2500);
     } catch (e) {
-      setError(String(e));
+      setError(e instanceof Error ? e.message : String(e));
     } finally {
       setSaving(false);
     }
@@ -5379,14 +5383,38 @@ function InboundSettingsCard() {
   const { role } = useOrg();
   const isAdmin = role === 'owner' || role === 'admin';
   const [settings, setSettings] = useState<InboundSettings | null>(null);
+  const [sharedDraft, setSharedDraft] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     getInboundSettings()
-      .then(setSettings)
+      .then((loaded) => {
+        setSettings(loaded);
+        setSharedDraft(loaded.shared_destination_number ?? '');
+      })
       .catch((e) => setError(String(e)));
   }, []);
+
+  // TASK-H36: the number is normalised to E.164 on save, so it is saved when the field loses
+  // focus (not on every keystroke, which would reject a half-typed number).
+  const commitSharedDestination = async () => {
+    if (!settings) return;
+    setError(null);
+    let normalized: string | null;
+    try {
+      normalized = normalizeForwardNumberInput(sharedDraft);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      return;
+    }
+    if (normalized === (settings.shared_destination_number ?? null)) {
+      setSharedDraft(normalized ?? '');
+      return;
+    }
+    await handleChange({ ...settings, shared_destination_number: normalized });
+    setSharedDraft(normalized ?? '');
+  };
 
   const handleChange = async (next: InboundSettings) => {
     setSettings(next);
@@ -5417,15 +5445,10 @@ function InboundSettingsCard() {
           <input
             type="tel"
             placeholder="Not set -- falls straight to voicemail"
-            value={settings?.shared_destination_number ?? ''}
+            value={sharedDraft}
             disabled={!settings || saving || !isAdmin}
-            onChange={(e) =>
-              settings &&
-              void handleChange({
-                ...settings,
-                shared_destination_number: e.target.value.trim() || null,
-              })
-            }
+            onChange={(e) => setSharedDraft(e.target.value)}
+            onBlur={() => void commitSharedDestination()}
             className="w-full max-w-sm bg-surface-2 border border-white/10 rounded-app-md px-3 py-2 text-white placeholder-text-muted focus:outline-none focus:border-accent-to disabled:opacity-60"
           />
           <p className="text-meta text-text-muted mt-1">

@@ -164,3 +164,24 @@ export function outcomeForEndedCall(args: {
 export function isPlausibleE164(value: string | null | undefined): value is string {
   return typeof value === 'string' && /^\+[1-9]\d{6,14}$/.test(value);
 }
+
+/** TASK-H36: turns what a person typed ("(830) 563-5638", "8305635638", "1 830 563 5638",
+ *  "+18305635638") into E.164, or null when it can't be done safely. A bare 10-digit or
+ *  1-prefixed 11-digit number is read as NANP (+1) -- the same US/Canada default the rest of the
+ *  product assumes; any other number must already carry its own "+" and country code. A stored
+ *  forward number that is not E.164 makes Telnyx reject the transfer (422 code 10016), which is
+ *  what stranded 14 inbound calls in 'ringing_cell'. */
+export function normalizeToE164(raw: string | null | undefined): string | null {
+  if (typeof raw !== 'string') return null;
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  if (/[^\d\s().+-]/.test(trimmed)) return null;
+  const hasPlus = trimmed.startsWith('+');
+  const digits = trimmed.replace(/\D/g, '');
+  if (hasPlus) return isPlausibleE164(`+${digits}`) ? `+${digits}` : null;
+  if (digits.length === 10 && /^[2-9]/.test(digits)) return `+1${digits}`;
+  if (digits.length === 11 && digits.startsWith('1') && /^[2-9]/.test(digits.slice(1))) {
+    return `+${digits}`;
+  }
+  return null;
+}
