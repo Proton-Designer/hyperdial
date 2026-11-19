@@ -265,15 +265,23 @@ export async function resumeInboundPausedSession(
     .neq('id', inboundCallId)
     .limit(1);
   if ((others ?? []).length > 0) return false;
-  // Same result as the Resume button (dialer-session-resume -> resumeToDialing: state 'dialing',
-  // pause_reason cleared, then refill; that endpoint makes no presence check either), but with an
-  // atomic guard on pause_reason so it can only undo OUR pause.
-  // Same result as the Resume button (dialer-session-resume -> resumeToDialing: state 'dialing',
-  // pause_reason cleared, then refill; that endpoint makes no presence check either), but with an
-  // atomic guard on pause_reason so it can only undo OUR pause.
+  // Restore the state the session had BEFORE the inbound pause (recorded in inbound_prior_state
+  // by enterStep): 'dialing' goes back to dialing (+refill, same as the Resume button), anything
+  // else -- 'ready', or unknown/unrecorded -- goes back to 'ready', so we never start dialing
+  // customers the agent did not ask for. Atomic guard on pause_reason: only undoes OUR pause.
+  const { data: current } = await supabase
+    .from('dial_sessions')
+    .select('state, pause_reason, inbound_prior_state')
+    .eq('id', sessionId)
+    .eq('org_id', orgId)
+    .maybeSingle();
+  if (!current || current.state !== 'paused' || current.pause_reason !== 'inbound_call') {
+    return false;
+  }
+  const restoreTo = current.inbound_prior_state === 'dialing' ? 'dialing' : 'ready';
   const { data, error } = await supabase
     .from('dial_sessions')
-    .update({ state: 'dialing', pause_reason: null })
+    .update({ state: restoreTo, pause_reason: null, inbound_prior_state: null })
     .eq('id', sessionId)
     .eq('org_id', orgId)
     .eq('state', 'paused')
@@ -284,11 +292,13 @@ export async function resumeInboundPausedSession(
     return false;
   }
   if ((data ?? []).length === 0) return false;
-  inboundLog('resume_inbound_session', { inboundCallId, sessionId });
-  try {
-    await refillSession(supabase, orgId, sessionId);
-  } catch (err) {
-    inboundLog('resume_inbound_session_refill_failed', { sessionId, error: String(err) });
+  inboundLog('resume_inbound_session', { inboundCallId, sessionId, restoreTo });
+  if (restoreTo === 'dialing') {
+    try {
+      await refillSession(supabase, orgId, sessionId);
+    } catch (err) {
+      inboundLog('resume_inbound_session_refill_failed', { sessionId, error: String(err) });
+    }
   }
   return true;
 }
@@ -374,7 +384,24 @@ async function enterStep(
     // return value was previously discarded, so a lost CAS still fell through to answering and
     // joining the caller into whatever conference_id the session happened to have, unconditionally.
     // Treat a lost CAS exactly like "no joinable session" -- advance past this step instead.
+    // Remember the state the session is in BEFORE we pause it, so a failed inbound can restore it
+    // (a 'ready' session must not be turned into 'dialing').
+    const { data: before } = await supabase
+      .from('dial_sessions')
+      .select('state')
+      .eq('id', args.joinableSessionId)
+      .maybeSingle();
+    const priorState = (before?.state as string | undefined) ?? null;
     const paused = await pauseSession(supabase, args.orgId, args.joinableSessionId, 'inbound_call');
+    if (paused) {
+      // Best-effort: if the column is not there yet (migration pending) resume falls back to 'ready'.
+      const { error: priorError } = await supabase
+        .from('dial_sessions')
+        .update({ inbound_prior_state: priorState })
+        .eq('id', args.joinableSessionId)
+        .eq('pause_reason', 'inbound_call');
+      if (priorError) inboundLog('inbound_prior_state_not_saved', { error: priorError.message });
+    }
     if (!paused) {
       inboundLog('bridging_session_pause_cas_lost', {
         inboundCallId: args.inboundCallId,
@@ -952,6 +979,18 @@ export async function handleClientStateEvent(
   }
 
   if (args.eventType === 'call.recording.saved' || args.eventType === 'call.recording.error') {
+    // The recording is over (finished, or hit its max_length): do not leave the caller on a silent
+    // line while the file downloads. Their call.hangup then ends the row as 'voicemail'.
+    if (row.state === 'voicemail') {
+      try {
+        await client.hangup(row.call_control_id);
+      } catch (err) {
+        inboundLog('voicemail_hangup_after_recording_failed', {
+          inboundCallId: row.id,
+          error: String(err).slice(0, 200),
+        });
+      }
+    }
     await processInboundRecordingEvent(supabase, args, row);
     return;
   }
@@ -1159,6 +1198,9 @@ export const INBOUND_UNANSWERED_STALE_SECS = 180;
  *  past it; anything else (forwarded / bridged conversation) can legitimately run long. */
 export const INBOUND_VOICEMAIL_STALE_SECS = 600;
 export const INBOUND_ANSWERED_STALE_SECS = 1800;
+/** A bridging_session row whose conference-join call.answered never arrived is treated as a failed
+ *  join after this long: the agent is resumed and the caller goes to the next step. */
+export const INBOUND_BRIDGING_STALL_SECS = 30;
 /** An UNANSWERED row Telnyx still reports alive this long after it started is dead weight. */
 export const INBOUND_RINGING_HANGUP_AFTER_SECS = 600;
 
@@ -1170,6 +1212,8 @@ interface StaleInboundRow {
   answered_at: string | null;
   created_at: string;
   dial_session_id: string | null;
+  routed_to_user_id: string | null;
+  from_e164: string;
 }
 
 export interface InboundReapResult {
@@ -1178,6 +1222,7 @@ export interface InboundReapResult {
   hungUp: number;
   leftAlive: number;
   unknown: number;
+  advanced: number;
 }
 
 /** The rule (lead, round 2): NEVER hang up or end a call Telnyx says is still alive. Each stale
@@ -1190,11 +1235,19 @@ export async function reapStaleInboundCalls(
   supabase: SupabaseClient,
   resolveClient: (orgId: string) => Promise<TelnyxClient | null>
 ): Promise<InboundReapResult> {
-  const result: InboundReapResult = { checked: 0, ended: 0, hungUp: 0, leftAlive: 0, unknown: 0 };
+  const result: InboundReapResult = {
+    checked: 0,
+    ended: 0,
+    hungUp: 0,
+    leftAlive: 0,
+    unknown: 0,
+    advanced: 0,
+  };
   const { data, error } = await supabase.rpc('list_stale_inbound_calls', {
     p_unanswered_after_seconds: INBOUND_UNANSWERED_STALE_SECS,
     p_voicemail_after_seconds: INBOUND_VOICEMAIL_STALE_SECS,
     p_answered_after_seconds: INBOUND_ANSWERED_STALE_SECS,
+    p_bridging_after_seconds: INBOUND_BRIDGING_STALL_SECS,
   });
   if (error) {
     inboundLog('list_stale_inbound_calls_failed', { error: error.message });
@@ -1212,6 +1265,31 @@ export async function reapStaleInboundCalls(
     if (!status) {
       result.unknown++;
       inboundLog('reap_inbound_status_unknown', { inboundCallId: row.id });
+      continue;
+    }
+    if (status.isAlive && row.state === 'bridging_session' && !row.answered_at) {
+      // The answer/join never completed (lost call.answered): treat as a failed join. Re-check the
+      // row first -- a late real event may have moved it -- then resume the agent and send the
+      // caller to the next step (cell/shared, or voicemail via speak on the already-answered leg).
+      const fresh = await loadInboundCallById(supabase, row.id);
+      if (fresh && fresh.state === 'bridging_session' && !fresh.answered_at) {
+        inboundLog('reap_inbound_bridging_stalled', { inboundCallId: row.id });
+        await advanceInboundCall(
+          supabase,
+          client,
+          {
+            orgId: row.org_id,
+            inboundCallId: row.id,
+            callControlId: row.call_control_id,
+            toE164: '',
+            fromE164: row.from_e164,
+            routedToUserId: row.routed_to_user_id,
+            joinableSessionId: null,
+          },
+          'bridging_session'
+        );
+        result.advanced++;
+      }
       continue;
     }
     if (status.isAlive) {

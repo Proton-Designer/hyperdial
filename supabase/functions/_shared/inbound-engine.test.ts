@@ -170,6 +170,14 @@ function makeExtraRpc(db: FakeDb) {
       const now = Date.now();
       const rows = [...db.table('inbound_calls').values()].filter((r) => {
         if (r.state === 'ended') return false;
+        if (
+          r.state === 'bridging_session' &&
+          !r.answered_at &&
+          now - new Date(r.created_at as string).getTime() >
+            (args.p_bridging_after_seconds as number) * 1000
+        ) {
+          return true;
+        }
         if (!r.answered_at) {
           return (
             now - new Date(r.created_at as string).getTime() >
@@ -1126,6 +1134,9 @@ Deno.test(
         for (const r of h.db.table('inbound_calls').values()) {
           r.created_at = agoIso(3600);
           r.state = state;
+          // an unanswered bridging_session is a stalled join (round 4: advanced, not hung up);
+          // an answered one is a live conversation and is left alone
+          if (state === 'bridging_session') r.answered_at = agoIso(3000);
         }
         h.server.callStatus.set('r-g', 'alive');
         const res = await reap(h);
@@ -1503,6 +1514,140 @@ Deno.test(
         'stays; Leg B events or the reaper decide'
       );
       assertEquals(h.server.transfers.length, 0, 'no second transfer');
+    } finally {
+      h.restore();
+    }
+  }
+);
+
+// ---------------------------------------------------------------------------
+// TASK-H36 round 4
+// ---------------------------------------------------------------------------
+
+Deno.test(
+  'H36r4 auto-resume restores the PRE-inbound state: ready stays ready, dialing goes back to dialing',
+  async () => {
+    for (const prior of ['ready', 'dialing']) {
+      const h = h36Setup({ online: true });
+      h.db.insert('dial_sessions', {
+        id: 'sess-h36',
+        org_id: ORG_ID,
+        campaign_id: CAMPAIGN_ID,
+        agent_id: 'intern-1',
+        state: prior,
+        conference_id: 'conf-h36',
+      });
+      try {
+        h.server.failNext.set('answer', 1);
+        await handleFreshInboundCall(
+          h.supabase,
+          h.client,
+          freshInboundArgs({ callControlId: `p-${prior}` })
+        );
+        assertEquals(
+          h.db.table('dial_sessions').get('sess-h36')!.state,
+          prior,
+          `restored to ${prior}`
+        );
+        assertEquals(h.db.table('dial_sessions').get('sess-h36')!.pause_reason, null);
+      } finally {
+        h.restore();
+      }
+    }
+  }
+);
+
+Deno.test(
+  'H36r4 voicemail: recording saved/error hangs the caller up (no silent line)',
+  async () => {
+    const h = h36Setup({});
+    try {
+      await handleFreshInboundCall(
+        h.supabase,
+        h.client,
+        freshInboundArgs({ callControlId: 'rec-1' })
+      );
+      const row = loadRow(h.db, 'rec-1');
+      assertEquals(row.state, 'voicemail');
+      await handleClientStateEvent(
+        h.supabase,
+        h.client,
+        { ...origEvent('call.recording.error', 'rec-1'), payload: {} },
+        { org: ORG_ID, inbound: row.id, step: 'voicemail' as InboundCallStep }
+      );
+      assertEquals(h.server.hangups, ['rec-1']);
+    } finally {
+      h.restore();
+    }
+  }
+);
+
+Deno.test(
+  'H36r4 bridging_session whose join answer never arrives: stalled > 30 s -> agent resumed, caller to the next step',
+  async () => {
+    const h = h36Setup({ online: true, forward: '+18305635638' });
+    h.db.insert('dial_sessions', {
+      id: 'sess-h36',
+      org_id: ORG_ID,
+      campaign_id: CAMPAIGN_ID,
+      agent_id: 'intern-1',
+      state: 'ready',
+      conference_id: 'conf-h36',
+    });
+    try {
+      await handleFreshInboundCall(
+        h.supabase,
+        h.client,
+        freshInboundArgs({ callControlId: 'st-1' })
+      );
+      assertEquals(loadRow(h.db, 'st-1').state, 'bridging_session');
+      // too fresh: nothing happens
+      h.server.callStatus.set('st-1', 'alive');
+      assertEquals((await reap(h)).checked, 0);
+      for (const r of h.db.table('inbound_calls').values()) r.created_at = agoIso(45);
+      const res = await reap(h);
+      assertEquals(res.advanced, 1);
+      assertEquals(loadRow(h.db, 'st-1').state, 'ringing_cell');
+      assertEquals(h.db.table('dial_sessions').get('sess-h36')!.state, 'ready');
+      assertEquals(h.server.hangups.length, 0);
+    } finally {
+      h.restore();
+    }
+  }
+);
+
+Deno.test(
+  'H36r4 bridging stall: a late real answer (answered_at set) is not advanced; a dead leg is ended + agent resumed',
+  async () => {
+    const h = h36Setup({ online: true, forward: '+18305635638' });
+    h.db.insert('dial_sessions', {
+      id: 'sess-h36',
+      org_id: ORG_ID,
+      campaign_id: CAMPAIGN_ID,
+      agent_id: 'intern-1',
+      state: 'dialing',
+      conference_id: 'conf-h36',
+    });
+    try {
+      await handleFreshInboundCall(
+        h.supabase,
+        h.client,
+        freshInboundArgs({ callControlId: 'st-2' })
+      );
+      for (const r of h.db.table('inbound_calls').values()) {
+        r.created_at = agoIso(45);
+        r.answered_at = agoIso(10); // answer arrived after all
+      }
+      h.server.callStatus.set('st-2', 'alive');
+      assertEquals((await reap(h)).advanced, 0);
+      assertEquals(loadRow(h.db, 'st-2').state, 'bridging_session');
+      // dead leg, never answered
+      for (const r of h.db.table('inbound_calls').values()) r.answered_at = null;
+      h.server.callStatus.set('st-2', 'dead');
+      const res = await reap(h);
+      assertEquals(res.ended, 1);
+      assertEquals(loadRow(h.db, 'st-2').state, 'ended');
+      assertEquals(h.db.table('dial_sessions').get('sess-h36')!.state, 'dialing');
     } finally {
       h.restore();
     }

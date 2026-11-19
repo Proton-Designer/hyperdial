@@ -7,14 +7,20 @@
 -- lost). So SQL only LISTS candidates and ENDS one row on request; dialer-sweeper asks Telnyx
 -- (GET /calls/{id} is_alive) per candidate and decides. Neither function hangs anything up.
 
+-- Round 4: the state a dial session had before an inbound call paused it (pause_reason
+-- 'inbound_call'), so a failed inbound restores 'ready' as 'ready' instead of starting to dial.
+alter table public.dial_sessions add column if not exists inbound_prior_state text;
+
 create function public.list_stale_inbound_calls(
   p_unanswered_after_seconds int default 180,
   p_voicemail_after_seconds int default 600,
-  p_answered_after_seconds int default 1800
+  p_answered_after_seconds int default 1800,
+  p_bridging_after_seconds int default 30
 )
 returns table (
   id uuid, org_id uuid, call_control_id text, state text,
-  answered_at timestamptz, created_at timestamptz, dial_session_id uuid
+  answered_at timestamptz, created_at timestamptz, dial_session_id uuid,
+  routed_to_user_id uuid, from_e164 text
 )
 language plpgsql
 stable
@@ -24,11 +30,15 @@ as $$
 #variable_conflict use_column
 begin
   return query
-  select c.id, c.org_id, c.call_control_id, c.state, c.answered_at, c.created_at, c.dial_session_id
+  select c.id, c.org_id, c.call_control_id, c.state, c.answered_at, c.created_at, c.dial_session_id,
+         c.routed_to_user_id, c.from_e164
   from public.inbound_calls c
   where c.state <> 'ended'
     and (
-      (c.answered_at is null
+      -- a bridging_session whose conference-join call.answered never arrived (round 4)
+      (c.state = 'bridging_session' and c.answered_at is null
+        and c.created_at < now() - make_interval(secs => p_bridging_after_seconds))
+      or (c.answered_at is null
         and c.created_at < now() - make_interval(secs => p_unanswered_after_seconds))
       or (c.answered_at is not null
         and c.answered_at < now() - make_interval(
@@ -66,8 +76,8 @@ begin
 end;
 $$;
 
-revoke all on function public.list_stale_inbound_calls(int, int, int) from public, anon, authenticated;
-grant execute on function public.list_stale_inbound_calls(int, int, int) to service_role;
+revoke all on function public.list_stale_inbound_calls(int, int, int, int) from public, anon, authenticated;
+grant execute on function public.list_stale_inbound_calls(int, int, int, int) to service_role;
 revoke all on function public.end_stale_inbound_call(uuid) from public, anon, authenticated;
 grant execute on function public.end_stale_inbound_call(uuid) to service_role;
 

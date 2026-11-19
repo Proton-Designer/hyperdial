@@ -232,7 +232,7 @@ Deno.serve(async (req: Request) => {
     return orgClients.get(orgId)?.client ?? null;
   }).catch((err) => {
     console.error('[dialer-sweeper] reapStaleInboundCalls failed', String(err));
-    return { checked: 0, ended: 0, hungUp: 0, leftAlive: 0, unknown: 0 };
+    return { checked: 0, ended: 0, hungUp: 0, leftAlive: 0, unknown: 0, advanced: 0 };
   });
 
   console.log('[dialer-sweeper] sweep_done', {
