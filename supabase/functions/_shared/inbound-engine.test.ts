@@ -10,6 +10,7 @@ import { createTelnyxClient } from './telnyx-client.ts';
 import { FakeDb, createFakeSupabase } from './dialer-fake-supabase.ts';
 import { encodeInboundClientState, type InboundCallStep } from './client-state.ts';
 import {
+  reapStaleInboundCalls,
   handleFreshInboundCall,
   handleOriginalLegEvent,
   handleClientStateEvent,
@@ -31,6 +32,10 @@ class FakeTelnyxServer {
   /** TASK-H36: action name ('transfer' | 'answer' | 'speak' | 'record_start' | 'join' |
    *  'hangup') -> how many upcoming calls of it answer 422 instead of succeeding. */
   failNext = new Map<string, number>();
+  /** HTTP status the injected failure answers with (422 = definitive rejection, 500/503 = unknown). */
+  failStatus = 422;
+  /** GET /calls/{id}: 'alive' | 'dead' | 'error' (anything unreadable) */
+  callStatus = new Map<string, 'alive' | 'dead' | 'error'>();
 
   private shouldFail(action: string): boolean {
     const n = this.failNext.get(action) ?? 0;
@@ -51,8 +56,14 @@ class FakeTelnyxServer {
             { code: '10016', title: 'Phone number must be in +E164 format', detail: 'test 422' },
           ],
         },
-        { status: 422 }
+        { status: this.failStatus }
       );
+    }
+    if (method === 'GET' && /\/calls\/([^/]+)$/.test(path)) {
+      const id = decodeURIComponent(path.match(/\/calls\/([^/]+)$/)![1]);
+      const st = this.callStatus.get(id) ?? 'error';
+      if (st === 'error') return Response.json({ errors: [] }, { status: 500 });
+      return Response.json({ data: { is_alive: st === 'alive' } });
     }
     if (method === 'POST' && /\/calls\/([^/]+)\/actions\/hangup$/.test(path)) {
       this.hangups.push(path.match(/\/calls\/([^/]+)\/actions\/hangup$/)![1]);
@@ -154,6 +165,38 @@ function makeExtraRpc(db: FakeDb) {
       const fields = (args.p_fields as Record<string, unknown>) ?? {};
       for (const key of INBOUND_CALL_FIELDS) if (key in fields) row[key] = fields[key];
       return { data: true, error: null };
+    }
+    if (name === 'list_stale_inbound_calls') {
+      const now = Date.now();
+      const rows = [...db.table('inbound_calls').values()].filter((r) => {
+        if (r.state === 'ended') return false;
+        if (!r.answered_at) {
+          return (
+            now - new Date(r.created_at as string).getTime() >
+            (args.p_unanswered_after_seconds as number) * 1000
+          );
+        }
+        const limit =
+          r.state === 'voicemail'
+            ? (args.p_voicemail_after_seconds as number)
+            : (args.p_answered_after_seconds as number);
+        return now - new Date(r.answered_at as string).getTime() > limit * 1000;
+      });
+      return { data: rows.map((r) => ({ ...r })), error: null };
+    }
+    if (name === 'end_stale_inbound_call') {
+      const row = db.table('inbound_calls').get(args.p_id as string);
+      if (!row || row.state === 'ended') return { data: null, error: null };
+      row.outcome = !row.answered_at
+        ? 'missed'
+        : row.state === 'voicemail'
+          ? 'voicemail'
+          : row.state === 'bridging_session' || row.state === 'ringing_intern'
+            ? 'answered_by_agent'
+            : 'forwarded';
+      row.state = 'ended';
+      row.ended_at = new Date().toISOString();
+      return { data: row.outcome, error: null };
     }
     if (name === 'enqueue_crm_job') {
       const orgId = args.p_org as string;
@@ -971,6 +1014,436 @@ Deno.test(
       assertEquals(server.hangups.length, 0);
     } finally {
       restore();
+    }
+  }
+);
+
+// ---------------------------------------------------------------------------
+// TASK-H36 round 2
+// ---------------------------------------------------------------------------
+
+const agoIso = (secs: number) => new Date(Date.now() - secs * 1000).toISOString();
+
+async function reap(h: ReturnType<typeof h36Setup>, opts: { noClient?: boolean } = {}) {
+  return await reapStaleInboundCalls(h.supabase, async () => (opts.noClient ? null : h.client));
+}
+
+Deno.test(
+  'H36r2 reaper: a ringing_cell row 200 s old that Telnyx says is ALIVE is left alone (no hangup, still open)',
+  async () => {
+    const h = h36Setup({ forward: '+18305635638' });
+    try {
+      await handleFreshInboundCall(
+        h.supabase,
+        h.client,
+        freshInboundArgs({ callControlId: 'r-a' })
+      );
+      loadRow(h.db, 'r-a');
+      (h.db.table('inbound_calls').values().next().value as Record<string, unknown>).created_at =
+        agoIso(200);
+      h.server.callStatus.set('r-a', 'alive');
+      const res = await reap(h);
+      assertEquals(res.leftAlive, 1);
+      assertEquals(h.server.hangups.length, 0, 'never cuts a live call');
+      assertEquals(loadRow(h.db, 'r-a').state, 'ringing_cell');
+    } finally {
+      h.restore();
+    }
+  }
+);
+
+Deno.test(
+  'H36r2 reaper: dead leg -> ended; unanswered=missed, answered=its connected outcome',
+  async () => {
+    const h = h36Setup({ forward: '+18305635638' });
+    try {
+      await handleFreshInboundCall(
+        h.supabase,
+        h.client,
+        freshInboundArgs({ callControlId: 'r-b1' })
+      );
+      await handleFreshInboundCall(
+        h.supabase,
+        h.client,
+        freshInboundArgs({ callControlId: 'r-b2' })
+      );
+      for (const r of h.db.table('inbound_calls').values()) {
+        r.created_at = agoIso(400);
+        if (r.call_control_id === 'r-b2') r.answered_at = agoIso(2000); // connected, then lost
+      }
+      h.server.callStatus.set('r-b1', 'dead');
+      h.server.callStatus.set('r-b2', 'dead');
+      const res = await reap(h);
+      assertEquals(res.ended, 2);
+      assertEquals(loadRow(h.db, 'r-b1').outcome, 'missed');
+      assertEquals(loadRow(h.db, 'r-b2').outcome, 'forwarded');
+      assertEquals(h.server.hangups.length, 0, 'dead legs need no hangup');
+    } finally {
+      h.restore();
+    }
+  }
+);
+
+Deno.test('H36r2 reaper: alive + never connected + >10 min -> hangup + missed', async () => {
+  const h = h36Setup({ forward: '+18305635638' });
+  try {
+    await handleFreshInboundCall(h.supabase, h.client, freshInboundArgs({ callControlId: 'r-c' }));
+    for (const r of h.db.table('inbound_calls').values()) r.created_at = agoIso(700);
+    h.server.callStatus.set('r-c', 'alive');
+    const res = await reap(h);
+    assertEquals(res.hungUp, 1);
+    assertEquals(h.server.hangups, ['r-c']);
+    assertEquals(loadRow(h.db, 'r-c').state, 'ended');
+    assertEquals(loadRow(h.db, 'r-c').outcome, 'missed');
+  } finally {
+    h.restore();
+  }
+});
+
+Deno.test('H36r2 reaper: Telnyx error/unknown, or no Telnyx key -> left alone', async () => {
+  const h = h36Setup({ forward: '+18305635638' });
+  try {
+    await handleFreshInboundCall(h.supabase, h.client, freshInboundArgs({ callControlId: 'r-d' }));
+    for (const r of h.db.table('inbound_calls').values()) r.created_at = agoIso(900);
+    // callStatus unset -> fake answers 500
+    let res = await reap(h);
+    assertEquals(res.unknown, 1);
+    assertEquals(loadRow(h.db, 'r-d').state, 'ringing_cell');
+    res = await reap(h, { noClient: true });
+    assertEquals(res.unknown, 1);
+    assertEquals(loadRow(h.db, 'r-d').state, 'ringing_cell');
+    assertEquals(h.server.hangups.length, 0);
+  } finally {
+    h.restore();
+  }
+});
+
+Deno.test(
+  'H36r2 reaper: a live answered call (long forwarded conversation) is left alone',
+  async () => {
+    const h = h36Setup({ forward: '+18305635638' });
+    try {
+      await handleFreshInboundCall(
+        h.supabase,
+        h.client,
+        freshInboundArgs({ callControlId: 'r-e' })
+      );
+      for (const r of h.db.table('inbound_calls').values()) {
+        r.created_at = agoIso(5000);
+        r.answered_at = agoIso(4000);
+      }
+      h.server.callStatus.set('r-e', 'alive');
+      const res = await reap(h);
+      assertEquals(res.leftAlive, 1);
+      assertEquals(loadRow(h.db, 'r-e').state, 'ringing_cell');
+      assertEquals(h.server.hangups.length, 0);
+    } finally {
+      h.restore();
+    }
+  }
+);
+
+function seedJoinableSession(h: ReturnType<typeof h36Setup>, conf: string | null = 'conf-h36') {
+  h.db.insert('dial_sessions', {
+    id: 'sess-h36',
+    org_id: ORG_ID,
+    campaign_id: CAMPAIGN_ID,
+    agent_id: 'intern-1',
+    state: 'dialing',
+    conference_id: conf,
+  });
+}
+const sessionOf = (h: ReturnType<typeof h36Setup>) => h.db.table('dial_sessions').get('sess-h36')!;
+
+Deno.test(
+  'H36r2 reaper: ending a dead bridging_session row resumes the agent session',
+  async () => {
+    const h = h36Setup({ online: true });
+    seedJoinableSession(h);
+    try {
+      await handleFreshInboundCall(
+        h.supabase,
+        h.client,
+        freshInboundArgs({ callControlId: 'r-f' })
+      );
+      assertEquals(sessionOf(h).state, 'paused');
+      for (const r of h.db.table('inbound_calls').values()) r.created_at = agoIso(400);
+      h.server.callStatus.set('r-f', 'dead');
+      await reap(h);
+      assertEquals(loadRow(h.db, 'r-f').state, 'ended');
+      assertEquals(sessionOf(h).state, 'dialing');
+      assertEquals(sessionOf(h).pause_reason, null);
+    } finally {
+      h.restore();
+    }
+  }
+);
+
+Deno.test(
+  'H36r2 call.bridged / call.answered on the ORIGINAL leg while ringing sets answered_at once',
+  async () => {
+    const h = h36Setup({ forward: '+18305635638' });
+    try {
+      await handleFreshInboundCall(
+        h.supabase,
+        h.client,
+        freshInboundArgs({ callControlId: 'b-a' })
+      );
+      await handleOriginalLegEvent(
+        h.supabase,
+        h.client,
+        origEvent('call.bridged', 'b-a'),
+        loadRow(h.db, 'b-a')
+      );
+      const first = loadRow(h.db, 'b-a').answered_at;
+      assertExists(first);
+      assertEquals(loadRow(h.db, 'b-a').state, 'ringing_cell');
+      await handleOriginalLegEvent(
+        h.supabase,
+        h.client,
+        origEvent('call.answered', 'b-a'),
+        loadRow(h.db, 'b-a')
+      );
+      assertEquals(loadRow(h.db, 'b-a').answered_at, first, 'idempotent');
+      // now the caller hanging up ends it as a connected (forwarded) call
+      await handleOriginalLegEvent(
+        h.supabase,
+        h.client,
+        origEvent('call.hangup', 'b-a'),
+        loadRow(h.db, 'b-a')
+      );
+      assertEquals(loadRow(h.db, 'b-a').outcome, 'forwarded');
+    } finally {
+      h.restore();
+    }
+  }
+);
+
+Deno.test('H36r2 call.bridged on Leg B (client_state) sets answered_at', async () => {
+  const h = h36Setup({ forward: '+18305635638' });
+  try {
+    await handleFreshInboundCall(h.supabase, h.client, freshInboundArgs({ callControlId: 'b-b' }));
+    const row = loadRow(h.db, 'b-b');
+    await handleClientStateEvent(
+      h.supabase,
+      h.client,
+      { ...origEvent('call.bridged', 'leg-b-1'), payload: {} },
+      { org: ORG_ID, inbound: row.id, step: 'cell' as InboundCallStep }
+    );
+    assertExists(loadRow(h.db, 'b-b').answered_at);
+  } finally {
+    h.restore();
+  }
+});
+
+Deno.test(
+  'H36r2 bridging failures resume the agent session: answer fail, join fail, no conference, caller left first',
+  async () => {
+    // answer fails
+    {
+      const h = h36Setup({ online: true });
+      seedJoinableSession(h);
+      try {
+        h.server.failNext.set('answer', 1);
+        await handleFreshInboundCall(
+          h.supabase,
+          h.client,
+          freshInboundArgs({ callControlId: 'v-1' })
+        );
+        assertEquals(sessionOf(h).state, 'dialing', 'answer failure resumes');
+      } finally {
+        h.restore();
+      }
+    }
+    // join fails
+    {
+      const h = h36Setup({ online: true });
+      seedJoinableSession(h);
+      try {
+        await handleFreshInboundCall(
+          h.supabase,
+          h.client,
+          freshInboundArgs({ callControlId: 'v-2' })
+        );
+        assertEquals(sessionOf(h).state, 'paused');
+        h.server.failNext.set('join', 1);
+        await handleOriginalLegEvent(
+          h.supabase,
+          h.client,
+          origEvent('call.answered', 'v-2'),
+          loadRow(h.db, 'v-2')
+        );
+        assertEquals(sessionOf(h).state, 'dialing', 'join failure resumes');
+      } finally {
+        h.restore();
+      }
+    }
+    // no conference id
+    {
+      const h = h36Setup({ online: true });
+      seedJoinableSession(h, null);
+      try {
+        await handleFreshInboundCall(
+          h.supabase,
+          h.client,
+          freshInboundArgs({ callControlId: 'v-3' })
+        );
+        await handleOriginalLegEvent(
+          h.supabase,
+          h.client,
+          origEvent('call.answered', 'v-3'),
+          loadRow(h.db, 'v-3')
+        );
+        assertEquals(sessionOf(h).state, 'dialing');
+      } finally {
+        h.restore();
+      }
+    }
+    // caller hangs up before the join
+    {
+      const h = h36Setup({ online: true });
+      seedJoinableSession(h);
+      try {
+        await handleFreshInboundCall(
+          h.supabase,
+          h.client,
+          freshInboundArgs({ callControlId: 'v-4' })
+        );
+        await handleOriginalLegEvent(
+          h.supabase,
+          h.client,
+          origEvent('call.hangup', 'v-4'),
+          loadRow(h.db, 'v-4')
+        );
+        assertEquals(sessionOf(h).state, 'dialing');
+        assertEquals(loadRow(h.db, 'v-4').outcome, 'missed');
+      } finally {
+        h.restore();
+      }
+    }
+    // a REAL conversation (joined, then hangup) leaves the session paused for the agent's Resume
+    {
+      const h = h36Setup({ online: true });
+      seedJoinableSession(h);
+      try {
+        await handleFreshInboundCall(
+          h.supabase,
+          h.client,
+          freshInboundArgs({ callControlId: 'v-5' })
+        );
+        await handleOriginalLegEvent(
+          h.supabase,
+          h.client,
+          origEvent('call.answered', 'v-5'),
+          loadRow(h.db, 'v-5')
+        );
+        await handleOriginalLegEvent(
+          h.supabase,
+          h.client,
+          origEvent('call.hangup', 'v-5'),
+          loadRow(h.db, 'v-5')
+        );
+        assertEquals(sessionOf(h).state, 'paused');
+        assertEquals(loadRow(h.db, 'v-5').outcome, 'answered_by_agent');
+      } finally {
+        h.restore();
+      }
+    }
+  }
+);
+
+Deno.test(
+  'H36r2 failed join with no cell/shared -> already-answered caller gets voicemail via speak (no 2nd answer), record has max_length',
+  async () => {
+    const h = h36Setup({ online: true });
+    seedJoinableSession(h);
+    try {
+      await handleFreshInboundCall(
+        h.supabase,
+        h.client,
+        freshInboundArgs({ callControlId: 'w-1' })
+      );
+      assertEquals(h.server.answers.length, 1);
+      h.server.failNext.set('join', 1);
+      await handleOriginalLegEvent(
+        h.supabase,
+        h.client,
+        origEvent('call.answered', 'w-1'),
+        loadRow(h.db, 'w-1')
+      );
+      const row = loadRow(h.db, 'w-1');
+      assertEquals(row.state, 'voicemail', 'caller is not dropped');
+      assertEquals(h.server.answers.length, 1, 'no second answer on an answered leg');
+      assertEquals(h.server.speaks.length, 1);
+      assertExists(h.server.speaks[0].body.client_state);
+      assertEquals(h.server.hangups.length, 0);
+      await handleOriginalLegEvent(
+        h.supabase,
+        h.client,
+        origEvent('call.speak.ended', 'w-1'),
+        loadRow(h.db, 'w-1')
+      );
+      assertEquals(h.server.recordStarts.length, 1);
+      assertEquals(h.server.recordStarts[0].body.max_length, 120);
+    } finally {
+      h.restore();
+    }
+  }
+);
+
+Deno.test(
+  'H36r2 join failure -> cell: answered_at cleared, so a caller hang-up during the ring is missed (not forwarded)',
+  async () => {
+    const h = h36Setup({ online: true, forward: '+18305635638' });
+    seedJoinableSession(h);
+    try {
+      await handleFreshInboundCall(
+        h.supabase,
+        h.client,
+        freshInboundArgs({ callControlId: 'w-2' })
+      );
+      h.server.failNext.set('join', 1);
+      await handleOriginalLegEvent(
+        h.supabase,
+        h.client,
+        origEvent('call.answered', 'w-2'),
+        loadRow(h.db, 'w-2')
+      );
+      assertEquals(loadRow(h.db, 'w-2').state, 'ringing_cell');
+      assertEquals(loadRow(h.db, 'w-2').answered_at, null);
+      await handleOriginalLegEvent(
+        h.supabase,
+        h.client,
+        origEvent('call.hangup', 'w-2'),
+        loadRow(h.db, 'w-2')
+      );
+      assertEquals(loadRow(h.db, 'w-2').outcome, 'missed');
+    } finally {
+      h.restore();
+    }
+  }
+);
+
+Deno.test(
+  'H36r2 transfer failing with an UNKNOWN outcome (5xx/timeout) does not ring a second destination',
+  async () => {
+    const h = h36Setup({ forward: '+18305635638', shared: '+19995550002' });
+    try {
+      h.server.failNext.set('transfer', 1);
+      h.server.failStatus = 503;
+      await handleFreshInboundCall(
+        h.supabase,
+        h.client,
+        freshInboundArgs({ callControlId: 'x-1' })
+      );
+      assertEquals(
+        loadRow(h.db, 'x-1').state,
+        'ringing_cell',
+        'stays; Leg B events or the reaper decide'
+      );
+      assertEquals(h.server.transfers.length, 0, 'no second transfer');
+    } finally {
+      h.restore();
     }
   }
 );

@@ -35,13 +35,9 @@ import {
 import type { TelnyxClient } from '../_shared/telnyx-client.ts';
 import { VOICEMAIL_DROP_SWEEP_TIMEOUT_SECONDS } from '../_shared/voicemail-core.ts';
 import { logOrgAction } from '../_shared/audit.ts';
+import { reapStaleInboundCalls } from '../_shared/inbound-engine.ts';
 
 const STUCK_AFTER_SECONDS = 60;
-// TASK-H36: an inbound call that never connected is dead well inside 3 minutes (3 x 20 s rings +
-// the voicemail answer); one that DID connect only gets an absolute ceiling (a conversation or
-// a voicemail recording can legitimately run long).
-const INBOUND_UNANSWERED_STUCK_AFTER_SECONDS = 180;
-const INBOUND_ANSWERED_HARD_CAP_SECONDS = 4 * 60 * 60;
 // TASK-L6: how long a claimed (bridged) contact leg must be silent before this even asks
 // Telnyx whether it's still alive -- see dialer-sweeper-core.ts's own header for why this
 // can't just be a longer version of STUCK_AFTER_SECONDS's own webhook-silence heuristic.
@@ -227,45 +223,20 @@ Deno.serve(async (req: Request) => {
     },
   });
 
-  // TASK-H36: inbound calls whose terminal webhook never arrived (or whose transfer failed) are
-  // ended as missed here so the Inbox trigger fires. A reaped call can still be live on the
-  // carrier side (e.g. parked, ringing into nothing), so hang the caller's leg up best-effort.
-  const { data: reapedInboundData, error: inboundReapError } = await supabase.rpc(
-    'sweep_stuck_inbound_calls',
-    {
-      p_unanswered_after_seconds: INBOUND_UNANSWERED_STUCK_AFTER_SECONDS,
-      p_answered_after_seconds: INBOUND_ANSWERED_HARD_CAP_SECONDS,
+  // TASK-H36: stuck inbound rows. The rule lives in reapStaleInboundCalls: a call Telnyx reports
+  // alive is NEVER ended or hung up here (except one that never connected after 10 minutes).
+  const inboundReap = await reapStaleInboundCalls(supabase, async (orgId) => {
+    if (!orgClients.has(orgId)) {
+      orgClients.set(orgId, await getConnectedOrgTelnyxContext(supabase, orgId));
     }
-  );
-  if (inboundReapError) {
-    console.error('[dialer-sweeper] sweep_stuck_inbound_calls failed', inboundReapError.message);
-  }
-  const reapedInbound = (reapedInboundData ?? []) as {
-    id: string;
-    org_id: string;
-    call_control_id: string;
-    outcome: string;
-  }[];
-  let inboundHungUp = 0;
-  for (const row of reapedInbound) {
-    try {
-      if (!orgClients.has(row.org_id)) {
-        orgClients.set(row.org_id, await getConnectedOrgTelnyxContext(supabase, row.org_id));
-      }
-      const client = orgClients.get(row.org_id)?.client ?? null;
-      if (client) {
-        await client.hangup(row.call_control_id);
-        inboundHungUp++;
-      }
-    } catch (err) {
-      // Usually 422 "call already ended" -- the row is ended in our own bookkeeping regardless.
-      console.log('[dialer-sweeper] inbound_hangup_failed', row.id, String(err));
-    }
-  }
+    return orgClients.get(orgId)?.client ?? null;
+  }).catch((err) => {
+    console.error('[dialer-sweeper] reapStaleInboundCalls failed', String(err));
+    return { checked: 0, ended: 0, hungUp: 0, leftAlive: 0, unknown: 0 };
+  });
 
   console.log('[dialer-sweeper] sweep_done', {
-    reapedInboundCalls: reapedInbound.length,
-    inboundHungUp,
+    inboundReap,
     reaped: result.reaped_legs?.length ?? 0,
     hungUp,
     pausedAgentSessions: result.paused_agent_sessions,
@@ -295,6 +266,6 @@ Deno.serve(async (req: Request) => {
     coachingHungUp,
     reapedCallTransfers: reapedCallTransfers.length,
     transfersUnwound,
-    reapedInboundCalls: reapedInbound.length,
+    inboundReap,
   });
 });

@@ -41,7 +41,7 @@ import {
   type InboundStep,
   type InboundRoutingInputs,
 } from './inbound-core.ts';
-import { pauseSession } from './dialer-engine.ts';
+import { pauseSession, refillSession } from './dialer-engine.ts';
 
 function inboundLog(step: string, meta: Record<string, unknown> = {}): void {
   console.log('[inbound-engine]', step, meta);
@@ -240,6 +240,53 @@ async function loadOrgInboundGreeting(
  *  this function on a routing-side failure (e.g. the intern has no telephony credential at all)
  *  -- that's treated as "this step can't actually be attempted," advancing to the next one
  *  immediately, same as a real ring timeout would, rather than leaving the caller stuck. */
+/** TASK-H36: voicemail's own ceiling (Telnyx record_start max_length), so a caller who just stays
+ *  on the line cannot hold a recording open indefinitely. */
+const INBOUND_VOICEMAIL_MAX_SECS = 120;
+
+/** TASK-H36: enterStep pauses the agent's dial session (pause_reason 'inbound_call') BEFORE the
+ *  caller is answered/joined. On every path where the caller never actually reaches the agent
+ *  (answer/join failure, no conference, caller hung up first, reaper) the agent never had a
+ *  conversation, so put the session back to dialing. Guarded: only a session that is paused FOR
+ *  an inbound call, and only when no OTHER open bridging_session row still uses it. After a real
+ *  conversation nothing calls this -- the agent resumes with the Resume button as before. */
+export async function resumeInboundPausedSession(
+  supabase: SupabaseClient,
+  orgId: string,
+  inboundCallId: string,
+  sessionId: string | null
+): Promise<boolean> {
+  if (!sessionId) return false;
+  const { data: others } = await supabase
+    .from('inbound_calls')
+    .select('id')
+    .eq('dial_session_id', sessionId)
+    .eq('state', 'bridging_session')
+    .neq('id', inboundCallId)
+    .limit(1);
+  if ((others ?? []).length > 0) return false;
+  const { data, error } = await supabase
+    .from('dial_sessions')
+    .update({ state: 'dialing', pause_reason: null })
+    .eq('id', sessionId)
+    .eq('org_id', orgId)
+    .eq('state', 'paused')
+    .eq('pause_reason', 'inbound_call')
+    .select('id');
+  if (error) {
+    inboundLog('resume_inbound_session_failed', { inboundCallId, sessionId, error: error.message });
+    return false;
+  }
+  if ((data ?? []).length === 0) return false;
+  inboundLog('resume_inbound_session', { inboundCallId, sessionId });
+  try {
+    await refillSession(supabase, orgId, sessionId);
+  } catch (err) {
+    inboundLog('resume_inbound_session_refill_failed', { sessionId, error: String(err) });
+  }
+  return true;
+}
+
 async function enterStep(
   supabase: SupabaseClient,
   client: TelnyxClient,
@@ -259,7 +306,15 @@ async function enterStep(
     callControlId: args.callControlId,
     expectedStates: [fromState],
     newState: step,
-    fields: step === 'bridging_session' ? { dial_session_id: args.joinableSessionId } : {},
+    // answered_at: reaching bridging_session sets dial_session_id; leaving it for a step that is
+    // NOT voicemail means nobody connected, so clear the answered_at the bridging answer wrote
+    // (otherwise a caller hang-up during the next ring is mislabelled 'forwarded').
+    fields:
+      step === 'bridging_session'
+        ? { dial_session_id: args.joinableSessionId }
+        : fromState === 'bridging_session'
+          ? { answered_at: step === 'voicemail' ? new Date().toISOString() : null }
+          : {},
   });
   if (!ok) {
     inboundLog('enter_step_cas_lost', { inboundCallId: args.inboundCallId, step, fromState });
@@ -278,6 +333,22 @@ async function enterStep(
       reason,
       error: String(err).slice(0, 300),
     });
+    // A transfer that failed with a timeout / network / 5xx error may still have started Leg B;
+    // advancing would ring a SECOND destination too. Only a definitive 4xx rejection advances;
+    // otherwise leave the row to Leg B's own events or the reaper.
+    if (reason === 'transfer' && !/failed \(4\d\d\)/.test(String(err))) {
+      inboundLog('transfer_outcome_unknown_not_advancing', {
+        inboundCallId: args.inboundCallId,
+        step,
+      });
+      return;
+    }
+    // Guard on state: if another event already moved the row, do not advance it again.
+    const current = await loadInboundCallById(supabase, args.inboundCallId);
+    if (!current || current.state !== step) {
+      inboundLog('step_command_failed_state_moved', { inboundCallId: args.inboundCallId, step });
+      return;
+    }
     if (step === 'voicemail') {
       await failVoicemail(supabase, client, args);
       return;
@@ -393,6 +464,26 @@ async function enterStep(
   }
 
   // step === 'voicemail'
+  if (fromState === 'bridging_session') {
+    // The caller's leg is ALREADY answered (bridging answered it, e.g. the conference join then
+    // failed): a second `answer` would 422 and drop a caller who was answered. Greet them with
+    // speak (carrying the voicemail client_state); call.speak.ended then starts the recording.
+    try {
+      const { greetingText } = await loadOrgInboundGreeting(supabase, args.orgId);
+      await client.speak(args.callControlId, {
+        payload: greetingText,
+        voice: 'female',
+        client_state: encodeInboundClientState({
+          org: args.orgId,
+          inbound: args.inboundCallId,
+          step: 'voicemail',
+        }),
+      });
+    } catch (err) {
+      await failAndAdvance('speak', err);
+    }
+    return;
+  }
   try {
     await client.answer(args.callControlId, {
       clientState: encodeInboundClientState({
@@ -447,6 +538,16 @@ export async function advanceInboundCall(
   },
   currentStep: InboundStep | null
 ): Promise<void> {
+  if (currentStep === 'bridging_session') {
+    // Leaving bridging_session without a conversation (see resumeInboundPausedSession).
+    const current = await loadInboundCallById(supabase, args.inboundCallId);
+    await resumeInboundPausedSession(
+      supabase,
+      args.orgId,
+      args.inboundCallId,
+      current?.dial_session_id ?? null
+    );
+  }
   const inputs = await buildRoutingInputs(supabase, args.orgId, args.routedToUserId);
   const nextStep =
     currentStep === null ? planInboundSteps(inputs)[0] : nextInboundStep(currentStep, inputs);
@@ -659,6 +760,10 @@ export async function handleOriginalLegEvent(
 
   if (args.eventType === 'call.hangup') {
     if (row.state === 'ended') return; // already finalized by some other event; nothing to do.
+    if (row.state === 'bridging_session' && !row.answered_at) {
+      // Caller left before being joined: the agent never had a conversation.
+      await resumeInboundPausedSession(supabase, args.orgId, row.id, row.dial_session_id);
+    }
     // The caller hung up -- whatever step we were on never (or already did) connect. If it
     // already connected (answered_at set: e.g. mid-voicemail-recording, or bridged into a
     // session/Leg B and the CALLER left first), this IS the normal end of that connection, not
@@ -673,6 +778,36 @@ export async function handleOriginalLegEvent(
         ? Math.max(0, Math.round((Date.now() - new Date(row.answered_at).getTime()) / 1000))
         : undefined,
     });
+    return;
+  }
+
+  // TASK-H36: a bridged/answered ORIGINAL leg while we are ringing a fallback target means the
+  // transfer connected, even if Leg B's own call.answered was lost or dropped. Record it (once).
+  if (
+    (args.eventType === 'call.bridged' || args.eventType === 'call.answered') &&
+    (row.state === 'ringing_intern' ||
+      row.state === 'ringing_cell' ||
+      row.state === 'ringing_shared')
+  ) {
+    if (!row.answered_at) {
+      await transitionInboundCall(supabase, {
+        callControlId: args.callControlId,
+        expectedStates: [row.state],
+        newState: row.state,
+        fields: { answered_at: new Date().toISOString() },
+      });
+    }
+    return;
+  }
+  if (args.eventType === 'call.bridged' && row.state === 'bridging_session') {
+    if (!row.answered_at) {
+      await transitionInboundCall(supabase, {
+        callControlId: args.callControlId,
+        expectedStates: ['bridging_session'],
+        newState: 'bridging_session',
+        fields: { answered_at: new Date().toISOString() },
+      });
+    }
     return;
   }
 
@@ -766,6 +901,7 @@ export async function handleOriginalLegEvent(
     try {
       await client.recordStart(args.callControlId, {
         channels: 'single',
+        maxLengthSecs: INBOUND_VOICEMAIL_MAX_SECS,
         clientState: encodeInboundClientState({
           org: args.orgId,
           inbound: row.id,
@@ -838,11 +974,12 @@ export async function handleClientStateEvent(
     return;
   }
 
-  if (args.eventType === 'call.answered') {
+  if (args.eventType === 'call.answered' || args.eventType === 'call.bridged') {
     // Leg B picked up -- Telnyx has ALREADY bridged it to the original leg (that's what
     // `transfer` does; no separate bridge command needed). The call is now live; stay in
     // `mappedStep` and just record when it connected -- the eventual hangup (of EITHER leg)
     // is what finalizes the row, matched by whichever leg's own event arrives first.
+    if (row.answered_at) return; // already recorded (by the other leg's event); idempotent
     await transitionInboundCall(supabase, {
       callControlId: row.call_control_id,
       expectedStates: [mappedStep],
@@ -1013,3 +1150,109 @@ export async function processTelnyxInboundEvent(
 }
 
 export type { InboundCallRow };
+
+// ---------------------------------------------------------------------------
+// TASK-H36 round 2: reaper for stuck inbound rows (called by dialer-sweeper)
+// ---------------------------------------------------------------------------
+
+/** A never-answered row is stale after this (3 x 20 s rings + the voicemail answer fit well inside). */
+export const INBOUND_UNANSWERED_STALE_SECS = 180;
+/** Answered rows: a voicemail recording is capped at INBOUND_VOICEMAIL_MAX_SECS, so 10 min is far
+ *  past it; anything else (forwarded / bridged conversation) can legitimately run long. */
+export const INBOUND_VOICEMAIL_STALE_SECS = 600;
+export const INBOUND_ANSWERED_STALE_SECS = 1800;
+/** An UNANSWERED row Telnyx still reports alive this long after it started is dead weight. */
+export const INBOUND_RINGING_HANGUP_AFTER_SECS = 600;
+
+interface StaleInboundRow {
+  id: string;
+  org_id: string;
+  call_control_id: string;
+  state: InboundCallDbState;
+  answered_at: string | null;
+  created_at: string;
+  dial_session_id: string | null;
+}
+
+export interface InboundReapResult {
+  checked: number;
+  ended: number;
+  hungUp: number;
+  leftAlive: number;
+  unknown: number;
+}
+
+/** The rule (lead, round 2): NEVER hang up or end a call Telnyx says is still alive. Each stale
+ *  open row is checked with GET /calls/{id} (is_alive) using the org's own key:
+ *   - not alive (or 404) -> end the row (missed if never answered, else its connected outcome);
+ *   - alive              -> leave it, unless it never connected and has been ringing/parked for
+ *                           more than 10 minutes (then hang up + end as missed);
+ *   - Telnyx error / unknown / no key -> leave it and log. */
+export async function reapStaleInboundCalls(
+  supabase: SupabaseClient,
+  resolveClient: (orgId: string) => Promise<TelnyxClient | null>
+): Promise<InboundReapResult> {
+  const result: InboundReapResult = { checked: 0, ended: 0, hungUp: 0, leftAlive: 0, unknown: 0 };
+  const { data, error } = await supabase.rpc('list_stale_inbound_calls', {
+    p_unanswered_after_seconds: INBOUND_UNANSWERED_STALE_SECS,
+    p_voicemail_after_seconds: INBOUND_VOICEMAIL_STALE_SECS,
+    p_answered_after_seconds: INBOUND_ANSWERED_STALE_SECS,
+  });
+  if (error) {
+    inboundLog('list_stale_inbound_calls_failed', { error: error.message });
+    return result;
+  }
+  for (const row of (data ?? []) as StaleInboundRow[]) {
+    result.checked++;
+    const client = await resolveClient(row.org_id).catch(() => null);
+    if (!client) {
+      result.unknown++;
+      inboundLog('reap_inbound_no_client', { inboundCallId: row.id });
+      continue;
+    }
+    const status = await client.getCallStatus(row.call_control_id).catch(() => null);
+    if (!status) {
+      result.unknown++;
+      inboundLog('reap_inbound_status_unknown', { inboundCallId: row.id });
+      continue;
+    }
+    if (status.isAlive) {
+      const ageSecs = (Date.now() - new Date(row.created_at).getTime()) / 1000;
+      const neverConnected =
+        !row.answered_at &&
+        (row.state === 'ringing' ||
+          row.state === 'ringing_intern' ||
+          row.state === 'ringing_cell' ||
+          row.state === 'ringing_shared' ||
+          row.state === 'voicemail');
+      if (!(neverConnected && ageSecs > INBOUND_RINGING_HANGUP_AFTER_SECS)) {
+        result.leftAlive++;
+        inboundLog('reap_inbound_left_alive', { inboundCallId: row.id, state: row.state });
+        continue;
+      }
+      try {
+        await client.hangup(row.call_control_id);
+        result.hungUp++;
+      } catch (err) {
+        inboundLog('reap_inbound_hangup_failed', { inboundCallId: row.id, error: String(err) });
+      }
+    }
+    const { data: outcome, error: endError } = await supabase.rpc('end_stale_inbound_call', {
+      p_id: row.id,
+    });
+    if (endError) {
+      inboundLog('end_stale_inbound_call_failed', {
+        inboundCallId: row.id,
+        error: endError.message,
+      });
+      continue;
+    }
+    if (!outcome) continue; // lost the race to a real event: already ended
+    result.ended++;
+    inboundLog('reap_inbound_ended', { inboundCallId: row.id, state: row.state, outcome });
+    if (row.state === 'bridging_session') {
+      await resumeInboundPausedSession(supabase, row.org_id, row.id, row.dial_session_id);
+    }
+  }
+  return result;
+}

@@ -255,18 +255,28 @@ export interface RecordStartArgs {
    *  on `call_control_id` -- verified against spec3.json that `call.recording.saved`'s payload
    *  carries none at all (only `call_leg_id`/`call_session_id`, both different UUIDs). */
   clientState?: string;
+  /** TASK-H36: hard ceiling in seconds (Telnyx `max_length`) so a caller who just stays on the
+   *  line cannot record forever; the recording is saved when it is reached. */
+  maxLengthSecs?: number;
 }
 
 export function buildRecordStartPayload(args: RecordStartArgs): {
   format: 'mp3' | 'wav';
   channels: 'single' | 'dual';
   client_state?: string;
+  max_length?: number;
 } {
-  const payload: { format: 'mp3' | 'wav'; channels: 'single' | 'dual'; client_state?: string } = {
+  const payload: {
+    format: 'mp3' | 'wav';
+    channels: 'single' | 'dual';
+    client_state?: string;
+    max_length?: number;
+  } = {
     format: args.format ?? 'mp3',
     channels: args.channels,
   };
   if (args.clientState) payload.client_state = args.clientState;
+  if (args.maxLengthSecs !== undefined) payload.max_length = args.maxLengthSecs;
   return payload;
 }
 
@@ -435,7 +445,10 @@ export interface TelnyxClient {
    * result, only on a definitive one.
    */
   getCallStatus(callControlId: string): Promise<{ isAlive: boolean } | null>;
-  speak(callControlId: string, payload: { payload: string; voice: string }): Promise<void>;
+  speak(
+    callControlId: string,
+    payload: { payload: string; voice: string; client_state?: string }
+  ): Promise<void>;
   /** TASK-H11: `POST /calls/{id}/actions/send_dtmf` -- plays DTMF tones to the far end of the leg
    *  (an answering-machine menu: "press 1 to be connected"). `digits` is already validated by
    *  `_shared/dtmf.ts`. */
