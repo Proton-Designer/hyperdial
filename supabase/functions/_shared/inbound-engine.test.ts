@@ -10,6 +10,7 @@ import { createTelnyxClient } from './telnyx-client.ts';
 import { FakeDb, createFakeSupabase } from './dialer-fake-supabase.ts';
 import { encodeInboundClientState, type InboundCallStep } from './client-state.ts';
 import {
+  advanceInboundCall,
   reapStaleInboundCalls,
   handleFreshInboundCall,
   handleOriginalLegEvent,
@@ -164,6 +165,18 @@ function makeExtraRpc(db: FakeDb) {
       row.state = args.p_new_state;
       const fields = (args.p_fields as Record<string, unknown>) ?? {};
       for (const key of INBOUND_CALL_FIELDS) if (key in fields) row[key] = fields[key];
+      return { data: true, error: null };
+    }
+    if (name === 'advance_stalled_bridging_call') {
+      const row = [...db.table('inbound_calls').values()].find(
+        (r) => r.call_control_id === args.p_call_control_id
+      );
+      if (!row || row.state !== 'bridging_session' || row.answered_at) {
+        return { data: false, error: null };
+      }
+      row.state = args.p_new_state;
+      const fields = (args.p_fields as Record<string, unknown>) ?? {};
+      if ('answered_at' in fields) row.answered_at = fields.answered_at;
       return { data: true, error: null };
     }
     if (name === 'list_stale_inbound_calls') {
@@ -593,6 +606,8 @@ Deno.test(
       assertEquals(server.joins.length, 1);
       assertEquals(server.joins[0].conferenceId, 'conf-1');
       assertEquals(server.joins[0].callControlId, 'call-5');
+      // the stalled-join rule relies on this: a successful join always has answered_at set
+      assertExists(loadRow(db, 'call-5').answered_at);
 
       row = loadRow(db, 'call-5');
       await handleOriginalLegEvent(
@@ -987,6 +1002,7 @@ Deno.test(
         );
         if (!joinFails) {
           assertEquals(server.joins.length, 1);
+          assertExists(loadRow(db, cc).answered_at, 'successful join => answered_at set');
           assertEquals(loadRow(db, cc).state, 'bridging_session');
         } else {
           assertEquals(server.joins.length, 0);
@@ -1648,6 +1664,44 @@ Deno.test(
       assertEquals(res.ended, 1);
       assertEquals(loadRow(h.db, 'st-2').state, 'ended');
       assertEquals(h.db.table('dial_sessions').get('sess-h36')!.state, 'dialing');
+    } finally {
+      h.restore();
+    }
+  }
+);
+
+Deno.test(
+  'H36 final: stalled-join advance loses to a late answer (CAS requires answered_at null); agent stays paused',
+  async () => {
+    const h = h36Setup({ online: true, forward: '+18305635638' });
+    seedJoinableSession(h);
+    try {
+      await handleFreshInboundCall(
+        h.supabase,
+        h.client,
+        freshInboundArgs({ callControlId: 'fin-1' })
+      );
+      const row = loadRow(h.db, 'fin-1');
+      // the late call.answered lands AFTER the reaper's fresh read but BEFORE its CAS
+      row.answered_at = agoIso(1);
+      await advanceInboundCall(
+        h.supabase,
+        h.client,
+        {
+          orgId: ORG_ID,
+          inboundCallId: row.id,
+          callControlId: 'fin-1',
+          toE164: '',
+          fromE164: row.from_e164,
+          routedToUserId: row.routed_to_user_id,
+          joinableSessionId: null,
+        },
+        'bridging_session',
+        { requireUnanswered: true }
+      );
+      assertEquals(loadRow(h.db, 'fin-1').state, 'bridging_session', 'caller not pulled out');
+      assertEquals(h.server.transfers.length, 0);
+      assertEquals(sessionOf(h).state, 'paused', 'live agent not unpaused');
     } finally {
       h.restore();
     }

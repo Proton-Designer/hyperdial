@@ -50,6 +50,37 @@ begin
 end;
 $$;
 
+-- Round 4 (eng2): the reaper's stalled-join advance. Same CAS shape as transition_inbound_call but
+-- it ALSO requires answered_at IS NULL, so a late real call.answered (which writes answered_at and
+-- starts the conference join) always wins the race and the caller is never pulled out of it.
+create function public.advance_stalled_bridging_call(
+  p_call_control_id text,
+  p_new_state text,
+  p_fields jsonb default '{}'::jsonb
+)
+returns boolean
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_rows int;
+begin
+  update public.inbound_calls c
+  set state = p_new_state,
+      answered_at = case when p_fields ? 'answered_at'
+        then (p_fields->>'answered_at')::timestamptz else c.answered_at end
+  where c.call_control_id = p_call_control_id
+    and c.state = 'bridging_session'
+    and c.answered_at is null;
+  get diagnostics v_rows = row_count;
+  return v_rows > 0;
+end;
+$$;
+
+revoke all on function public.advance_stalled_bridging_call(text, text, jsonb) from public, anon, authenticated;
+grant execute on function public.advance_stalled_bridging_call(text, text, jsonb) to service_role;
+
 -- Ends ONE row (the caller already established the Telnyx leg is gone, or has hung it up).
 -- Returns the outcome, or null if the row had already ended (lost a race to a real event).
 create function public.end_stale_inbound_call(p_id uuid)

@@ -130,6 +130,26 @@ async function transitionInboundCall(
   return data === true;
 }
 
+/** Like transitionInboundCall, but additionally requires answered_at IS NULL (round 4: the
+ *  stalled-join advance must not pull a caller out of a conversation whose answer arrived late). */
+async function claimStalledBridging(
+  supabase: SupabaseClient,
+  args: {
+    callControlId: string;
+    expectedStates: InboundCallDbState[];
+    newState: InboundCallDbState;
+    fields?: Record<string, unknown>;
+  }
+): Promise<boolean> {
+  const { data, error } = await supabase.rpc('advance_stalled_bridging_call', {
+    p_call_control_id: args.callControlId,
+    p_new_state: args.newState,
+    p_fields: args.fields ?? {},
+  });
+  if (error) throw new Error(`advance_stalled_bridging_call: ${error.message}`);
+  return data === true;
+}
+
 /** Every input `planInboundSteps`/`nextInboundStep` need, freshly read. Nothing here is cached
  *  on the inbound_calls row -- see this file's header for why that's deliberate. */
 async function buildRoutingInputs(
@@ -314,11 +334,20 @@ async function enterStep(
     fromE164: string;
     routedToUserId: string | null;
     joinableSessionId: string | null;
+    /** Round 4 (eng2): the reaper's stalled-join advance must lose to a late real answer, so its
+     *  CAS also requires answered_at IS NULL (see advance_stalled_bridging_call). */
+    requireUnanswered?: boolean;
+    /** Runs right after the CAS into `step` succeeds (and only then). */
+    onEntered?: () => Promise<void>;
   },
   step: InboundStep,
   fromState: InboundCallDbState
 ): Promise<void> {
-  const ok = await transitionInboundCall(supabase, {
+  const claim =
+    args.requireUnanswered && fromState === 'bridging_session'
+      ? claimStalledBridging
+      : transitionInboundCall;
+  const ok = await claim(supabase, {
     callControlId: args.callControlId,
     expectedStates: [fromState],
     newState: step,
@@ -337,6 +366,7 @@ async function enterStep(
     return;
   }
   inboundLog('enter_step', { inboundCallId: args.inboundCallId, step });
+  if (args.onEntered) await args.onEntered();
 
   // TASK-H36: the row is already CAS'd into `step` above, so a command that THROWS (e.g. Telnyx
   // 422 on a malformed forward number) would otherwise leave the row parked in `step` forever
@@ -569,10 +599,14 @@ export async function advanceInboundCall(
     routedToUserId: string | null;
     joinableSessionId: string | null;
   },
-  currentStep: InboundStep | null
+  currentStep: InboundStep | null,
+  opts: { requireUnanswered?: boolean } = {}
 ): Promise<void> {
-  if (currentStep === 'bridging_session') {
-    // Leaving bridging_session without a conversation (see resumeInboundPausedSession).
+  // Leaving bridging_session without a conversation: resume the agent (see
+  // resumeInboundPausedSession) -- but only AFTER our CAS out of the step succeeded, so a lost
+  // race (late answer / hang-up after a real conversation) never unpauses a live agent.
+  const resumeAgent = async () => {
+    if (currentStep !== 'bridging_session') return;
     const current = await loadInboundCallById(supabase, args.inboundCallId);
     await resumeInboundPausedSession(
       supabase,
@@ -580,7 +614,7 @@ export async function advanceInboundCall(
       args.inboundCallId,
       current?.dial_session_id ?? null
     );
-  }
+  };
   const inputs = await buildRoutingInputs(supabase, args.orgId, args.routedToUserId);
   const nextStep =
     currentStep === null ? planInboundSteps(inputs)[0] : nextInboundStep(currentStep, inputs);
@@ -594,13 +628,19 @@ export async function advanceInboundCall(
       lastStep: currentStep ?? 'voicemail',
       connected: false,
     });
+    await resumeAgent();
     return;
   }
 
   await enterStep(
     supabase,
     client,
-    { ...args, joinableSessionId: inputs.joinableSessionId },
+    {
+      ...args,
+      joinableSessionId: inputs.joinableSessionId,
+      requireUnanswered: opts.requireUnanswered,
+      onEntered: resumeAgent,
+    },
     nextStep,
     fromState
   );
@@ -1286,7 +1326,8 @@ export async function reapStaleInboundCalls(
             routedToUserId: row.routed_to_user_id,
             joinableSessionId: null,
           },
-          'bridging_session'
+          'bridging_session',
+          { requireUnanswered: true }
         );
         result.advanced++;
       }
