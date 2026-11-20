@@ -332,9 +332,12 @@ export interface OrgApiKey {
 
 /** The owner/admin's own org's keys (RLS-scoped; `key_hash` is never selectable). Newest first. */
 export async function listOrgApiKeys(): Promise<OrgApiKey[]> {
+  // RLS shows every org the caller administers; create_org_api_key works on the ACTIVE org, so list that one.
+  const orgId = await getActiveOrgId();
   const { data, error } = await supabase
     .from('org_api_keys')
     .select('id, name, key_prefix, scopes, created_at, last_used_at, revoked_at, created_by')
+    .eq('org_id', orgId)
     .order('created_at', { ascending: false });
   if (error) throw new Error(error.message);
   return (data ?? []) as OrgApiKey[];
