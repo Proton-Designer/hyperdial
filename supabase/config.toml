@@ -576,3 +576,8 @@ s3_secret_key = "env(S3_SECRET_KEY)"
 # TASK-H29: PUBLIC pro form (no login, visitors have no JWT). Auth is the unguessable link token; the function only calls
 # service-only RPCs and rate limits by hashed IP. Deploy with --no-verify-jwt.
 verify_jwt = false
+
+[functions.public-api]
+# TASK-H37: read-only public Calls API. Auth is the x-api-key header (sha256 lookup in org_api_keys); callers have no JWT.
+# Deploy with --no-verify-jwt.
+verify_jwt = false
