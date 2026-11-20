@@ -268,9 +268,9 @@ export function ApiKeysTab() {
       <div className="bg-surface-1 rounded-app-lg p-4 sm:p-6 border border-border-subtle max-w-4xl">
         <h3 className="text-section-title text-text-primary mb-2">How to use it</h3>
         <p className="text-sm text-text-secondary mb-3">
-          Send your key in the <code>x-api-key</code> header. Ask for calls that ended after a time
-          you choose; follow <code>next_cursor</code> for the next page (up to 200 calls each,
-          oldest first).
+          Send your key in the <code>x-api-key</code> header. Ask for calls that changed after a
+          time you choose; follow <code>next_cursor</code> while <code>has_more</code> is true (up
+          to 200 calls a page, oldest first). Limit: 60 requests a minute.
         </p>
         <pre className="overflow-x-auto rounded-app-md bg-surface-2 border border-border-subtle p-3 text-xs text-text-primary mb-3">
           {`curl -H "x-api-key: YOUR_KEY" \\
@@ -286,7 +286,16 @@ export function ApiKeysTab() {
           <li>
             Each call has the agent, campaign, outcome (<code>disposition</code>), the contact with
             their <code>timezone</code>, <code>callback_at</code> and a <code>recording_url</code>{' '}
-            to the MP3 (a link that works for 6 hours).
+            to the MP3 (a link that works for 6 hours). Manual calls are not included.
+          </li>
+          <li>
+            A call can come back: first <code>status: &quot;pending&quot;</code> (outcome or
+            recording not there yet), then <code>&quot;complete&quot;</code>. Keep one copy per{' '}
+            <code>id</code>, the one with the newest <code>updated_at</code>.
+          </li>
+          <li>
+            If a recording link could not be made, <code>recording_url</code> is null and{' '}
+            <code>recording_error</code> says so; the call comes back later with the link.
           </li>
           <li>
             Recordings are two-channel: <strong>left is the contact, right is the agent</strong>.
