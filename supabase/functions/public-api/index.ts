@@ -35,7 +35,7 @@ Deno.serve((req: Request) =>
       const { data, error } = await admin.rpc('public_api_list_calls', {
         p_org: a.orgId,
         p_since: a.since,
-        p_after_ended_at: a.afterEndedAt,
+        p_after_changed_at: a.afterChangedAt,
         p_after_id: a.afterId,
         p_limit: a.limit,
       });

@@ -25,6 +25,8 @@ function row(n: number, org: string, extra: Partial<CallRow> = {}): CallRow & { 
     org,
     id: uuid(n),
     ended_at: new Date(Date.UTC(2026, 10, 19, 10, 0, 0) + n * 1000).toISOString(),
+    updated_at: new Date(Date.UTC(2026, 10, 19, 10, 0, 0) + n * 1000).toISOString(),
+    status: 'complete',
     duration_seconds: 60,
     agent_name: 'Rayan',
     agent_email: 'r@x.com',
@@ -57,14 +59,14 @@ async function setup(
     listCalls: (a) => {
       calls.push({ orgId: a.orgId });
       const out = rows
-        .filter((r) => r.org === a.orgId && r.ended_at > (a.since === '-infinity' ? '' : a.since))
+        .filter((r) => r.org === a.orgId && r.updated_at > (a.since === '-infinity' ? '' : a.since))
         .filter(
           (r) =>
-            !a.afterEndedAt ||
-            r.ended_at > a.afterEndedAt ||
-            (r.ended_at === a.afterEndedAt && r.id > a.afterId!)
+            !a.afterChangedAt ||
+            r.updated_at > a.afterChangedAt ||
+            (r.updated_at === a.afterChangedAt && r.id > a.afterId!)
         )
-        .sort((x, y) => (x.ended_at + x.id < y.ended_at + y.id ? -1 : 1))
+        .sort((x, y) => (x.updated_at + x.id < y.updated_at + y.id ? -1 : 1))
         .slice(0, a.limit);
       return Promise.resolve(out);
     },
@@ -151,8 +153,8 @@ Deno.test(
   'cursor paging: 450 rows come back as 200 + 200 + 50, oldest first, no gaps or repeats',
   async () => {
     const rows = Array.from({ length: 450 }, (_, i) => row(i + 1, ORG_A));
-    // ties on ended_at must still page cleanly
-    rows[10] = { ...rows[10], ended_at: rows[9].ended_at };
+    // ties on updated_at must still page cleanly
+    rows[10] = { ...rows[10], updated_at: rows[9].updated_at };
     const { deps } = await setup(rows);
     const seen: string[] = [];
     let qs = '?since=2026-01-01';
@@ -184,7 +186,7 @@ Deno.test('cursor: bad cursors are 400; round-trips', async () => {
     await res.text();
   }
   const c = encodeCursor('2026-11-19T10:00:01.000Z', uuid(7));
-  assertEquals(decodeCursor(c), { endedAt: '2026-11-19T10:00:01.000Z', id: uuid(7) });
+  assertEquals(decodeCursor(c), { changedAt: '2026-11-19T10:00:01.000Z', id: uuid(7) });
 });
 
 Deno.test(
@@ -265,6 +267,8 @@ Deno.test('response shape matches the request', async () => {
     'recording_channels',
     'recording_status',
     'recording_url',
+    'status',
+    'updated_at',
   ]);
   assertEquals(Object.keys(b.calls[0].contact).sort(), [
     'business',
@@ -283,3 +287,62 @@ Deno.test('parseIsoInstant', () => {
   assertEquals(parseIsoInstant('2026-11-19T17:47:53'), '2026-11-19T17:47:53.000Z');
   assertEquals(parseIsoInstant('1; drop table'), null);
 });
+
+Deno.test(
+  'a call is returned pending, then again complete once its disposition and recording land',
+  async () => {
+    const ended = '2026-11-19T10:00:00.000Z';
+    const pending = row(1, ORG_A, {
+      ended_at: ended,
+      updated_at: ended,
+      status: 'pending',
+      disposition: null,
+      recording_path: null,
+      recording_status: 'recording',
+      recording_channels: null,
+    });
+    const rows = [pending];
+    const { deps } = await setup(rows);
+    const first = await (
+      await handlePublicApi(get('?since=2026-11-19T09:00:00Z', KEY_A), deps)
+    ).json();
+    assertEquals(first.calls.length, 1);
+    assertEquals(first.calls[0].status, 'pending');
+    assertEquals(first.calls[0].disposition, null);
+    assertEquals(first.calls[0].recording_url, null);
+
+    // the poller moves on with the cursor/last updated_at: nothing new yet
+    const idle = await (
+      await handlePublicApi(get(`?cursor=${first.next_cursor}`, KEY_A), deps)
+    ).json();
+    assertEquals(idle.calls.length, 0);
+
+    // disposition + recording land 5 minutes after the call ended
+    rows[0] = {
+      ...pending,
+      updated_at: '2026-11-19T10:05:00.000Z',
+      status: 'complete',
+      disposition: 'Not interested',
+      recording_path: `${ORG_A}/1.mp3`,
+      recording_status: 'saved',
+      recording_channels: 2,
+    };
+    const again = await (
+      await handlePublicApi(get(`?cursor=${first.next_cursor}`, KEY_A), deps)
+    ).json();
+    assertEquals(again.calls.length, 1);
+    assertEquals(again.calls[0].id, first.calls[0].id);
+    assertEquals(again.calls[0].status, 'complete');
+    assertEquals(again.calls[0].updated_at, '2026-11-19T10:05:00.000Z');
+    assertEquals(again.calls[0].disposition, 'Not interested');
+    assertEquals(again.calls[0].recording_url, `https://signed/${ORG_A}/1.mp3`);
+    // and a since-based poll (last poll time between ended_at and the change) also sees it
+    const bySince = await (
+      await handlePublicApi(get('?since=2026-11-19T10:02:00Z', KEY_A), deps)
+    ).json();
+    assertEquals(
+      bySince.calls.map((c: { id: string }) => c.id),
+      [uuid(1)]
+    );
+  }
+);

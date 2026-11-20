@@ -150,17 +150,20 @@ begin
 end;
 $$;
 
--- public_api_list_calls: one page, oldest first by (ended_at, id), keyset on (p_after_ended_at, p_after_id).
+-- public_api_list_calls: one page, oldest first by (updated_at, id) where updated_at = greatest(ended_at, dispositioned_at,
+-- recording_saved_at) -- a call re-appears when its disposition or recording lands after it ended (callback_at/notes are set
+-- with the disposition; they have no timestamp of their own). status = 'complete' once dispositioned and the recording is no
+-- longer 'recording' (saved/deleted/failed/none), else 'pending'. Keyset on (p_after_changed_at, p_after_id).
 -- Returns up to p_limit (max 200) rows as jsonb; the caller signs recording_url from recording_path.
 create function public.public_api_list_calls(
   p_org uuid,
   p_since timestamptz,
-  p_after_ended_at timestamptz default null,
+  p_after_changed_at timestamptz default null,
   p_after_id uuid default null,
   p_limit int default 200
 )
 returns table (
-  id uuid, ended_at timestamptz, duration_seconds int, agent_name text, agent_email text, campaign text,
+  id uuid, ended_at timestamptz, updated_at timestamptz, status text, duration_seconds int, agent_name text, agent_email text, campaign text,
   disposition text, contact_name text, contact_business text, contact_phone text, contact_email text,
   contact_timezone text, contact_notes text, callback_at timestamptz,
   recording_path text, recording_status text, recording_channels int
@@ -173,6 +176,9 @@ as $$
   select
     cl.id,
     cl.ended_at,
+    greatest(cl.ended_at, cl.dispositioned_at, cl.recording_saved_at),
+    case when cl.dispositioned_at is not null and coalesce(cl.recording_status, 'saved') <> 'recording'
+         then 'complete' else 'pending' end,
     cl.duration_seconds::int,
     nullif(btrim(coalesce(p.first_name, '') || ' ' || coalesce(p.last_name, '')), ''),
     u.email::text,
@@ -201,9 +207,10 @@ as $$
     and cl.kind = 'contact'
     and cl.outcome = 'connected'
     and cl.ended_at is not null
-    and cl.ended_at > p_since
-    and (p_after_ended_at is null or (cl.ended_at, cl.id) > (p_after_ended_at, p_after_id))
-  order by cl.ended_at, cl.id
+    and greatest(cl.ended_at, cl.dispositioned_at, cl.recording_saved_at) > p_since
+    and (p_after_changed_at is null
+         or (greatest(cl.ended_at, cl.dispositioned_at, cl.recording_saved_at), cl.id) > (p_after_changed_at, p_after_id))
+  order by greatest(cl.ended_at, cl.dispositioned_at, cl.recording_saved_at), cl.id
   limit least(greatest(coalesce(p_limit, 200), 1), 200);
 $$;
 
@@ -213,5 +220,5 @@ grant execute on function public.public_api_check_key(text, int) to service_role
 grant execute on function public.public_api_list_calls(uuid, timestamptz, timestamptz, uuid, int) to service_role;
 
 -- Index for the keyset scan.
-create index if not exists idx_call_legs_org_connected_ended
-  on public.call_legs(org_id, ended_at, id) where kind = 'contact' and outcome = 'connected';
+create index if not exists idx_call_legs_org_connected_changed
+  on public.call_legs(org_id, (greatest(ended_at, dispositioned_at, recording_saved_at)), id) where kind = 'contact' and outcome = 'connected';

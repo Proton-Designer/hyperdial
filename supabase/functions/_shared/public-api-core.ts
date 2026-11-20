@@ -12,6 +12,8 @@ const SIGN_CONCURRENCY = 10;
 export interface CallRow {
   id: string;
   ended_at: string;
+  updated_at: string;
+  status: 'complete' | 'pending';
   duration_seconds: number | null;
   agent_name: string | null;
   agent_email: string | null;
@@ -41,7 +43,7 @@ export interface PublicApiDeps {
   listCalls: (args: {
     orgId: string;
     since: string;
-    afterEndedAt: string | null;
+    afterChangedAt: string | null;
     afterId: string | null;
     limit: number;
   }) => Promise<CallRow[]>;
@@ -69,21 +71,21 @@ export function parseIsoInstant(raw: string): string | null {
   return Number.isNaN(t) ? null : new Date(t).toISOString();
 }
 
-export function encodeCursor(endedAt: string, id: string): string {
-  const raw = JSON.stringify([endedAt, id]);
+export function encodeCursor(changedAt: string, id: string): string {
+  const raw = JSON.stringify([changedAt, id]);
   return btoa(raw).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
-export function decodeCursor(cursor: string): { endedAt: string; id: string } | null {
+export function decodeCursor(cursor: string): { changedAt: string; id: string } | null {
   try {
     if (!/^[A-Za-z0-9_-]{10,200}$/.test(cursor)) return null;
     const b64 = cursor.replace(/-/g, '+').replace(/_/g, '/');
     const parsed = JSON.parse(atob(b64 + '='.repeat((4 - (b64.length % 4)) % 4)));
     if (!Array.isArray(parsed) || parsed.length !== 2) return null;
-    const [endedAt, id] = parsed;
-    if (typeof endedAt !== 'string' || typeof id !== 'string' || !UUID_RE.test(id)) return null;
-    const iso = parseIsoInstant(endedAt);
-    return iso ? { endedAt: iso, id } : null;
+    const [changedAt, id] = parsed;
+    if (typeof changedAt !== 'string' || typeof id !== 'string' || !UUID_RE.test(id)) return null;
+    // Keep the database's own (microsecond) text so a keyset never re-reads or skips a row at the boundary.
+    return parseIsoInstant(changedAt) ? { changedAt, id } : null;
   } catch {
     return null;
   }
@@ -155,12 +157,12 @@ export async function handlePublicApi(req: Request, deps: PublicApiDeps): Promis
   const cursorRaw = url.searchParams.get('cursor');
   const sinceRaw = url.searchParams.get('since');
   let since: string;
-  let afterEndedAt: string | null = null;
+  let afterChangedAt: string | null = null;
   let afterId: string | null = null;
   if (cursorRaw) {
     const c = decodeCursor(cursorRaw);
     if (!c) return json(400, { error: 'Invalid cursor' });
-    afterEndedAt = c.endedAt;
+    afterChangedAt = c.changedAt;
     afterId = c.id;
     since = '-infinity';
     if (sinceRaw) {
@@ -185,7 +187,7 @@ export async function handlePublicApi(req: Request, deps: PublicApiDeps): Promis
     rows = await deps.listCalls({
       orgId: check.org_id,
       since,
-      afterEndedAt,
+      afterChangedAt,
       afterId,
       limit: PAGE_LIMIT,
     });
@@ -206,6 +208,8 @@ export async function handlePublicApi(req: Request, deps: PublicApiDeps): Promis
     return {
       id: r.id,
       ended_at: r.ended_at,
+      updated_at: r.updated_at,
+      status: r.status,
       duration_seconds: r.duration_seconds,
       agent: { name: r.agent_name, email: r.agent_email },
       campaign: r.campaign,
@@ -230,9 +234,7 @@ export async function handlePublicApi(req: Request, deps: PublicApiDeps): Promis
   const last = rows[rows.length - 1];
   return json(200, {
     calls,
-    next_cursor: last
-      ? encodeCursor(new Date(last.ended_at).toISOString(), last.id)
-      : (cursorRaw ?? null),
+    next_cursor: last ? encodeCursor(last.updated_at, last.id) : (cursorRaw ?? null),
     has_more: rows.length === PAGE_LIMIT,
   });
 }
