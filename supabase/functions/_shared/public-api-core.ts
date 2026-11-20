@@ -19,6 +19,7 @@ export interface CallRow {
   agent_email: string | null;
   campaign: string | null;
   disposition: string | null;
+  disposition_reason: string | null;
   contact_name: string | null;
   contact_business: string | null;
   contact_phone: string | null;
@@ -89,6 +90,13 @@ export function decodeCursor(cursor: string): { changedAt: string; id: string } 
   } catch {
     return null;
   }
+}
+
+/** Any timestamp the database returns -> ISO 8601 UTC with Z (milliseconds). Microseconds stay only inside the cursor. */
+export function isoZ(raw: string | null): string | null {
+  if (!raw) return null;
+  const t = Date.parse(raw);
+  return Number.isNaN(t) ? null : new Date(t).toISOString();
 }
 
 function json(status: number, body: unknown, extra: Record<string, string> = {}): Response {
@@ -207,13 +215,14 @@ export async function handlePublicApi(req: Request, deps: PublicApiDeps): Promis
     const hasRecording = !!r.recording_path;
     return {
       id: r.id,
-      ended_at: r.ended_at,
-      updated_at: r.updated_at,
+      ended_at: isoZ(r.ended_at),
+      updated_at: isoZ(r.updated_at),
       status: r.status,
       duration_seconds: r.duration_seconds,
       agent: { name: r.agent_name, email: r.agent_email },
       campaign: r.campaign,
       disposition: r.disposition,
+      disposition_reason: r.disposition_reason,
       contact: {
         name: r.contact_name,
         business: r.contact_business,
@@ -222,7 +231,7 @@ export async function handlePublicApi(req: Request, deps: PublicApiDeps): Promis
         timezone: r.contact_timezone,
         notes: r.contact_notes,
       },
-      callback_at: r.callback_at,
+      callback_at: isoZ(r.callback_at),
       recording_url: s.url,
       recording_status: r.recording_status,
       recording_channels: hasRecording ? (r.recording_channels ?? 2) : null,

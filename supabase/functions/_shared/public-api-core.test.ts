@@ -32,6 +32,7 @@ function row(n: number, org: string, extra: Partial<CallRow> = {}): CallRow & { 
     agent_email: 'r@x.com',
     campaign: 'C',
     disposition: 'Not interested',
+    disposition_reason: null,
     contact_name: 'N',
     contact_business: 'B',
     contact_phone: '+12145550123',
@@ -260,6 +261,7 @@ Deno.test('response shape matches the request', async () => {
     'campaign',
     'contact',
     'disposition',
+    'disposition_reason',
     'duration_seconds',
     'ended_at',
     'id',
@@ -344,5 +346,27 @@ Deno.test(
       bySince.calls.map((c: { id: string }) => c.id),
       [uuid(1)]
     );
+  }
+);
+
+Deno.test(
+  'timestamps are ISO 8601 UTC with Z; microseconds stay only inside the cursor; removed disposition is explained',
+  async () => {
+    const r = row(1, ORG_A, {
+      ended_at: '2026-11-16 19:48:04.751+00',
+      updated_at: '2026-11-16T19:48:39.007661+00:00',
+      callback_at: '2026-11-21T15:00:00+00:00',
+      disposition: null,
+      disposition_reason: 'removed',
+    });
+    const { deps } = await setup([r]);
+    const b = await (await handlePublicApi(get('?since=2026-01-01', KEY_A), deps)).json();
+    const c = b.calls[0];
+    assertEquals(c.ended_at, '2026-11-16T19:48:04.751Z');
+    assertEquals(c.updated_at, '2026-11-16T19:48:39.007Z');
+    assertEquals(c.callback_at, '2026-11-21T15:00:00.000Z');
+    assertEquals(c.disposition, null);
+    assertEquals(c.disposition_reason, 'removed');
+    assertEquals(decodeCursor(b.next_cursor)?.changedAt, '2026-11-16T19:48:39.007661+00:00');
   }
 );

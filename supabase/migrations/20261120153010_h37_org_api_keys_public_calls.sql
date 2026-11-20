@@ -150,6 +150,31 @@ begin
 end;
 $$;
 
+-- recording_status_at: when recording_status last changed. A recording that fails (download_failed/recording_failed) sets
+-- no other timestamp, and retention/paused changes none either; a BEFORE UPDATE trigger stamps it so those transitions move
+-- updated_at (the failing code path lives in dialer-engine.ts, which this task does not touch).
+alter table public.call_legs add column if not exists recording_status_at timestamptz;
+
+create function public.call_legs_stamp_recording_status_at()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+begin
+  if new.recording_status is distinct from old.recording_status then
+    new.recording_status_at := now();
+  end if;
+  return new;
+end;
+$$;
+
+create trigger trg_call_legs_recording_status_at
+  before update of recording_status on public.call_legs
+  for each row execute function public.call_legs_stamp_recording_status_at();
+
+-- disposition_reason: 'removed' = the agent chose a disposition (dispositioned_at/by are set) but its row was deleted
+-- afterwards (call_legs.disposition_id is ON DELETE SET NULL), so the label is gone. Cause of the 4 Repuvance legs of
+-- 2026-11-16 that had dispositioned_at and no disposition.
 -- public_api_list_calls: one page, oldest first by (updated_at, id) where updated_at = greatest(ended_at, dispositioned_at,
 -- recording_saved_at) -- a call re-appears when its disposition or recording lands after it ended (callback_at/notes are set
 -- with the disposition; they have no timestamp of their own). status = 'complete' once dispositioned and the recording is no
@@ -163,7 +188,7 @@ create function public.public_api_list_calls(
   p_limit int default 200
 )
 returns table (
-  id uuid, ended_at timestamptz, updated_at timestamptz, status text, duration_seconds int, agent_name text, agent_email text, campaign text,
+  id uuid, ended_at timestamptz, updated_at timestamptz, status text, duration_seconds int, disposition_reason text, agent_name text, agent_email text, campaign text,
   disposition text, contact_name text, contact_business text, contact_phone text, contact_email text,
   contact_timezone text, contact_notes text, callback_at timestamptz,
   recording_path text, recording_status text, recording_channels int
@@ -176,10 +201,11 @@ as $$
   select
     cl.id,
     cl.ended_at,
-    greatest(cl.ended_at, cl.dispositioned_at, cl.recording_saved_at),
-    case when cl.dispositioned_at is not null and coalesce(cl.recording_status, 'saved') <> 'recording'
+    greatest(cl.ended_at, cl.dispositioned_at, cl.recording_saved_at, cl.recording_deleted_at, cl.recording_status_at),
+    case when cl.dispositioned_at is not null and coalesce(cl.recording_status, 'saved') not in ('recording', 'paused')
          then 'complete' else 'pending' end,
     cl.duration_seconds::int,
+    case when cl.dispositioned_at is not null and cl.disposition_id is null then 'removed' end,
     nullif(btrim(coalesce(p.first_name, '') || ' ' || coalesce(p.last_name, '')), ''),
     u.email::text,
     ca.name,
@@ -207,10 +233,10 @@ as $$
     and cl.kind = 'contact'
     and cl.outcome = 'connected'
     and cl.ended_at is not null
-    and greatest(cl.ended_at, cl.dispositioned_at, cl.recording_saved_at) > p_since
+    and greatest(cl.ended_at, cl.dispositioned_at, cl.recording_saved_at, cl.recording_deleted_at, cl.recording_status_at) > p_since
     and (p_after_changed_at is null
-         or (greatest(cl.ended_at, cl.dispositioned_at, cl.recording_saved_at), cl.id) > (p_after_changed_at, p_after_id))
-  order by greatest(cl.ended_at, cl.dispositioned_at, cl.recording_saved_at), cl.id
+         or (greatest(cl.ended_at, cl.dispositioned_at, cl.recording_saved_at, cl.recording_deleted_at, cl.recording_status_at), cl.id) > (p_after_changed_at, p_after_id))
+  order by greatest(cl.ended_at, cl.dispositioned_at, cl.recording_saved_at, cl.recording_deleted_at, cl.recording_status_at), cl.id
   limit least(greatest(coalesce(p_limit, 200), 1), 200);
 $$;
 
@@ -221,4 +247,4 @@ grant execute on function public.public_api_list_calls(uuid, timestamptz, timest
 
 -- Index for the keyset scan.
 create index if not exists idx_call_legs_org_connected_changed
-  on public.call_legs(org_id, (greatest(ended_at, dispositioned_at, recording_saved_at)), id) where kind = 'contact' and outcome = 'connected';
+  on public.call_legs(org_id, (greatest(ended_at, dispositioned_at, recording_saved_at, recording_deleted_at, recording_status_at)), id) where kind = 'contact' and outcome = 'connected';

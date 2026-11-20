@@ -39,6 +39,7 @@ Which calls are included: calls the agent had a live conversation on (a campaign
       "agent": { "name": "Rayan Chakir", "email": "rayan@repuvance.com" },
       "campaign": "Repuvance | Cold Calling Script V1",
       "disposition": "Not interested",
+      "disposition_reason": null,
       "contact": {
         "name": "Jane Doe",
         "business": "Doe Roofing",
@@ -69,6 +70,7 @@ Which calls are included: calls the agent had a live conversation on (a campaign
 | `agent`                 | The HyperDial user who took the call.                                                                                                                                                               |
 | `campaign`              | Campaign name.                                                                                                                                                                                      |
 | `disposition`           | The outcome label the agent chose after the call (for example "Not interested" or "Booked"). `null` until the agent has chosen one.                                                                 |
+| `disposition_reason`    | `null` normally. `"removed"` means the agent did choose an outcome but that outcome was deleted from the settings afterwards, so `disposition` is `null` and the call is still `complete`.          |
 | `contact`               | Who was called. `timezone` is the contact's own timezone, so you can show a callback at their local time. `email` is the one from the latest close form when there is one. Any field can be `null`. |
 | `callback_at`           | When the contact asked to be called back (UTC), or `null`.                                                                                                                                          |
 | `recording_url`         | A temporary signed link to the MP3, valid for 6 hours. Download it within that time. `null` while there is no recording yet, or when the link could not be made (see `recording_error`).            |
@@ -79,7 +81,9 @@ Which calls are included: calls the agent had a live conversation on (a campaign
 | `next_cursor`           | Pass it as `cursor` for the next page.                                                                                                                                                              |
 | `has_more`              | `true` when more changed calls are waiting.                                                                                                                                                         |
 
-Missing information is always `null`, never an empty string. All timestamps are ISO 8601 in UTC, ending in `Z`.
+Missing information is always `null`, never an empty string. All times are ISO 8601 in UTC with a trailing `Z` (for example `2026-11-19T17:47:53.000Z`).
+
+**Late changes to contact details.** `contact.email` (from the latest close form), `contact.notes` and `callback_at` are read when the call is returned. A close form saved later does not make an already-`complete` call come back; the new value shows up only if the call is returned again for another reason. All timestamps are ISO 8601 in UTC, ending in `Z`.
 
 The contact `email` and `notes` are read when the call is returned. A close form or note added **later** does not make the call come back, so you will not be sent the new email or notes for a call you already have.
 
@@ -87,7 +91,7 @@ The contact `email` and `notes` are read when the call is returned. A close form
 
 The outcome and the recording are added **after** the call ends, so a call can appear more than once: first as `status: "pending"` (just ended, outcome or recording not there yet), then again as `status: "complete"` once they are. Each appearance has a newer `updated_at`.
 
-In your script, store calls by `id` and **replace** the stored one with whichever has the newest `updated_at`. Treat a call as final when its `status` is `complete`.
+In your script, store calls by `id` and **replace** the stored one with whichever has the newest `updated_at`. Treat a call as final when its `status` is `complete`. A recording that fails or is deleted also moves `updated_at` (the call comes back with `recording_status` showing why and no `recording_url`).
 
 ## 5. Polling every 15 minutes
 
@@ -103,6 +107,9 @@ In your script, store calls by `id` and **replace** the stored one with whicheve
 | `401`  | Missing, wrong or revoked key.                                                                         |
 | `400`  | `since` or `cursor` is not valid.                                                                      |
 | `429`  | More than 60 requests per minute for the key. Wait (the `Retry-After` header says how long) and retry. |
+| `405`  | The request was not a GET.                                                                             |
+| `404`  | Any path other than `/v1/calls`.                                                                       |
+| `500`  | The calls could not be loaded: retry.                                                                  |
 | `503`  | Temporarily unavailable: retry in a few seconds.                                                       |
 | `404`  | The path is not `/v1/calls`.                                                                           |
 | `405`  | The request was not a `GET`.                                                                           |
