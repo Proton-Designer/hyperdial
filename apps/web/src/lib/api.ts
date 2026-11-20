@@ -318,6 +318,50 @@ export async function getMyForwardNumber(): Promise<string | null> {
   return (data?.forward_phone_number as string | null) ?? null;
 }
 
+// --- TASK-H37: org API keys (Settings -> API keys, owner/admin only) -----------------------------
+export interface OrgApiKey {
+  id: string;
+  name: string;
+  key_prefix: string;
+  scopes: string[];
+  created_at: string;
+  last_used_at: string | null;
+  revoked_at: string | null;
+  created_by: string | null;
+}
+
+/** The owner/admin's own org's keys (RLS-scoped; `key_hash` is never selectable). Newest first. */
+export async function listOrgApiKeys(): Promise<OrgApiKey[]> {
+  const { data, error } = await supabase
+    .from('org_api_keys')
+    .select('id, name, key_prefix, scopes, created_at, last_used_at, revoked_at, created_by')
+    .order('created_at', { ascending: false });
+  if (error) throw new Error(error.message);
+  return (data ?? []) as OrgApiKey[];
+}
+
+export interface CreatedOrgApiKey {
+  id: string;
+  name: string;
+  /** The plaintext key. Returned ONCE by `create_org_api_key`; never stored or shown again. */
+  key: string;
+  key_prefix: string;
+  created_at: string;
+}
+
+export async function createOrgApiKey(name: string): Promise<CreatedOrgApiKey> {
+  const { data, error } = await supabase.rpc('create_org_api_key', { p_name: name });
+  if (error) throw new Error(error.message);
+  const row = (Array.isArray(data) ? data[0] : data) as CreatedOrgApiKey | null;
+  if (!row?.key) throw new Error('The key was not returned. Try again.');
+  return row;
+}
+
+export async function revokeOrgApiKey(id: string): Promise<void> {
+  const { error } = await supabase.rpc('revoke_org_api_key', { p_id: id });
+  if (error) throw new Error(error.message);
+}
+
 /** TASK-H36: a forward/shared number that is not E.164 made Telnyx reject the inbound transfer
  *  (422 10016) and strand the caller, so both are normalised on save. Blank clears the field; a
  *  value that cannot be read as a phone number is rejected with a plain message. */

@@ -33,6 +33,7 @@ import {
   AlertTriangle,
   UserCog,
   Voicemail,
+  KeyRound,
 } from 'lucide-react';
 import { usePhoneNumbers } from '@/contexts/PhoneNumbersContext';
 import { useAuth } from '@/contexts/AuthContext';
@@ -184,10 +185,12 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { ListSkeleton, TableSkeleton } from '@/components/app/skeletons';
 import { rowsToCsv, downloadCsv } from '@/lib/csv';
 import { normalizePhoneStrict } from '@/lib/phone-normalize';
+import { ApiKeysTab } from '@/components/settings/ApiKeysTab';
 
 type SettingsTab =
   | 'profile'
   | 'voicemail'
+  | 'apikeys'
   | 'phone'
   | 'team'
   | 'integrations'
@@ -5584,6 +5587,10 @@ export function Settings({ section }: { section?: SettingsSection } = {}) {
     ...(!hideFromManager
       ? [{ id: 'distribution' as SettingsTab, label: 'Distribution', icon: Share2 }]
       : []),
+    // TASK-H37: read-only Calls API keys, owner/admin only.
+    ...(!hideFromManager
+      ? [{ id: 'apikeys' as SettingsTab, label: 'API keys', icon: KeyRound }]
+      : []),
     ...(!isAgent ? [{ id: 'activity' as SettingsTab, label: 'Activity', icon: History }] : []),
   ];
 
@@ -5596,6 +5603,7 @@ export function Settings({ section }: { section?: SettingsSection } = {}) {
         activeTab === 'dispositions' ||
         activeTab === 'dnc' ||
         activeTab === 'distribution' ||
+        activeTab === 'apikeys' ||
         activeTab === 'activity')
     ) {
       setActiveTab('profile');
@@ -5607,7 +5615,8 @@ export function Settings({ section }: { section?: SettingsSection } = {}) {
         activeTab === 'integrations' ||
         activeTab === 'dispositions' ||
         activeTab === 'dnc' ||
-        activeTab === 'distribution')
+        activeTab === 'distribution' ||
+        activeTab === 'apikeys')
     ) {
       setActiveTab('profile');
     }
@@ -5682,6 +5691,8 @@ export function Settings({ section }: { section?: SettingsSection } = {}) {
               {activeTab === 'profile' && <ProfileTab />}
 
               {activeTab === 'voicemail' && <VoicemailDropCard />}
+
+              {activeTab === 'apikeys' && !hideFromManager && <ApiKeysTab />}
 
               {activeTab === 'phone' && !hideFromManager && (
                 <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
