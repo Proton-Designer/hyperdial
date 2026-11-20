@@ -5069,9 +5069,16 @@ export interface RecordingSearchRow {
   flag_reason: string | null;
   comment_count: number;
   has_scorecard: boolean;
+  /** TASK-H38: who was called. Null when the leg has no contact row. */
+  contact_id: string | null;
+  contact_business: string | null;
+  contact_name: string | null;
+  contact_phone: string | null;
 }
 
 export interface RecordingSearchFilters {
+  /** TASK-H38: company, person or phone, matched server-side with the same rule as lib/contactName.ts. */
+  search?: string;
   /** Owner/admin/manager only -- scope-checked server-side against the caller's own managed
    *  pods (`recordings_search`'s own `p_agent_id` check); an agent may only ever pass their own
    *  id (or omit it, same result). */
@@ -5105,6 +5112,7 @@ export async function searchRecordings(
     p_flagged_only: filters.flaggedOnly ?? false,
     p_limit: filters.limit ?? 50,
     p_offset: filters.offset ?? 0,
+    p_search: filters.search?.trim() ? filters.search.trim() : null,
   });
   if (error) throw new Error(error.message);
   return (data ?? []) as RecordingSearchRow[];

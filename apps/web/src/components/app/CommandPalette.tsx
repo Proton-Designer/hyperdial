@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { contactHeadline } from '@/lib/contactName';
+import { contactHeadline, contactNameMatches } from '@/lib/contactName';
 import {
   LayoutGrid,
   Phone,
@@ -91,14 +91,7 @@ export function CommandPalette({
   };
 
   const q = query.trim().toLowerCase();
-  const matchedContacts = (contacts ?? []).filter((c) => {
-    if (!q) return false;
-    return (
-      contactLabel(c).toLowerCase().includes(q) ||
-      (c.phone_raw ?? '').toLowerCase().includes(q) ||
-      (c.phone_number ?? '').toLowerCase().includes(q)
-    );
-  });
+  const matchedContacts = (contacts ?? []).filter((c) => q && contactNameMatches(c, query));
   const matchedCampaigns = (campaigns ?? []).filter((c) => q && c.name.toLowerCase().includes(q));
 
   return (

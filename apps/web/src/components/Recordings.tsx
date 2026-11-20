@@ -2,7 +2,9 @@ import { RecordingPlayer } from '@/components/RecordingPlayer';
 import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
-import { Headphones, Flag, MessageSquare, ClipboardList, X } from 'lucide-react';
+import { Headphones, Flag, MessageSquare, ClipboardList, Phone, Search, X } from 'lucide-react';
+import { contactHeadline, contactSecondaryName } from '@/lib/contactName';
+import { setPendingManualDialNumber } from '@/lib/dialerLaunchIntent';
 import {
   searchRecordings,
   getRecordingUrl,
@@ -52,6 +54,7 @@ const inputClass =
   'bg-surface-2 border border-white/10 rounded-app-sm px-2 py-1.5 text-sm text-text-primary';
 
 interface Filters {
+  search: string;
   agentId: string;
   campaignId: string;
   dispositionKey: string;
@@ -63,6 +66,7 @@ interface Filters {
 }
 
 const EMPTY_FILTERS: Filters = {
+  search: '',
   agentId: '',
   campaignId: '',
   dispositionKey: '',
@@ -82,8 +86,65 @@ const EMPTY_FILTERS: Filters = {
  * livePodOptions already use -- they narrow as other filters narrow, which is an accepted
  * tradeoff there too.
  */
-export function Recordings() {
+/** TASK-H38: who was called -- company as the headline, the person under it, the phone as a tap-to-call link. */
+function ContactBlock({
+  row,
+  onCallBack,
+}: {
+  row: RecordingSearchRow;
+  onCallBack?: (phone: string) => void;
+}) {
+  const named = { business_name: row.contact_business };
+  const person = row.contact_name ?? '';
+  const headline = contactHeadline({
+    business_name: row.contact_business,
+    first_name: row.contact_name,
+  });
+  const secondary = contactSecondaryName({ ...named, first_name: person });
+  if (!row.contact_business && !row.contact_name && !row.contact_phone) {
+    return <div className="text-meta text-text-muted">Contact not on file</div>;
+  }
+  return (
+    <div className="min-w-0">
+      <div className="truncate font-medium text-text-primary">{headline}</div>
+      {secondary && <div className="truncate text-meta text-text-secondary">{secondary}</div>}
+      {row.contact_phone && (
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+          <a
+            href={`tel:${row.contact_phone}`}
+            onClick={(e) => e.stopPropagation()}
+            className="hd-touch inline-flex items-center gap-1 text-meta text-accent-from hover:underline"
+          >
+            <Phone className="w-3.5 h-3.5" aria-hidden />
+            {row.contact_phone}
+          </a>
+          {onCallBack && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onCallBack(row.contact_phone!);
+              }}
+              className="hd-touch text-meta text-text-secondary underline hover:text-text-primary"
+            >
+              Call back
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function Recordings({ onNavigateToDialer }: { onNavigateToDialer?: () => void } = {}) {
   const { role } = useOrg();
+  const callBack = onNavigateToDialer
+    ? (phone: string) => {
+        setPendingManualDialNumber(phone);
+        onNavigateToDialer();
+      }
+    : undefined;
+  const [searchInput, setSearchInput] = useState('');
   const isAgent = role === 'agent';
   const canScore = role === 'owner' || role === 'admin' || role === 'manager';
 
@@ -112,6 +173,7 @@ export function Recordings() {
       start,
       end,
       flaggedOnly: filters.flaggedOnly,
+      search: filters.search || undefined,
       limit: PAGE_SIZE,
       offset: nextOffset,
     })
@@ -136,7 +198,17 @@ export function Recordings() {
     filters.start,
     filters.end,
     filters.flaggedOnly,
+    filters.search,
   ]);
+
+  // Debounce the search box so a fast typist sends one request, not one per key.
+  useEffect(() => {
+    const t = setTimeout(() => {
+      const next = searchInput.trim();
+      setFilters((f) => (f.search === next ? f : { ...f, search: next }));
+    }, 300);
+    return () => clearTimeout(t);
+  }, [searchInput]);
 
   const agentOptions = useMemo(() => {
     if (!rows) return [];
@@ -181,6 +253,20 @@ export function Recordings() {
       />
 
       <div className="flex flex-wrap items-center gap-2 mb-4 rounded-app-lg border border-border-subtle bg-surface-1 p-3">
+        <label className="relative w-full sm:w-72">
+          <span className="sr-only">Search by company, name or phone</span>
+          <Search
+            className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted"
+            aria-hidden
+          />
+          <input
+            type="search"
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
+            placeholder="Search company, name or phone"
+            className={`${inputClass} w-full pl-8`}
+          />
+        </label>
         {!isAgent && (
           <select
             value={filters.agentId}
@@ -263,7 +349,8 @@ export function Recordings() {
           />
           Flagged only
         </label>
-        {(filters.agentId ||
+        {(filters.search ||
+          filters.agentId ||
           filters.campaignId ||
           filters.dispositionKey ||
           filters.minMinutes ||
@@ -271,7 +358,14 @@ export function Recordings() {
           filters.start ||
           filters.end ||
           filters.flaggedOnly) && (
-          <Button size="sm" variant="fe-ghost" onClick={() => setFilters(EMPTY_FILTERS)}>
+          <Button
+            size="sm"
+            variant="fe-ghost"
+            onClick={() => {
+              setSearchInput('');
+              setFilters(EMPTY_FILTERS);
+            }}
+          >
             Clear filters
           </Button>
         )}
@@ -291,7 +385,7 @@ export function Recordings() {
         <EmptyState
           icon={Headphones}
           title="No recordings found"
-          body="Try widening your filters, or check back after some calls have been made."
+          body="Try widening your filters or search, or check back after some calls have been made."
         />
       )}
 
@@ -300,20 +394,26 @@ export function Recordings() {
           <div className="rounded-app-lg border border-border-subtle bg-surface-1 overflow-hidden">
             <div className="md:hidden divide-y divide-border-subtle">
               {rows.map((r) => (
-                <button
+                <div
                   key={r.call_leg_id}
-                  type="button"
+                  role="button"
+                  tabIndex={0}
                   onClick={() => setSelectedId(r.call_leg_id)}
-                  className={`block w-full min-h-11 px-3 py-3 text-left ${
+                  onKeyDown={(e) => {
+                    if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) {
+                      e.preventDefault();
+                      setSelectedId(r.call_leg_id);
+                    }
+                  }}
+                  className={`block w-full min-h-11 cursor-pointer px-3 py-3 text-left ${
                     selectedId === r.call_leg_id ? 'bg-accent-to/10' : ''
                   }`}
                 >
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
-                      {!isAgent && (
-                        <div className="truncate font-medium text-text-primary">{r.agent_name}</div>
-                      )}
+                      <ContactBlock row={r} onCallBack={callBack} />
                       <div className="truncate text-meta text-text-secondary">
+                        {!isAgent && `${r.agent_name} · `}
                         {r.campaign_name ?? '—'}
                       </div>
                     </div>
@@ -333,12 +433,13 @@ export function Recordings() {
                     <span>{formatDuration(r.duration_seconds)}</span>
                     <span>{formatWhen(r.ended_at)}</span>
                   </div>
-                </button>
+                </div>
               ))}
             </div>
             <table className="hidden w-full text-sm md:table">
               <thead className="bg-surface-2 text-text-secondary text-left">
                 <tr>
+                  <th className="px-3 py-2 font-medium">Contact</th>
                   {!isAgent && <th className="px-3 py-2 font-medium">Agent</th>}
                   <th className="px-3 py-2 font-medium">Campaign</th>
                   <th className="px-3 py-2 font-medium">Disposition</th>
@@ -356,6 +457,9 @@ export function Recordings() {
                       selectedId === r.call_leg_id ? 'bg-accent-to/10' : ''
                     }`}
                   >
+                    <td className="px-3 py-2">
+                      <ContactBlock row={r} onCallBack={callBack} />
+                    </td>
                     {!isAgent && <td className="px-3 py-2 text-text-primary">{r.agent_name}</td>}
                     <td className="px-3 py-2 text-text-secondary">{r.campaign_name ?? '—'}</td>
                     <td className="px-3 py-2 text-text-secondary">{r.disposition_label ?? '—'}</td>
@@ -397,6 +501,7 @@ export function Recordings() {
             <RecordingDetailPanel
               row={selectedRow}
               canScore={canScore}
+              onCallBack={callBack}
               onClose={() => setSelectedId(null)}
               onFlagChanged={() => load(0, false)}
             />
@@ -410,11 +515,13 @@ export function Recordings() {
 function RecordingDetailPanel({
   row,
   canScore,
+  onCallBack,
   onClose,
   onFlagChanged,
 }: {
   row: RecordingSearchRow;
   canScore: boolean;
+  onCallBack?: (phone: string) => void;
   onClose: () => void;
   onFlagChanged: () => void;
 }) {
@@ -572,10 +679,10 @@ function RecordingDetailPanel({
   const panel = (
     <div className="rounded-app-lg border border-border-subtle bg-surface-1 p-4 space-y-5 lg:sticky lg:top-4 max-lg:rounded-none max-lg:border-0 max-lg:pt-[max(1rem,env(safe-area-inset-top))] max-lg:pb-[max(1rem,env(safe-area-inset-bottom))]">
       <div className="flex items-start justify-between">
-        <div>
-          <div className="text-body font-medium text-text-primary">{row.agent_name}</div>
-          <div className="text-meta text-text-secondary">
-            {row.campaign_name ?? '—'} · {formatWhen(row.ended_at)}
+        <div className="min-w-0">
+          <ContactBlock row={row} onCallBack={onCallBack} />
+          <div className="mt-1 text-meta text-text-secondary">
+            {row.agent_name} · {row.campaign_name ?? '—'} · {formatWhen(row.ended_at)}
           </div>
         </div>
         <button

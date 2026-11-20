@@ -349,7 +349,7 @@ export function MainApp() {
           )}
           {activeTab === 'recordings' && (
             <PageTransition>
-              <Recordings />
+              <Recordings onNavigateToDialer={() => setActiveTab('dialer')} />
             </PageTransition>
           )}
           {activeTab === 'inbox' && (
