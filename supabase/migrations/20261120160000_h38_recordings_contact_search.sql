@@ -6,7 +6,8 @@
 --   - every word of the query appears in the contact's business/name/owner text, OR
 --   - the query with spaces removed appears in that text with spaces removed ("bow stern" finds "Bowstern"), OR
 --   - a digits-only query (>= 3 digits, phone punctuation allowed) appears in a phone number's digits.
--- Normalisation: lowercase, common accents folded, every run of other characters = one space.
+-- Normalisation (identical client and SQL): accents folded via NFD, ß/ł/ø/đ mapped, any-script letters and digits kept, every
+-- run of other characters = one space. A blank query = no filter; a query that normalises to nothing matches nothing.
 --
 -- recordings_search gains p_search (last, default null) and four output columns (contact_id, contact_business, contact_name,
 -- contact_phone). Output columns change, so the old function is dropped and recreated; every scoping rule is copied unchanged
@@ -19,11 +20,18 @@ language sql
 immutable
 set search_path = ''
 as $$
+  -- Same steps as normalizeSearchText (apps/web/src/lib/contactName.ts): NFD + strip combining marks, lowercase,
+  -- ß -> ss and ł/ø/đ -> l/o/d (NFD does not decompose those), then every run of a non-letter/non-digit (any script)
+  -- becomes one space.
   select btrim(regexp_replace(
-    translate(lower(coalesce(p_text, '')), 'àáâãäåāçćčèéêëēėęìíîïīñńòóôõöøōùúûüūýÿžśšł', 'aaaaaaaccceeeeeeeiiiiinnooooooouuuuuyyzssl'),
-    '[^a-z0-9]+', ' ', 'g'))
+    translate(
+      replace(lower(regexp_replace(normalize(coalesce(p_text, ''), NFD), '[\u0300-\u036f]', '', 'g')), 'ß', 'ss'),
+      'łøđ', 'lod'),
+    '[^[:alnum:]]+', ' ', 'g'))
 $$;
 
+-- A blank query (only spaces) = no filter. A query that has characters but normalises to nothing (e.g. "!!!") matches
+-- NOTHING (never the whole list).
 create function private.search_matches(p_query text, p_text text, p_phones text[])
 returns boolean
 language sql
@@ -31,7 +39,8 @@ immutable
 set search_path = ''
 as $$
   select case
-    when private.search_norm(p_query) = '' then true
+    when btrim(coalesce(p_query, '')) = '' then true
+    when private.search_norm(p_query) = '' then false
     when not exists (
       select 1 from unnest(string_to_array(private.search_norm(p_query), ' ')) w
       where position(w in private.search_norm(p_text)) = 0

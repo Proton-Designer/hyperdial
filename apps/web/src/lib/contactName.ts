@@ -24,13 +24,20 @@ export function contactSecondaryName(c: NamedContact | null | undefined): string
   return person && business && person.toLowerCase() !== business.toLowerCase() ? person : '';
 }
 
-/** TASK-H38: lowercase, strip accents, turn every run of punctuation into one space. "Bow-Stern, Inc." -> "bow stern inc". */
+/**
+ * TASK-H38: the shared normaliser (the SAME steps are in SQL as private.search_norm): NFD + strip combining marks (so
+ * é/ü/ź/ő/ğ... fold to plain letters), lowercase, the few letters NFD does not decompose (ß -> ss, ł -> l, ø -> o, đ -> d),
+ * then every run of anything that is not a letter or digit (ANY script: Arabic, Cyrillic, CJK... stay) becomes one space.
+ * "Bow-Stern, Inc." -> "bow stern inc"; "Łódź" -> "lodz"; "محمد" stays "محمد".
+ */
 export function normalizeSearchText(raw: string | null | undefined): string {
   return (raw ?? '')
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .toLowerCase()
-    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/ß/g, 'ss')
+    .replace(/[łøđ]/g, (c) => (c === 'ł' ? 'l' : c === 'ø' ? 'o' : 'd'))
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
     .trim();
 }
 
@@ -50,8 +57,9 @@ export function searchMatches(
   phones: (string | null | undefined)[],
   query: string
 ): boolean {
+  if (!query.trim()) return true;
   const q = normalizeSearchText(query);
-  if (!q) return true;
+  if (!q) return false;
   const hay = normalizeSearchText(texts.filter(Boolean).join(' '));
   const words = q.split(' ');
   if (words.every((w) => hay.includes(w))) return true;
