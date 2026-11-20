@@ -68,7 +68,7 @@ Which calls are included: calls the agent had a live conversation on (a campaign
 | `duration_seconds`      | Length of the call.                                                                                                                                                                                 |
 | `agent`                 | The HyperDial user who took the call.                                                                                                                                                               |
 | `campaign`              | Campaign name.                                                                                                                                                                                      |
-| `disposition`           | The outcome label the agent chose after the call (for example "Callback", "Not interested", "Booked"). `null` until the agent has chosen one.                                                       |
+| `disposition`           | The outcome label the agent chose after the call (for example "Not interested" or "Booked"). `null` until the agent has chosen one.                                                                 |
 | `contact`               | Who was called. `timezone` is the contact's own timezone, so you can show a callback at their local time. `email` is the one from the latest close form when there is one. Any field can be `null`. |
 | `callback_at`           | When the contact asked to be called back (UTC), or `null`.                                                                                                                                          |
 | `recording_url`         | A temporary signed link to the MP3, valid for 6 hours. Download it within that time. `null` while there is no recording yet, or when the link could not be made (see `recording_error`).            |
@@ -79,7 +79,9 @@ Which calls are included: calls the agent had a live conversation on (a campaign
 | `next_cursor`           | Pass it as `cursor` for the next page.                                                                                                                                                              |
 | `has_more`              | `true` when more changed calls are waiting.                                                                                                                                                         |
 
-Missing information is always `null`, never an empty string.
+Missing information is always `null`, never an empty string. All timestamps are ISO 8601 in UTC, ending in `Z`.
+
+The contact `email` and `notes` are read when the call is returned. A close form or note added **later** does not make the call come back, so you will not be sent the new email or notes for a call you already have.
 
 ## 4. A call can come back (dedupe by `id`, keep the newest)
 
@@ -91,7 +93,7 @@ In your script, store calls by `id` and **replace** the stored one with whicheve
 
 1. First run: `since=` the time you want to start from.
 2. Follow `next_cursor` while `has_more` is `true`.
-3. When a run finishes, remember the largest `updated_at` you saw and use it as the next run's `since` (go back one minute and dedupe by `id`). An empty page with no cursor returns `next_cursor: null`, so keep your own `since` rather than relying on the cursor.
+3. When a run finishes, remember the largest `updated_at` you saw and use it as the next run's `since`. **Rule: subtract one minute from it and dedupe by `id`.** An empty page with no cursor returns `next_cursor: null`, so keep your own `since` rather than relying on the cursor.
 4. Keep a `pending` call until it comes back as `complete`; do not process its recording or outcome before that.
 
 ## 6. Errors and limits
@@ -102,5 +104,8 @@ In your script, store calls by `id` and **replace** the stored one with whicheve
 | `400`  | `since` or `cursor` is not valid.                                                                      |
 | `429`  | More than 60 requests per minute for the key. Wait (the `Retry-After` header says how long) and retry. |
 | `503`  | Temporarily unavailable: retry in a few seconds.                                                       |
+| `404`  | The path is not `/v1/calls`.                                                                           |
+| `405`  | The request was not a `GET`.                                                                           |
+| `500`  | The calls could not be loaded. Retry in a moment.                                                      |
 
 The key only ever sees your own organisation's calls.

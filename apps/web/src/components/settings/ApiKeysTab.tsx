@@ -300,6 +300,10 @@ export function ApiKeysTab() {
           <li>
             Recordings are two-channel: <strong>left is the contact, right is the agent</strong>.
           </li>
+          <li>
+            Times are ISO 8601 UTC (ending in <code>Z</code>). A close-form email or notes added
+            after a call was returned are not re-sent.
+          </li>
           <li>Anything missing comes back as null. Treat the key like a password.</li>
           <li>
             Full guide: <code>docs/guides/public-api.md</code> in the HyperDial repository.
