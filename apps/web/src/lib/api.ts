@@ -235,6 +235,8 @@ export interface NumberHealthScore {
   /** Call history depth: dials and active days in the last 30 days. Never null. */
   history_score: number;
   likely_flagged: boolean;
+  /** Likely flagged AND people who answer hang up quickly / stay less: the only case that is rested automatically. */
+  auto_rest_confirmed: boolean;
   likely_flagged_reason: string | null;
   dials_7d: number;
   dials_30d: number;

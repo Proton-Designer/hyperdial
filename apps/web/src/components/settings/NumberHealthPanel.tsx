@@ -198,8 +198,9 @@ export function NumberHealthPanel() {
             Rest a number automatically when it looks flagged
             <span className="block text-meta text-text-secondary">
               When a number&apos;s answer rate drops sharply (well below its own past weeks and your
-              other numbers) it is rested for {autoRest.days} days. The last active number is never
-              rested, so you always keep a line. You can reactivate any number below.
+              other numbers) it is rested for {autoRest.days} days, but only when people who answer
+              are also hanging up faster, and never if it is an agent&apos;s only number. You can
+              reactivate any number below.
             </span>
           </span>
         </label>
@@ -289,7 +290,9 @@ export function NumberHealthPanel() {
                   <p className="px-3 pb-2 text-meta text-danger">
                     {sc.likely_flagged_reason}.{' '}
                     {autoRest?.enabled
-                      ? `It will be rested for ${autoRest.days} days at the next check (every 6 hours) unless it is your last active number.`
+                      ? sc.auto_rest_confirmed
+                        ? `It will be rested for ${autoRest.days} days at the next check (every 6 hours), if its agent has another number to dial from.`
+                        : 'It is not rested automatically yet: people who answer are not hanging up faster. Rest it yourself if you want to be safe.'
                       : 'Consider resting it; automatic rest is switched off.'}
                   </p>
                 )}
@@ -298,7 +301,7 @@ export function NumberHealthPanel() {
                     <span>
                       Rested automatically on {new Date(sc.flagged_at).toLocaleDateString()}
                       {sc.resting_until
-                        ? `, back in rotation ${new Date(sc.resting_until).toLocaleDateString()}`
+                        ? `, resting until ${new Date(sc.resting_until).toLocaleDateString()}`
                         : ''}
                     </span>
                     <button

@@ -18,7 +18,7 @@
 --    auto_rest_days (default 3).
 -- 3. public.auto_rest_likely_flagged_numbers(p_org_id): rests every likely-flagged number of an org that has
 --    the setting on, using the existing rest mechanism (status='resting', resting_until, flagged_at,
---    flagged_reason). It NEVER rests the last active number of an org (the dialer must keep a line). Writes
+--    flagged_reason). It only rests a number if every agent who can dial from it keeps another active usable number (own, or unassigned pool); otherwise the warning stays and the admins are told. Writes
 --    one org_audit_log row ('number.auto_rest') and notifies the owners/admins. service_role only.
 -- 4. pg_cron: every 6 hours, SQL only (no edge function, nothing to deploy).
 --
@@ -56,6 +56,10 @@ agg as (
     count(*) filter (where not this_week) as dials_base,
     count(*) filter (where connected and duration_seconds is not null) as answered_timed,
     count(*) filter (where connected and duration_seconds >= 10) as answered_10s,
+    count(*) filter (where this_week and connected and duration_seconds is not null) as timed_7d,
+    count(*) filter (where this_week and connected and duration_seconds >= 10) as ten_7d,
+    count(*) filter (where not this_week and connected and duration_seconds is not null) as timed_base,
+    count(*) filter (where not this_week and connected and duration_seconds >= 10) as ten_base,
     count(distinct day) as active_days
   from legs
   group by number_id
@@ -70,6 +74,9 @@ j as (
     coalesce(a.dials_base, 0) as dials_base,
     coalesce(a.answered_timed, 0) as answered_timed,
     coalesce(a.answered_10s, 0) as answered_10s,
+    coalesce(a.timed_7d, 0) as timed_7d, coalesce(a.ten_7d, 0) as ten_7d,
+    coalesce(a.timed_base, 0) as timed_base, coalesce(a.ten_base, 0) as ten_base,
+    b.quick_hangup_share,
     coalesce(a.active_days, 0) as active_days
   from public.number_health_badges b
   join public.user_phone_numbers upn on upn.id = b.number_id
@@ -95,7 +102,14 @@ scored as (
       and j.rate_7d < j.median_7d * 0.5
       and j.status = 'active'
       and (j.flagged_at is null or j.flagged_at < now() - interval '7 days')
-    ) as likely_flagged
+    ) as likely_flagged,
+    -- number-level confirmation for AUTO-rest (a bad week for an agent's list also looks like a drop against
+    -- other agents' numbers): people who answer hang up quickly (5 s share 40%+), or the share of answered
+    -- calls that stay 10 s+ fell by 15+ points against the earlier weeks (10+ timed answers in each window).
+    (coalesce(j.quick_hangup_share, 0) >= 0.4
+      or (j.timed_7d >= 10 and j.timed_base >= 10
+          and j.ten_base::numeric / j.timed_base - j.ten_7d::numeric / j.timed_7d >= 0.15)
+    ) as confirm_signal
   from j
 )
 select
@@ -114,6 +128,7 @@ select
   case when answered_timed >= 10 then round(100.0 * answered_10s / answered_timed)::int end as stay_score,
   round(60.0 * least(dials_30d, 200) / 200 + 40.0 * least(active_days, 14) / 14)::int as history_score,
   likely_flagged,
+  (likely_flagged and confirm_signal) as auto_rest_confirmed,
   case when likely_flagged then
     format('Answer rate fell from %s%% to %s%% this week, and your other numbers are at %s%%',
       round(rate_base * 100), round(rate_7d * 100), round(median_7d * 100))
@@ -140,8 +155,8 @@ as $$
 declare
   v_org record;
   v_cand record;
-  v_active int;
-  v_rested int;
+  v_safe boolean;
+  v_body text;
   v_reason text;
 begin
   for v_org in
@@ -155,19 +170,52 @@ begin
       where upn.org_id = v_org.org_id and upn.status = 'active'
       for update;
 
-    select count(*) into v_active
-    from public.user_phone_numbers upn
-    where upn.org_id = v_org.org_id and upn.status = 'active';
-
-    v_rested := 0;
     for v_cand in
-      select sc.number_id, sc.phone_number, sc.likely_flagged_reason
+      select sc.number_id, sc.phone_number, sc.likely_flagged_reason, sc.auto_rest_confirmed,
+             upn.assigned_user_id
       from public.number_health_scores sc
+      join public.user_phone_numbers upn on upn.id = sc.number_id
       where sc.org_id = v_org.org_id and sc.likely_flagged
       order by sc.answer_score nulls last, sc.dials_7d desc
     loop
-      -- never rest the last active number: the dialer must keep a line
-      exit when v_active - v_rested <= 1;
+      -- a likely-flagged number with no second sign (see confirm_signal) only keeps its warning
+      continue when not v_cand.auto_rest_confirmed;
+
+      -- Every agent who can dial from this number must keep another usable number (same rule as
+      -- private.has_available_dial_number / pick_and_reserve_dial_number: active, and assigned to the agent
+      -- or unassigned). Re-evaluated per candidate, so earlier rests in this run count.
+      if v_cand.assigned_user_id is not null then
+        v_safe := exists (
+          select 1 from public.user_phone_numbers n2
+          where n2.org_id = v_org.org_id and n2.id <> v_cand.number_id and n2.status = 'active'
+            and (n2.assigned_user_id is null or n2.assigned_user_id = v_cand.assigned_user_id));
+      else
+        v_safe := exists (
+          select 1 from public.user_phone_numbers n2
+          where n2.org_id = v_org.org_id and n2.id <> v_cand.number_id and n2.status = 'active'
+            and n2.assigned_user_id is null)
+        or not exists (
+          select 1 from public.org_members m
+          where m.org_id = v_org.org_id and m.status = 'active'
+            and not exists (select 1 from public.user_phone_numbers n3
+              where n3.org_id = v_org.org_id and n3.status = 'active' and n3.assigned_user_id = m.user_id));
+      end if;
+
+      if not v_safe then
+        -- keep the warning, tell the admins once a week
+        v_body := v_cand.phone_number || ' looks flagged but could not be rested automatically: it is '
+          || case when v_cand.assigned_user_id is not null then 'its assigned agent''s only number'
+                  else 'the only number in the shared pool' end
+          || ' (' || v_cand.likely_flagged_reason || '). Add a number in Settings > Telephony > Numbers.';
+        insert into public.notifications (org_id, user_id, type, title, body)
+        select v_org.org_id, m.user_id, 'number_auto_rest_blocked', 'A flagged number could not be rested', v_body
+        from public.org_members m
+        where m.org_id = v_org.org_id and m.status = 'active' and m.role in ('owner', 'admin')
+          and not exists (select 1 from public.notifications n
+            where n.user_id = m.user_id and n.type = 'number_auto_rest_blocked' and n.body = v_body
+              and n.created_at > now() - interval '7 days');
+        continue;
+      end if;
 
       v_reason := 'Likely flagged: ' || v_cand.likely_flagged_reason;
       update public.user_phone_numbers upn
@@ -178,7 +226,6 @@ begin
       where upn.id = v_cand.number_id and upn.status = 'active';
 
       if found then
-        v_rested := v_rested + 1;
         perform private.log_org_action(
           v_org.org_id, 'number.auto_rest', 'phone_number', v_cand.number_id,
           jsonb_build_object('phone_number', v_cand.phone_number, 'reason', v_reason,
@@ -189,7 +236,7 @@ begin
         select v_org.org_id, m.user_id, 'number_auto_rested',
                'A phone number was rested automatically',
                v_cand.phone_number || ' looks flagged (' || v_cand.likely_flagged_reason || '). It is resting for '
-                 || v_org.auto_rest_days || ' days. You can reactivate it in Settings > Numbers.'
+                 || v_org.auto_rest_days || ' days. You can reactivate it in Settings > Telephony > Numbers.'
         from public.org_members m
         where m.org_id = v_org.org_id and m.status = 'active' and m.role in ('owner', 'admin');
 
