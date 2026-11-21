@@ -207,12 +207,15 @@ begin
           || case when v_cand.assigned_user_id is not null then 'its assigned agent''s only number'
                   else 'the only number in the shared pool' end
           || ' (' || v_cand.likely_flagged_reason || '). Add a number in Settings > Telephony > Numbers.';
-        insert into public.notifications (org_id, user_id, type, title, body)
-        select v_org.org_id, m.user_id, 'number_auto_rest_blocked', 'A flagged number could not be rested', v_body
+        -- dedupe on type + number id + admin (not the body: it carries rounded percentages that move)
+        insert into public.notifications (org_id, user_id, type, title, body, data)
+        select v_org.org_id, m.user_id, 'number_auto_rest_blocked', 'A flagged number could not be rested', v_body,
+               jsonb_build_object('number_id', v_cand.number_id)
         from public.org_members m
         where m.org_id = v_org.org_id and m.status = 'active' and m.role in ('owner', 'admin')
           and not exists (select 1 from public.notifications n
-            where n.user_id = m.user_id and n.type = 'number_auto_rest_blocked' and n.body = v_body
+            where n.user_id = m.user_id and n.type = 'number_auto_rest_blocked'
+              and n.data->>'number_id' = v_cand.number_id::text
               and n.created_at > now() - interval '7 days');
         continue;
       end if;
@@ -232,11 +235,12 @@ begin
                              'rest_days', v_org.auto_rest_days),
           null
         );
-        insert into public.notifications (org_id, user_id, type, title, body)
+        insert into public.notifications (org_id, user_id, type, title, body, data)
         select v_org.org_id, m.user_id, 'number_auto_rested',
                'A phone number was rested automatically',
                v_cand.phone_number || ' looks flagged (' || v_cand.likely_flagged_reason || '). It is resting for '
-                 || v_org.auto_rest_days || ' days. You can reactivate it in Settings > Telephony > Numbers.'
+                 || v_org.auto_rest_days || ' days. You can reactivate it in Settings > Telephony > Numbers.',
+               jsonb_build_object('number_id', v_cand.number_id)
         from public.org_members m
         where m.org_id = v_org.org_id and m.status = 'active' and m.role in ('owner', 'admin');
 
