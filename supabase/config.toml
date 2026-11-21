@@ -2,7 +2,7 @@
 # https://supabase.com/docs/guides/local-development/cli/config
 # A string used to distinguish different Supabase projects on the same host. Defaults to the
 # working directory name when running `supabase init`.
-project_id = "Softdial"
+project_id = "HyperDial"
 
 [api]
 enabled = true
@@ -367,11 +367,20 @@ verify_jwt = false
 verify_jwt = false
 [functions.telnyx-webhook]
 verify_jwt = false
+[functions.telnyx-connect]
+verify_jwt = false
+[functions.telnyx-disconnect]
+verify_jwt = false
+[functions.telnyx-spend-status]
+verify_jwt = false
 
 [functions.dashboard-stats]
 verify_jwt = false
 
 [functions.team-performance]
+verify_jwt = false
+
+[functions.analytics-summary]
 verify_jwt = false
 
 [functions.ensure-week-summary]
@@ -383,6 +392,64 @@ verify_jwt = false
 [functions.contacts-import]
 verify_jwt = false
 
+[functions.org-invite-create]
+verify_jwt = false
+[functions.org-invite-accept]
+verify_jwt = false
+[functions.org-members]
+verify_jwt = false
+
+[functions.ghl-connect]
+verify_jwt = false
+[functions.ghl-disconnect]
+verify_jwt = false
+[functions.ghl-import]
+verify_jwt = false
+[functions.ghl-update-blocked-tags]
+verify_jwt = false
+[functions.ghl-sync-worker]
+# Triggered by pg_net (a cron job), which sends no Supabase JWT at all -- without this the
+# gateway 401s every tick once deployed, before the function's own X-Cron-Secret check ever
+# runs (TASK-P3-P3, caught in review). Auth is that header, not a JWT.
+verify_jwt = false
+[functions.shift-ghl-sync]
+# Called by cron (X-Cron-Secret) and by the shifts functions after a write (service-role bearer):
+# neither carries a user JWT. The function does its own check and fails closed (TASK-S04).
+verify_jwt = false
+[functions.shift-kpi-compute]
+# Cron (X-Cron-Secret / service-role bearer) AND signed-in users (own live numbers): the function does its own
+# auth for both, so the gateway JWT check is off (TASK-S05).
+verify_jwt = false
+[functions.shifts-week-lock]
+# Cron only (pg_net sends no JWT); X-Cron-Secret / service-role bearer checked in the function, fails closed.
+verify_jwt = false
+[functions.shifts-week-close]
+# Same as shifts-week-lock.
+verify_jwt = false
+[functions.ghl-pull-worker]
+# Same shape as ghl-sync-worker above: pg_net sends only X-Cron-Secret, no Supabase JWT --
+# without this the gateway 401s every tick before the function's own secret check ever runs
+# (MISSION-4 TASK-T1, review fix-forward -- audit/T1/review-eng2.md #1, BLOCKER).
+verify_jwt = false
+[functions.ghl-reconcile-worker]
+# TASK-G08: triggered by pg_net with only X-Cron-Secret (its own GHL_RECONCILE_WORKER_SECRET), no
+# Supabase JWT -- same reason as ghl-pull-worker above; fails closed in code when the secret is unset.
+verify_jwt = false
+[functions.ghl-webhook]
+# TASK-G30: PUBLIC endpoint called by GoHighLevel, which sends no Supabase JWT. The function authenticates the
+# request itself (X-GHL-Signature Ed25519 or the per-org X-HyperDial-Webhook-Secret) and fails closed.
+verify_jwt = false
+[functions.close-delivery-worker]
+# TASK-H03: triggered by pg_net (cron) with only X-Cron-Secret (CLOSE_DELIVERY_WORKER_SECRET), no Supabase JWT --
+# without this the gateway 401s every tick. Fails closed in code when the secret is unset.
+verify_jwt = false
+
+# TASK-H21: custom auth (requireOrgRole / getUserFromRequest) like every user-facing function here.
+[functions.view-as-start]
+verify_jwt = false
+[functions.view-as-stop]
+verify_jwt = false
+
 # Parallel dialer (auth required except webhook)
 [functions.dialer-session-start]
 verify_jwt = false
@@ -390,9 +457,86 @@ verify_jwt = false
 verify_jwt = false
 [functions.dialer-session-pause]
 verify_jwt = false
+[functions.dialer-session-resume]
+verify_jwt = false
 [functions.dialer-session-get]
 verify_jwt = false
 [functions.dialer-session-active]
+verify_jwt = false
+[functions.dialer-session-hangup-live]
+# Pre-existing gap, found while adding this task's own entry below: TASK-P2-E2 shipped this
+# function using the same custom-auth (getUserFromRequest) pattern as every other dialer-session-*
+# function but never added its config.toml entry -- a real deployed gateway would 401 it before
+# its own auth code ever runs, same class of bug as TASK-P3-P3's ghl-import/ghl-sync-worker gaps.
+# Fixed proactively in the same commit rather than filing it and moving on.
+verify_jwt = false
+[functions.dialer-send-dtmf]
+# TASK-H11: custom auth (requireTelnyxOrgRole) like every dialer-session-* function.
+verify_jwt = false
+[functions.dialer-session-disposition]
+verify_jwt = false
+[functions.dialer-session-reconnect]
+verify_jwt = false
+[functions.dialer-session-raise-hand]
+# MISSION-5 TASK-M5-B2: same custom-auth (requireTelnyxOrgRole) pattern as every other
+# dialer-session-* function above -- set from the start this time, not caught by a later
+# fix-forward (see dialer-session-hangup-live's own comment for what happens when this is
+# missed).
+verify_jwt = false
+[functions.dialer-sweeper]
+# Same reason as ghl-sync-worker above: triggered by pg_net (a cron job), no Supabase JWT at
+# all -- auth is the X-Cron-Secret header, checked inside the function itself. Set from the
+# start this time (TASK-P2-E5), not caught by a later fix-forward.
+verify_jwt = false
+
+[functions.recording-url]
+# Custom auth (requireTelnyxOrgRole), same pattern as every other dialer-session-*/telnyx-*
+# function -- gateway JWT verification would otherwise 401 before that code runs.
+verify_jwt = false
+[functions.recording-retention]
+# Triggered by pg_net (a cron job), no Supabase JWT at all -- auth is the X-Cron-Secret header.
+# Set from the start (TASK-F-T2), same lesson as dialer-sweeper/ghl-sync-worker above.
+verify_jwt = false
+
+[functions.voicemail-upload]
+# Custom auth (requireOrgRole), same pattern as recording-url above -- set from the start
+# (TASK-F-T3), not discovered the hard way this time.
+verify_jwt = false
+
+[functions.spend-alert-check]
+# Triggered by pg_net (a cron job), no Supabase JWT at all -- auth is the X-Cron-Secret header.
+# Set from the start (TASK-SP), same lesson as recording-retention/dialer-sweeper/ghl-sync-worker.
+verify_jwt = false
+
+[functions.reliability-alert-check]
+# Triggered by pg_net (a cron job), no Supabase JWT at all -- auth is the X-Cron-Secret header.
+# Set from the start (TASK-T10), same lesson as spend-alert-check/recording-retention/
+# dialer-sweeper/ghl-sync-worker.
+verify_jwt = false
+
+[functions.number-health-check]
+# TASK-T9: dual entry path -- pg_net cron (X-Cron-Secret, no Supabase JWT) OR an on-demand
+# owner/admin call with a real JWT, verified manually inside via requireOrgRole (same
+# "verify_jwt=false + custom auth" shape as voicemail-upload/recording-url above). Set from the
+# start, same lesson as every cron-worker function in this file.
+verify_jwt = false
+
+[functions.campaign-lines-guard-check]
+# Triggered by pg_net (a cron job), no Supabase JWT at all -- auth is the X-Cron-Secret header.
+# Set from the start (MISSION-4 TASK-S2), same lesson as spend-alert-check/reliability-alert-check/
+# recording-retention/dialer-sweeper/ghl-sync-worker.
+verify_jwt = false
+
+[functions.dialer-coaching]
+# Pre-existing gap, found while adding this task's own entry below: MISSION-4 TASK-T3 shipped
+# this function using the same custom-auth (requireTelnyxOrgRole) pattern as every other
+# dialer-session-*/recording-url function but never added its config.toml entry -- same class of
+# bug as dialer-session-hangup-live's own fix-forward, noted earlier in this file. Fixed
+# proactively (MISSION-5 TASK-A1) rather than filing it and moving on.
+verify_jwt = false
+
+[functions.org-audit-log]
+# Custom auth (requireOrgRole), same pattern as org-members/org-invite-create above.
 verify_jwt = false
 
 [edge_runtime]
@@ -427,3 +571,13 @@ s3_region = "env(S3_REGION)"
 s3_access_key = "env(S3_ACCESS_KEY)"
 # Configures AWS_SECRET_ACCESS_KEY for S3 bucket
 s3_secret_key = "env(S3_SECRET_KEY)"
+
+[functions.pro-application]
+# TASK-H29: PUBLIC pro form (no login, visitors have no JWT). Auth is the unguessable link token; the function only calls
+# service-only RPCs and rate limits by hashed IP. Deploy with --no-verify-jwt.
+verify_jwt = false
+
+[functions.public-api]
+# TASK-H37: read-only public Calls API. Auth is the x-api-key header (sha256 lookup in org_api_keys); callers have no JWT.
+# Deploy with --no-verify-jwt.
+verify_jwt = false

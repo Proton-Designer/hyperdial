@@ -1,97 +1,129 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { corsHeaders, corsPreflightResponse } from '../_shared/cors.ts';
-import { getUserFromRequest } from '../_shared/auth.ts';
-import { getSessionBatchState } from '../_shared/redis.ts';
-import { completeBatchAndAdvanceIfNeeded, handleCallHangup } from '../_shared/dialer-engine.ts';
-import { hangupCall } from '../_shared/telnyx.ts';
-import { getAgentSessionState } from '../_shared/redis.ts';
+import {
+  requireTelnyxOrgRole,
+  getConnectedOrgTelnyxContext,
+} from '../_shared/telnyx-org-context.ts';
+import { endLiveCall } from '../_shared/dialer-engine.ts';
+import { readJsonBody } from '../_shared/http-json.ts';
+import { logOrgAction } from '../_shared/audit.ts';
+import { isManagerScopedToAgent } from '../_shared/pod-scope.ts';
 
 interface HangupLiveBody {
   sessionId?: string;
 }
 
+function jsonResponse(status: number, payload: Record<string, unknown>): Response {
+  return new Response(JSON.stringify(payload), {
+    status,
+    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+  });
+}
+
+/** Ends the current live (claimed/on_call) contact leg for a session. The resulting
+ *  call.hangup webhook drives the normal ended -> apply_leg_outcome -> wrap_up flow --
+ *  this function only issues the Telnyx hangup command, same "commands only, state changes
+ *  through the webhook" discipline as everywhere else in this lane. */
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return corsPreflightResponse();
-  if (req.method !== 'POST') {
-    return new Response(JSON.stringify({ error: 'Method not allowed' }), {
-      status: 405,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    });
-  }
+  if (req.method !== 'POST') return jsonResponse(405, { error: 'Method not allowed' });
 
-  const { user, error: authError } = await getUserFromRequest(req);
+  const {
+    user,
+    orgId,
+    role,
+    error: authError,
+  } = await requireTelnyxOrgRole(req, ['owner', 'admin', 'agent', 'manager']);
   if (authError) return authError;
 
+  const { body, errorResponse } = await readJsonBody<HangupLiveBody>(req);
+  if (errorResponse) return errorResponse;
+
   try {
-    const body = (await req.json()) as HangupLiveBody;
     const sessionId = body.sessionId?.trim();
-    if (!sessionId) {
-      return new Response(JSON.stringify({ error: 'sessionId is required' }), {
-        status: 400,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
+    if (!sessionId) return jsonResponse(400, { error: 'sessionId is required' });
 
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL')!,
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
     );
 
-    const { data: session } = await supabase
-      .from('dialer_sessions')
-      .select('id, user_id, status')
+    const { data: session, error: sessionError } = await supabase
+      .from('dial_sessions')
+      .select('id, org_id, agent_id, active_leg_id')
       .eq('id', sessionId)
-      .eq('user_id', user.id)
       .maybeSingle();
-    if (!session || session.status !== 'active') {
-      console.warn('[hangup-live] session_not_found_or_inactive', { sessionId });
-      return new Response(JSON.stringify({ error: 'Session not found or not active' }), {
-        status: 404,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
+    if (sessionError) return jsonResponse(500, { error: sessionError.message });
+    if (!session || session.org_id !== orgId)
+      return jsonResponse(404, { error: 'Session not found' });
+    if (role === 'agent' && session.agent_id !== user.id) {
+      return jsonResponse(403, { error: 'Not your session' });
     }
+    // MISSION-5 TASK-M5-B4: a manager may only remote-hangup an agent inside their own managed
+    // pod scope -- see dialer-session-pause's own identical check + pod-scope.ts's header.
+    if (role === 'manager' && session.agent_id !== user.id) {
+      const inScope = await isManagerScopedToAgent(supabase, orgId, user.id, session.agent_id);
+      if (!inScope) return jsonResponse(403, { error: 'That agent is outside your managed pods' });
+    }
+    // MISSION-5 TASK-M5-B2: a manager forcibly disconnecting someone ELSE's live call -- the
+    // confirm step for this is client-side only (Team.tsx's remote hang-up button); logged here,
+    // same "only the remote case, never the agent's own routine End Call click" scoping as
+    // dialer-session-pause's own new log call.
+    const isRemoteAction = role !== 'agent' && session.agent_id !== user.id;
+    if (!session.active_leg_id) {
+      // TASK-I1: no live CONTACT leg -- but a caller can be bridged into this same session's
+      // conference with no call_legs row at all (inbound-engine.ts's `bridging_session` step,
+      // dial_sessions.pause_reason: 'inbound_call'). Same "current, not-yet-ended" scoping as
+      // dialer-session-get's own inboundCall query. Ending IT is a real Telnyx hangup on the
+      // caller's own leg, not an engine state transition -- the resulting call.hangup webhook
+      // (handleOriginalLegEvent) is what finalizes the inbound_calls row; the agent resumes
+      // dialing afterward via the existing Resume button, same as any other pause (decision 7,
+      // RESUME_PLAN-eng2.md).
+      const { data: inboundCall, error: inboundError } = await supabase
+        .from('inbound_calls')
+        .select('call_control_id')
+        .eq('dial_session_id', sessionId)
+        .eq('state', 'bridging_session')
+        .is('ended_at', null)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (inboundError) return jsonResponse(500, { error: inboundError.message });
+      if (!inboundCall) return jsonResponse(400, { error: 'No live call to end' });
 
-    const batchState = await getSessionBatchState(sessionId);
-    const liveCallId = batchState?.humanAnsweredCallId ?? null;
-    if (!liveCallId) {
-      console.warn('[hangup-live] no_live_call_to_end', { sessionId });
-      // Identify if we have any active calls at all
-      const activeCallIds = batchState?.activeCallIds ?? [];
-      if (activeCallIds.length > 0) {
-        // Fallback: If no "Human" call is registered but there are active calls, maybe we should hang them all up?
-        // For now, let's just log this case.
-        console.warn('[hangup-live] has_active_calls_but_no_human_winner', { count: activeCallIds.length });
+      const { client, error: telnyxError } = await getConnectedOrgTelnyxContext(supabase, orgId);
+      if (!client) return telnyxError!;
+      await client.hangup(inboundCall.call_control_id);
+      if (isRemoteAction) {
+        await logOrgAction(supabase, {
+          orgId,
+          actorUserId: user.id,
+          action: 'session.remote_hangup',
+          targetType: 'dial_session',
+          targetId: sessionId,
+          details: { agentId: session.agent_id, kind: 'inbound_call' },
+        });
       }
-      return new Response(JSON.stringify({ error: 'No live call to end' }), {
-        status: 400,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      return jsonResponse(200, { ok: true });
+    }
+
+    const ok = await endLiveCall(supabase, orgId, sessionId);
+    if (!ok) return jsonResponse(400, { error: 'No live call to end' });
+
+    if (isRemoteAction) {
+      await logOrgAction(supabase, {
+        orgId,
+        actorUserId: user.id,
+        action: 'session.remote_hangup',
+        targetType: 'dial_session',
+        targetId: sessionId,
+        details: { agentId: session.agent_id, kind: 'contact_leg' },
       });
     }
 
-    console.log('[hangup-live] hanging_up_live_call', { sessionId, liveCallId });
-
-    await hangupCall(liveCallId);
-    const result = await handleCallHangup(supabase, liveCallId);
-
-    if (result.shouldAdvance && result.sessionId && result.userId) {
-      const agentState = await getAgentSessionState(result.userId);
-      await completeBatchAndAdvanceIfNeeded(supabase, {
-        sessionId: result.sessionId,
-        userId: result.userId,
-        webhookUrl: `${Deno.env.get('SUPABASE_URL')}/functions/v1/telnyx-webhook`,
-        fromNumber: agentState?.fromNumber ?? '',
-      });
-    }
-
-    return new Response(
-      JSON.stringify({ ok: true }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return jsonResponse(200, { ok: true });
   } catch (err) {
     console.error('dialer-session-hangup-live error:', err);
-    return new Response(JSON.stringify({ error: String(err) }), {
-      status: 500,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    });
+    return jsonResponse(500, { error: String(err) });
   }
 });

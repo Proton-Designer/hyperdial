@@ -1,6 +1,6 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { corsHeaders, corsPreflightResponse } from '../_shared/cors.ts';
-import { getUserFromRequest } from '../_shared/auth.ts';
+import { requireOrgRole } from '../_shared/auth.ts';
 
 function getLastWeekBounds(): { start: string; end: string; label: string } {
   const now = new Date();
@@ -21,7 +21,10 @@ function getLastWeekBounds(): { start: string; end: string; label: string } {
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return corsPreflightResponse();
 
-  const { user, error: authError } = await getUserFromRequest(req);
+  // Personal notification for the caller's own week (notifications stays
+  // user_id-scoped per TASK-P1-01), any role. org_id is required on the row
+  // since notifications.org_id is NOT NULL as of TASK-P1-01.
+  const { user, orgId, error: authError } = await requireOrgRole(req, ['owner', 'admin', 'agent']);
   if (authError) return authError;
 
   try {
@@ -44,6 +47,7 @@ Deno.serve(async (req) => {
     const { data: existing } = await supabase
       .from('notifications')
       .select('id')
+      .eq('org_id', orgId)
       .eq('user_id', user.id)
       .eq('type', 'week_summary')
       .like('body', `%${startStr}%`)
@@ -57,21 +61,26 @@ Deno.serve(async (req) => {
       );
     }
 
+    // TASK-P4-P1: call_leg_analytics (real call_legs/dial_sessions data) replaces call_events,
+    // which nothing in this repo writes.
     const { data: rows } = await supabase
-      .from('call_events')
-      .select('outcome, duration_seconds')
-      .eq('user_id', user.id)
-      .eq('direction', 'outbound')
-      .gte('started_at', start)
-      .lte('started_at', end);
+      .from('call_leg_analytics')
+      .select('is_connected, duration_seconds')
+      .eq('org_id', orgId)
+      .eq('agent_id', user.id)
+      .gte('created_at', start)
+      .lte('created_at', end);
 
     const list = rows ?? [];
     const calls = list.length;
-    const answered = list.filter((r: { outcome: string }) => r.outcome === 'answered').length;
+    const answered = list.filter((r: { is_connected: boolean }) => r.is_connected).length;
     const connectRate = calls > 0 ? Math.round((answered / calls) * 1000) / 10 : 0;
     const talkTimeSeconds = list
-      .filter((r: { outcome: string }) => r.outcome === 'answered')
-      .reduce((sum: number, r: { duration_seconds?: number }) => sum + (r.duration_seconds ?? 0), 0);
+      .filter((r: { is_connected: boolean }) => r.is_connected)
+      .reduce(
+        (sum: number, r: { duration_seconds: number | null }) => sum + (r.duration_seconds ?? 0),
+        0
+      );
     const hours = Math.floor(talkTimeSeconds / 3600);
     const mins = Math.floor((talkTimeSeconds % 3600) / 60);
     const talkTimeFormatted = hours > 0 ? `${hours}h ${mins}m` : `${mins}m`;
@@ -87,20 +96,20 @@ Deno.serve(async (req) => {
 
     await supabase.from('notifications').insert({
       user_id: user.id,
+      org_id: orgId,
       type: 'week_summary',
       title: `Week summary – ${label}`,
       body,
     });
 
-    return new Response(
-      JSON.stringify({ created: true }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return new Response(JSON.stringify({ created: true }), {
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
   } catch (err) {
     console.error('ensure-week-summary error:', err);
-    return new Response(
-      JSON.stringify({ error: String(err) }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return new Response(JSON.stringify({ error: String(err) }), {
+      status: 500,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
   }
 });

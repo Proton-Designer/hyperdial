@@ -1,40 +1,60 @@
-import Telnyx from 'npm:telnyx@4';
-import { createClient } from 'npm:@supabase/supabase-js@2';
+/**
+ * List the org's purchased numbers (TASK-P1-06; TASK-N1 widens the response with pool
+ * metadata). Pure DB read against `user_phone_numbers` -- no Telnyx call, so this works even if
+ * the org's Telnyx connection later goes `disconnected`. Any active org member can see the org's
+ * shared number pool (`user_phone_numbers`' own RLS already scopes SELECT to org members; this
+ * uses the service-role client so the org filter below is load-bearing, not just RLS).
+ */
 import { corsHeaders, corsPreflightResponse } from '../_shared/cors.ts';
-import { getUserFromRequest } from '../_shared/auth.ts';
+import { requireTelnyxOrgRole, getSupabaseAdmin } from '../_shared/telnyx-org-context.ts';
 
-Deno.serve(async (req) => {
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+  });
+}
+
+Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return corsPreflightResponse();
 
-  const { user, error: authError } = await getUserFromRequest(req);
-  if (authError) return authError;
+  const { orgId, error: roleError } = await requireTelnyxOrgRole(req, ['owner', 'admin', 'agent']);
+  if (roleError) return roleError;
 
-  try {
-    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
-
-    const { data: userNumbers, error: dbError } = await supabase
-      .from('user_phone_numbers')
-      .select('id, telnyx_phone_number_id, phone_number, created_at')
-      .eq('user_id', user.id)
-      .order('created_at', { ascending: false });
-
-    if (dbError) {
-      return new Response(
-        JSON.stringify({ error: dbError.message }),
-        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
-
-    return new Response(JSON.stringify({ numbers: userNumbers || [] }), {
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    });
-  } catch (err) {
-    console.error('telnyx-list-numbers error:', err);
-    return new Response(
-      JSON.stringify({ error: String(err) }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+  const supabase = getSupabaseAdmin();
+  const { data: numbers, error: dbError } = await supabase
+    .from('user_phone_numbers')
+    .select(
+      'id, telnyx_phone_number_id, phone_number, created_at, assigned_user_id, status, resting_until, daily_cap'
+    )
+    .eq('org_id', orgId)
+    .order('created_at', { ascending: false });
+  if (dbError) {
+    console.error('[telnyx-list-numbers] query failed', dbError.message);
+    return jsonResponse({ error: dbError.message }, 500);
   }
+
+  // TASK-N1: today's dial count per number, so the UI can show "dials today / cap" without a
+  // second round trip. UTC calendar day -- same boundary private.pick_and_reserve_dial_number
+  // itself uses (see the migration's own comment on why there's no per-org tz to read instead).
+  const today = new Date().toISOString().slice(0, 10);
+  const { data: usage, error: usageError } = await supabase
+    .from('number_daily_usage')
+    .select('number_id, dials')
+    .eq('org_id', orgId)
+    .eq('day', today);
+  if (usageError) {
+    console.error('[telnyx-list-numbers] usage query failed', usageError.message);
+    return jsonResponse({ error: usageError.message }, 500);
+  }
+  const dialsByNumber = new Map(
+    (usage ?? []).map((u) => [u.number_id as string, u.dials as number])
+  );
+
+  const enriched = (numbers ?? []).map((n) => ({
+    ...n,
+    dials_today: dialsByNumber.get(n.id as string) ?? 0,
+  }));
+
+  return jsonResponse({ numbers: enriched });
 });

@@ -1,279 +1,277 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { corsHeaders, corsPreflightResponse } from '../_shared/cors.ts';
-import { getUserFromRequest } from '../_shared/auth.ts';
-import { buildConferenceName, createConference } from '../_shared/telnyx.ts';
-import { fetchDialableContacts, fireBatch } from '../_shared/dialer-engine.ts';
-import { setAgentSessionState } from '../_shared/redis.ts';
-import { publishDialerEvent } from '../_shared/dialer-events.ts';
+import { requireTelnyxOrgRole } from '../_shared/telnyx-org-context.ts';
+import { startSession } from '../_shared/dialer-engine.ts';
+import { readJsonBody } from '../_shared/http-json.ts';
+import { checkSpendGate } from '../_shared/spend-gate.ts';
+import { checkDialNumberAvailable } from '../_shared/dial-number-check.ts';
 
-interface StartRequestBody {
+/**
+ * Starts a rolling-refill dial session for a campaign (TASK-P2-E2). Rewritten from the
+ * legacy Redis/dialer_sessions engine to the org-scoped dial_sessions/call_legs schema --
+ * see _shared/dialer-engine.ts's header for the full design.
+ *
+ * Behavior change from the legacy function: no `fromNumber`/`agentCallControlId`/
+ * `agentCallbackNumber` request fields anymore. The caller ID now comes from the
+ * campaign's own `caller_id_number_id` (added TASK-P2-P1) -- a campaign, not a per-session
+ * choice.
+ *
+ * TASK-L1: `startSession` now dials the real agent WebRTC leg ("Go Ready") instead of
+ * dialing contacts immediately -- the session starts 'ready_pending' and only reaches
+ * 'dialing' once the agent leg answers (see dialer-engine.ts's header). The active-session
+ * check below is now per-AGENT, not per-campaign (SEC-8: an agent has exactly one SIP
+ * endpoint, so they can only ever be in one session at a time, regardless of campaign) --
+ * backed by a live partial unique index (`dial_sessions_one_active_per_agent`,
+ * `20260925005000`); the catch block maps its violation (surfaced as
+ * `ACTIVE_SESSION_EXISTS_FOR_AGENT` from startSession) to the same 409 shape as this
+ * proactive check, closing the check-then-insert race.
+ */
+
+const VALID_AMD_MODES = ['off', 'detect', 'detect_words', 'premium'] as const;
+type AmdModeOverride = (typeof VALID_AMD_MODES)[number];
+
+interface StartBody {
   campaignId?: string;
-  linesCount?: number;
-  agentCallControlId?: string;
-  fromNumber?: string;
-  /** When set, the backend will call this number when a contact answers and join the agent to the conference for two-way audio. */
-  agentCallbackNumber?: string;
-  debugRequestId?: string;
+  /** Overrides the campaign's own default `lines` (1-7, or 1-10 with the campaign's high-lines
+   *  drop-rate guard enabled -- MISSION-4 TASK-S2) for this session only. */
+  lines?: number;
+  /** Overrides the campaign's own default `amd_mode` for this session only (BUG-7). */
+  amdMode?: AmdModeOverride;
 }
 
-const log = (step: string, detail?: Record<string, unknown>) => {
-  console.log(`[dialer-session-start] ${step}`, detail ?? '');
-};
+function jsonResponse(status: number, payload: Record<string, unknown>): Response {
+  return new Response(JSON.stringify(payload), {
+    status,
+    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+  });
+}
 
 Deno.serve(async (req) => {
-  let requestId = crypto.randomUUID();
-  const jsonHeaders = { ...corsHeaders, 'Content-Type': 'application/json' };
-  const respond = (status: number, payload: Record<string, unknown>, checkpoint: string) =>
-    new Response(
-      JSON.stringify({
-        ...payload,
-        requestId,
-        checkpoint,
-      }),
-      { status, headers: jsonHeaders }
-    );
-
   if (req.method === 'OPTIONS') return corsPreflightResponse();
-  if (req.method !== 'POST') {
-    return respond(405, { error: 'Method not allowed' }, 'method_check');
-  }
+  if (req.method !== 'POST') return jsonResponse(405, { error: 'Method not allowed' });
 
-  log('request_received', { requestId });
-  const { user, error: authError } = await getUserFromRequest(req);
-  if (authError) {
-    log('auth_failed', { requestId, error: authError.status });
-    return authError;
-  }
-  log('auth_ok', { requestId, userId: user.id });
+  const {
+    user,
+    orgId,
+    role,
+    error: authError,
+  } = await requireTelnyxOrgRole(req, ['owner', 'admin', 'agent']);
+  if (authError) return authError;
+
+  const { body, errorResponse } = await readJsonBody<StartBody>(req);
+  if (errorResponse) return errorResponse;
 
   try {
-    const featureEnabled = (Deno.env.get('PARALLEL_DIALER_ENABLED') ?? 'true').toLowerCase() === 'true';
-    if (!featureEnabled) {
-      log('feature_disabled');
-      return new Response(JSON.stringify({ error: 'Parallel dialer is disabled' }), {
-        status: 403,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
-
-    const body = (await req.json()) as StartRequestBody;
-    requestId = body.debugRequestId?.trim() || requestId;
     const campaignId = body.campaignId?.trim();
-    const linesCount = Math.max(1, Math.min(5, Number(body.linesCount ?? 3)));
-    const agentCallControlId = body.agentCallControlId?.trim();
-    const fromNumber = body.fromNumber?.trim();
-    const agentCallbackNumber = body.agentCallbackNumber?.trim() || undefined;
-    log('body_parsed', { requestId, campaignId, linesCount, fromNumber: fromNumber ? '***' : null });
+    if (!campaignId) return jsonResponse(400, { error: 'campaignId is required' });
 
-    if (!campaignId) {
-      log('validation_failed', { requestId, reason: 'missing_campaignId' });
-      return respond(400, { error: 'campaignId is required' }, 'validate_campaign_id');
-    }
-    if (!fromNumber) {
-      log('validation_failed', { requestId, reason: 'missing_fromNumber' });
-      return respond(
-        400,
-        { error: 'Choose a phone number to call from. Purchase one in Settings if needed.' },
-        'validate_from_number'
-      );
-    }
+    const linesOverride =
+      body.lines !== undefined ? Math.max(1, Math.min(10, Math.trunc(body.lines))) : undefined;
+    const amdModeOverride = VALID_AMD_MODES.includes(body.amdMode as AmdModeOverride)
+      ? body.amdMode
+      : undefined;
 
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL')!,
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
     );
 
-    log('checking_user_phone_number', { requestId });
-    const { data: userNumber, error: userNumberError } = await supabase
-      .from('user_phone_numbers')
-      .select('phone_number')
-      .eq('user_id', user.id)
-      .eq('phone_number', fromNumber)
+    const { data: campaign, error: campaignError } = await supabase
+      .from('campaigns')
+      .select(
+        'id, lines, amd_mode, caller_id_number_id, status, deleted_at, high_lines_guard_enabled'
+      )
+      .eq('id', campaignId)
+      .eq('org_id', orgId)
       .maybeSingle();
-    if (userNumberError) {
-      log('user_phone_number_error', { requestId, error: userNumberError.message });
-      return respond(500, { error: 'Could not verify phone number.' }, 'check_user_phone_number');
+    if (campaignError) return jsonResponse(500, { error: campaignError.message });
+    if (!campaign) return jsonResponse(404, { error: 'Campaign not found' });
+    // dial_sessions_require_active_campaign (20260924001500) enforces this same rule at the
+    // DB level via a BEFORE INSERT trigger -- checked here too so a normal case (not a race)
+    // gets a clean, specific 4xx instead of parsing the trigger's raised exception text. The
+    // catch block below still maps that trigger's rejection to a 4xx as defense in depth for
+    // the TOCTOU window between this check and the actual insert (e.g. another request
+    // deletes/pauses the campaign in between).
+    if (campaign.deleted_at) {
+      return jsonResponse(400, {
+        error: 'This campaign has been deleted, so a dial session cannot be started.',
+        code: 'CAMPAIGN_NOT_ACTIVE',
+      });
     }
-    if (!userNumber) {
-      log('validation_failed', { requestId, reason: 'fromNumber_not_owned' });
-      return respond(
-        400,
-        { error: 'That phone number is not yours. Choose a number you purchased in Settings.' },
-        'validate_owned_number'
-      );
+    if (campaign.status !== 'active') {
+      return jsonResponse(400, {
+        error: `This campaign is ${campaign.status}, so a dial session cannot be started.`,
+        code: 'CAMPAIGN_NOT_ACTIVE',
+      });
+    }
+    // MISSION-4 TASK-S2 (part 1): same rule as campaigns_lines_check / the dial_sessions
+    // BEFORE INSERT trigger (20260926070005) -- checked here too for a clean, specific 4xx
+    // instead of parsing the trigger's raised exception text, same "proactive + DB-enforced
+    // defense in depth" shape as the deleted/status checks just above.
+    const effectiveLines = linesOverride ?? (campaign.lines as number);
+    if (effectiveLines > 7 && !campaign.high_lines_guard_enabled) {
+      return jsonResponse(400, {
+        error:
+          "More than 7 lines requires this campaign's high-lines drop-rate guard to be enabled first (Campaign settings).",
+        code: 'HIGH_LINES_GUARD_REQUIRED',
+      });
+    }
+    // TASK-N1: a pool-only org (no legacy campaign.caller_id_number_id ever set) must still be
+    // able to Go Ready -- the agent leg's own dial (agentDialFromNumber, dialer-engine.ts) falls
+    // back to ANY org-owned number when the legacy field is empty, so the only real requirement
+    // is that the org owns at least one phone number at all, not that THIS campaign has a fixed
+    // one. A campaign with its own caller_id_number_id set skips this extra check entirely.
+    if (!campaign.caller_id_number_id) {
+      const { count: numberCount, error: numberCountError } = await supabase
+        .from('user_phone_numbers')
+        .select('id', { count: 'exact', head: true })
+        .eq('org_id', orgId);
+      if (numberCountError) return jsonResponse(500, { error: numberCountError.message });
+      if (!numberCount) {
+        return jsonResponse(400, {
+          error: 'This org has no phone numbers yet. Buy one in Settings first.',
+          code: 'MISSING_CALLER_ID',
+        });
+      }
     }
 
-    log('checking_existing_session', { requestId, campaignId });
-    const { data: existingSession, error: existingError } = await supabase
-      .from('dialer_sessions')
-      .select('id,status')
-      .eq('user_id', user.id)
-      .eq('campaign_id', campaignId)
-      .eq('status', 'active')
+    // Review fix (L1 round-3 review-notes-r3.md, MAJOR 1): owners/admins may start any org
+    // campaign (unchanged), but an agent must actually be assigned to it -- the Dialer's own
+    // campaign list (listMyCampaignAssignments) already filters to this, but nothing enforced
+    // it server-side, so a crafted request could start dialing on an unassigned campaign.
+    if (role === 'agent') {
+      const { data: assignment, error: assignmentError } = await supabase
+        .from('campaign_agents')
+        .select('campaign_id')
+        .eq('campaign_id', campaignId)
+        .eq('user_id', user.id)
+        .maybeSingle();
+      if (assignmentError) return jsonResponse(500, { error: assignmentError.message });
+      if (!assignment) {
+        return jsonResponse(403, {
+          error: 'You are not assigned to this campaign.',
+          code: 'NOT_ASSIGNED_TO_CAMPAIGN',
+        });
+      }
+    }
+
+    // Per-agent, not per-campaign (SEC-8) -- see this file's header. `dial_sessions_one_active_
+    // per_agent` (live) enforces this for real; this is the fast, clean-error proactive path.
+    const { data: existing, error: existingError } = await supabase
+      .from('dial_sessions')
+      .select('id')
+      .eq('agent_id', user.id)
+      .in('state', [
+        'ready_pending',
+        'ready',
+        'dialing',
+        'connecting',
+        'on_call',
+        'wrap_up',
+        'paused',
+        'paused_agent_lost',
+      ])
       .maybeSingle();
-    if (existingError) {
-      log('existing_session_query_error', { requestId, error: existingError.message });
-      return respond(500, { error: 'Could not check existing sessions.' }, 'check_existing_session');
-    }
-    if (existingSession) {
-      log('conflict_active_session_exists', { requestId, existingSessionId: existingSession.id });
-      return respond(
-        409,
-        {
-          error: 'An active dialer session already exists for this campaign.',
-          code: 'ACTIVE_SESSION_EXISTS',
-          existingSessionId: existingSession.id,
-        },
-        'existing_session_conflict'
-      );
+    if (existingError) return jsonResponse(500, { error: existingError.message });
+    if (existing) {
+      return jsonResponse(409, {
+        error:
+          'You already have an active dialer session. Stop or reconnect it before starting another.',
+        code: 'ACTIVE_SESSION_EXISTS',
+        existingSessionId: existing.id,
+      });
     }
 
-    const telnyxApiKey = Deno.env.get('TELNYX_API_KEY');
-    if (!telnyxApiKey) {
-      log('config_error', { requestId, reason: 'missing_telnyx_api_key' });
-      return respond(
-        503,
-        {
-          error: 'Server is not configured for outbound dialing. Set TELNYX_API_KEY in Supabase Edge Function secrets.',
-          code: 'MISSING_TELNYX_API_KEY',
-        },
-        'config_validation'
-      );
+    // TASK-H23 F: a pool-dialing campaign (no fixed caller ID) with no number this agent can use would answer the
+    // agent leg and then pause at the first refill. Refuse now, before any leg exists, saying why (none vs capped).
+    if (!campaign.caller_id_number_id) {
+      const noNumber = await checkDialNumberAvailable(supabase, orgId, user.id);
+      if (noNumber) return jsonResponse(400, noNumber as unknown as Record<string, unknown>);
     }
 
-    const connectionId =
-      Deno.env.get('TELNYX_CONNECTION_ID') ?? Deno.env.get('TELNYX_CALL_CONTROL_CONNECTION_ID');
-    if (!connectionId) {
-      log('config_error', { requestId, reason: 'missing_telnyx_connection_id' });
-      return respond(
-        503,
-        {
-          error: 'Parallel dialing requires a Call Control connection. Set TELNYX_CONNECTION_ID in Supabase secrets. In Telnyx Portal: create a Call Control Application with webhook URL pointing to your Supabase telnyx-webhook, then use that connection’s ID. See docs/TELNYX_CALL_CONTROL_SETUP.md.',
-          code: 'MISSING_TELNYX_CONNECTION_ID',
-        },
-        'config_validation'
-      );
+    // TASK-SP: checked here (Go Ready), not on every refill -- a live GET /balance call on
+    // every refill would add an external HTTP round trip to the hot dialing loop and risk
+    // rate-limiting Telnyx's billing endpoint under real load; a session already running is
+    // never killed mid-call for this (see spend-gate.ts's own header + decisions.md). Fails
+    // OPEN (never blocks) when the balance can't be read at all -- only a CONFIRMED over-cap
+    // spend blocks Go Ready (TASK-SP2: a low balance never blocks, see spend-gate.ts).
+    const spendGate = await checkSpendGate(supabase, orgId);
+    if (spendGate.blocked) {
+      return jsonResponse(400, { error: spendGate.message, code: spendGate.code });
     }
-    log('config_ok', { requestId });
 
-    log('fetching_dialable_contacts', { requestId, campaignId });
-    const allDialable = await fetchDialableContacts(supabase, {
+    const { sessionId } = await startSession(supabase, {
+      orgId,
       campaignId,
-      userId: user.id,
-      offset: 0,
-      limit: 5000,
-    });
-    log('dialable_contacts_fetched', { requestId, count: allDialable.length });
-
-    if (allDialable.length === 0) {
-      log('validation_failed', { requestId, reason: 'no_dialable_contacts' });
-      return respond(400, { error: 'No dialable contacts in campaign.' }, 'validate_dialable_contacts');
-    }
-
-    log('inserting_dialer_session', { requestId });
-    const { data: sessionRow, error: sessionError } = await supabase
-      .from('dialer_sessions')
-      .insert({
-        user_id: user.id,
-        campaign_id: campaignId,
-        status: 'active',
-        lines_count: linesCount,
-        current_index: 0,
-        total_contacts: allDialable.length,
-        from_number: fromNumber,
-      })
-      .select('*')
-      .single();
-    if (sessionError || !sessionRow) {
-      log('session_insert_error', { requestId, error: sessionError?.message });
-      throw new Error(sessionError?.message ?? 'Failed to create dialer session');
-    }
-    log('session_created', { requestId, sessionId: sessionRow.id });
-
-    // Telnyx POST /conferences requires call_control_id; only create when we have an agent leg.
-    const conference = agentCallControlId
-      ? await createConference({
-          userId: user.id,
-          sessionId: sessionRow.id,
-          agentCallControlId,
-        })
-      : {
-          id: null as string | null,
-          name: buildConferenceName(user.id, sessionRow.id),
-        };
-
-    log('conference_ready', { requestId, agentCallControlId: !!agentCallControlId, conferenceName: conference.name });
-    await supabase
-      .from('dialer_sessions')
-      .update({
-        conference_id: conference.id,
-        conference_name: conference.name,
-      })
-      .eq('id', sessionRow.id);
-    log('conference_updated', { requestId, conferenceId: conference.id, conferenceName: conference.name });
-
-    log('setting_redis_agent_state', { requestId });
-    await setAgentSessionState(user.id, {
-      sessionId: sessionRow.id,
-      campaignId,
-      conferenceId: conference.id,
-      conferenceName: conference.name,
-      linesCount,
-      fromNumber,
-      status: 'active',
-      agentCallbackNumber,
+      agentId: user.id,
+      lines: linesOverride ?? (campaign.lines as number),
+      amdMode: amdModeOverride ?? (campaign.amd_mode as AmdModeOverride),
     });
 
-    const firstBatch = allDialable.slice(0, linesCount);
-    const webhookUrl = `${Deno.env.get('SUPABASE_URL')}/functions/v1/telnyx-webhook`;
-    log('firing_first_batch', { requestId, batchSize: firstBatch.length });
-    await fireBatch(supabase, {
-      userId: user.id,
-      sessionId: sessionRow.id,
-      campaignId,
-      conferenceName: conference.name,
-      linesCount,
-      fromNumber,
-      webhookUrl,
-      batchIndex: 0,
-      contacts: firstBatch,
-    });
-    log('first_batch_fired', { requestId });
-
-    await publishDialerEvent(user.id, 'DIALER_SESSION_STARTED', {
-      sessionId: sessionRow.id,
-      totalContacts: allDialable.length,
-      linesCount,
-      conferenceName: conference.name,
-      conferenceId: conference.id,
-    });
-
-    log('success', { requestId, sessionId: sessionRow.id, totalContacts: allDialable.length });
-    return new Response(
-      JSON.stringify({
-        sessionId: sessionRow.id,
-        conferenceDetails: {
-          conferenceId: conference.id,
-          conferenceName: conference.name,
-        },
-        totalContacts: allDialable.length,
-      }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    // TASK-SP2: the session still starts even on a low balance -- this rides along on the same
+    // snapshot checkSpendGate already fetched, no extra Telnyx round trip.
+    return jsonResponse(200, { sessionId, warning: spendGate.warning });
   } catch (err) {
-    const msg = String(err);
-    console.error('[dialer-session-start] error', err);
-    log('catch_error', { requestId, message: msg });
-    if (msg.includes('TELNYX_CONNECTION_REJECTED') || (msg.includes('422') && msg.includes('webhook'))) {
-      return respond(
-        503,
-        {
-          error: 'The connection ID is not valid for server-side dialing. Create a Call Control Application in the Telnyx portal with your webhook URL and set its connection ID as TELNYX_CONNECTION_ID. Do not use the WebRTC credential connection. See docs/TELNYX_CALL_CONTROL_SETUP.md.',
-          code: 'INVALID_TELNYX_CONNECTION',
-        },
-        'telnyx_422'
-      );
+    const msg = err instanceof Error ? err.message : String(err);
+    // dial_sessions_require_active_campaign (20260924001500): the proactive checks above
+    // catch the normal case; this is the TOCTOU fallback (the campaign was deleted/paused by
+    // another request between that SELECT and this INSERT).
+    if (
+      msg.includes('cannot start a dial session for a deleted campaign') ||
+      msg.includes('cannot start a dial session for a') ||
+      msg.includes('does not reference an existing campaign')
+    ) {
+      return jsonResponse(400, {
+        error: 'This campaign is no longer active, so a dial session cannot be started.',
+        code: 'CAMPAIGN_NOT_ACTIVE',
+      });
     }
-    return respond(500, { error: msg }, 'catch_error');
+    // MISSION-4 TASK-S2 TOCTOU fallback: an admin turned the guard off (or an earlier request's
+    // own drop-rate trip fired) between the proactive check above and this INSERT.
+    if (msg.includes("unless the campaign's high-lines drop-rate guard is enabled")) {
+      return jsonResponse(400, {
+        error:
+          "More than 7 lines requires this campaign's high-lines drop-rate guard to be enabled first (Campaign settings).",
+        code: 'HIGH_LINES_GUARD_REQUIRED',
+      });
+    }
+    // SEC-8 TOCTOU fallback: another request inserted a session for this same agent between
+    // the proactive check above and this INSERT. startSession (dialer-engine.ts) maps the live
+    // partial unique index's violation (detected by Postgres SQLSTATE 23505, review fix m2)
+    // to this exact message.
+    if (msg.includes('ACTIVE_SESSION_EXISTS_FOR_AGENT')) {
+      // Review fix (m2): look up the id of the session that won the race so the client's
+      // ActiveSessionExistsError actually gets thrown (api.ts only throws it when
+      // existingSessionId is present) -- the proactive check above already does this same
+      // lookup for the common case; this is just that same query for the rare TOCTOU one.
+      // `supabase` itself is block-scoped inside the try above, so a fresh client is needed.
+      const supabaseForLookup = createClient(
+        Deno.env.get('SUPABASE_URL')!,
+        Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
+      );
+      const { data: winner } = await supabaseForLookup
+        .from('dial_sessions')
+        .select('id')
+        .eq('agent_id', user.id)
+        .in('state', [
+          'ready_pending',
+          'ready',
+          'dialing',
+          'connecting',
+          'on_call',
+          'wrap_up',
+          'paused',
+          'paused_agent_lost',
+        ])
+        .maybeSingle();
+      return jsonResponse(409, {
+        error:
+          'You already have an active dialer session. Stop or reconnect it before starting another.',
+        code: 'ACTIVE_SESSION_EXISTS',
+        existingSessionId: winner?.id,
+      });
+    }
+    console.error('dialer-session-start error:', err);
+    return jsonResponse(500, { error: msg });
   }
 });

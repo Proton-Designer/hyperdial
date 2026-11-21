@@ -1,0 +1,146 @@
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useState,
+  useCallback,
+  useRef,
+  type ReactNode,
+} from 'react';
+import { supabase } from '@/lib/supabase';
+import { useAuth } from './AuthContext';
+
+// MISSION-5 TASK-M5-A5: 'manager' added. This is the client's own copy of the role union (the
+// server's real source of truth is org_members_role_check, widened in the same task's migration)
+// -- every place that reads `role` already does an explicit equality/membership check, so a
+// stale build never silently mis-classifies a manager as something more privileged; at worst it
+// fails a `=== 'manager'` check and treats them like an unrecognized/lower role until redeployed.
+export type OrgRole = 'owner' | 'admin' | 'agent' | 'manager';
+
+export interface OrgMembership {
+  orgId: string;
+  orgName: string;
+  role: OrgRole;
+}
+
+interface OrgContextValue {
+  loading: boolean;
+  orgId: string | null;
+  role: OrgRole | null;
+  firstName: string | null;
+  lastName: string | null;
+  /** Every org this user actively belongs to (for the org switcher). */
+  orgs: OrgMembership[];
+  refetch: () => Promise<void>;
+  switchOrg: (orgId: string) => Promise<void>;
+}
+
+const OrgContext = createContext<OrgContextValue | null>(null);
+
+interface MembershipRow {
+  org_id: string;
+  role: OrgRole;
+  orgs: { name: string } | { name: string }[] | null;
+}
+
+export function OrgProvider({ children }: { children: ReactNode }) {
+  const { user } = useAuth();
+  // Keyed on the id, not the User object: a new object for the same user (token refresh, tab
+  // refocus) must not re-run the membership load and flip `loading`.
+  const userId = user?.id ?? null;
+  const [loading, setLoading] = useState(true);
+  const [orgId, setOrgId] = useState<string | null>(null);
+  const [role, setRole] = useState<OrgRole | null>(null);
+  const [firstName, setFirstName] = useState<string | null>(null);
+  const [lastName, setLastName] = useState<string | null>(null);
+  const [orgs, setOrgs] = useState<OrgMembership[]>([]);
+  // TASK-L4 re-review, LOW: two `load()` calls can be in flight at once (the effect below auto-
+  // fires on every `user` change, e.g. right after signUp() during an invite accept -- and
+  // InviteLanding.tsx also calls `refetch()` explicitly right after `acceptOrgInvite`). Without
+  // this guard, whichever call's network round trip happens to finish LAST wins regardless of
+  // which one started last -- the auto-fired pre-membership load can resolve after the explicit
+  // post-accept refetch and clobber its correct result back to "no membership yet". Each call
+  // captures the sequence number current when IT started, and only commits state if no newer
+  // call has started since -- the latest call to START always eventually wins.
+  const loadSeqRef = useRef(0);
+
+  const load = useCallback(async () => {
+    const seq = ++loadSeqRef.current;
+    if (!userId) {
+      if (seq !== loadSeqRef.current) return;
+      setLoading(false);
+      setOrgId(null);
+      setRole(null);
+      setOrgs([]);
+      return;
+    }
+    setLoading(true);
+    const [{ data: profile }, { data: memberships }] = await Promise.all([
+      supabase
+        .from('profiles')
+        .select('first_name, last_name, active_org_id')
+        .eq('user_id', userId)
+        .maybeSingle(),
+      supabase
+        .from('org_members')
+        .select('org_id, role, orgs(name)')
+        .eq('user_id', userId)
+        .eq('status', 'active'),
+    ]);
+    if (seq !== loadSeqRef.current) return;
+
+    setFirstName((profile?.first_name as string | null) ?? null);
+    setLastName((profile?.last_name as string | null) ?? null);
+
+    const list: OrgMembership[] = ((memberships ?? []) as MembershipRow[]).map((m) => ({
+      orgId: m.org_id,
+      orgName: (Array.isArray(m.orgs) ? m.orgs[0]?.name : m.orgs?.name) ?? 'Untitled org',
+      role: m.role,
+    }));
+    setOrgs(list);
+
+    const activeOrgId = (profile?.active_org_id as string | null) ?? null;
+    setOrgId(activeOrgId);
+    setRole(list.find((m) => m.orgId === activeOrgId)?.role ?? null);
+    setLoading(false);
+  }, [userId]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const switchOrg = useCallback(
+    async (newOrgId: string) => {
+      if (!user) return;
+      const { error } = await supabase
+        .from('profiles')
+        .update({ active_org_id: newOrgId, updated_at: new Date().toISOString() })
+        .eq('user_id', user.id);
+      if (error) throw new Error(error.message);
+      // Nothing else in the app listens for an org change (every screen fetches its org-scoped
+      // data once, on mount) -- a full reload is the simplest way to guarantee every screen
+      // re-fetches under the new org rather than mixing stale data from the old one.
+      window.location.reload();
+    },
+    [user]
+  );
+
+  const value: OrgContextValue = {
+    loading,
+    orgId,
+    role,
+    firstName,
+    lastName,
+    orgs,
+    refetch: load,
+    switchOrg,
+  };
+
+  return <OrgContext.Provider value={value}>{children}</OrgContext.Provider>;
+}
+
+export function useOrg() {
+  const ctx = useContext(OrgContext);
+  if (!ctx) throw new Error('useOrg must be used within OrgProvider');
+  return ctx;
+}

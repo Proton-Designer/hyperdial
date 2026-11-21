@@ -1,0 +1,179 @@
+/**
+ * TASK-H03: "Log Close" submit. POST { contactId, ownerName?, businessName?, mobile?, email?, services?[], cities?[],
+ * frequencies?[], insured?: boolean|null, bestContact?, startingPrice?, capacity?, yearsInBusiness? }
+ * TASK-H28: NOTHING on the form is required (the contact, or the dialed number, is the anchor). Absent/blank text = null,
+ * absent lists = [], insured absent/null = not answered. A value that is entered must still be valid (the RPC checks it).
+ * Blank business name falls back to the contact's, blank mobile to the contact's phone (done in the RPC).
+ *   -> { closeId, deduped, deliveryStatus: 'pending'|'sent'|'failed'|'not_configured', contactId?: string|null, contactCreated?: boolean }
+ * TASK-H24: send `phone` (the number that was called) INSTEAD of `contactId` to close a number that may not be a contact
+ * yet (after a manual call): the RPC finds the org contact by normalized phone or creates it from the form, then closes.
+ * `contactId` in the response is null when the caller was only allowed through because that number phoned in (they
+ * must not learn which contact it is).
+ * The RPC runs as the CALLER (user JWT + anon key) so auth.uid() and the contacts trigger see the real agent; it
+ * inserts the close, marks the contact Closed and queues the GHL tag in one transaction. The webhook delivery is then
+ * attempted once right away (service role); failures stay 'pending' for the 5-minute sweep (close-delivery-worker).
+ */
+import { createClient } from 'npm:@supabase/supabase-js@2';
+import { corsHeaders, corsPreflightResponse } from '../_shared/cors.ts';
+import { requireOrgRole } from '../_shared/auth.ts';
+import { readJsonBody } from '../_shared/http-json.ts';
+import { runCloseDeliveries } from '../_shared/close-delivery-run.ts';
+
+declare const EdgeRuntime: { waitUntil(promise: Promise<unknown>): void } | undefined;
+
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+  });
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+interface CloseBody {
+  contactId?: unknown;
+  phone?: unknown;
+  ownerName?: unknown;
+  businessName?: unknown;
+  mobile?: unknown;
+  email?: unknown;
+  services?: unknown;
+  cities?: unknown;
+  frequencies?: unknown;
+  insured?: unknown;
+  bestContact?: unknown;
+  startingPrice?: unknown;
+  capacity?: unknown;
+  yearsInBusiness?: unknown;
+}
+
+const str = (v: unknown): string | null => (typeof v === 'string' ? v : null);
+// Absent or null = an empty list (TASK-H28); anything else that is not an array of text is a 400 (null result).
+const strArray = (v: unknown): string[] | null =>
+  v === undefined || v === null
+    ? []
+    : Array.isArray(v) && v.every((x) => typeof x === 'string')
+      ? (v as string[])
+      : null;
+const num = (v: unknown): number | null | undefined =>
+  v === null || v === undefined || v === ''
+    ? null
+    : typeof v === 'number' && Number.isFinite(v)
+      ? v
+      : undefined;
+
+Deno.serve(async (req: Request) => {
+  if (req.method === 'OPTIONS') return corsPreflightResponse();
+  if (req.method !== 'POST') return jsonResponse({ error: 'Method not allowed' }, 405);
+
+  // Everyone who can dial may log a close (managers dial too). The RPC repeats this role check and then applies
+  // contact_read_access, so a caller outside these roles is refused there as well.
+  const { orgId, error: authError } = await requireOrgRole(req, [
+    'owner',
+    'admin',
+    'manager',
+    'agent',
+  ]);
+  if (authError) return authError;
+
+  const parsed = await readJsonBody<CloseBody>(req);
+  if (parsed.errorResponse) return parsed.errorResponse;
+  const b = parsed.body;
+
+  const contactId = str(b.contactId);
+  const services = strArray(b.services);
+  const cities = strArray(b.cities);
+  const frequencies = strArray(b.frequencies);
+  const price = num(b.startingPrice);
+  const capacity = num(b.capacity);
+  const years = num(b.yearsInBusiness);
+  const phone = str(b.phone);
+  const byPhone = !contactId && !!phone?.trim();
+  if (!byPhone && (!contactId || !UUID_RE.test(contactId)))
+    return jsonResponse({ error: 'contactId or phone is required' }, 400);
+  if (!services || !cities || !frequencies) {
+    return jsonResponse({ error: 'services, cities and frequencies must be arrays of text' }, 400);
+  }
+  if (b.insured !== undefined && b.insured !== null && typeof b.insured !== 'boolean')
+    return jsonResponse({ error: 'insured must be true, false or empty' }, 400);
+  if (price === undefined || capacity === undefined || years === undefined) {
+    return jsonResponse({ error: 'price, capacity and years must be numbers' }, 400);
+  }
+  if (capacity !== null && !Number.isInteger(capacity))
+    return jsonResponse({ error: 'capacity must be a whole number' }, 400);
+  if (years !== null && !Number.isInteger(years))
+    return jsonResponse({ error: 'years must be a whole number' }, 400);
+
+  const userClient = createClient(
+    Deno.env.get('SUPABASE_URL')!,
+    Deno.env.get('SUPABASE_ANON_KEY')!,
+    {
+      global: { headers: { Authorization: req.headers.get('Authorization')! } },
+      auth: { persistSession: false, autoRefreshToken: false },
+    }
+  );
+  const closeArgs = {
+    p_owner_name: str(b.ownerName) ?? '',
+    p_business_name: str(b.businessName) ?? '',
+    p_mobile: str(b.mobile) ?? '',
+    p_email: str(b.email),
+    p_services: services,
+    p_cities: cities,
+    p_frequencies: frequencies,
+    p_insured: typeof b.insured === 'boolean' ? b.insured : null,
+    p_best_contact: str(b.bestContact),
+    p_starting_price: price,
+    p_capacity: capacity,
+    p_years_in_business: years,
+  };
+  const { data, error } = byPhone
+    ? await userClient.rpc('log_contact_close_by_phone', {
+        p_org_id: orgId,
+        p_phone: phone,
+        ...closeArgs,
+      })
+    : await userClient.rpc('log_contact_close', { p_contact_id: contactId, ...closeArgs });
+  if (error) {
+    // 22023 = validation message written for the form; 42501/P0002 = not allowed / not found.
+    const status =
+      error.code === '22023'
+        ? 400
+        : error.code === '42501'
+          ? 403
+          : error.code === 'P0002'
+            ? 404
+            : 500;
+    if (status === 500) console.error('[log-contact-close] rpc failed', error);
+    return jsonResponse(
+      { error: status === 500 ? 'Could not save the close' : error.message },
+      status
+    );
+  }
+  const row = Array.isArray(data) ? data[0] : data;
+  const closeId = row?.close_id as string | undefined;
+  if (!closeId) return jsonResponse({ error: 'Could not save the close' }, 500);
+
+  let deliveryStatus = row.delivery_status as string;
+  if (deliveryStatus === 'pending' && row.deduped !== true) {
+    const admin = createClient(
+      Deno.env.get('SUPABASE_URL')!,
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
+    );
+    const attempt = runCloseDeliveries(admin, { limit: 1, closeId })
+      .then((t) => t)
+      .catch((err) => {
+        console.error('[log-contact-close] immediate delivery failed', closeId, err);
+        return null;
+      });
+    // Never make the intern wait on the receiver: the response goes out now, the attempt finishes in the background.
+    if (typeof EdgeRuntime !== 'undefined') EdgeRuntime.waitUntil(attempt);
+    else await attempt;
+  }
+  return jsonResponse({
+    closeId,
+    deduped: row.deduped === true,
+    deliveryStatus,
+    contactId: byPhone ? ((row.contact_id as string | null) ?? null) : contactId,
+    contactCreated: byPhone ? row.contact_created === true : false,
+  });
+});

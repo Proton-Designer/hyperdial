@@ -1,0 +1,71 @@
+/*
+ * TASK-MOB2: opt-in touch sizing for dense admin screens (Team, Settings, Team Shifts ...).
+ * Add the `hd-touch` class to a screen root (or to a portaled modal panel) and every form control
+ * and button inside it reaches 44px on touch widths (<1024px). Desktop is untouched. Add
+ * `hd-touch-skip` to a control that must stay compact (inline text links inside a sentence).
+ * Written unlayered on purpose: raw controls use `.text-body`-style unlayered classes that a
+ * Tailwind utility cannot beat.
+ */
+@media (max-width: 1023px), (pointer: coarse) {
+  .hd-touch
+    :is(
+      select,
+      textarea,
+      input:not([type='checkbox'], [type='radio'], [type='range'], [type='file'], [type='hidden'])
+    ):not(.hd-touch-skip) {
+    min-height: 44px;
+    font-size: 16px;
+  }
+  /* iOS Safari ignores min-height on a native <select> (found in the Simulator: 33pt tall); height is honoured. */
+  .hd-touch select:not(.hd-touch-skip) {
+    height: 44px;
+  }
+  .hd-touch :is(button, [role='button'], summary):not(.hd-touch-skip) {
+    min-height: 44px;
+    min-width: 44px;
+  }
+  .hd-touch label:has(input[type='checkbox'], input[type='radio']):not(.hd-touch-skip) {
+    min-height: 44px;
+    min-width: 44px;
+    display: inline-flex;
+    align-items: center;
+  }
+  .hd-touch input[type='checkbox']:not(.hd-touch-skip),
+  .hd-touch input[type='radio']:not(.hd-touch-skip) {
+    min-width: 20px;
+    min-height: 20px;
+  }
+}
+
+/*
+ * Scroll cue for a table/strip that scrolls sideways inside its own container: a soft shadow on
+ * the edge that still has content. Works on any background via --hd-scroll-bg (default surface-1).
+ * Usage: <div className="hd-scroll-x"> ... </div> (it also sets overflow-x: auto).
+ */
+.hd-scroll-x {
+  overflow-x: auto;
+  background:
+    linear-gradient(to right, var(--hd-scroll-bg, var(--surface-1)) 30%, transparent) left center,
+    linear-gradient(to left, var(--hd-scroll-bg, var(--surface-1)) 30%, transparent) right center,
+    radial-gradient(farthest-side at 0 50%, rgb(0 0 0 / 0.45), transparent) left center,
+    radial-gradient(farthest-side at 100% 50%, rgb(0 0 0 / 0.45), transparent) right center;
+  background-repeat: no-repeat;
+  background-size:
+    24px 100%,
+    24px 100%,
+    10px 100%,
+    10px 100%;
+  background-attachment: local, local, scroll, scroll;
+  background-color: var(--hd-scroll-bg, var(--surface-1));
+}
+
+/*
+ * TASK-MOB5: a full-screen fixed modal that must stay above the on-screen keyboard (iOS keeps fixed boxes at the
+ * layout viewport size). Add `hd-vv` to its `fixed inset-0` root; --vv-h/--vv-top come from lib/visualViewport.ts and
+ * fall back to the full dynamic viewport where there is no keyboard or no visualViewport.
+ */
+.hd-vv {
+  top: var(--vv-top, 0px) !important;
+  bottom: auto !important;
+  height: var(--vv-h, 100dvh) !important;
+}

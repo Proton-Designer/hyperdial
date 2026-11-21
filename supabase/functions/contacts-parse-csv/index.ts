@@ -1,6 +1,7 @@
 import { parse } from 'npm:csv-parse/sync';
 import { corsHeaders, corsPreflightResponse } from '../_shared/cors.ts';
-import { getUserFromRequest } from '../_shared/auth.ts';
+import { requireOrgRole } from '../_shared/auth.ts';
+import { normalizePhoneStrict } from '../_shared/phone-normalize.ts';
 
 const CANONICAL_FIELDS = [
   'Business Name',
@@ -16,6 +17,7 @@ const CANONICAL_FIELDS = [
   'Last Name',
   'Owner Contact',
   'Address',
+  'City',
 ] as const;
 
 const ALIASES: Record<string, string> = {
@@ -67,6 +69,9 @@ const ALIASES: Record<string, string> = {
   addr: 'Address',
 };
 
+/** TASK-H01: City matches only these exact headers -- a substring rule would map "Capacity" or "Electricity". */
+const CITY_HEADERS = new Set(['city', 'town', 'locality', 'city/town', 'business city']);
+
 function normalizeForMatch(s: string): string {
   return (s || '').trim().toLowerCase().replace(/\s+/g, ' ');
 }
@@ -83,6 +88,7 @@ function headerMatchScore(originalHeader: string, field: string): number {
   if (normalizeForMatch(field) === norm) return 100;
   if (field === 'Business Link' && isBusinessLinkMatch(norm)) return 100;
   if (field === 'Business Link') return 0;
+  if (field === 'City') return CITY_HEADERS.has(norm) ? (norm === 'city' ? 100 : 80) : 0;
   const canonNorm = normalizeForMatch(field);
   if (norm.includes(canonNorm) || canonNorm.includes(norm)) return 60;
   const alias = ALIASES[norm] || ALIASES[originalHeader.trim().toLowerCase()];
@@ -99,7 +105,8 @@ function headerMatchScore(originalHeader: string, field: string): number {
 function looksLikeLink(v: string): boolean {
   const s = (v || '').trim().toLowerCase();
   if (s.startsWith('http://') || s.startsWith('https://')) return true;
-  if (s.startsWith('www.') || s.includes('.com') || s.includes('.org') || s.includes('.net')) return true;
+  if (s.startsWith('www.') || s.includes('.com') || s.includes('.org') || s.includes('.net'))
+    return true;
   if (/maps\.google|google\.com\/maps|goo\.gl|bit\.ly/i.test(s)) return true;
   if (s.includes('/') && (s.includes('.') || s.length > 15)) return true;
   return false;
@@ -152,6 +159,14 @@ function valueMatchScore(previewData: string[], field: string): number {
   return Math.round(Math.min(100, ratio * 100));
 }
 
+/** Column index mapped to a given canonical field, or -1 if none is. */
+function colIndexOf(assignment: Map<number, string>, field: string): number {
+  for (const [colIdx, mapped] of assignment) {
+    if (mapped === field) return colIdx;
+  }
+  return -1;
+}
+
 /** Best-fit: score each (column, field) by header + value fit, then assign so each column and each field is used at most once (highest scores first). */
 function assignBestFitColumns(
   headers: string[],
@@ -167,6 +182,9 @@ function assignBestFitColumns(
       .filter(Boolean);
     for (const field of canonicalFields) {
       const h = headerMatchScore(original_header, field);
+      // TASK-H06: Rating / Review Count are bare numbers, so a column of small integers ("Years In Business",
+      // "Employees") fitted them on values alone and silently landed in review_count. Require a header match.
+      if (h === 0 && (field === 'Rating' || field === 'Review Count')) continue;
       const v = valueMatchScore(preview_data, field);
       const combined = h * 0.5 + v * 0.5;
       if (combined >= 25) candidates.push({ colIdx, field, score: combined });
@@ -189,17 +207,20 @@ function assignBestFitColumns(
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return corsPreflightResponse();
 
-  const { user, error: authError } = await getUserFromRequest(req);
+  // Part of the same owner/admin-only import flow as contacts-import (design §2);
+  // this step makes no DB queries but is gated the same way so an agent can't
+  // probe it even though it returns no org data.
+  const { error: authError } = await requireOrgRole(req, ['owner', 'admin']);
   if (authError) return authError;
 
   try {
-    const body = await req.json() as { csv_text?: string };
+    const body = (await req.json()) as { csv_text?: string };
     const csvText = body?.csv_text;
     if (!csvText || typeof csvText !== 'string') {
-      return new Response(
-        JSON.stringify({ error: 'Missing csv_text in body' }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return new Response(JSON.stringify({ error: 'Missing csv_text in body' }), {
+        status: 400,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
     }
 
     const rows = parse(csvText, {
@@ -229,19 +250,33 @@ Deno.serve(async (req) => {
       };
     });
 
+    // Design §7: "invalid ones are rejected at import with a count" -- surface that count
+    // at preview time too, against the *whole* file, not just the 3-row preview, using the
+    // same normalizePhoneStrict the actual import will use. Only meaningful once a column
+    // is auto-mapped (or will be mapped) to "Phone Number"; 0 when none is.
+    const phoneColumnHeader = headers[colIndexOf(assignment, 'Phone Number')];
+    let invalidPhoneCount = 0;
+    if (phoneColumnHeader) {
+      for (const row of rows) {
+        const raw = row[phoneColumnHeader] != null ? String(row[phoneColumnHeader]).trim() : '';
+        if (raw && !normalizePhoneStrict(raw)) invalidPhoneCount++;
+      }
+    }
+
     return new Response(
       JSON.stringify({
         columns,
         total_rows: totalRows,
         preview_rows: previewRows,
+        invalid_phone_count: invalidPhoneCount,
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   } catch (err) {
     console.error('contacts-parse-csv error:', err);
-    return new Response(
-      JSON.stringify({ error: String(err) }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return new Response(JSON.stringify({ error: String(err) }), {
+      status: 500,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
   }
 });

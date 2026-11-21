@@ -1,0 +1,13 @@
+# Allowlist: upload only what the web build needs. Everything else (supabase/, docs/, .brain/,
+# vendor/, and the untracked .claude/ run folder with its backups and secrets) stays local.
+/*
+!/apps
+!/package.json
+!/package-lock.json
+!/vercel.json
+/apps/*
+!/apps/web
+/apps/web/node_modules
+/apps/web/dist
+/apps/web/.env
+/apps/web/.env.*

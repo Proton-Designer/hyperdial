@@ -1,0 +1,81 @@
+{
+  "meta": {
+    "artifact": "service-index",
+    "version": "1.0",
+    "generated_at": "2026-10-20T01:43:33.177Z",
+    "target": "/Users/aymanmohammed/Desktop/Softdial",
+    "git": {
+      "commit": "a9dc894",
+      "branch": "feat/stage-1",
+      "dirty": true
+    },
+    "tool": {
+      "name": "agent-brain",
+      "version": "0.1.0"
+    }
+  },
+  "data": {
+    "services": [
+      {
+        "name": ".brain",
+        "path": ".brain",
+        "kind": "service",
+        "package": null,
+        "language": "HTML",
+        "entrypoint": null,
+        "owner": null,
+        "doc": null,
+        "depends_on": [],
+        "depended_on_by": [],
+        "external": []
+      },
+      {
+        "name": "web",
+        "path": "apps/web",
+        "kind": "app",
+        "package": "@hyperdial/web",
+        "language": "TypeScript",
+        "entrypoint": null,
+        "owner": null,
+        "doc": null,
+        "depends_on": [],
+        "depended_on_by": [
+          "supabase"
+        ],
+        "external": []
+      },
+      {
+        "name": "scripts",
+        "path": "scripts",
+        "kind": "service",
+        "package": null,
+        "language": "Shell",
+        "entrypoint": null,
+        "owner": null,
+        "doc": null,
+        "depends_on": [
+          "supabase"
+        ],
+        "depended_on_by": [],
+        "external": []
+      },
+      {
+        "name": "supabase",
+        "path": "supabase",
+        "kind": "service",
+        "package": null,
+        "language": "TypeScript",
+        "entrypoint": null,
+        "owner": null,
+        "doc": null,
+        "depends_on": [
+          "apps/web"
+        ],
+        "depended_on_by": [
+          "scripts"
+        ],
+        "external": []
+      }
+    ]
+  }
+}
