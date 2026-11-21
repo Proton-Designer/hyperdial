@@ -163,9 +163,10 @@ export interface TelnyxDialPayload {
 }
 
 /** A slow premium decision ends as not_sure (= claim) after this long, not Telnyx's own default.
- *  TASK-H32: 5000 -> 8000; business IVRs / hold queues were the most common not_sure and 5 s let
- *  too many voicemails through to agents. */
-export const PREMIUM_AMD_TOTAL_ANALYSIS_MILLIS = 8000;
+ *  TASK-H39 (2026-11-20): back to 5000. TASK-H32 had raised it to 8000 (IVRs / hold queues made not_sure the
+ *  most common result), but prospects then heard silence after "hello" for too long and Rayan was not heard
+ *  in the first seconds. The wait is mostly the detector itself (see audit/TASK-H39/silence-options.md). */
+export const PREMIUM_AMD_TOTAL_ANALYSIS_MILLIS = 5000;
 
 /** off -> 'disabled', every other value passes straight through -- all 4 are verified members
  *  of CallRequest.answering_machine_detection's enum (spec3.json). */
