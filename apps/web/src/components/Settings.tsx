@@ -3904,6 +3904,7 @@ const AUDIT_ACTION_LABELS: Record<string, string> = {
   'invite.resend': 'Resent an invite',
   'invite.revoke': 'Revoked an invite',
   'member.restore': 'Restored a member',
+  'number.auto_rest': 'Rested a phone number automatically (likely flagged)',
   'member.reactivate_via_invite': 'Reactivated a member via invite',
   'member.release_queued_leads': "Released a member's queued leads",
   'member.set_pod': "Set a member's pod",

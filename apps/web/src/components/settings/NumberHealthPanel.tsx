@@ -2,11 +2,17 @@ import { useEffect, useState } from 'react';
 import { ChevronDown, ExternalLink } from 'lucide-react';
 import { cn } from '@/components/ui/utils';
 import { useOrg } from '@/contexts/OrgContext';
+import { TapCheckbox } from '@/components/mobile/TapCheckbox';
 import {
+  getNumberHealthAutoRest,
   getNumberHealthBadges,
+  getNumberHealthScores,
   getNumberHealthStats,
   runNumberHealthCheck,
+  setNumberHealthAutoRest,
+  setPhoneNumberStatus,
   type NumberHealthBadge,
+  type NumberHealthScore,
   type NumberHealthStat,
 } from '@/lib/api';
 
@@ -27,6 +33,41 @@ const LEVEL_UI: Record<NumberHealthBadge['level'], { label: string; chip: string
   unknown: { label: 'Not enough calls yet', chip: 'bg-surface-3 text-text-secondary' },
 };
 
+/** TASK-H40: 70+ good, 40-69 so-so, under 40 poor. Null = not enough calls to judge. */
+function scoreTone(score: number | null): string {
+  if (score == null) return 'text-text-secondary';
+  if (score >= 70) return 'text-success';
+  if (score >= 40) return 'text-warning';
+  return 'text-danger';
+}
+
+const SCORE_INFO: {
+  key: 'answer_score' | 'stay_score' | 'history_score';
+  label: string;
+  meaning: string;
+  empty: string;
+}[] = [
+  {
+    key: 'answer_score',
+    label: 'Answer',
+    meaning: 'How often people pick up, compared with your other numbers and its own past weeks.',
+    empty: 'Not enough calls this week',
+  },
+  {
+    key: 'stay_score',
+    label: 'Stays on the line',
+    meaning: 'Of the people who answer, how many stay on for 10 seconds or more.',
+    empty: 'Not enough answered calls yet',
+  },
+  {
+    key: 'history_score',
+    label: 'History',
+    meaning:
+      'How much calling history this number has in the last 30 days. More reads as more trusted.',
+    empty: '',
+  },
+];
+
 const pct = (rate: number | null) => (rate == null ? '—' : `${Math.round(rate * 100)}%`);
 const secs = (s: number | null) => (s == null ? '—' : `${Math.round(s)}s`);
 
@@ -41,14 +82,26 @@ export function NumberHealthPanel() {
   const [checking, setChecking] = useState(false);
   const [lastCheckMessage, setLastCheckMessage] = useState<string | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
+  const [scores, setScores] = useState<Record<string, NumberHealthScore>>({});
+  const [autoRest, setAutoRest] = useState<{ enabled: boolean; days: number } | null>(null);
+  const [autoRestBusy, setAutoRestBusy] = useState(false);
+  const [rowError, setRowError] = useState<string | null>(null);
+  const [reactivatingId, setReactivatingId] = useState<string | null>(null);
 
   const load = () => {
     setLoading(true);
     setLoadError(false);
-    Promise.all([getNumberHealthBadges(), getNumberHealthStats()])
-      .then(([b, s]) => {
+    Promise.all([
+      getNumberHealthBadges(),
+      getNumberHealthStats(),
+      getNumberHealthScores(),
+      getNumberHealthAutoRest(),
+    ])
+      .then(([b, s, sc, ar]) => {
         setBadges(b);
         setStats(Object.fromEntries(s.map((x) => [x.number_id, x])));
+        setScores(Object.fromEntries(sc.map((x) => [x.number_id, x])));
+        setAutoRest(ar);
       })
       .catch((e) => {
         console.error('Failed to load number health', e);
@@ -62,6 +115,34 @@ export function NumberHealthPanel() {
   }, [isAdmin]);
 
   if (!isAdmin) return null;
+
+  const handleAutoRestToggle = async (next: boolean) => {
+    setAutoRestBusy(true);
+    setRowError(null);
+    try {
+      await setNumberHealthAutoRest(next);
+      setAutoRest((cur) => (cur ? { ...cur, enabled: next } : cur));
+    } catch (e) {
+      console.error('Failed to save the automatic rest setting', e);
+      setRowError("Couldn't save that setting. Check your connection and try again.");
+    } finally {
+      setAutoRestBusy(false);
+    }
+  };
+
+  const handleReactivate = async (numberId: string) => {
+    setReactivatingId(numberId);
+    setRowError(null);
+    try {
+      await setPhoneNumberStatus(numberId, 'active');
+      load();
+    } catch (e) {
+      console.error('Failed to reactivate number', e);
+      setRowError("Couldn't reactivate that number. Try again.");
+    } finally {
+      setReactivatingId(null);
+    }
+  };
 
   const handleCheckNow = async () => {
     setChecking(true);
@@ -105,6 +186,33 @@ export function NumberHealthPanel() {
         far below the pool median are rested automatically when alerts are turned on.
       </p>
 
+      {autoRest && (
+        <label className="mb-4 flex items-start gap-3 rounded-app-md border border-border-subtle bg-surface-2/40 p-3 text-sm text-text-primary">
+          <TapCheckbox
+            checked={autoRest.enabled}
+            disabled={autoRestBusy}
+            onChange={(e) => void handleAutoRestToggle(e.target.checked)}
+            aria-label="Rest likely-flagged numbers automatically"
+          />
+          <span className="min-w-0">
+            Rest a number automatically when it looks flagged
+            <span className="block text-meta text-text-secondary">
+              When a number&apos;s answer rate drops sharply (well below its own past weeks and your
+              other numbers) it is rested for {autoRest.days} days. The last active number is never
+              rested, so you always keep a line. You can reactivate any number below.
+            </span>
+          </span>
+        </label>
+      )}
+      {rowError && (
+        <div
+          role="alert"
+          className="mb-4 p-3 rounded-app-md bg-danger/10 border border-danger/30 text-danger text-sm"
+        >
+          {rowError}
+        </div>
+      )}
+
       {checkError && (
         <div
           role="alert"
@@ -139,6 +247,7 @@ export function NumberHealthPanel() {
           {badges.map((b) => {
             const ui = LEVEL_UI[b.level];
             const st = stats[b.number_id];
+            const sc = scores[b.number_id];
             const open = openId === b.number_id;
             return (
               <li
@@ -157,6 +266,11 @@ export function NumberHealthPanel() {
                       <span className={cn('px-2 py-0.5 rounded-full text-xs font-medium', ui.chip)}>
                         {ui.label}
                       </span>
+                      {sc?.likely_flagged && (
+                        <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-danger/10 text-danger">
+                          Likely flagged
+                        </span>
+                      )}
                       {b.status === 'resting' && (
                         <span className="text-xs text-text-secondary">Resting</span>
                       )}
@@ -171,6 +285,53 @@ export function NumberHealthPanel() {
                     aria-hidden
                   />
                 </button>
+                {sc?.likely_flagged && sc.likely_flagged_reason && (
+                  <p className="px-3 pb-2 text-meta text-danger">
+                    {sc.likely_flagged_reason}.{' '}
+                    {autoRest?.enabled
+                      ? `It will be rested for ${autoRest.days} days at the next check (every 6 hours) unless it is your last active number.`
+                      : 'Consider resting it; automatic rest is switched off.'}
+                  </p>
+                )}
+                {b.status === 'resting' && sc?.flagged_at && (
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 pb-2 text-meta text-text-secondary">
+                    <span>
+                      Rested automatically on {new Date(sc.flagged_at).toLocaleDateString()}
+                      {sc.resting_until
+                        ? `, back in rotation ${new Date(sc.resting_until).toLocaleDateString()}`
+                        : ''}
+                    </span>
+                    <button
+                      type="button"
+                      disabled={reactivatingId === b.number_id}
+                      onClick={() => void handleReactivate(b.number_id)}
+                      className="hd-touch rounded-app-md border border-border-subtle px-3 py-1 text-sm text-text-primary hover:bg-surface-2 disabled:opacity-50"
+                    >
+                      {reactivatingId === b.number_id ? 'Reactivating…' : 'Reactivate'}
+                    </button>
+                  </div>
+                )}
+                {sc && (
+                  <dl className="grid grid-cols-1 gap-2 px-3 pb-3 sm:grid-cols-3">
+                    {SCORE_INFO.map((info) => {
+                      const v = sc[info.key];
+                      return (
+                        <div key={info.key} className="min-w-0">
+                          <dt className="flex items-baseline gap-2 text-meta text-text-secondary">
+                            <span>{info.label}</span>
+                            <span className={cn('text-base font-semibold', scoreTone(v))}>
+                              {v == null ? '—' : v}
+                              {v != null && <span className="text-xs font-normal">/100</span>}
+                            </span>
+                          </dt>
+                          <dd className="text-meta text-text-secondary">
+                            {v == null ? info.empty : info.meaning}
+                          </dd>
+                        </div>
+                      );
+                    })}
+                  </dl>
+                )}
                 {open && (
                   <div className="border-t border-border-subtle p-3 space-y-3">
                     {b.reasons.length > 1 && (
@@ -210,17 +371,34 @@ export function NumberHealthPanel() {
           with all three for free. It improves how your calls look; it doesn&apos;t guarantee they
           won&apos;t be labelled.
         </p>
-        <ol className="list-decimal pl-5 space-y-1 text-meta text-text-secondary mb-3">
+        <ol className="list-decimal pl-5 space-y-2 text-meta text-text-secondary mb-3">
           <li>
-            Open the free registry and enter your business name and each phone number you dial from.
+            <span className="text-text-primary">Register your numbers for free.</span> Open
+            freecallerregistry.com, enter your business name and each number you dial from. One
+            registration covers all three analytics companies (Hiya, First Orion and TNS) that
+            carriers use to label calls.
           </li>
           <li>
-            Use the same business name everywhere, and set it as the caller name (CNAM) for the
-            number with your phone provider.
+            <span className="text-text-primary">Set a business name (CNAM).</span> Where your phone
+            provider offers it, set the same business name as the caller name for each number, so
+            people see who is calling.
           </li>
           <li>
-            Come back to this page after a week of calling: the badges above show whether the answer
-            rate held up.
+            <span className="text-text-primary">Rest a flagged number.</span> When a number shows
+            &quot;Likely flagged&quot; or its answer score falls, stop calling from it for a week or
+            two. This page does that for you when automatic rest is on.
+          </li>
+          <li>
+            <span className="text-text-primary">Dispute a wrong label.</span> If a number is
+            labelled &quot;Spam Likely&quot;, you can ask each company to review it: Hiya and First
+            Orion have a free number-lookup and dispute form on their websites, and the carrier
+            analytics company TNS has a call-labelling redress form. It can take days or weeks, and
+            a review is not guaranteed to change the label.
+          </li>
+          <li>
+            <span className="text-text-primary">Spread your calls.</span> Keep each number under its
+            daily limit and add numbers instead of pushing one number harder. Many calls from one
+            number is the most common reason it gets labelled.
           </li>
         </ol>
         <a

@@ -217,6 +217,70 @@ export async function getNumberHealthBadges(): Promise<NumberHealthBadge[]> {
   return (data ?? []) as NumberHealthBadge[];
 }
 
+/** TASK-H40: three 0-100 scores per number (view `number_health_scores`, defined once in SQL) plus the
+ *  "likely flagged" warning. A score is null when there isn't enough data to judge it. */
+export interface NumberHealthScore {
+  number_id: string;
+  org_id: string;
+  phone_number: string;
+  status: 'active' | 'resting' | 'retired';
+  resting_until: string | null;
+  /** Set when the number was rested for a health reason (automatically by H40, or by the weekly CID-4 check). */
+  flagged_at: string | null;
+  flagged_reason: string | null;
+  /** This week's answer rate against the better of the pool median and the number's own baseline. */
+  answer_score: number | null;
+  /** Share of answered calls (30 days) lasting 10 s or more. */
+  stay_score: number | null;
+  /** Call history depth: dials and active days in the last 30 days. Never null. */
+  history_score: number;
+  likely_flagged: boolean;
+  likely_flagged_reason: string | null;
+  dials_7d: number;
+  dials_30d: number;
+  active_days: number;
+  answered_30d: number;
+  answered_10s_30d: number;
+}
+
+export async function getNumberHealthScores(): Promise<NumberHealthScore[]> {
+  const orgId = await getActiveOrgId();
+  const { data, error } = await supabase
+    .from('number_health_scores')
+    .select('*')
+    .eq('org_id', orgId)
+    .order('phone_number', { ascending: true });
+  if (error) throw new Error(error.message);
+  return (data ?? []) as NumberHealthScore[];
+}
+
+/** TASK-H40: the org's automatic-rest switch (default ON). Read by any member, written by owner/admin only
+ *  (the table's own RLS). */
+export interface NumberHealthAutoRest {
+  enabled: boolean;
+  days: number;
+}
+
+export async function getNumberHealthAutoRest(): Promise<NumberHealthAutoRest> {
+  const orgId = await getActiveOrgId();
+  const { data, error } = await supabase
+    .from('org_number_health_settings')
+    .select('auto_rest_likely_flagged, auto_rest_days')
+    .eq('org_id', orgId)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return { enabled: data?.auto_rest_likely_flagged ?? true, days: data?.auto_rest_days ?? 3 };
+}
+
+export async function setNumberHealthAutoRest(enabled: boolean): Promise<void> {
+  const orgId = await getActiveOrgId();
+  const { error } = await supabase
+    .from('org_number_health_settings')
+    .update({ auto_rest_likely_flagged: enabled, updated_at: new Date().toISOString() })
+    .eq('org_id', orgId);
+  if (error) throw new Error(error.message);
+}
+
 export interface NumberHealthCheckResult {
   numberId: string;
   phoneNumber: string;
