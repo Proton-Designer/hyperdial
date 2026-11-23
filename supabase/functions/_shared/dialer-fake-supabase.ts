@@ -506,6 +506,11 @@ function rpc(
     // TASK-N1 fix-forward (finding L): mirrors private.release_reserved_dial_number's SQL
     // exactly -- decrement (never below 0), reactivate only if that decrement is what drops it
     // back under cap.
+    // Outbound dial pacing (cps-gate.ts): the fake never makes a caller wait -- the pacing math
+    // lives in SQL (reserve_dial_slot) and awaitDialSlot's own wait handling is covered by
+    // cps-gate.test.ts.
+    case 'reserve_dial_slot':
+      return { data: 0, error: null };
     case 'release_reserved_dial_number': {
       const orgId = args.p_org_id as string;
       const numberId = args.p_number_id as string;

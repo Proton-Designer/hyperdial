@@ -2032,3 +2032,9 @@ one. A contact that matches no rule is not imported (GHL also holds customers), 
 - **Wake lock** while a dialing session is live (not stopped/completed), retried on the next tap because iOS refuses it outside a gesture. A line lost while the screen was off reuses the existing `paused_agent_lost` Reconnect path with its own wording; no new engine state.
 - **Desktop did not change** beyond accepted items (MOB3 pixel diff, `audit/MOB3/diff.md`): the 1px checkbox shift, the coverage-grid label column at 64px, and 11px to 12px text on the Contacts filter labels, Shifts status pills and Pick grid labels. The lead accepted the 12px change on desktop (easier to read, a 1 to 3px shift). The shortcut hint and inbox badge stay 10px on desktop (12px only under 1024px).
 - **PWA:** manifest `start_url: "/"`, standalone, no orientation lock (landscape is allowed), `any` and `maskable` icons, iOS status bar style `black` (opaque, so the fixed top bar needs no notch padding).
+
+## 2026-11-23: Pace outbound dials at 5 CPS per org (Telnyx CPS surcharge)
+- **Why:** from Dec 1, 2026 Telnyx bills Voice API outbound on the monthly p95 of hourly peak CPS, first 5 free. HyperDial re-dials all lines after every connected call, so bursts above 5 recur every dialing hour and are not "rare outliers".
+- **Rolling window, not a fixed per-second counter:** a fixed counter lets a misaligned second see twice the limit; a fixed gap (an earlier draft used 0.3 s) slows a 10-line redial for no reason. A rolling 1.1 s window lets the first 5 go at once and only delays the excess.
+- **Per org, default 5, configurable (`org_telephony.dial_cps_limit`):** each org pays its own Telnyx account, so each gets its own free 5. Raising it is a spend decision ($12 per extra CPS a month).
+- **Fails open** on an RPC error: a pacing outage should cost a small surcharge, never stop dialing.

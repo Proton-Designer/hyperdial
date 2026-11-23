@@ -143,6 +143,7 @@ import {
 // circular import (transfer-core.ts itself imports agentSipUri from this file) is safe here --
 // both bindings are only used inside function bodies, never at module-evaluation time.
 import { cancelInFlightTransferForSession } from './transfer-core.ts';
+import { awaitDialSlot } from './cps-gate.ts';
 
 function dialerLog(step: string, meta: Record<string, unknown> = {}): void {
   console.log('[dialer-engine]', step, meta);
@@ -1072,6 +1073,8 @@ async function dialLead(
   });
 
   try {
+    // Keep the org's combined outbound dials within its CPS limit (cps-gate.ts).
+    await awaitDialSlot(supabase, args.orgId);
     const { callControlId } = await client.dial({
       connectionId: args.callControlAppId,
       to: args.phoneNumber,

@@ -9,6 +9,8 @@ updated: 2026-09-27
 sources:
   - supabase/functions/_shared/dialer-core.ts
   - supabase/functions/_shared/dialer-engine.ts
+  - supabase/functions/_shared/cps-gate.ts
+  - supabase/migrations/20261124000000_dial_cps_gate.sql
   - supabase/functions/_shared/client-state.ts
   - supabase/functions/_shared/coaching-core.ts
   - supabase/functions/_shared/transfer-core.ts
@@ -826,6 +828,21 @@ Records the WINNING contact leg only, never a loser, starting the moment it's ac
   `.id`, so it landed under one random uuid key), making every row inside it invisible to a
   normal table scan. Fixed generically (handles both shapes); this is the first deno test in
   this shared fake to exercise a bulk insert, so nothing caught it before.
+
+### Outbound dial pacing (Telnyx CPS surcharge)
+
+From Dec 1, 2026 Telnyx bills Voice API outbound traffic on the monthly 95th percentile of each
+active hour's busiest second of call attempts; the first 5 calls per second are free, then
+$12 per extra CPS up to 25. Dropped legs count (they were accepted attempts), and `refillSession`
+re-dials every line after each connected call, so without pacing the burst recurs in nearly every
+dialing hour. `dialLead` now calls `awaitDialSlot` (`_shared/cps-gate.ts`) right before
+`client.dial()`: the `reserve_dial_slot` RPC (migration `20261124000000_dial_cps_gate.sql`) keeps
+the org's last `org_telephony.dial_cps_limit` (default 5) dial times in `private.org_dial_pace`
+and hands each caller a slot so no rolling 1.1 s window holds more than that many dials. Dials
+under the limit go out with no wait. It is per org because each org dials through its own (BYO)
+Telnyx account. Fails open on an RPC error; a slot more than 15 s away throws inside `dialLead`'s
+try, which ends the leg as a retryable `no_answer`. Only contact dials are paced: the agent leg,
+coaching and transfer dials are low volume and unpaced.
 
 ## Not covered here
 
